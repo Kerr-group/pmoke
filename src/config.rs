@@ -1,0 +1,183 @@
+use anyhow::{Context, Result, anyhow, bail};
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeSet, fs, path::Path};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Config {
+    pub version: u32,
+
+    pub experiment: Experiment,
+    pub instruments: Instruments,
+    pub timebase: Timebase,
+    pub roles: Roles,
+    pub channels: Vec<Channel>,
+
+    pub pulse: Pulse,
+    pub lockin: Lockin,
+    pub reference: Reference,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Experiment {
+    pub filename: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Instruments {
+    #[serde(rename = "function_generator")]
+    pub function_generator: Option<FunctionGenerator>,
+    pub oscilloscope: Option<Oscilloscope>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionGenerator {
+    pub connection: Connection,
+    #[serde(default)]
+    pub model: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Oscilloscope {
+    pub connection: Connection,
+    #[serde(default)]
+    pub model: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "protocol", rename_all = "lowercase")]
+pub enum Connection {
+    Gpib { board: u8, address: u8 },
+    Vxi11 { ip: String, port: Option<u16> },
+    Tcpip { ip: String, port: u16 },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Timebase {
+    pub t0: f64,
+    pub dt: f64,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Roles {
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub sensor_ch: Vec<u32>,
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub signal_ch: Vec<u32>,
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub reference_ch: Vec<u32>,
+}
+
+fn one_or_many<'de, D>(de: D) -> std::result::Result<Vec<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(u32),
+        Many(Vec<u32>),
+    }
+    Ok(match OneOrMany::deserialize(de)? {
+        OneOrMany::One(x) => vec![x],
+        OneOrMany::Many(xs) => xs,
+    })
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Channel {
+    pub index: u32,
+    #[serde(default)]
+    pub factor: Option<f64>,
+    #[serde(default)]
+    pub unit_out: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Pulse {
+    pub bg_window_before: Window,
+    pub bg_window_after: Window,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct Window {
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Lockin {
+    pub workers: usize,
+    pub filter_length_samples: usize,
+    pub stride_samples: usize,
+    pub preview_stride_samples: usize,
+    pub window: Window,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Reference {
+    pub interval_samples: usize,
+    pub window_samples: usize,
+}
+
+// From &str
+pub fn from_str(s: &str) -> Result<Config> {
+    let de = toml::de::Deserializer::parse(s).map_err(|e| anyhow!("toml parse error: {e}"))?;
+
+    let cfg: Config =
+        serde_path_to_error::deserialize(de).map_err(|e| anyhow!("{} at {}", e, e.path()))?;
+
+    cfg.validate()?;
+
+    Ok(cfg)
+}
+
+// From file
+pub fn from_path(path: impl AsRef<Path>) -> Result<Config> {
+    let p = path.as_ref();
+    let text = fs::read_to_string(p).with_context(|| format!("failed to read {}", p.display()))?;
+    from_str(&text)
+}
+
+impl Config {
+    pub fn validate(&self) -> Result<()> {
+        if self.version != 1 {
+            bail!("unsupported config version: {}", self.version);
+        }
+        if self.timebase.dt <= 0.0 {
+            bail!("timebase.dt must be positive");
+        }
+        let mut seen = BTreeSet::new();
+        for ch in &self.channels {
+            if !seen.insert(ch.index) {
+                bail!("duplicate channel index: {}", ch.index);
+            }
+        }
+
+        let has = |n: u32| seen.contains(&n);
+        for (name, arr) in [
+            ("sensor_ch", &self.roles.sensor_ch),
+            ("signal_ch", &self.roles.signal_ch),
+            ("reference_ch", &self.roles.reference_ch),
+        ] {
+            for &idx in arr.iter() {
+                if !has(idx) {
+                    bail!("roles.{name} contains undefined channel index: {idx}");
+                }
+            }
+        }
+        let check_win = |label: &str, w: Window| -> Result<()> {
+            if !(w.start < w.end) {
+                bail!(
+                    "{label}: start must be < end (start={}, end={})",
+                    w.start,
+                    w.end
+                );
+            }
+            Ok(())
+        };
+        check_win("lockin.window", self.lockin.window)?;
+        check_win("pulse.bg_window_before", self.pulse.bg_window_before)?;
+        check_win("pulse.bg_window_after", self.pulse.bg_window_after)?;
+
+        Ok(())
+    }
+}

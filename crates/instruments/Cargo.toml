@@ -1,0 +1,16 @@
+[package]
+name = "instruments"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpib-rs = {path = "../gpib-rs"}
+
+[[example]]
+name = "dummy"
+path = "./examples/dummy/dummy.rs"
+
+[[example]]
+name = "keithley2000"
+path = "./examples/keithley/keithley2000.rs"
+

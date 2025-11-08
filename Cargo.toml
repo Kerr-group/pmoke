@@ -1,0 +1,23 @@
+[package]
+name = "pmoke"
+version = "0.1.0"
+edition = "2024"
+
+
+[workspace]
+members = [
+  "crates/gpib-rs",
+  "crates/instruments",
+  "crates/lockin-core",
+]
+
+[dependencies]
+gpib-rs = { path = "crates/gpib-rs" }
+instruments = { path = "crates/instruments" }
+lockin-core = { path = "crates/lockin-core" }
+anyhow = "1.0.99"
+serde = { version = "1.0.219", features = ["derive"] }
+toml = "0.9.5"
+serde_path_to_error= "0.1.17"
+clap = { version = "4.5.51", features = ["derive"] }
+serde_json = "1.0.145"

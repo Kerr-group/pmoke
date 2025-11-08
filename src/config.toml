@@ -1,0 +1,54 @@
+version = 1
+
+[experiment]
+filename = "2025_09_01_shot1_Fe3O4_20m_300V_250mA_48mWlight.csv"
+
+[instruments.function_generator]
+connection = { protocol = "gpib", board = 0, address = 11 }
+model = "WF198x"
+
+[instruments.oscilloscope]
+connection = { protocol = "tcpip", ip = "10.249.11.19", port = 55255 }
+model = "DHO5108"
+
+[timebase]
+t0 = -1.5e-3 # seconds
+dt = 500e-12 # seconds
+
+[roles]
+sensor_ch = [1, 4]
+signal_ch = [2]
+reference_ch = [3]
+
+# Channel for current sensor
+[[channels]]
+index = 1
+factor = -4.875405593e6
+unit_out = "A"
+
+# Channel for signal
+[[channels]]
+index = 2
+
+[[channels]]
+index = 3
+
+[[channels]]
+index = 4
+factor = 1
+unit_out = "V"
+
+[pulse]
+bg_window_before = { start = 0e-3, end = 5e-3 }
+bg_window_after = { start = 5e-3, end = 15e-3 }
+
+[lockin]
+workers = 4
+filter_length_samples = 20
+stride_samples = 2000
+preview_stride_samples = 3000
+window = { start = -2e-3, end = 8e-3 }
+
+[reference]
+interval_samples = 100000
+window_samples = 1000
