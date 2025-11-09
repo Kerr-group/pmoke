@@ -1,11 +1,14 @@
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::Config;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::*;
 
 pub fn single(cfg: &Config) -> Result<()> {
-    let mut handler = OscilloscopeHandler::initialize(cfg)?;
-    handler.set_single()?;
+    let mut handler = OscilloscopeHandler::initialize(cfg)
+        .context("failed to initialize oscilloscope handler")?;
+    handler
+        .set_single()
+        .context("failed to set oscilloscope to single mode")?;
 
     println!(
         "{}  Oscilloscope set to single mode successfully.",
