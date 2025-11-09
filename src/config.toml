@@ -3,7 +3,7 @@ version = 1
 
 [instruments.function_generator]
 connection = { protocol = "gpib", board = 0, address = 11 }
-model = "WF198x"
+model = "WF1946B"
 
 [instruments.oscilloscope]
 connection = { protocol = "tcpip", ip = "10.249.11.19", port = 55255 }

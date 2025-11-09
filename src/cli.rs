@@ -29,7 +29,7 @@ pub enum Command {
     /// Send trigger signal from the function generator
     Trigger,
     /// Set single mode and send trigger signal
-    Shot,
+    Autoshot,
     /// Fetch data from the oscilloscope and save to a file
     Fetch,
     /// Analyze the data

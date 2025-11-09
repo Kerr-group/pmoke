@@ -45,3 +45,30 @@ pub fn validate_oscilloscope(cfg: &Config) -> Result<()> {
     };
     Ok(())
 }
+
+pub fn validate_fg(cfg: &Config) -> Result<()> {
+    let instruments = cfg
+        .instruments
+        .as_ref()
+        .ok_or_else(|| anyhow!("No instruments defined in configuration."))?;
+
+    let fg_cfg = instruments
+        .function_generator
+        .as_ref()
+        .ok_or_else(|| anyhow!("Function generator configuration is missing."))?;
+
+    let endpoint = validate_connection(&fg_cfg.connection)?;
+
+    match fg_cfg.model.as_str() {
+        "WF1946B" => match endpoint {
+            Connection::Gpib { .. } => {}
+            _ => {
+                bail!("WF1946B must be connected over GPIB.");
+            }
+        },
+        other => {
+            bail!("Unknown function generator model: {other}");
+        }
+    };
+    Ok(())
+}

@@ -16,8 +16,8 @@ fn main() -> Result<()> {
     match args.command {
         Some(Command::Show) => commands::show::show(&cfg),
         Some(Command::Single) => commands::single::single(&cfg),
-        Some(Command::Trigger) => Ok(()),
-        Some(Command::Shot) => Ok(()),
+        Some(Command::Trigger) => commands::trigger::trigger(&cfg),
+        Some(Command::Autoshot) => commands::autoshot::autoshot(&cfg),
         Some(Command::Fetch) => commands::fetch::fetch(&cfg),
         Some(Command::Analyze) => Ok(()),
         Some(Command::Li) => Ok(()),

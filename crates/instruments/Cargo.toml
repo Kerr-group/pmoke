@@ -19,4 +19,8 @@ path = "./examples/keithley/keithley2000.rs"
 name = "dho5108"
 path = "./examples/rigol/dho5108.rs"
 
+[[example]]
+name = "wf1946b"
+path = "./examples/nf/wf1946b.rs"
+
 
