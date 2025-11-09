@@ -55,9 +55,9 @@ pub struct Roles {
     #[serde(default, deserialize_with = "one_or_many")]
     pub sensor_ch: Vec<u32>,
     #[serde(default, deserialize_with = "one_or_many")]
-    pub signal_ch: Vec<u32>,
-    #[serde(default, deserialize_with = "one_or_many")]
     pub reference_ch: Vec<u32>,
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub signal_ch: Vec<u32>,
 }
 
 fn one_or_many<'de, D>(de: D) -> std::result::Result<Vec<u32>, D::Error>
@@ -149,8 +149,8 @@ impl Config {
         let has = |n: u32| seen.contains(&n);
         for (name, arr) in [
             ("sensor_ch", &self.roles.sensor_ch),
-            ("signal_ch", &self.roles.signal_ch),
             ("reference_ch", &self.roles.reference_ch),
+            ("signal_ch", &self.roles.signal_ch),
         ] {
             for &idx in arr.iter() {
                 if !has(idx) {

@@ -15,10 +15,10 @@ members = [
 gpib-rs = { path = "crates/gpib-rs" }
 instruments = { path = "crates/instruments" }
 lockin-core = { path = "crates/lockin-core" }
-anyhow = "1.0.99"
+anyhow = "1.0.100"
 serde = { version = "1.0.219", features = ["derive"] }
-toml = "0.9.5"
-serde_path_to_error= "0.1.17"
+toml = "0.9.8"
+serde_path_to_error= "0.1.20"
 clap = { version = "4.5.51", features = ["derive"] }
 serde_json = "1.0.145"
 pyo3 = { version = "0.27.1", features = ["auto-initialize"] }
