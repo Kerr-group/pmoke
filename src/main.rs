@@ -18,7 +18,7 @@ fn main() -> Result<()> {
         Some(Command::Single) => commands::single::single(&cfg),
         Some(Command::Trigger) => Ok(()),
         Some(Command::Shot) => Ok(()),
-        Some(Command::Fetch) => Ok(()),
+        Some(Command::Fetch) => commands::fetch::fetch(&cfg),
         Some(Command::Analyze) => Ok(()),
         Some(Command::Li) => Ok(()),
         Some(Command::Phase { rad, auto, formula }) => {

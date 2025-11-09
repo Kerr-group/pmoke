@@ -1,7 +1,5 @@
 version = 1
 
-[experiment]
-filename = "2025_09_01_shot1_Fe3O4_20m_300V_250mA_48mWlight.csv"
 
 [instruments.function_generator]
 connection = { protocol = "gpib", board = 0, address = 11 }
@@ -10,6 +8,7 @@ model = "WF198x"
 [instruments.oscilloscope]
 connection = { protocol = "tcpip", ip = "10.249.11.19", port = 55255 }
 model = "DHO5108"
+memory_depth = 10_000_000
 
 [timebase]
 t0 = -1.5e-3 # seconds

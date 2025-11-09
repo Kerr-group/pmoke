@@ -6,7 +6,6 @@ use std::{collections::BTreeSet, fs, path::Path};
 pub struct Config {
     pub version: u32,
 
-    pub experiment: Experiment,
     pub instruments: Option<Instruments>,
     pub timebase: Timebase,
     pub roles: Roles,
@@ -15,11 +14,6 @@ pub struct Config {
     pub pulse: Pulse,
     pub lockin: Lockin,
     pub reference: Reference,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Experiment {
-    pub filename: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,6 +35,7 @@ pub struct Oscilloscope {
     pub connection: Connection,
     #[serde(default)]
     pub model: String,
+    pub memory_depth: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

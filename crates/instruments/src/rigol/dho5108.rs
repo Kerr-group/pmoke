@@ -102,7 +102,6 @@ impl DHO5108 {
         let y_inc: f64 = self.query("WAV:YINC?")?.parse().unwrap();
         let y_ori: f64 = self.query("WAV:YOR?")?.parse().unwrap();
         let y_ref: f64 = self.query("WAV:YREF?")?.parse().unwrap();
-        println!("YINC={y_inc}, YOR={y_ori}, YREF={y_ref}");
 
         // read actual data
         let raw_bytes = self.query_binary("WAV:DATA?")?;
