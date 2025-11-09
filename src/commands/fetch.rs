@@ -20,6 +20,13 @@ pub fn fetch(cfg: &Config) -> Result<()> {
 
     let channels = build_channel_list(cfg);
 
+    println!(
+        "{}  Fetching {} samples from {} channels...",
+        "→".yellow().bold(),
+        depth,
+        channels.len()
+    );
+
     let t_fetch_start = Instant::now();
     let data_per_ch = fetch_all_channels(&mut handler, &channels, depth)?;
     let t_fetch_end = Instant::now();

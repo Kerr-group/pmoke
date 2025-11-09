@@ -83,7 +83,7 @@ impl DHO5108 {
 
     pub fn fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<Vec<f64>> {
         // Set data source to channel ch
-        self.write_line(&format!("WAV::SOUR CHAN{ch}"))?;
+        self.write_line(&format!("WAV:SOUR CHAN{ch}"))?;
 
         // Set Raw
         self.write_line("WAV:MODE RAW")?;
