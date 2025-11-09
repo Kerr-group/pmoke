@@ -1,6 +1,7 @@
+use anyhow::Result;
 use instruments::dummy::DummyInstrument;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let mut dmm = DummyInstrument::open(5)?;
 
     let idn = dmm.query_line("*IDN?")?;

@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
-use gpib_rs::{GpibError, Result};
+use crate::instruments::Result;
+use gpib_rs::GpibError;
 
 #[derive(Clone)]
 struct Lcg(u64);

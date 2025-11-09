@@ -6,6 +6,7 @@ pub enum RefType {
     Cos,
 }
 
+#[allow(dead_code)]
 pub struct LockinProcessor {
     t: Vec<f64>,
     data: Vec<f64>,

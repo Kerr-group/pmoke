@@ -36,6 +36,30 @@ pub enum Command {
     Analyze,
     /// Run numerical lock-in analysis
     Li,
-    /// Rotate phase of lock-in analysis
-    Phase,
+    /// Rotate the reference phase for lock-in analysis
+    ///
+    /// This command adjusts the reference phase used after the lock-in detection.
+    /// You can either specify the phase angle manually (in rad),
+    /// or let the program determine it automatically using an internal algorithm.
+    Phase {
+        /// Phase offset to apply (in rad).
+        /// Positive values rotate the phase counterclockwise.
+        #[arg(short, long, value_name = "RAD")]
+        #[arg(conflicts_with = "auto")]
+        #[arg(conflicts_with = "formula")]
+        rad: f64,
+
+        /// Automatically determine the optimal phase offset.
+        /// If set, the `rad` option is ignored.
+        #[arg(short, long)]
+        #[arg(conflicts_with = "rad")]
+        #[arg(conflicts_with = "formula")]
+        auto: bool,
+
+        /// Use formula-based phase adjustment.
+        #[arg(short, long)]
+        #[arg(conflicts_with = "rad")]
+        #[arg(conflicts_with = "auto")]
+        formula: bool,
+    },
 }

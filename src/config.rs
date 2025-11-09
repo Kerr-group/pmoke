@@ -7,7 +7,7 @@ pub struct Config {
     pub version: u32,
 
     pub experiment: Experiment,
-    pub instruments: Instruments,
+    pub instruments: Option<Instruments>,
     pub timebase: Timebase,
     pub roles: Roles,
     pub channels: Vec<Channel>,
@@ -47,7 +47,6 @@ pub struct Oscilloscope {
 #[serde(tag = "protocol", rename_all = "lowercase")]
 pub enum Connection {
     Gpib { board: u8, address: u8 },
-    Vxi11 { ip: String, port: Option<u16> },
     Tcpip { ip: String, port: u16 },
 }
 

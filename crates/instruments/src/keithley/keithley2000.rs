@@ -1,18 +1,19 @@
-use gpib_rs::{Instrument, Result};
+use crate::instruments::Result;
+use gpib_rs::Instrument;
 
-#[derive(Debug, Clone, Copy)]
-pub enum Function {
-    VoltDC,
-}
-
-#[allow(dead_code)]
-impl Function {
-    fn scpi_token(self) -> &'static str {
-        match self {
-            Function::VoltDC => "VOLT:DC",
-        }
-    }
-}
+// #[derive(Debug, Clone, Copy)]
+// pub enum Function {
+//     VoltDC,
+// }
+//
+// #[allow(dead_code)]
+// impl Function {
+//     fn scpi_token(self) -> &'static str {
+//         match self {
+//             Function::VoltDC => "VOLT:DC",
+//         }
+//     }
+// }
 
 pub struct Keithley2000 {
     inst: Instrument,
@@ -36,15 +37,17 @@ impl Keithley2000 {
         self.use_crlf = on;
     }
 
-    pub fn set_timeout_secs(&self, secs: u64) -> Result<()> {
-        self.inst.set_timeout_secs(secs)
+    pub fn set_timeout_secs(&mut self, secs: u64) -> Result<()> {
+        self.inst.set_timeout_secs(secs)?;
+        Ok(())
     }
 
-    pub fn idn(&self) -> Result<String> {
-        if self.use_crlf {
-            self.inst.query_crlf("*IDN?")
+    pub fn identify(&self) -> Result<String> {
+        let res = if self.use_crlf {
+            self.inst.query_crlf("*IDN?")?
         } else {
-            self.inst.query_line("*IDN?")
-        }
+            self.inst.query_line("*IDN?")?
+        };
+        Ok(res)
     }
 }

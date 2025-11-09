@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod communications;
 mod config;
 mod lockin;
 
@@ -12,19 +13,27 @@ fn main() -> Result<()> {
 
     let cfg = config::from_path(&args.config)?;
 
-    lockin::reference::println_ref();
-
     match args.command {
-        Some(Command::Show) => commands::show::run(&cfg),
-        Some(Command::Single) => {}
-        Some(Command::Trigger) => {}
-        Some(Command::Shot) => {}
-        Some(Command::Fetch) => {}
-        Some(Command::Analyze) => {}
-        Some(Command::Li) => {}
-        Some(Command::Phase) => {}
-        None => commands::show::run(&cfg),
+        Some(Command::Show) => commands::show::show(&cfg),
+        Some(Command::Single) => commands::single::single(&cfg),
+        Some(Command::Trigger) => Ok(()),
+        Some(Command::Shot) => Ok(()),
+        Some(Command::Fetch) => Ok(()),
+        Some(Command::Analyze) => Ok(()),
+        Some(Command::Li) => Ok(()),
+        Some(Command::Phase { rad, auto, formula }) => {
+            if formula {
+                println!("Displaying the formula used for phase rotation...");
+                // show_formula();
+            } else if auto {
+                println!("Automatically determining optimal phase rotation...");
+                // run_auto_phase_detection();
+            } else {
+                println!("Rotating phase by {:.2} rad...", rad);
+                // rotate_phase(degree);
+            }
+            Ok(())
+        }
+        None => commands::show::show(&cfg),
     }
-
-    Ok(())
 }

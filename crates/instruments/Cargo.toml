@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 gpib-rs = {path = "../gpib-rs"}
+anyhow = "1.0.100"
 
 [[example]]
 name = "dummy"
@@ -13,4 +14,9 @@ path = "./examples/dummy/dummy.rs"
 [[example]]
 name = "keithley2000"
 path = "./examples/keithley/keithley2000.rs"
+
+[[example]]
+name = "dho5108"
+path = "./examples/rigol/dho5108.rs"
+
 
