@@ -7,9 +7,7 @@ mod lockin;
 use anyhow::Result;
 use clap::CommandFactory;
 use clap::Parser;
-use clap_complete::{Shell, generate};
 use cli::{Cli, Command};
-use std::io;
 
 fn main() -> Result<()> {
     let args = Cli::parse();
