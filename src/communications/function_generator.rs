@@ -27,7 +27,7 @@ impl FGHandler {
         let connection = &fg_cfg.connection;
 
         let fg = match (model, connection) {
-            ("WF1946B", Connection::Gpib { board, address }) => {
+            ("WF1946B", Connection::Gpib { board: _, address }) => {
                 let wf = WF1946B::open(*address as i32)?;
                 FG::WF1946B(wf)
             }

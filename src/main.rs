@@ -5,7 +5,6 @@ mod config;
 mod lockin;
 
 use anyhow::Result;
-use clap::CommandFactory;
 use clap::Parser;
 use cli::{Cli, Command};
 
