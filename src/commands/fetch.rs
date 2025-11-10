@@ -1,19 +1,20 @@
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::Config;
-use anyhow::{Context, Result, bail};
-use std::fs::File;
-use std::io::{BufWriter, Write};
+use crate::constants::FETCHED_FNAME;
+use crate::utils::channels::build_channel_list;
+use crate::utils::csv::write_csv;
+use anyhow::{Context, Result, anyhow, bail};
 use std::time::Instant;
 
 pub fn fetch(cfg: &Config) -> Result<()> {
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
 
-    let osc_cfg = cfg
+    let osc_cfg = &cfg
         .instruments
         .as_ref()
-        .and_then(|ins| ins.oscilloscope.as_ref())
-        .context("oscilloscope configuration is missing")?;
+        .ok_or_else(|| anyhow!("Instruments configuration is missing."))?
+        .oscilloscope;
 
     let depth = osc_cfg.memory_depth;
 
@@ -39,8 +40,11 @@ pub fn fetch(cfg: &Config) -> Result<()> {
         (depth * channels.len()) as f64 / fetch_elapsed.as_secs_f64()
     );
 
+    let headers: Vec<String> = channels.iter().map(|ch| format!("ch{ch}")).collect();
+    let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
+
     let t_write_start = Instant::now();
-    write_csv("raw.csv", &channels, &data_per_ch, depth)?;
+    write_csv(FETCHED_FNAME, &header_refs, &data_per_ch)?;
     let t_write_end = Instant::now();
 
     println!(
@@ -49,24 +53,6 @@ pub fn fetch(cfg: &Config) -> Result<()> {
     );
 
     Ok(())
-}
-
-fn build_channel_list(cfg: &Config) -> Result<Vec<u8>> {
-    let mut channels: Vec<u8> = Vec::new();
-
-    channels.extend(cfg.roles.sensor_ch.iter().map(|&ch| ch as u8));
-    channels.extend(cfg.roles.signal_ch.iter().map(|&ch| ch as u8));
-    channels.extend(cfg.roles.reference_ch.iter().map(|&ch| ch as u8));
-
-    channels.sort();
-
-    for i in 1..channels.len() {
-        if channels[i] == channels[i - 1] {
-            bail!("Duplicate channel detected: ch{}", channels[i]);
-        }
-    }
-
-    Ok(channels)
 }
 
 fn fetch_all_channels(
@@ -93,31 +79,4 @@ fn fetch_all_channels(
     }
 
     Ok(data_per_ch)
-}
-
-fn write_csv(path: &str, channels: &[u8], data_per_ch: &[Vec<f64>], depth: usize) -> Result<()> {
-    let file = File::create(path).context("failed to create csv file")?;
-    let mut writer = BufWriter::new(file);
-
-    for (i, ch) in channels.iter().enumerate() {
-        if i + 1 == channels.len() {
-            write!(writer, "ch{ch}")?;
-        } else {
-            write!(writer, "ch{ch},")?;
-        }
-    }
-    writeln!(writer)?;
-
-    for (row_idx, _) in data_per_ch[0].iter().enumerate().take(depth) {
-        for (col_idx, ch_data) in data_per_ch.iter().enumerate() {
-            write!(writer, "{}", ch_data[row_idx])?;
-            if col_idx + 1 != data_per_ch.len() {
-                write!(writer, ",")?;
-            }
-        }
-        writeln!(writer)?;
-    }
-
-    writer.flush()?;
-    Ok(())
 }

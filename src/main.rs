@@ -2,7 +2,9 @@ mod cli;
 mod commands;
 mod communications;
 mod config;
+mod constants;
 mod lockin;
+mod utils;
 
 use anyhow::Result;
 use clap::Parser;
@@ -25,6 +27,7 @@ fn main() -> Result<()> {
         Some(Command::Autoshot) => commands::autoshot::autoshot(&cfg),
         Some(Command::Fetch) => commands::fetch::fetch(&cfg),
         Some(Command::Automeasure) => commands::automeasure::automeasure(&cfg),
+        Some(Command::Reference) => commands::reference::reference(&cfg),
         Some(Command::Analyze) => Ok(()),
         Some(Command::Li) => Ok(()),
         Some(Command::Phase { rad, auto, formula }) => {

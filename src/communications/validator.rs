@@ -25,10 +25,7 @@ pub fn validate_oscilloscope(cfg: &Config) -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow!("No instruments defined in configuration."))?;
 
-    let osc_cfg = instruments
-        .oscilloscope
-        .as_ref()
-        .ok_or_else(|| anyhow!("Oscilloscope configuration is missing."))?;
+    let osc_cfg = &instruments.oscilloscope;
 
     let endpoint = validate_connection(&osc_cfg.connection)?;
 

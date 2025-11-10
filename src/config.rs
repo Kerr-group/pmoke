@@ -13,14 +13,13 @@ pub struct Config {
 
     pub pulse: Pulse,
     pub lockin: Lockin,
-    pub reference: Reference,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Instruments {
     #[serde(rename = "function_generator")]
     pub function_generator: Option<FunctionGenerator>,
-    pub oscilloscope: Option<Oscilloscope>,
+    pub oscilloscope: Oscilloscope,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,12 +103,6 @@ pub struct Lockin {
     pub stride_samples: usize,
     pub preview_stride_samples: usize,
     pub window: Window,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Reference {
-    pub interval_samples: usize,
-    pub window_samples: usize,
 }
 
 // From &str

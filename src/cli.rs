@@ -35,6 +35,8 @@ pub enum Command {
     Fetch,
     /// Perform auto measurement (set single mode, trigger, fetch)
     Automeasure,
+    /// Analyze the reference signal
+    Reference,
     /// Analyze the data
     Analyze,
     /// Run numerical lock-in analysis

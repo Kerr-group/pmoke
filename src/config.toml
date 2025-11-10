@@ -15,8 +15,8 @@ dt = 500e-12 # seconds
 
 [roles]
 sensor_ch = [1, 4]
-reference_ch = [2] # Supports only one reference channel
-signal_ch = [3]
+reference_ch = [3] # Supports only one reference channel
+signal_ch = [2]
 
 # Channel for current sensor
 [[channels]]
@@ -47,6 +47,3 @@ stride_samples = 2000
 preview_stride_samples = 3000
 window = { start = -2e-3, end = 8e-3 }
 
-[reference]
-interval_samples = 100000
-window_samples = 1000

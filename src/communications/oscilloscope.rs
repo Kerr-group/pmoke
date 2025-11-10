@@ -15,13 +15,7 @@ impl OscilloscopeHandler {
     pub fn initialize(cfg: &Config) -> Result<Self> {
         validate_oscilloscope(cfg)?;
 
-        let osc_cfg = cfg
-            .instruments
-            .as_ref()
-            .unwrap()
-            .oscilloscope
-            .as_ref()
-            .unwrap();
+        let osc_cfg = &cfg.instruments.as_ref().unwrap().oscilloscope;
 
         let model = osc_cfg.model.as_str();
         let connection = &osc_cfg.connection;
