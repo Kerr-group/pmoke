@@ -1,7 +1,6 @@
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::Config;
 use anyhow::{Context, Result, bail};
-use colored::*;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::Instant;
