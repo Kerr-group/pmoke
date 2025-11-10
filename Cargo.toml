@@ -22,5 +22,7 @@ serde_path_to_error= "0.1.20"
 clap = { version = "4.5.51", features = ["derive"] }
 serde_json = "1.0.145"
 pyo3 = { version = "0.27.1", features = ["auto-initialize"] }
-spinners = "4.1.1"
 colored = "3.0.0"
+clap_complete = "4.5.60"
+dirs = "6.0.0"
+

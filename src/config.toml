@@ -1,6 +1,5 @@
 version = 1
 
-
 [instruments.function_generator]
 connection = { protocol = "gpib", board = 0, address = 11 }
 model = "WF1946B"

@@ -5,8 +5,11 @@ mod config;
 mod lockin;
 
 use anyhow::Result;
+use clap::CommandFactory;
 use clap::Parser;
+use clap_complete::{Shell, generate};
 use cli::{Cli, Command};
+use std::io;
 
 fn main() -> Result<()> {
     let args = Cli::parse();
@@ -32,6 +35,10 @@ fn main() -> Result<()> {
                 println!("Rotating phase by {:.2} rad...", rad);
                 // rotate_phase(degree);
             }
+            Ok(())
+        }
+        Some(Command::Completions { shell }) => {
+            commands::completions::install_completion(shell)?;
             Ok(())
         }
         None => commands::show::show(&cfg),

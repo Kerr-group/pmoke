@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 
 /// A simple CLI tool to inspect and validate experiment configuration files.
 #[derive(Parser, Debug)]
@@ -61,5 +62,11 @@ pub enum Command {
         #[arg(conflicts_with = "rad")]
         #[arg(conflicts_with = "auto")]
         formula: bool,
+    },
+    /// Generate shell completion script
+    Completions {
+        /// Shell to generate for: bash, zsh, fish, powershell, elvish
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
