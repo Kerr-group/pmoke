@@ -19,6 +19,7 @@ fn main() -> Result<()> {
         Some(Command::Trigger) => commands::trigger::trigger(&cfg),
         Some(Command::Autoshot) => commands::autoshot::autoshot(&cfg),
         Some(Command::Fetch) => commands::fetch::fetch(&cfg),
+        Some(Command::Automeasure) => commands::automeasure::automeasure(&cfg),
         Some(Command::Analyze) => Ok(()),
         Some(Command::Li) => Ok(()),
         Some(Command::Phase { rad, auto, formula }) => {

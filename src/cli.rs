@@ -33,6 +33,8 @@ pub enum Command {
     Autoshot,
     /// Fetch data from the oscilloscope and save to a file
     Fetch,
+    /// Perform auto measurement (set single mode, trigger, fetch)
+    Automeasure,
     /// Analyze the data
     Analyze,
     /// Run numerical lock-in analysis
