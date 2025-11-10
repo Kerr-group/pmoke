@@ -18,11 +18,10 @@ pub fn fetch(cfg: &Config) -> Result<()> {
 
     let depth = osc_cfg.memory_depth;
 
-    let channels = build_channel_list(cfg);
+    let channels = build_channel_list(cfg)?;
 
     println!(
-        "{}  Fetching {} samples from {} channels...",
-        "→".yellow().bold(),
+        "⏳ Fetching {} samples from {} channels...",
         depth,
         channels.len()
     );
@@ -34,8 +33,7 @@ pub fn fetch(cfg: &Config) -> Result<()> {
     let fetch_elapsed = t_fetch_end - t_fetch_start;
 
     println!(
-        "{}  Fetched {} samples from {} channels in {:.2?} ({:.2} samples/sec)",
-        "✔".green().bold(),
+        "✅ Fetched {} samples from {} channels in {:.2?} ({:.2} samples/sec)",
         depth,
         channels.len(),
         fetch_elapsed,
@@ -47,20 +45,29 @@ pub fn fetch(cfg: &Config) -> Result<()> {
     let t_write_end = Instant::now();
 
     println!(
-        "{}  Data written to raw.csv in {:.2?}",
-        "✔".green().bold(),
+        "📝 Data written to raw.csv in {:.2?}",
         t_write_end - t_write_start
     );
 
     Ok(())
 }
 
-fn build_channel_list(cfg: &Config) -> Vec<u8> {
+fn build_channel_list(cfg: &Config) -> Result<Vec<u8>> {
     let mut channels: Vec<u8> = Vec::new();
+
     channels.extend(cfg.roles.sensor_ch.iter().map(|&ch| ch as u8));
     channels.extend(cfg.roles.signal_ch.iter().map(|&ch| ch as u8));
     channels.extend(cfg.roles.reference_ch.iter().map(|&ch| ch as u8));
-    channels
+
+    channels.sort();
+
+    for i in 1..channels.len() {
+        if channels[i] == channels[i - 1] {
+            bail!("Duplicate channel detected: ch{}", channels[i]);
+        }
+    }
+
+    Ok(channels)
 }
 
 fn fetch_all_channels(

@@ -8,6 +8,6 @@ pub fn trigger(cfg: &Config) -> Result<()> {
         FGHandler::initialize(cfg).context("failed to initialize function generator handler")?;
     handler.trigger().context("failed to trigger")?;
 
-    println!("{}  Trigger command sent successfully.", "✔".green().bold());
+    println!("📈 Trigger command sent successfully.");
     Ok(())
 }
