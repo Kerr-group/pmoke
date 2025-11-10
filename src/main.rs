@@ -11,6 +11,11 @@ use cli::{Cli, Command};
 fn main() -> Result<()> {
     let args = Cli::parse();
 
+    if let Some(Command::Completions { shell }) = args.command.as_ref() {
+        commands::completions::install_completion(*shell)?;
+        return Ok(());
+    }
+
     let cfg = config::from_path(&args.config)?;
 
     match args.command {
@@ -25,20 +30,14 @@ fn main() -> Result<()> {
         Some(Command::Phase { rad, auto, formula }) => {
             if formula {
                 println!("Displaying the formula used for phase rotation...");
-                // show_formula();
             } else if auto {
                 println!("Automatically determining optimal phase rotation...");
-                // run_auto_phase_detection();
             } else {
                 println!("Rotating phase by {:.2} rad...", rad);
-                // rotate_phase(degree);
             }
             Ok(())
         }
-        Some(Command::Completions { shell }) => {
-            commands::completions::install_completion(shell)?;
-            Ok(())
-        }
+        Some(Command::Completions { .. }) => Ok(()),
         None => commands::show::show(&cfg),
     }
 }
