@@ -3,14 +3,12 @@ pub mod ref_plot;
 
 use std::f64::consts::PI;
 
+use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
+use crate::lockin::reference::fit::{RefFitParams, ReferenceHandler};
 use crate::lockin::time::time_builder;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::read_selected_columns;
-use crate::{
-    config::Config,
-    lockin::reference::fit::{RefFitParams, ReferenceHandler},
-};
 use anyhow::{Context, Result, anyhow, bail};
 
 pub fn run(cfg: &Config) -> Result<RefFitParams> {
@@ -33,7 +31,7 @@ pub fn run(cfg: &Config) -> Result<RefFitParams> {
         .context("failed to read reference column from csv")?;
     let elapsed_read = t0.elapsed();
     println!(
-        "📥 read reference column {} in {:.2?}",
+        "📥 Read reference column {} in {:.2?}",
         col_idx + 1,
         elapsed_read
     );
@@ -91,5 +89,5 @@ fn extract_single_reference_ch(cfg: &Config) -> Result<u8> {
     if ref_chs.len() != 1 {
         bail!("multiple reference channels are not supported");
     }
-    Ok(ref_chs[0] as u8)
+    Ok(ref_chs[0])
 }

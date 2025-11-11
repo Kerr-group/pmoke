@@ -1,4 +1,3 @@
-
 import numpy as np
 import lmfit
 from scipy.signal import windows
@@ -115,8 +114,6 @@ class PreciseFFT:
         return omega, amp
 
 
-
-
 class ReferenceFitter:
     def __init__(self):
         pass
@@ -143,7 +140,7 @@ class ReferenceFitter:
 
         f_ref, A_ref, omega_tref = self._guess_from_fft(t, y, pad_factor=3)
 
-        print(f"❔ Initial guess: f_ref={f_ref * 1e-6:.3f} MHz, A_ref={A_ref:.3f}, omega_tref={omega_tref:.3f} rad")
+        print(f"❔ Initial guess: f_ref={f_ref * 1e-6:.3f} MHz, A_ref={A_ref:.3f} V, omega_tref={omega_tref:.3f} rad")
 
         def ref_model(t, A_ref, df, omega_tref):
             return A_ref * np.sin(2 * np.pi * (f_ref + df) * t - omega_tref)
@@ -167,7 +164,7 @@ class ReferenceFitter:
         omega_tref_fit = float(p["omega_tref"].value)
         f_ref_fit = f_ref + df
 
-        print(f"✅ Fitted: f_ref={f_ref_fit*1e-6:.3f} MHz, A_ref={A_ref_fit:.3f}, omega_tref={omega_tref_fit:.3f} rad")
+        print(f"✅ Fitted: f_ref={f_ref_fit*1e-6:.3f} MHz, A_ref={A_ref_fit:.3f} V, omega_tref={omega_tref_fit:.3f} rad")
 
         return {
             "f_ref": f_ref_fit,

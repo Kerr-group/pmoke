@@ -28,6 +28,7 @@ fn main() -> Result<()> {
         Some(Command::Fetch) => commands::fetch::fetch(&cfg),
         Some(Command::Automeasure) => commands::automeasure::automeasure(&cfg),
         Some(Command::Reference) => commands::reference::reference(&cfg),
+        Some(Command::Sensor) => commands::sensor::sensor(&cfg),
         Some(Command::Analyze) => Ok(()),
         Some(Command::Li) => Ok(()),
         Some(Command::Phase { rad, auto, formula }) => {

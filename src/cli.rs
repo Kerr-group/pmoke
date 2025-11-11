@@ -37,6 +37,8 @@ pub enum Command {
     Automeasure,
     /// Analyze the reference signal
     Reference,
+    /// Analyze the sensor signal
+    Sensor,
     /// Analyze the data
     Analyze,
     /// Run numerical lock-in analysis

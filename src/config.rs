@@ -52,22 +52,22 @@ pub struct Timebase {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Roles {
     #[serde(default, deserialize_with = "one_or_many")]
-    pub sensor_ch: Vec<u32>,
+    pub sensor_ch: Vec<u8>,
     #[serde(default, deserialize_with = "one_or_many")]
-    pub reference_ch: Vec<u32>,
+    pub reference_ch: Vec<u8>,
     #[serde(default, deserialize_with = "one_or_many")]
-    pub signal_ch: Vec<u32>,
+    pub signal_ch: Vec<u8>,
 }
 
-fn one_or_many<'de, D>(de: D) -> std::result::Result<Vec<u32>, D::Error>
+fn one_or_many<'de, D>(de: D) -> std::result::Result<Vec<u8>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum OneOrMany {
-        One(u32),
-        Many(Vec<u32>),
+        One(u8),
+        Many(Vec<u8>),
     }
     Ok(match OneOrMany::deserialize(de)? {
         OneOrMany::One(x) => vec![x],
@@ -77,9 +77,11 @@ where
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Channel {
-    pub index: u32,
+    pub index: u8,
     #[serde(default)]
     pub factor: Option<f64>,
+    #[serde(default)]
+    pub label: Option<String>,
     #[serde(default)]
     pub unit_out: Option<String>,
 }
@@ -101,7 +103,6 @@ pub struct Lockin {
     pub workers: usize,
     pub filter_length_samples: usize,
     pub stride_samples: usize,
-    pub preview_stride_samples: usize,
     pub window: Window,
 }
 
@@ -109,7 +110,7 @@ pub struct Lockin {
 pub fn from_str(s: &str) -> Result<Config> {
     let de = toml::de::Deserializer::parse(s).map_err(|e| anyhow!("toml parse error: {e}"))?;
 
-    let cfg: Config =
+    let mut cfg: Config =
         serde_path_to_error::deserialize(de).map_err(|e| anyhow!("{} at {}", e, e.path()))?;
 
     cfg.validate()?;
@@ -125,7 +126,7 @@ pub fn from_path(path: impl AsRef<Path>) -> Result<Config> {
 }
 
 impl Config {
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&mut self) -> Result<()> {
         if self.version != 1 {
             bail!("unsupported config version: {}", self.version);
         }
@@ -139,7 +140,7 @@ impl Config {
             }
         }
 
-        let has = |n: u32| seen.contains(&n);
+        let has = |n: u8| seen.contains(&n);
         for (name, arr) in [
             ("sensor_ch", &self.roles.sensor_ch),
             ("reference_ch", &self.roles.reference_ch),
@@ -151,6 +152,21 @@ impl Config {
                 }
             }
         }
+
+        for ch in &self.channels {
+            let idx = ch.index;
+            let used_in_roles = self.roles.sensor_ch.contains(&idx)
+                || self.roles.reference_ch.contains(&idx)
+                || self.roles.signal_ch.contains(&idx);
+
+            if !used_in_roles {
+                bail!(
+                    "channel index {} is defined in `channels` but not used in any roles (sensor_ch / reference_ch / signal_ch)",
+                    idx
+                );
+            }
+        }
+
         let check_win = |label: &str, w: Window| -> Result<()> {
             if !(w.start < w.end) {
                 bail!(
@@ -164,6 +180,8 @@ impl Config {
         check_win("lockin.window", self.lockin.window)?;
         check_win("pulse.bg_window_before", self.pulse.bg_window_before)?;
         check_win("pulse.bg_window_after", self.pulse.bg_window_after)?;
+
+        self.channels.sort_by_key(|ch| ch.index);
 
         Ok(())
     }
