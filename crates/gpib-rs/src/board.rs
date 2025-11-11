@@ -88,7 +88,7 @@ impl Board {
     pub fn scan_pads(&self) -> Result<Vec<i32>> {
         let mut v = Vec::new();
 
-        let device_defined_at_controller = self.conf.as_ref().map_or(false, |conf| {
+        let device_defined_at_controller = self.conf.as_ref().is_some_and(|conf| {
             conf.devices
                 .iter()
                 .any(|d| d.minor == self.index && d.pad == self.controller_pad)
@@ -152,18 +152,19 @@ impl Drop for Board {
 
 fn resolve_board(request: &str, conf: Option<&GpibConf>) -> (String, i32) {
     if let Some(n) = crate::conf::parse_board_index(request) {
-        if let Some(cf) = conf {
-            if let Some(iface) = cf.interfaces.iter().find(|it| it.minor == n) {
-                return (iface.name.clone(), iface.minor);
-            }
+        if let Some(conf) = conf.and_then(|c| c.interfaces.iter().find(|it| it.minor == n).cloned())
+        {
+            return (conf.name, conf.minor);
         }
         return (request.to_string(), n);
     }
-    if let Some(cf) = conf {
-        if let Some(iface) = cf.interfaces.iter().find(|it| it.name == request) {
-            return (iface.name.clone(), iface.minor);
-        }
+
+    if let Some(conf) =
+        conf.and_then(|c| c.interfaces.iter().find(|it| it.name == request).cloned())
+    {
+        return (conf.name, conf.minor);
     }
+
     (request.to_string(), 0)
 }
 

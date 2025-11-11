@@ -55,16 +55,31 @@ pub fn run(cfg: &Config) -> Result<()> {
     let index_arr = s_cfg.iter().map(|c| c.index).collect::<Vec<u8>>();
     let factor_arr = s_cfg
         .iter()
-        .map(|c| c.factor.unwrap())
-        .collect::<Vec<f64>>();
+        .map(|c| {
+            c.factor
+                .context(format!("channel {} has no 'factor' value", c.index))
+        })
+        .collect::<Result<Vec<f64>>>()?;
+
     let label_arr = s_cfg
         .iter()
-        .map(|c| c.label.as_ref().unwrap().as_str())
-        .collect::<Vec<&str>>();
+        .map(|c| {
+            c.label
+                .as_ref()
+                .context(format!("channel {} has no 'label'", c.index))
+                .map(|s| s.as_str())
+        })
+        .collect::<Result<Vec<&str>>>()?;
+
     let unit_arr = s_cfg
         .iter()
-        .map(|c| c.unit_out.as_ref().unwrap().as_str())
-        .collect::<Vec<&str>>();
+        .map(|c| {
+            c.unit_out
+                .as_ref()
+                .context(format!("channel {} has no 'unit_out'", c.index))
+                .map(|s| s.as_str())
+        })
+        .collect::<Result<Vec<&str>>>()?;
 
     let stride_samples = cfg.lockin.stride_samples;
 
