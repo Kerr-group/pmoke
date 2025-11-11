@@ -1,5 +1,5 @@
 use crate::config::Config;
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 
 pub fn build_channel_list(cfg: &Config) -> Result<Vec<u8>> {
     let mut channels: Vec<u8> = Vec::new();
