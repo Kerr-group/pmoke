@@ -61,10 +61,7 @@ fn try_pkg_config() -> bool {
     // Use pkg-config only on non-Windows targets.
     // If "gpib" is present, pkg-config will print link search paths and link-libs itself.
     // Return true if probe succeeded.
-    match pkg_config::Config::new().probe("gpib") {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    pkg_config::Config::new().probe("gpib").is_ok()
 }
 
 fn link_unix(dir: &Path, target_os: &str) {
@@ -91,12 +88,7 @@ fn find_unix_lib_dir(target_os: &str) -> Option<PathBuf> {
         _ => &["libgpib.so", "libgpib.so.0", "libgpib.so.1"],
     };
 
-    for dir in candidates {
-        if contains_any(&dir, names) {
-            return Some(dir);
-        }
-    }
-    None
+    candidates.into_iter().find(|dir| contains_any(dir, names))
 }
 
 fn default_unix_candidates(target_os: &str) -> Vec<PathBuf> {

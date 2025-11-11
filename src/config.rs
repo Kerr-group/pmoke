@@ -168,7 +168,7 @@ impl Config {
         }
 
         let check_win = |label: &str, w: Window| -> Result<()> {
-            if !(w.start < w.end) {
+            if !matches!(w.start.partial_cmp(&w.end), Some(std::cmp::Ordering::Less)) {
                 bail!(
                     "{label}: start must be < end (start={}, end={})",
                     w.start,
