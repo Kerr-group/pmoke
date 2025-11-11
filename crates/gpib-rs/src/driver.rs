@@ -7,21 +7,21 @@ use std::{fs, process::Command};
 fn have_gpib_dev_nodes() -> bool {
     if let Ok(rd) = fs::read_dir("/dev") {
         for e in rd.flatten() {
-            if let Some(n) = e.file_name().to_str() {
-                if n.starts_with("gpib") {
-                    return true;
-                }
+            if let Some(n) = e.file_name().to_str()
+                && n.starts_with("gpib")
+            {
+                return true;
             }
         }
     }
     false
 }
 
-#[cfg(target_os = "windows")]
-pub(crate) fn ensure_driver_configured() -> Result<()> {
-    // Windows uses NI MAX; nothing to do here.
-    Ok(())
-}
+// #[cfg(target_os = "windows")]
+// pub(crate) fn ensure_driver_configured() -> Result<()> {
+//     // Windows uses NI MAX; nothing to do here.
+//     Ok(())
+// }
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn ensure_driver_configured() -> Result<()> {

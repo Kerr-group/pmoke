@@ -30,10 +30,10 @@ pub(crate) struct GpibConf {
 pub(crate) fn default_conf_paths() -> Vec<PathBuf> {
     let mut v = Vec::new();
     for k in ["GPIB_CONF", "GPIB_CONF_PATH"] {
-        if let Ok(p) = env::var(k) {
-            if !p.is_empty() {
-                v.push(PathBuf::from(p));
-            }
+        if let Ok(p) = env::var(k)
+            && !p.is_empty()
+        {
+            v.push(PathBuf::from(p));
         }
     }
     v.push(PathBuf::from("/etc/gpib.conf"));
@@ -60,12 +60,15 @@ pub(crate) fn default_conf_paths() -> Vec<PathBuf> {
 
 pub(crate) fn load_gpib_conf() -> Option<(GpibConf, PathBuf)> {
     for p in default_conf_paths() {
-        if let Ok(txt) = fs::read_to_string(&p) {
-            if let Some(conf) = parse_gpib_conf(&txt) {
-                // eprintln!("(info) gpib.conf loaded from: {}", p.display());
-                return Some((conf, p));
-            }
-        }
+        let Ok(txt) = fs::read_to_string(&p) else {
+            continue;
+        };
+
+        let Some(conf) = parse_gpib_conf(&txt) else {
+            continue;
+        };
+
+        return Some((conf, p));
     }
     eprintln!("(info) gpib.conf not found in default paths");
     None

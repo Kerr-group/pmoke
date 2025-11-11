@@ -79,7 +79,7 @@ impl Instrument {
     /// Low-allocation write of a LF-terminated line.
     pub fn write_line_fast(&self, s: &str) -> Result<()> {
         const SBUF: usize = 512;
-        if s.len() + 1 <= SBUF {
+        if s.len() < SBUF {
             let mut buf = [0u8; SBUF];
             buf[..s.len()].copy_from_slice(s.as_bytes());
             buf[s.len()] = b'\n';
