@@ -65,10 +65,10 @@ pub fn run_reference(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
     }
 
     let results = ReferenceHandler {}
-        .fit(&t, &ref_data)
+        .fit(t, &ref_data)
         .context("failed to fit reference signal")?;
 
-    plot_fit_results(&t, &ref_data, &results).context("failed to plot reference signal")?;
+    plot_fit_results(t, &ref_data, &results).context("failed to plot reference signal")?;
 
     Ok(results)
 }

@@ -11,8 +11,8 @@ pub struct SensorIntegralPlotter {}
 impl SensorIntegralPlotter {
     pub fn plot(
         &self,
-        t: Vec<f64>,
-        y: Vec<Vec<f64>>,
+        t: &[f64],
+        y: &[Vec<f64>],
         index_arr: &[u8],
         label_arr: &[&str],
         unit_arr: &[&str],

@@ -1,4 +1,5 @@
 pub mod pulse_calculator;
+pub mod resolve;
 pub mod sensor_builder;
 pub mod sensor_integral_plot;
 pub mod sensor_raw_plot;
@@ -6,43 +7,41 @@ pub mod sensor_raw_plot;
 use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
 use crate::lockin::time::time_builder;
-use crate::utils::channels::build_channel_list;
 use crate::utils::csv::read_selected_columns;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
+
+struct SensorMeta<'a> {
+    factor: f64,
+    label: &'a str,
+    unit: &'a str,
+}
 
 pub fn run(cfg: &Config) -> Result<()> {
-    let s_chs: &Vec<u8> = extract_sensor_ch(cfg)?;
+    let t = time_builder(cfg)?;
 
-    let channels = build_channel_list(cfg)?;
-
-    let mut col_idx = Vec::new();
-
-    for ch in s_chs.iter() {
-        let idx = channels.iter().position(|c| *c == *ch).ok_or_else(|| {
-            anyhow!(
-                "sensor channel {} not found in fetched channels {:?}",
-                ch,
-                channels
-            )
-        })?;
-        col_idx.push(idx);
-    }
-
-    let mut s_cfg = Vec::new();
-    for idx in col_idx.iter() {
-        s_cfg.push(&cfg.channels[*idx]);
-    }
-
+    let (sensor_ch, col_idx) = resolve::sensor_column_indices(cfg)?;
     let t0 = std::time::Instant::now();
     let s_cols = read_selected_columns(FETCHED_FNAME, &col_idx)
         .context("failed to read sensor columns from csv")?;
-    let elapsed_read = t0.elapsed();
     println!(
-        "📥 Read seosor columns {:?} in {:.2?}",
-        col_idx, elapsed_read
+        "📥 Read sensor columns {:?} in {:.2?}",
+        col_idx,
+        t0.elapsed()
     );
 
-    let t = &time_builder(cfg)?;
+    let _ = run_sensor(cfg, &t, &s_cols, &sensor_ch)?;
+    Ok(())
+}
+
+pub fn run_sensor(
+    cfg: &Config,
+    t: &[f64],
+    s_cols: &[Vec<f64>],
+    sensor_ch: &[u8],
+) -> Result<(Vec<f64>, Vec<Vec<f64>>)> {
+    if s_cols.is_empty() {
+        bail!("No sensor data columns were read from {}", FETCHED_FNAME);
+    }
 
     if t.len() != s_cols[0].len() {
         bail!(
@@ -52,131 +51,114 @@ pub fn run(cfg: &Config) -> Result<()> {
         );
     }
 
-    let index_arr = s_cfg.iter().map(|c| c.index).collect::<Vec<u8>>();
-    let factor_arr = s_cfg
-        .iter()
-        .map(|c| {
-            c.factor
-                .context(format!("channel {} has no 'factor' value", c.index))
-        })
-        .collect::<Result<Vec<f64>>>()?;
+    let sensor_meta = extract_sensor_metadata(cfg, sensor_ch)?;
 
-    let label_arr = s_cfg
-        .iter()
-        .map(|c| {
-            c.label
-                .as_ref()
-                .context(format!("channel {} has no 'label'", c.index))
-                .map(|s| s.as_str())
-        })
-        .collect::<Result<Vec<&str>>>()?;
-
-    let unit_arr = s_cfg
-        .iter()
-        .map(|c| {
-            c.unit_out
-                .as_ref()
-                .context(format!("channel {} has no 'unit_out'", c.index))
-                .map(|s| s.as_str())
-        })
-        .collect::<Result<Vec<&str>>>()?;
+    let c_bg_arr = fit_background(cfg, t, s_cols)?;
 
     let stride_samples = cfg.lockin.stride_samples;
-
     let t_stride = t
         .iter()
         .step_by(stride_samples)
         .cloned()
         .collect::<Vec<f64>>();
-    let s_stride = s_cols
-        .iter()
-        .map(|col| {
-            col.iter()
-                .step_by(stride_samples)
-                .cloned()
-                .collect::<Vec<f64>>()
-        })
-        .collect::<Vec<Vec<f64>>>();
 
-    let bg_window_before = cfg.pulse.bg_window_before;
-    let bg_window_after = cfg.pulse.bg_window_after;
-
-    let t_fit = t
-        .iter()
-        .cloned()
-        .filter(|&ti| {
-            (ti >= bg_window_before.start && ti <= bg_window_before.end)
-                || (ti >= bg_window_after.start && ti <= bg_window_after.end)
-        })
-        .collect::<Vec<f64>>();
-    let s_fit = s_cols
-        .iter()
-        .map(|col| {
-            col.iter()
-                .cloned()
-                .zip(t.iter())
-                .filter(|&(_yi, ti)| {
-                    (ti >= &bg_window_before.start && ti <= &bg_window_before.end)
-                        || (ti >= &bg_window_after.start && ti <= &bg_window_after.end)
-                })
-                .map(|(yi, _ti)| yi)
-                .collect::<Vec<f64>>()
-        })
-        .collect::<Vec<Vec<f64>>>();
-
-    let mut c_bg_arr = Vec::new();
-    for s in s_fit.iter() {
-        let c = pulse_calculator::PulseBgFitter {}.fit(&t_fit, s)?;
-        c_bg_arr.push(c);
-    }
-    // drop t_fit and s_fit to save memory
-    drop(t_fit);
-    drop(s_fit);
+    let s_stride = stride_vec_2d(s_cols, stride_samples);
 
     sensor_raw_plot::SensorRawPlotter {}
-        .plot(&t_stride, s_stride, &index_arr, &c_bg_arr)
+        .plot(&t_stride, s_stride, sensor_ch, &c_bg_arr)
         .context("failed to plot sensor data")?;
 
-    // Do integration on sensors
     let start = std::time::Instant::now();
-    let mut s_integral = Vec::new();
-    for (i, s) in s_cols.iter().enumerate() {
-        let c_bg = c_bg_arr[i];
-        let coeff = factor_arr[i];
-        let integral = pulse_calculator::PulseIntegralCalculator::new(cfg.timebase.dt)
-            .integrate(s, c_bg, coeff);
-        s_integral.push(integral);
-    }
+
+    let dt = cfg.timebase.dt;
+    let s_integral = s_cols
+        .iter()
+        .zip(c_bg_arr.iter())
+        .zip(sensor_meta.iter())
+        .map(|((s, &c_bg), meta)| {
+            pulse_calculator::PulseIntegralCalculator::new(dt).integrate(s, c_bg, meta.factor)
+        })
+        .collect::<Vec<_>>();
+
     let elapsed = start.elapsed();
     println!("💻 Sensor integrations completed in {:.2?}", elapsed);
 
-    let s_integral_stride = s_integral
-        .iter()
-        .map(|col| {
-            col.iter()
-                .step_by(stride_samples)
-                .cloned()
-                .collect::<Vec<f64>>()
-        })
-        .collect::<Vec<Vec<f64>>>();
+    let s_integral_stride = stride_vec_2d(&s_integral, stride_samples);
+
+    let labels: Vec<&str> = sensor_meta.iter().map(|m| m.label).collect();
+    let units: Vec<&str> = sensor_meta.iter().map(|m| m.unit).collect();
 
     sensor_integral_plot::SensorIntegralPlotter {}
-        .plot(
-            t_stride,
-            s_integral_stride,
-            &index_arr,
-            &label_arr,
-            &unit_arr,
-        )
+        .plot(&t_stride, &s_integral_stride, sensor_ch, &labels, &units)
         .context("failed to plot sensor integrals")?;
 
-    Ok(())
+    Ok((t_stride, s_integral_stride))
 }
 
-fn extract_sensor_ch(cfg: &Config) -> Result<&Vec<u8>> {
-    let s_chs = &cfg.roles.sensor_ch;
-    if s_chs.is_empty() {
-        bail!("reference channel is not specified in the configuration");
+fn extract_sensor_metadata<'a>(cfg: &'a Config, sensor_ch: &[u8]) -> Result<Vec<SensorMeta<'a>>> {
+    sensor_ch
+        .iter()
+        .map(|ch| {
+            let conf = cfg
+                .channels
+                .iter()
+                .find(|c| c.index == *ch)
+                .with_context(|| format!("channel {} is not defined in [channels]", ch))?;
+
+            let factor = conf
+                .factor
+                .with_context(|| format!("channel {} has no 'factor'", ch))?;
+            let label = conf
+                .label
+                .as_deref()
+                .with_context(|| format!("channel {} has no 'label'", ch))?;
+            let unit = conf
+                .unit_out
+                .as_deref()
+                .with_context(|| format!("channel {} has no 'unit_out'", ch))?;
+
+            Ok(SensorMeta {
+                factor,
+                label,
+                unit,
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+}
+
+fn stride_vec_2d<T: Clone>(data: &[Vec<T>], stride: usize) -> Vec<Vec<T>> {
+    data.iter()
+        .map(|col| col.iter().step_by(stride).cloned().collect())
+        .collect()
+}
+
+fn fit_background(cfg: &Config, t: &[f64], s_cols: &[Vec<f64>]) -> Result<Vec<f64>> {
+    let bg_window_before = &cfg.pulse.bg_window_before;
+    let bg_window_after = &cfg.pulse.bg_window_after;
+
+    let is_in_bg = |ti: &f64| {
+        (ti >= &bg_window_before.start && ti <= &bg_window_before.end)
+            || (ti >= &bg_window_after.start && ti <= &bg_window_after.end)
+    };
+
+    let t_fit = t.iter().cloned().filter(is_in_bg).collect::<Vec<f64>>();
+
+    if t_fit.is_empty() {
+        bail!("No data points found in background windows. Cannot fit background.");
     }
-    Ok(s_chs)
+
+    s_cols
+        .iter()
+        .map(|col| {
+            let s_fit = col
+                .iter()
+                .cloned()
+                .zip(t.iter())
+                .filter(|&(_yi, ti)| is_in_bg(ti)) // 同じ条件でフィルタ
+                .map(|(yi, _ti)| yi)
+                .collect::<Vec<f64>>();
+
+            pulse_calculator::PulseBgFitter {}.fit(&t_fit, &s_fit)
+        })
+        .collect::<Result<Vec<_>>>()
 }
