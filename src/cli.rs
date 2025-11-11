@@ -39,10 +39,10 @@ pub enum Command {
     Reference,
     /// Analyze the sensor signal
     Sensor,
-    /// Analyze the data
-    Analyze,
     /// Run numerical lock-in analysis
     Li,
+    /// Analyze the data
+    Analyze,
     /// Rotate the reference phase for lock-in analysis
     ///
     /// This command adjusts the reference phase used after the lock-in detection.

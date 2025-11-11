@@ -4,6 +4,30 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+pub fn read_csv<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<f64>>> {
+    let mut rdr = ReaderBuilder::new()
+        .has_headers(true)
+        .from_path(&path)
+        .with_context(|| format!("failed to open csv: {}", path.as_ref().display()))?;
+
+    let mut columns: Vec<Vec<f64>> = Vec::new();
+
+    for result in rdr.records() {
+        let record: StringRecord = result?;
+        if columns.is_empty() {
+            columns.resize(record.len(), Vec::new());
+        }
+        for (col_idx, field) in record.iter().enumerate() {
+            let val: f64 = field
+                .parse()
+                .with_context(|| format!("failed to parse '{}' as f64", field))?;
+            columns[col_idx].push(val);
+        }
+    }
+
+    Ok(columns)
+}
+
 pub fn read_selected_columns<P: AsRef<Path>>(path: P, cols: &[usize]) -> Result<Vec<Vec<f64>>> {
     let mut rdr = ReaderBuilder::new()
         .has_headers(true)

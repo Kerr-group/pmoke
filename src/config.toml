@@ -14,7 +14,7 @@ t0 = -1.5e-3 # seconds
 dt = 500e-12 # seconds
 
 [roles]
-sensor_ch = [1, 4]
+sensor_ch = [4, 1]
 reference_ch = [3] # Supports only one reference channel
 signal_ch = [2]
 

@@ -1,13 +1,12 @@
 pub mod pulse_calculator;
-pub mod resolve;
-pub mod sensor_builder;
 pub mod sensor_integral_plot;
 pub mod sensor_raw_plot;
 
-use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
+use crate::lockin::resolve::sensor_column_indices;
 use crate::lockin::time::time_builder;
 use crate::utils::csv::read_selected_columns;
+use crate::{config::Config, lockin::time::time_stride_builder};
 use anyhow::{Context, Result, bail};
 
 struct SensorMeta<'a> {
@@ -19,7 +18,7 @@ struct SensorMeta<'a> {
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
 
-    let (sensor_ch, col_idx) = resolve::sensor_column_indices(cfg)?;
+    let (sensor_ch, col_idx) = sensor_column_indices(cfg)?;
     let t0 = std::time::Instant::now();
     let s_cols = read_selected_columns(FETCHED_FNAME, &col_idx)
         .context("failed to read sensor columns from csv")?;
@@ -56,12 +55,7 @@ pub fn run_sensor(
     let c_bg_arr = fit_background(cfg, t, s_cols)?;
 
     let stride_samples = cfg.lockin.stride_samples;
-    let t_stride = t
-        .iter()
-        .step_by(stride_samples)
-        .cloned()
-        .collect::<Vec<f64>>();
-
+    let t_stride = time_stride_builder(cfg)?;
     let s_stride = stride_vec_2d(s_cols, stride_samples);
 
     sensor_raw_plot::SensorRawPlotter {}

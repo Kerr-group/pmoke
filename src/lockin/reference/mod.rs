@@ -13,11 +13,7 @@ use anyhow::{Context, Result, anyhow, bail};
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
-    let _ = run_reference(cfg, &t)?;
-    Ok(())
-}
 
-pub fn run_reference(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
     let ref_ch = extract_single_reference_ch(cfg)?;
 
     let channels = build_channel_list(cfg)?;
@@ -51,6 +47,11 @@ pub fn run_reference(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
         elapsed_read
     );
 
+    let _ = run_reference(&t, &ref_data)?;
+    Ok(())
+}
+
+pub fn run_reference(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
     if t.len() != ref_data.len() {
         bail!(
             "time length ({}) and reference length ({}) differ",
@@ -65,10 +66,10 @@ pub fn run_reference(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
     }
 
     let results = ReferenceHandler {}
-        .fit(t, &ref_data)
+        .fit(t, ref_data)
         .context("failed to fit reference signal")?;
 
-    plot_fit_results(t, &ref_data, &results).context("failed to plot reference signal")?;
+    plot_fit_results(t, ref_data, &results).context("failed to plot reference signal")?;
 
     Ok(results)
 }

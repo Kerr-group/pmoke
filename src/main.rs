@@ -29,8 +29,8 @@ fn main() -> Result<()> {
         Some(Command::Automeasure) => commands::automeasure::automeasure(&cfg),
         Some(Command::Reference) => commands::reference::reference(&cfg),
         Some(Command::Sensor) => commands::sensor::sensor(&cfg),
+        Some(Command::Li) => commands::li::li(&cfg),
         Some(Command::Analyze) => Ok(()),
-        Some(Command::Li) => Ok(()),
         Some(Command::Phase { rad, auto, formula }) => {
             if formula {
                 println!("Displaying the formula used for phase rotation...");

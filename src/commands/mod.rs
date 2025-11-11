@@ -2,6 +2,7 @@ pub mod automeasure;
 pub mod autoshot;
 pub mod completions;
 pub mod fetch;
+pub mod li;
 pub mod reference;
 pub mod sensor;
 pub mod show;
