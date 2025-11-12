@@ -50,7 +50,7 @@ pub fn run(cfg: &Config) -> Result<()> {
         .map(|read_data| read_data[1 + num_sensor_ch..].to_vec())
         .collect();
 
-    run_phase_analysis(cfg, &t, &sensor_integral_ch, &li_results, ch)?;
+    run_phase_analysis(cfg, &t, &sensor_integral_ch, &li_results)?;
     Ok(())
 }
 
@@ -59,7 +59,6 @@ pub fn run_phase_analysis(
     t: &[f64],
     sensor_integral_ch: &[Vec<f64>],
     li_results: &[Vec<Vec<f64>>],
-    ch: &[u8],
 ) -> Result<()> {
     let headers = LI_ROTATED_HEADER;
     let labels: Vec<String> = headers
