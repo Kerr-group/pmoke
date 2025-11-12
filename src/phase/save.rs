@@ -1,12 +1,12 @@
 use crate::{
     config::Config,
-    constants::{LI_HEADER, T_HEADER},
+    constants::{LI_ROTATED_HEADER, T_HEADER},
     lockin::sensor::extract_sensor_metadata,
     utils::csv::write_csv,
 };
 use anyhow::Result;
 
-pub fn get_li_headers(cfg: &Config) -> Result<Vec<String>> {
+pub fn get_li_rotated_headers(cfg: &Config) -> Result<Vec<String>> {
     let t_header = T_HEADER.to_string();
 
     let sensor_meta = extract_sensor_metadata(cfg)?;
@@ -19,7 +19,7 @@ pub fn get_li_headers(cfg: &Config) -> Result<Vec<String>> {
         })
         .collect();
 
-    let li_headers: Vec<String> = LI_HEADER.iter().map(|s| s.to_string()).collect();
+    let li_headers: Vec<String> = LI_ROTATED_HEADER.iter().map(|s| s.to_string()).collect();
 
     let mut headers = Vec::new();
     headers.push(t_header);
@@ -28,18 +28,19 @@ pub fn get_li_headers(cfg: &Config) -> Result<Vec<String>> {
     Ok(headers)
 }
 
-pub fn write_li_results(
+pub fn write_li_rotated_results(
     fname: &str,
     headers: &[String],
     t: &[f64],
     s_integral: &[Vec<f64>],
-    li_result: &[Vec<f64>],
+    li_rotated_result: &[Vec<f64>],
 ) -> Result<()> {
-    let mut export_data: Vec<Vec<f64>> = Vec::with_capacity(1 + s_integral.len() + li_result.len());
+    let mut export_data: Vec<Vec<f64>> =
+        Vec::with_capacity(1 + s_integral.len() + li_rotated_result.len());
 
     export_data.push(t.to_vec());
     export_data.extend_from_slice(s_integral);
-    export_data.extend_from_slice(li_result);
+    export_data.extend_from_slice(li_rotated_result);
 
     let headers_slice: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
 

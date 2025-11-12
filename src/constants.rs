@@ -17,3 +17,19 @@ pub const LI_HEADER: [&str; 12] = [
 ];
 
 pub const LI_RESULTS_NAME: &str = "lockin_results";
+
+pub const LI_ROTATED_HEADER: [&str; 12] = [
+    "LIin_h1 (V)",
+    "LIout_h1 (V)",
+    "LIin_h2 (V)",
+    "LIout_h2 (V)",
+    "LIin_h3 (V)",
+    "LIout_h3 (V)",
+    "LIin_h4 (V)",
+    "LIout_h4 (V)",
+    "LIin_h5 (V)",
+    "LIout_h5 (V)",
+    "LIin_h6 (V)",
+    "LIout_h6 (V)",
+];
+pub const LI_ROTATED_NAME: &str = "lockin_rotated";

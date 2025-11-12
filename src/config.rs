@@ -13,6 +13,7 @@ pub struct Config {
 
     pub pulse: Pulse,
     pub lockin: Lockin,
+    pub phase: Phase,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,6 +104,11 @@ pub struct Lockin {
     pub workers: usize,
     pub filter_length_samples: usize,
     pub stride_samples: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Phase {
+    pub use_ch: Vec<u8>,
 }
 
 // From &str

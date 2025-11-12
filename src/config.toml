@@ -10,20 +10,20 @@ model = "DHO5108"
 memory_depth = 10_000_000
 
 [timebase]
-t0 = -1.5e-3 # seconds
+t0 = -0.5e-3 # seconds
 dt = 500e-12 # seconds
 
 [roles]
-sensor_ch = [1,4]
-reference_ch = [3] # Supports only one reference channel
-signal_ch = [2]
+sensor_ch = [1]
+reference_ch = [2] # Supports only one reference channel
+signal_ch = [3,4]
 
 # Channel for current sensor
 [[channels]]
 index = 1
-factor = -4.875405593e6
-label = "$I$"
-unit_out = "A"
+factor = -39364.84663082185
+label = "$B$"
+unit_out = "T"
 
 # Channel for signal
 [[channels]]
@@ -40,11 +40,13 @@ unit_out = "V"
 
 
 [pulse]
-bg_window_before = { start = -5e-3, end = -0.5e-3 }
-bg_window_after = { start = 2.5e-3, end = 15e-3 }
+bg_window_before = { start = -5e-3, end = -0.1e-3 }
+bg_window_after = { start = 4.2e-3, end = 15e-3 }
 
 [lockin]
 workers = 4
 filter_length_samples = 20
 stride_samples = 2000
 
+[phase]
+use_ch = [3]

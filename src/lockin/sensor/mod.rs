@@ -54,7 +54,7 @@ pub fn run_sensor(
         );
     }
 
-    let sensor_meta = extract_sensor_metadata(cfg, sensor_ch)?;
+    let sensor_meta = extract_sensor_metadata(cfg)?;
 
     let c_bg_arr = fit_background(cfg, t, s_cols)?;
 
@@ -92,10 +92,8 @@ pub fn run_sensor(
     Ok((t_stride, s_integral_stride))
 }
 
-pub fn extract_sensor_metadata<'a>(
-    cfg: &'a Config,
-    sensor_ch: &[u8],
-) -> Result<Vec<SensorMeta<'a>>> {
+pub fn extract_sensor_metadata<'a>(cfg: &'a Config) -> Result<Vec<SensorMeta<'a>>> {
+    let sensor_ch = &cfg.roles.sensor_ch;
     sensor_ch
         .iter()
         .map(|ch| {

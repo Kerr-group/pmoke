@@ -4,6 +4,7 @@ mod communications;
 mod config;
 mod constants;
 mod lockin;
+mod phase;
 mod utils;
 
 use anyhow::Result;
@@ -30,17 +31,9 @@ fn main() -> Result<()> {
         Some(Command::Reference) => commands::reference::reference(&cfg),
         Some(Command::Sensor) => commands::sensor::sensor(&cfg),
         Some(Command::Li) => commands::li::li(&cfg),
+        Some(Command::Phase) => commands::phase::phase(&cfg),
         Some(Command::Analyze) => Ok(()),
-        Some(Command::Phase { rad, auto, formula }) => {
-            if formula {
-                println!("Displaying the formula used for phase rotation...");
-            } else if auto {
-                println!("Automatically determining optimal phase rotation...");
-            } else {
-                println!("Rotating phase by {:.2} rad...", rad);
-            }
-            Ok(())
-        }
+        Some(Command::Auto) => Ok(()),
         Some(Command::Completions { .. }) => Ok(()),
         None => commands::show::show(&cfg),
     }

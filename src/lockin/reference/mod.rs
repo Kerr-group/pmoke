@@ -5,7 +5,7 @@ use std::f64::consts::PI;
 
 use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
-use crate::lockin::reference::fit::{RefFitParams, ReferenceHandler};
+use crate::lockin::reference::fit::{RefFitParams, ReferenceFitter};
 use crate::lockin::time::time_builder;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::read_selected_columns;
@@ -49,7 +49,7 @@ pub fn get_ref_fit_params(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
         elapsed_read
     );
 
-    let results = ReferenceHandler {}
+    let results = ReferenceFitter {}
         .fit(t, &ref_data)
         .context("failed to fit reference signal")?;
 
@@ -70,7 +70,7 @@ pub fn run_reference(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
         bail!("Cannot fit empty data.");
     }
 
-    let results = ReferenceHandler {}
+    let results = ReferenceFitter {}
         .fit(t, ref_data)
         .context("failed to fit reference signal")?;
 

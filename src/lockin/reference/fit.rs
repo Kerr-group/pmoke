@@ -14,9 +14,9 @@ pub struct RefFitParams {
 }
 
 #[allow(dead_code)]
-pub struct ReferenceHandler {}
+pub struct ReferenceFitter {}
 
-impl ReferenceHandler {
+impl ReferenceFitter {
     pub fn fit(&self, t: &[f64], y: &[f64]) -> Result<RefFitParams> {
         Python::attach(|py| {
             let code = CString::new(REF_FIT_PY).expect("ref_fit.py contains interior NUL");

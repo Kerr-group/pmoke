@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::constants::{FETCHED_FNAME, HARMONICS, LI_HEADER, LI_RESULTS_NAME};
 use crate::lockin::reference::fit::RefFitParams;
 use crate::lockin::reference::run_reference;
-use crate::lockin::save::{get_headers, write_li_results};
+use crate::lockin::save::{get_li_headers, write_li_results};
 use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
 use crate::utils::csv::read_csv;
@@ -37,12 +37,12 @@ pub fn run(cfg: &Config) -> Result<()> {
 
     let t = time_builder(cfg)?;
 
-    run_li(cfg, &t, &data)?;
+    let _ = run_li(cfg, &t, &data)?;
 
     Ok(())
 }
 
-pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<()> {
+pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<Vec<Vec<Vec<f64>>>> {
     let (sensor_ch, sensor_idx) = resolve::sensor_column_indices(cfg)?;
     let (_, ref_idx) = resolve::reference_column_index(cfg)?;
     let (signal_ch, signal_idx) = resolve::signal_column_indices(cfg)?;
@@ -77,7 +77,7 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<()> {
     drop(signal_data);
 
     // Save lock-in results
-    let headers = get_headers(cfg, sensor_ch)?;
+    let headers = get_li_headers(cfg)?;
     let t0 = std::time::Instant::now();
     for (sig_ch, li_result) in signal_ch.iter().zip(result.iter()) {
         let li_result_fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, sig_ch);
@@ -105,7 +105,7 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<()> {
         .plot(&t_stride, &result, &signal_ch, &labels)
         .context("failed to plot lock-in results")?;
 
-    Ok(())
+    Ok(result)
 }
 
 pub fn li_process(
