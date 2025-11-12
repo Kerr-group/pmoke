@@ -14,7 +14,7 @@ t0 = -1.5e-3 # seconds
 dt = 500e-12 # seconds
 
 [roles]
-sensor_ch = [4, 1]
+sensor_ch = [1]
 reference_ch = [3] # Supports only one reference channel
 signal_ch = [2]
 
@@ -32,11 +32,17 @@ index = 2
 [[channels]]
 index = 3
 
-[[channels]]
-index = 4
-factor = 1
-label = "$V$"
-unit_out = "V"
+# [[channels]]
+# index = 4
+# factor = 1
+# label = "$V$"
+# unit_out = "V"
+#
+# [[channels]]
+# index = 5
+# factor = 1
+# label = "$F$"
+# unit_out = "f"
 
 
 [pulse]
@@ -47,5 +53,4 @@ bg_window_after = { start = 2.5e-3, end = 15e-3 }
 workers = 4
 filter_length_samples = 20
 stride_samples = 2000
-window = { start = -2e-3, end = 8e-3 }
 

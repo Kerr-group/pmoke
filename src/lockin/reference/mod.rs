@@ -13,7 +13,11 @@ use anyhow::{Context, Result, anyhow, bail};
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
+    let _ = get_ref_fit_params(cfg, &t)?;
+    Ok(())
+}
 
+pub fn get_ref_fit_params(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
     let ref_ch = extract_single_reference_ch(cfg)?;
 
     let channels = build_channel_list(cfg)?;
@@ -29,7 +33,6 @@ pub fn run(cfg: &Config) -> Result<()> {
         })?;
 
     let t0 = std::time::Instant::now();
-
     let ref_data = read_selected_columns(FETCHED_FNAME, &[col_idx])
         .context("failed to read reference column from csv")?
         .pop()
@@ -39,7 +42,6 @@ pub fn run(cfg: &Config) -> Result<()> {
                 col_idx
             )
         })?;
-
     let elapsed_read = t0.elapsed();
     println!(
         "📥 Read reference column {} in {:.2?}",
@@ -47,8 +49,11 @@ pub fn run(cfg: &Config) -> Result<()> {
         elapsed_read
     );
 
-    let _ = run_reference(&t, &ref_data)?;
-    Ok(())
+    let results = ReferenceHandler {}
+        .fit(t, &ref_data)
+        .context("failed to fit reference signal")?;
+
+    Ok(results)
 }
 
 pub fn run_reference(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {

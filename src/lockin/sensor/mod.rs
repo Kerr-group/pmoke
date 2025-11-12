@@ -2,11 +2,13 @@ pub mod pulse_calculator;
 pub mod sensor_integral_plot;
 pub mod sensor_raw_plot;
 
+use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
+use crate::lockin::reference::get_ref_fit_params;
 use crate::lockin::resolve::sensor_column_indices;
+use crate::lockin::stride::{li_stride_1d, li_stride_2d};
 use crate::lockin::time::time_builder;
 use crate::utils::csv::read_selected_columns;
-use crate::{config::Config, lockin::time::time_stride_builder};
 use anyhow::{Context, Result, bail};
 
 struct SensorMeta<'a> {
@@ -17,6 +19,7 @@ struct SensorMeta<'a> {
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
+    let ref_fit_params = get_ref_fit_params(cfg, &t)?;
 
     let (sensor_ch, col_idx) = sensor_column_indices(cfg)?;
     let t0 = std::time::Instant::now();
@@ -28,7 +31,7 @@ pub fn run(cfg: &Config) -> Result<()> {
         t0.elapsed()
     );
 
-    let _ = run_sensor(cfg, &t, &s_cols, &sensor_ch)?;
+    let _ = run_sensor(cfg, &t, &s_cols, &sensor_ch, ref_fit_params.f_ref)?;
     Ok(())
 }
 
@@ -37,6 +40,7 @@ pub fn run_sensor(
     t: &[f64],
     s_cols: &[Vec<f64>],
     sensor_ch: &[u8],
+    f_ref: f64,
 ) -> Result<(Vec<f64>, Vec<Vec<f64>>)> {
     if s_cols.is_empty() {
         bail!("No sensor data columns were read from {}", FETCHED_FNAME);
@@ -54,9 +58,8 @@ pub fn run_sensor(
 
     let c_bg_arr = fit_background(cfg, t, s_cols)?;
 
-    let stride_samples = cfg.lockin.stride_samples;
-    let t_stride = time_stride_builder(cfg)?;
-    let s_stride = stride_vec_2d(s_cols, stride_samples);
+    let t_stride = li_stride_1d(cfg, t, f_ref)?;
+    let s_stride = li_stride_2d(cfg, s_cols, f_ref)?;
 
     sensor_raw_plot::SensorRawPlotter {}
         .plot(&t_stride, s_stride, sensor_ch, &c_bg_arr)
@@ -77,7 +80,7 @@ pub fn run_sensor(
     let elapsed = start.elapsed();
     println!("💻 Sensor integrations completed in {:.2?}", elapsed);
 
-    let s_integral_stride = stride_vec_2d(&s_integral, stride_samples);
+    let s_integral_stride = li_stride_2d(cfg, &s_integral, f_ref)?;
 
     let labels: Vec<&str> = sensor_meta.iter().map(|m| m.label).collect();
     let units: Vec<&str> = sensor_meta.iter().map(|m| m.unit).collect();
@@ -118,12 +121,6 @@ fn extract_sensor_metadata<'a>(cfg: &'a Config, sensor_ch: &[u8]) -> Result<Vec<
             })
         })
         .collect::<Result<Vec<_>>>()
-}
-
-fn stride_vec_2d<T: Clone>(data: &[Vec<T>], stride: usize) -> Vec<Vec<T>> {
-    data.iter()
-        .map(|col| col.iter().step_by(stride).cloned().collect())
-        .collect()
 }
 
 fn fit_background(cfg: &Config, t: &[f64], s_cols: &[Vec<f64>]) -> Result<Vec<f64>> {

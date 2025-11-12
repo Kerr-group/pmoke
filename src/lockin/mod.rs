@@ -1,18 +1,20 @@
+pub mod lockin_core;
+pub mod lockin_params;
 pub mod reference;
 pub mod resolve;
 pub mod sensor;
+pub mod stride;
 pub mod time;
 
-// use std::f64::consts::PI;
-
 use crate::config::Config;
-use crate::constants::FETCHED_FNAME;
+use crate::constants::{FETCHED_FNAME, HARMONICS};
 use crate::lockin::reference::fit::{RefFitParams, ReferenceHandler};
 use crate::lockin::reference::run_reference;
 use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
 use crate::utils::csv::read_csv;
 use anyhow::{Context, Result, anyhow, bail};
+use rayon::prelude::*;
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t0 = std::time::Instant::now();
@@ -30,6 +32,14 @@ pub fn run(cfg: &Config) -> Result<()> {
         bail!("Fetched data is empty, cannot extract columns.");
     }
 
+    let t = time_builder(cfg)?;
+
+    run_li(cfg, &t, &data)?;
+
+    Ok(())
+}
+
+pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<()> {
     let (sensor_ch, sensor_idx) = resolve::sensor_column_indices(cfg)?;
     let (_, ref_idx) = resolve::reference_column_index(cfg)?;
     let (_, signal_idx) = resolve::signal_column_indices(cfg)?;
@@ -49,17 +59,78 @@ pub fn run(cfg: &Config) -> Result<()> {
     let sensor_data: Vec<Vec<f64>> = sensor_idx.iter().map(|&idx| data[idx].clone()).collect();
     let ref_data: Vec<f64> = data[ref_idx].clone();
     let signal_data: Vec<Vec<f64>> = signal_idx.iter().map(|&idx| data[idx].clone()).collect();
-    let t = time_builder(cfg)?;
 
     // Reference analysis
-    let ref_fit_params = run_reference(&t, &ref_data)?;
+    let ref_fit_params = run_reference(t, &ref_data)?;
+    drop(ref_data);
 
     // Sensor analysis
-    let (t_stride, sensor_integral_stride) = run_sensor(cfg, &t, &sensor_data, &sensor_ch)?;
+    let (t_stride, sensor_integral_stride) =
+        run_sensor(cfg, t, &sensor_data, &sensor_ch, ref_fit_params.f_ref)?;
+    drop(sensor_data);
+    println!("length of t_stride: {}", t_stride.len());
 
+    // Lock-in processing
+    li_process(cfg, t, &signal_data, ref_fit_params)?;
     Ok(())
 }
 
-pub fn run_li(cfg: &Config) -> Result<()> {
-    Ok(())
+pub fn li_process(
+    cfg: &Config,
+    t: &[f64],
+    signal_data: &[Vec<f64>],
+    ref_fit_params: RefFitParams,
+) -> Result<Vec<Vec<Vec<f64>>>> {
+    let f_ref: f64 = ref_fit_params.f_ref;
+    let omega_tref: f64 = ref_fit_params.omega_tref;
+    let fil_length: usize = cfg.lockin.filter_length_samples;
+    let stride: usize = cfg.lockin.stride_samples;
+    let workers: usize = cfg.lockin.workers;
+
+    let harmonics = HARMONICS;
+    let ref_types = [lockin_core::RefType::Sin, lockin_core::RefType::Cos];
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .context("Failed to build rayon thread pool")?;
+
+    println!("🔒 Starting lock-in processing with {} workers...", workers);
+    let t0 = std::time::Instant::now();
+
+    let mut all_signals_results: Vec<Vec<Vec<f64>>> = Vec::with_capacity(signal_data.len());
+
+    for (sig_idx, signal) in signal_data.iter().enumerate() {
+        let li_processor =
+            lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, fil_length, stride)?;
+
+        // [ (1,Sin), (1,Cos), (2,Sin), ... ]
+        let mut args_list = Vec::new();
+        for h in harmonics {
+            for &r in &ref_types {
+                args_list.push((h, r));
+            }
+        }
+
+        let results_list: Vec<Vec<f64>> = pool.install(|| {
+            args_list
+                .par_iter()
+                .map(|&(harmonic, ref_type)| li_processor.compute_lockin(harmonic, ref_type))
+                .collect() // [LI1x, LI1y, LI2x, ...]
+        });
+
+        all_signals_results.push(results_list);
+    }
+
+    let elapsed_li = t0.elapsed();
+    println!("🔒 Completed lock-in processing in {:.2?}", elapsed_li);
+
+    println!(
+        "structure of all_signals_results: {} signals x {} harmonic-components x {} data-points",
+        all_signals_results.len(),
+        all_signals_results[0].len(),
+        all_signals_results[0][0].len()
+    );
+
+    Ok(all_signals_results)
 }

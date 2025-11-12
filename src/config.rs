@@ -103,7 +103,6 @@ pub struct Lockin {
     pub workers: usize,
     pub filter_length_samples: usize,
     pub stride_samples: usize,
-    pub window: Window,
 }
 
 // From &str
@@ -177,7 +176,6 @@ impl Config {
             }
             Ok(())
         };
-        check_win("lockin.window", self.lockin.window)?;
         check_win("pulse.bg_window_before", self.pulse.bg_window_before)?;
         check_win("pulse.bg_window_after", self.pulse.bg_window_after)?;
 
