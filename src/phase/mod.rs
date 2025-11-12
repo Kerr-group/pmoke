@@ -1,9 +1,11 @@
 pub mod omega_t0_analysis;
+pub mod phase_rotation_plot;
 pub mod rotator;
 pub mod save;
 
-use crate::constants::LI_ROTATED_NAME;
+use crate::constants::{LI_ROTATED_HEADER, LI_ROTATED_NAME};
 use crate::phase::omega_t0_analysis::OT0Analyser;
+use crate::phase::phase_rotation_plot::PhaseRotationPlotter;
 use crate::phase::rotator::rotate_phase;
 use crate::phase::save::{get_li_rotated_headers, write_li_rotated_results};
 use crate::{config::Config, constants::LI_RESULTS_NAME, utils::csv::read_csv};
@@ -59,13 +61,26 @@ pub fn run_phase_analysis(
     li_results: &[Vec<Vec<f64>>],
     ch: &[u8],
 ) -> Result<()> {
+    let headers = LI_ROTATED_HEADER;
+    let labels: Vec<String> = headers
+        .iter()
+        .map(|s| s.trim().replace("(V)", ""))
+        .collect();
+    let ch = &cfg.phase.use_ch;
+
+    let mut rotated_results: Vec<Vec<Vec<f64>>> = Vec::new();
     for (ch_i, li_result) in ch.iter().zip(li_results.iter()) {
         let rotated_result = phase_analysis(li_result)?;
         let li_rotated_name = LI_ROTATED_NAME;
         let fname = format!("{}_ch{}.csv", li_rotated_name, ch_i);
         let headers = get_li_rotated_headers(cfg)?;
         write_li_rotated_results(&fname, &headers, t, sensor_integral_ch, &rotated_result)?;
+        rotated_results.push(rotated_result);
     }
+
+    PhaseRotationPlotter {}
+        .plot(t, &rotated_results, ch, &labels)
+        .context("failed to plot phase-rotated results")?;
     Ok(())
 }
 
