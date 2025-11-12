@@ -1,5 +1,6 @@
 pub mod lockin_core;
 pub mod lockin_params;
+pub mod lockin_plot;
 pub mod reference;
 pub mod resolve;
 pub mod save;
@@ -8,14 +9,14 @@ pub mod stride;
 pub mod time;
 
 use crate::config::Config;
-use crate::constants::{FETCHED_FNAME, HARMONICS, LI_RESULTS_NAME};
-use crate::lockin::reference::fit::{RefFitParams, ReferenceHandler};
+use crate::constants::{FETCHED_FNAME, HARMONICS, LI_HEADER, LI_RESULTS_NAME};
+use crate::lockin::reference::fit::RefFitParams;
 use crate::lockin::reference::run_reference;
 use crate::lockin::save::{get_headers, write_li_results};
 use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
 use crate::utils::csv::read_csv;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 
 pub fn run(cfg: &Config) -> Result<()> {
@@ -94,6 +95,16 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<()> {
         signal_ch, elapsed_save
     );
 
+    let headers = LI_HEADER;
+    let labels: Vec<String> = headers
+        .iter()
+        .map(|s| s.trim().replace("(V)", ""))
+        .collect();
+
+    lockin_plot::LIPlotter {}
+        .plot(&t_stride, &result, &signal_ch, &labels)
+        .context("failed to plot lock-in results")?;
+
     Ok(())
 }
 
@@ -122,7 +133,7 @@ pub fn li_process(
 
     let mut all_signals_results: Vec<Vec<Vec<f64>>> = Vec::with_capacity(signal_data.len());
 
-    for (sig_idx, signal) in signal_data.iter().enumerate() {
+    for signal in signal_data.iter() {
         let li_processor =
             lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, fil_length, stride)?;
 
