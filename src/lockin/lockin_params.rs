@@ -6,8 +6,11 @@ use std::f64::consts::PI;
 pub struct LockinParams {
     pub dt: f64,
     pub stride: usize,
+    #[allow(dead_code)]
     pub fil_length: usize,
+    #[allow(dead_code)]
     pub length: usize,
+    #[allow(dead_code)]
     pub f_ref: f64,
 
     pub omega: f64,

@@ -11,10 +11,10 @@ use crate::lockin::time::time_builder;
 use crate::utils::csv::read_selected_columns;
 use anyhow::{Context, Result, bail};
 
-struct SensorMeta<'a> {
-    factor: f64,
-    label: &'a str,
-    unit: &'a str,
+pub struct SensorMeta<'a> {
+    pub factor: f64,
+    pub label: &'a str,
+    pub unit: &'a str,
 }
 
 pub fn run(cfg: &Config) -> Result<()> {
@@ -92,7 +92,10 @@ pub fn run_sensor(
     Ok((t_stride, s_integral_stride))
 }
 
-fn extract_sensor_metadata<'a>(cfg: &'a Config, sensor_ch: &[u8]) -> Result<Vec<SensorMeta<'a>>> {
+pub fn extract_sensor_metadata<'a>(
+    cfg: &'a Config,
+    sensor_ch: &[u8],
+) -> Result<Vec<SensorMeta<'a>>> {
     sensor_ch
         .iter()
         .map(|ch| {

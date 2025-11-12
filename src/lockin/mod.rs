@@ -2,14 +2,16 @@ pub mod lockin_core;
 pub mod lockin_params;
 pub mod reference;
 pub mod resolve;
+pub mod save;
 pub mod sensor;
 pub mod stride;
 pub mod time;
 
 use crate::config::Config;
-use crate::constants::{FETCHED_FNAME, HARMONICS};
+use crate::constants::{FETCHED_FNAME, HARMONICS, LI_RESULTS_NAME};
 use crate::lockin::reference::fit::{RefFitParams, ReferenceHandler};
 use crate::lockin::reference::run_reference;
+use crate::lockin::save::{get_headers, write_li_results};
 use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
 use crate::utils::csv::read_csv;
@@ -42,7 +44,7 @@ pub fn run(cfg: &Config) -> Result<()> {
 pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<()> {
     let (sensor_ch, sensor_idx) = resolve::sensor_column_indices(cfg)?;
     let (_, ref_idx) = resolve::reference_column_index(cfg)?;
-    let (_, signal_idx) = resolve::signal_column_indices(cfg)?;
+    let (signal_ch, signal_idx) = resolve::signal_column_indices(cfg)?;
 
     let max_sensor_idx = sensor_idx.iter().max().cloned().unwrap_or(0);
     let max_signal_idx = signal_idx.iter().max().cloned().unwrap_or(0);
@@ -68,10 +70,30 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<()> {
     let (t_stride, sensor_integral_stride) =
         run_sensor(cfg, t, &sensor_data, &sensor_ch, ref_fit_params.f_ref)?;
     drop(sensor_data);
-    println!("length of t_stride: {}", t_stride.len());
 
     // Lock-in processing
-    li_process(cfg, t, &signal_data, ref_fit_params)?;
+    let result = li_process(cfg, t, &signal_data, ref_fit_params)?;
+    drop(signal_data);
+
+    // Save lock-in results
+    let headers = get_headers(cfg, sensor_ch)?;
+    let t0 = std::time::Instant::now();
+    for (sig_ch, li_result) in signal_ch.iter().zip(result.iter()) {
+        let li_result_fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, sig_ch);
+        write_li_results(
+            &li_result_fname,
+            &headers,
+            &t_stride,
+            &sensor_integral_stride,
+            li_result,
+        )?;
+    }
+    let elapsed_save = t0.elapsed();
+    println!(
+        "💾 Saved lock-in results for signals {:?} in {:.2?}",
+        signal_ch, elapsed_save
+    );
+
     Ok(())
 }
 
@@ -124,13 +146,6 @@ pub fn li_process(
 
     let elapsed_li = t0.elapsed();
     println!("🔒 Completed lock-in processing in {:.2?}", elapsed_li);
-
-    println!(
-        "structure of all_signals_results: {} signals x {} harmonic-components x {} data-points",
-        all_signals_results.len(),
-        all_signals_results[0].len(),
-        all_signals_results[0][0].len()
-    );
 
     Ok(all_signals_results)
 }

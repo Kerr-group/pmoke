@@ -14,7 +14,7 @@ t0 = -1.5e-3 # seconds
 dt = 500e-12 # seconds
 
 [roles]
-sensor_ch = [1]
+sensor_ch = [1,4]
 reference_ch = [3] # Supports only one reference channel
 signal_ch = [2]
 
@@ -32,17 +32,11 @@ index = 2
 [[channels]]
 index = 3
 
-# [[channels]]
-# index = 4
-# factor = 1
-# label = "$V$"
-# unit_out = "V"
-#
-# [[channels]]
-# index = 5
-# factor = 1
-# label = "$F$"
-# unit_out = "f"
+[[channels]]
+index = 4
+factor = 1
+label = "$V$"
+unit_out = "V"
 
 
 [pulse]
