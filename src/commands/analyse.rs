@@ -5,12 +5,14 @@ use crate::kerr::run_kerr_analysis;
 use crate::lockin::time::time_builder;
 use crate::phase::run_phase_analysis;
 use crate::utils::channels::build_channel_list;
-use crate::utils::csv::write_csv;
+use crate::utils::csv::{ensure_not_exists, write_csv};
 use crate::{commands::fetch::fetch_all_channels, lockin::run_li};
 use anyhow::{Context, Result, anyhow};
 use std::time::Instant;
 
 pub fn analyse(cfg: &Config) -> Result<()> {
+    ensure_not_exists(FETCHED_FNAME)?;
+
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
 

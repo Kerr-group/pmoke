@@ -1,12 +1,14 @@
-use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::write_csv;
+use crate::{communications::oscilloscope::OscilloscopeHandler, utils::csv::ensure_not_exists};
 use anyhow::{Context, Result, anyhow, bail};
 use std::time::Instant;
 
 pub fn fetch(cfg: &Config) -> Result<()> {
+    ensure_not_exists(FETCHED_FNAME)?;
+
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
 
