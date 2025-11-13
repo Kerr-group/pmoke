@@ -46,7 +46,7 @@ pub enum Command {
     /// Calculate the Kerr angle
     Kerr,
     /// Run data analysis (fetch, li, phase, kerr)
-    Analyze,
+    Analyse,
     /// Run the full automatic measurement and analysis
     Auto,
     /// Generate shell completion script
