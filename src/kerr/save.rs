@@ -36,14 +36,13 @@ pub fn write_kerr_results(
     fname: &str,
     headers: &[String],
     t: &[f64],
-    s_integral: &[f64],
+    s_integral: &[Vec<f64>],
     kerr_results: &[Vec<f64>],
 ) -> Result<()> {
-    let mut export_data: Vec<Vec<f64>> =
-        Vec::with_capacity(1 + s_integral.len() + kerr_results.len());
+    let mut export_data: Vec<Vec<f64>> = Vec::with_capacity(2 + kerr_results.len());
 
     export_data.push(t.to_vec());
-    export_data.push(s_integral.to_vec());
+    export_data.extend_from_slice(s_integral);
     export_data.extend_from_slice(kerr_results);
 
     let headers_slice: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();

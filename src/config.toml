@@ -53,5 +53,5 @@ use_signal_ch = [2]
 
 [kerr]
 use_sensor_ch = 1 # Supports only one sensor channel
-kerr_type = "harmonics" # "standard" or "harmonics"
+kerr_type = "standard" # "standard" or "harmonics"
 factor = 1 

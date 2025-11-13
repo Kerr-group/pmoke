@@ -41,7 +41,9 @@ class KerrStandardAnalyser:
 
         gs.scatter_colormap(axs[0], x, kerr * 1e3, t)
         axs[0].grid()
-        gs.title(fig_name)
+
+        # title = fig_name + " using Standard"
+        # gs.title(title)
 
         gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
         gs.show(fig_name, ft_list=["png"])

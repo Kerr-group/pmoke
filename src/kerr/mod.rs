@@ -119,7 +119,7 @@ pub fn run_kerr_analysis(
     }
     let fname = format!("{}_results.csv", KERR_NAME);
     let headers = get_kerr_headers(cfg)?;
-    write_kerr_results(&fname, &headers, t, sensor_integral, &kerr_results)?;
+    write_kerr_results(&fname, &headers, t, sensor_integral_ch, &kerr_results)?;
 
     Ok(())
 }
