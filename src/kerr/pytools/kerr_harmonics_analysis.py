@@ -43,6 +43,7 @@ class KerrHarmonicsAnalyser:
         mean_x0 = float(np.mean(x0))
 
         kerr = self.get_kerr(mean_x0, li2_in, li3_in, li4_in)
+        kerr = kerr * factor
 
         axs = gs.axes(
             True,

@@ -1,9 +1,11 @@
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::Config;
+use crate::constants::FETCHED_FNAME;
 use crate::kerr::run_kerr_analysis;
 use crate::lockin::time::time_builder;
 use crate::phase::run_phase_analysis;
 use crate::utils::channels::build_channel_list;
+use crate::utils::csv::write_csv;
 use crate::{commands::fetch::fetch_all_channels, lockin::run_li};
 use anyhow::{Context, Result, anyhow};
 use std::time::Instant;
@@ -40,6 +42,18 @@ pub fn analyse(cfg: &Config) -> Result<()> {
         channels.len(),
         fetch_elapsed,
         (depth * channels.len()) as f64 / fetch_elapsed.as_secs_f64()
+    );
+
+    let headers: Vec<String> = channels.iter().map(|ch| format!("ch{ch}")).collect();
+    let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
+
+    let t_write_start = Instant::now();
+    write_csv(FETCHED_FNAME, &header_refs, &data_per_ch)?;
+    let t_write_end = Instant::now();
+
+    println!(
+        "📝 Data written to raw.csv in {:.2?}",
+        t_write_end - t_write_start
     );
 
     let t = time_builder(cfg)?;

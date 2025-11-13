@@ -57,6 +57,8 @@ pub fn run_kerr_analysis(
     sensor_integral_ch: &[Vec<f64>],
     li_rotated_results: &[Vec<Vec<f64>>],
 ) -> Result<()> {
+    println!("🔍 Running Kerr analysis...");
+
     let kerr_sensor_ch_index = cfg.kerr.use_sensor_ch;
 
     let ch_conf: &Channel = cfg

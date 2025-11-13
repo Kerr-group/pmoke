@@ -7,7 +7,7 @@ use std::time::Duration;
 pub fn auto(cfg: &Config) -> Result<()> {
     autoshot(cfg)?;
 
-    thread::sleep(Duration::from_secs(1));
+    thread::sleep(Duration::from_secs(3));
 
     analyse(cfg)?;
 

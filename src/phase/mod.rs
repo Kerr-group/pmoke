@@ -65,6 +65,7 @@ pub fn run_phase_analysis(
         .collect();
     let ch = &cfg.phase.use_signal_ch;
 
+    println!("🔄 Running phase analysis for channels {:?}...", ch);
     let mut rotated_results: Vec<Vec<Vec<f64>>> = Vec::new();
     for (ch_i, li_result) in ch.iter().zip(li_results.iter()) {
         let rotated_result = phase_analysis(li_result)?;
@@ -74,6 +75,7 @@ pub fn run_phase_analysis(
         write_li_rotated_results(&fname, &headers, t, sensor_integral_ch, &rotated_result)?;
         rotated_results.push(rotated_result);
     }
+    println!("✅ Phase analysis completed.");
 
     PhaseRotationPlotter {}
         .plot(t, &rotated_results, ch, &labels)
