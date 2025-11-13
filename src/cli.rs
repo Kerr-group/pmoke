@@ -45,7 +45,7 @@ pub enum Command {
     Phase,
     /// Calculate the Kerr angle
     Kerr,
-    /// Analyze the data
+    /// Run data analysis (fetch, li, phase, kerr)
     Analyze,
     /// Run the full automatic measurement and analysis
     Auto,

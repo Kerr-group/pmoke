@@ -48,7 +48,7 @@ pub fn run(cfg: &Config) -> Result<()> {
         .map(|read_data| read_data[1 + num_sensor_ch..].to_vec())
         .collect();
 
-    run_phase_analysis(cfg, &t, &sensor_integral_ch, &li_results)?;
+    let _ = run_phase_analysis(cfg, &t, &sensor_integral_ch, &li_results)?;
     Ok(())
 }
 
@@ -57,7 +57,7 @@ pub fn run_phase_analysis(
     t: &[f64],
     sensor_integral_ch: &[Vec<f64>],
     li_results: &[Vec<Vec<f64>>],
-) -> Result<()> {
+) -> Result<Vec<Vec<Vec<f64>>>> {
     let headers = LI_ROTATED_HEADER;
     let labels: Vec<String> = headers
         .iter()
@@ -78,7 +78,7 @@ pub fn run_phase_analysis(
     PhaseRotationPlotter {}
         .plot(t, &rotated_results, ch, &labels)
         .context("failed to plot phase-rotated results")?;
-    Ok(())
+    Ok(rotated_results)
 }
 
 pub fn phase_analysis(li_result: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {

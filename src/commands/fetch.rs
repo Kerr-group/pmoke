@@ -55,7 +55,7 @@ pub fn fetch(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-fn fetch_all_channels(
+pub fn fetch_all_channels(
     handler: &mut OscilloscopeHandler,
     channels: &[u8],
     depth: usize,

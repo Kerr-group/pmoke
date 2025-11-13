@@ -42,7 +42,11 @@ pub fn run(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<Vec<Vec<Vec<f64>>>> {
+pub fn run_li(
+    cfg: &Config,
+    t: &[f64],
+    data: &[Vec<f64>],
+) -> Result<(Vec<f64>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>)> {
     let (sensor_ch, sensor_idx) = resolve::sensor_column_indices(cfg)?;
     let (_, ref_idx) = resolve::reference_column_index(cfg)?;
     let (signal_ch, signal_idx) = resolve::signal_column_indices(cfg)?;
@@ -105,7 +109,7 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<Vec<Vec<Vec<
         .plot(&t_stride, &result, &signal_ch, &labels)
         .context("failed to plot lock-in results")?;
 
-    Ok(result)
+    Ok((t_stride, sensor_integral_stride, result))
 }
 
 pub fn li_process(

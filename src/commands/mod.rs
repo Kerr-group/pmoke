@@ -1,3 +1,5 @@
+pub mod analyse;
+pub mod auto;
 pub mod automeasure;
 pub mod autoshot;
 pub mod completions;
