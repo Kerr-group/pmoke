@@ -108,7 +108,7 @@ pub struct Lockin {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Phase {
-    pub use_ch: Vec<u8>,
+    pub use_signal_ch: Vec<u8>,
 }
 
 // From &str
