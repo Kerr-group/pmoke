@@ -7,12 +7,9 @@ use crate::constants::{KERR_NAME, LI_ROTATED_NAME};
 use crate::kerr::kerr_harmonics_analysis::KerrHarmonicsAnalyser;
 use crate::kerr::kerr_standard_analysis::KerrStandardAnalyser;
 use crate::kerr::save::{get_kerr_headers, write_kerr_results};
-use crate::lockin::sensor::{extract_sensor_metadata, sensor_integral_plot};
-use crate::phase::save::{get_li_rotated_headers, write_li_rotated_results};
-use crate::{config::Config, constants::LI_RESULTS_NAME, utils::csv::read_csv};
+use crate::{config::Config, utils::csv::read_csv};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
-use std::f64::consts::PI;
 use std::time::Instant;
 
 pub fn run(cfg: &Config) -> Result<()> {

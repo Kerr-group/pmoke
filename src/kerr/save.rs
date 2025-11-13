@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    constants::{KERR_HEADER, LI_ROTATED_HEADER, T_HEADER},
+    constants::{KERR_HEADER, T_HEADER},
     lockin::sensor::extract_sensor_metadata,
     utils::csv::write_csv,
 };
