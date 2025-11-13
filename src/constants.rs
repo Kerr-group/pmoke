@@ -33,3 +33,6 @@ pub const LI_ROTATED_HEADER: [&str; 12] = [
     "LIout_h6 (V)",
 ];
 pub const LI_ROTATED_NAME: &str = "lockin_rotated";
+
+pub const KERR_NAME: &str = "kerr";
+pub const KERR_HEADER: &str = "Kerr angle (rad)";

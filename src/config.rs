@@ -14,6 +14,7 @@ pub struct Config {
     pub pulse: Pulse,
     pub lockin: Lockin,
     pub phase: Phase,
+    pub kerr: Kerr,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -111,6 +112,20 @@ pub struct Phase {
     pub use_signal_ch: Vec<u8>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KerrType {
+    Standard,
+    Harmonics,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Kerr {
+    pub use_sensor_ch: u8,
+    pub kerr_type: KerrType,
+    pub factor: f64,
+}
+
 // From &str
 pub fn from_str(s: &str) -> Result<Config> {
     let de = toml::de::Deserializer::parse(s).map_err(|e| anyhow!("toml parse error: {e}"))?;
@@ -143,6 +158,20 @@ impl Config {
             if !seen.insert(ch.index) {
                 bail!("duplicate channel index: {}", ch.index);
             }
+        }
+
+        let kerr_ch = self.kerr.use_sensor_ch;
+        if !seen.contains(&kerr_ch) {
+            bail!(
+                "kerr.use_sensor_ch ({}) is not defined in channels",
+                kerr_ch
+            );
+        }
+        if !self.roles.sensor_ch.contains(&kerr_ch) {
+            bail!(
+                "kerr.use_sensor_ch ({}) is not included in roles.sensor_ch",
+                kerr_ch
+            );
         }
 
         let has = |n: u8| seen.contains(&n);

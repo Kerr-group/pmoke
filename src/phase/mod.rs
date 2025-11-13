@@ -16,7 +16,6 @@ use std::time::Instant;
 
 pub fn run(cfg: &Config) -> Result<()> {
     let ch = &cfg.phase.use_signal_ch;
-    println!("Using channel: {:?}", ch);
 
     if ch.is_empty() {
         println!("⚠️ No channels specified for phase analysis. Skipping phase analysis.");
@@ -37,9 +36,8 @@ pub fn run(cfg: &Config) -> Result<()> {
 
     let elapsed_read = t0.elapsed();
     println!(
-        "📥 Read lock-in results for {} channels in {:.2?}",
-        ch.len(),
-        elapsed_read
+        "📥 Read lock-in rotated results for ch {:?} in {:.2?}",
+        ch, elapsed_read
     );
 
     let t = all_data[0][0].clone(); // time column

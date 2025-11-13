@@ -43,6 +43,8 @@ pub enum Command {
     Li,
     /// Rotate the reference phase for lock-in analysis
     Phase,
+    /// Calculate the Kerr angle
+    Kerr,
     /// Analyze the data
     Analyze,
     /// Run the full automatic measurement and analysis

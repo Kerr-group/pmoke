@@ -2,6 +2,7 @@ pub mod automeasure;
 pub mod autoshot;
 pub mod completions;
 pub mod fetch;
+pub mod kerr;
 pub mod li;
 pub mod phase;
 pub mod reference;

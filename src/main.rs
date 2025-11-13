@@ -3,6 +3,7 @@ mod commands;
 mod communications;
 mod config;
 mod constants;
+mod kerr;
 mod lockin;
 mod phase;
 mod utils;
@@ -32,6 +33,7 @@ fn main() -> Result<()> {
         Some(Command::Sensor) => commands::sensor::sensor(&cfg),
         Some(Command::Li) => commands::li::li(&cfg),
         Some(Command::Phase) => commands::phase::phase(&cfg),
+        Some(Command::Kerr) => commands::kerr::kerr(&cfg),
         Some(Command::Analyze) => Ok(()),
         Some(Command::Auto) => Ok(()),
         Some(Command::Completions { .. }) => Ok(()),
