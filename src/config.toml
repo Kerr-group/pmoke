@@ -14,9 +14,9 @@ t0 = -0.5e-3 # seconds
 dt = 500e-12 # seconds
 
 [roles]
-sensor_ch = [1, 4]
-reference_ch = [3] # Supports only one reference channel
-signal_ch = [2]
+sensor_ch = [1]
+reference_ch = [2] # Supports only one reference channel
+signal_ch = [3,4]
 
 # Channel for current sensor
 [[channels]]
@@ -49,7 +49,7 @@ filter_length_samples = 20
 stride_samples = 2000
 
 [phase]
-use_signal_ch = [2]
+use_signal_ch = [3,4]
 
 [kerr]
 use_sensor_ch = 1 # Supports only one sensor channel
