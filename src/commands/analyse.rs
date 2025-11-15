@@ -1,13 +1,9 @@
 use crate::commands::fetch::run_fetch;
-use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::Config;
-use crate::constants::FETCHED_FNAME;
 use crate::kerr::run_kerr_analysis;
 use crate::lockin::time::time_builder;
 use crate::phase::run_phase_analysis;
-use crate::utils::channels::build_channel_list;
-use crate::utils::csv::{ensure_not_exists, write_csv};
-use crate::{commands::fetch::fetch_all_channels, lockin::run_li};
+use crate::lockin::run_li;
 use anyhow::Result;
 
 pub fn analyse(cfg: &Config) -> Result<()> {
