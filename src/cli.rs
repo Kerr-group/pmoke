@@ -45,8 +45,8 @@ pub enum Command {
     Phase,
     /// Calculate the Kerr angle
     Kerr,
-    /// Run data analysis (fetch, li, phase, kerr)
-    Analyse,
+    /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)
+    Process,
     /// Run the full automatic measurement and analysis
     Auto,
     /// Generate shell completion script

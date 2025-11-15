@@ -34,7 +34,7 @@ fn main() -> Result<()> {
         Some(Command::Li) => commands::li::li(&cfg),
         Some(Command::Phase) => commands::phase::phase(&cfg),
         Some(Command::Kerr) => commands::kerr::kerr(&cfg),
-        Some(Command::Analyse) => commands::analyse::analyse(&cfg),
+        Some(Command::Process) => commands::process::process(&cfg),
         Some(Command::Auto) => commands::auto::auto(&cfg),
         Some(Command::Completions { .. }) => Ok(()),
         None => commands::show::show(&cfg),

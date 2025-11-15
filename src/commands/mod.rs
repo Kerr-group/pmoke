@@ -1,4 +1,3 @@
-pub mod analyse;
 pub mod auto;
 pub mod automeasure;
 pub mod autoshot;
@@ -7,6 +6,7 @@ pub mod fetch;
 pub mod kerr;
 pub mod li;
 pub mod phase;
+pub mod process;
 pub mod reference;
 pub mod sensor;
 pub mod show;

@@ -1,12 +1,12 @@
 use crate::commands::fetch::run_fetch;
 use crate::config::Config;
 use crate::kerr::run_kerr_analysis;
+use crate::lockin::run_li;
 use crate::lockin::time::time_builder;
 use crate::phase::run_phase_analysis;
-use crate::lockin::run_li;
 use anyhow::Result;
 
-pub fn analyse(cfg: &Config) -> Result<()> {
+pub fn process(cfg: &Config) -> Result<()> {
     let data_per_ch = run_fetch(cfg)?;
 
     let t = time_builder(cfg)?;
