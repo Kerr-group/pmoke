@@ -7,6 +7,24 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::time::Instant;
 
 pub fn fetch(cfg: &Config) -> Result<()> {
+    let data_per_ch = run_fetch(cfg)?;
+
+    let channels = build_channel_list(cfg)?;
+    let headers: Vec<String> = channels.iter().map(|ch| format!("ch{ch}")).collect();
+    let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
+
+    let t_write_start = Instant::now();
+    write_csv(FETCHED_FNAME, &header_refs, &data_per_ch)?;
+    let t_write_end = Instant::now();
+
+    println!(
+        "📝 Data written to raw.csv in {:.2?}",
+        t_write_end - t_write_start
+    );
+    Ok(())
+}
+
+pub fn run_fetch(cfg: &Config) -> Result<Vec<Vec<f64>>> {
     ensure_not_exists(FETCHED_FNAME)?;
 
     let mut handler = OscilloscopeHandler::initialize(cfg)
@@ -21,7 +39,6 @@ pub fn fetch(cfg: &Config) -> Result<()> {
     let depth = osc_cfg.memory_depth;
 
     let channels = build_channel_list(cfg)?;
-
     println!(
         "⏳ Fetching {} samples from {} channels...",
         depth,
@@ -41,20 +58,7 @@ pub fn fetch(cfg: &Config) -> Result<()> {
         fetch_elapsed,
         (depth * channels.len()) as f64 / fetch_elapsed.as_secs_f64()
     );
-
-    let headers: Vec<String> = channels.iter().map(|ch| format!("ch{ch}")).collect();
-    let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
-
-    let t_write_start = Instant::now();
-    write_csv(FETCHED_FNAME, &header_refs, &data_per_ch)?;
-    let t_write_end = Instant::now();
-
-    println!(
-        "📝 Data written to raw.csv in {:.2?}",
-        t_write_end - t_write_start
-    );
-
-    Ok(())
+    Ok(data_per_ch)
 }
 
 pub fn fetch_all_channels(
