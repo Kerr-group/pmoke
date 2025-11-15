@@ -1,4 +1,4 @@
-# pmoke — Pulsed MOKE Measurement CLI
+# 💥pmoke — Pulsed MOKE Measurement CLI
 
 `pmoke` is a command-line tool designed to control a pulsed Magneto-Optical Kerr Effect (MOKE) measurement system.  
 It automates oscilloscope control, trigger handling, data fetching, numerical lock-in analysis, phase rotation, and Kerr angle extraction, enabling fully reproducible experiments and analysis pipelines.
