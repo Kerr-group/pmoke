@@ -45,6 +45,8 @@ pub enum Command {
     Phase,
     /// Calculate the Kerr angle
     Kerr,
+    /// Run all analysis steps: reference, sensor, lock-in, phase, Kerr
+    Analyze,
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)
     Process,
     /// Run the full automatic measurement and analysis

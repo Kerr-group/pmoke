@@ -7,14 +7,14 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::time::Instant;
 
 pub fn fetch(cfg: &Config) -> Result<()> {
-    let data_per_ch = run_fetch(cfg)?;
+    let data = run_fetch(cfg)?;
 
     let channels = build_channel_list(cfg)?;
     let headers: Vec<String> = channels.iter().map(|ch| format!("ch{ch}")).collect();
     let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
 
     let t_write_start = Instant::now();
-    write_csv(FETCHED_FNAME, &header_refs, &data_per_ch)?;
+    write_csv(FETCHED_FNAME, &header_refs, &data)?;
     let t_write_end = Instant::now();
 
     println!(
@@ -46,7 +46,7 @@ pub fn run_fetch(cfg: &Config) -> Result<Vec<Vec<f64>>> {
     );
 
     let t_fetch_start = Instant::now();
-    let data_per_ch = fetch_all_channels(&mut handler, &channels, depth)?;
+    let data = fetch_all_channels(&mut handler, &channels, depth)?;
     let t_fetch_end = Instant::now();
 
     let fetch_elapsed = t_fetch_end - t_fetch_start;
@@ -58,7 +58,7 @@ pub fn run_fetch(cfg: &Config) -> Result<Vec<Vec<f64>>> {
         fetch_elapsed,
         (depth * channels.len()) as f64 / fetch_elapsed.as_secs_f64()
     );
-    Ok(data_per_ch)
+    Ok(data)
 }
 
 pub fn fetch_all_channels(
@@ -66,7 +66,7 @@ pub fn fetch_all_channels(
     channels: &[u8],
     depth: usize,
 ) -> Result<Vec<Vec<f64>>> {
-    let mut data_per_ch: Vec<Vec<f64>> = Vec::with_capacity(channels.len());
+    let mut data: Vec<Vec<f64>> = Vec::with_capacity(channels.len());
 
     for &ch in channels {
         let v = handler
@@ -81,8 +81,8 @@ pub fn fetch_all_channels(
             );
         }
 
-        data_per_ch.push(v);
+        data.push(v);
     }
 
-    Ok(data_per_ch)
+    Ok(data)
 }

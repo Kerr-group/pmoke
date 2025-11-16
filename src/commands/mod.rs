@@ -1,3 +1,4 @@
+pub mod analyze;
 pub mod auto;
 pub mod automeasure;
 pub mod autoshot;
