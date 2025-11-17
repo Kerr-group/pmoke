@@ -120,5 +120,8 @@ pub fn run_kerr_analysis(
     let headers = get_kerr_headers(cfg)?;
     write_kerr_results(&fname, &headers, t, sensor_integral_ch, &kerr_results)?;
 
+    println!("💾 Saved Kerr analysis results for channels {:?}.", ch);
+    println!("✅ Kerr analysis completed.");
+
     Ok(())
 }
