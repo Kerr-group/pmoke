@@ -9,7 +9,7 @@ class SensorRawPlotter:
     def plot(self, t: NDArray, y: NDArray, index_arr: list[int], c_bg_arr: NDArray):
         ch_num = len(index_arr)
         mosaic = "".join([chr(65 + i) for i in range(ch_num)])
-        axs = gs.axes(False, size=(6 * ch_num, 6), mosaic=mosaic)
+        axs = gs.axes(False, size=(6 * ch_num, 6), mosaic=mosaic, ion=False)
         for i, (yi, c_bg) in enumerate(zip(y, c_bg_arr)):
             gs.scatter(axs[i], t * 1e6, yi)
             axs[i].axhline(c_bg, color="red", ls="--", lw=1, label="Background")

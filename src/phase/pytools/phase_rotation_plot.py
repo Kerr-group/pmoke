@@ -12,7 +12,7 @@ class PhaseRotationPlotter:
             [f"{chr(65 + 2*i)}{chr(65 + 2*i + 1)}" for i in range(ch_num)]
         )
 
-        axs = gs.axes(False, size=(12, 6 * ch_num), mosaic=mosaic)
+        axs = gs.axes(False, size=(12, 6 * ch_num), mosaic=mosaic, ion=False)
 
         label = []
         for i, si in enumerate(y):

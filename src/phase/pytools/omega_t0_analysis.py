@@ -35,11 +35,7 @@ class OT0Analyser:
 
         label = f"$-\\omega t_0$ = {result.params['slope'].value:.2e}$n$"
 
-        axs = gs.axes(
-            False,
-            size=(6, 6),
-            mosaic="A",
-        )
+        axs = gs.axes(False, size=(6, 6), mosaic="A", ion=False)
         cm = gs.get_cmap(cmap="viridis", N=6)
 
         gs.scatter(axs[0], ones * 1, m_ot0_1, label="1", color=cm[0])
