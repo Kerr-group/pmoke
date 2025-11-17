@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+#[cfg(feature = "hw")]
 mod communications;
 mod config;
 mod constants;
@@ -22,22 +23,40 @@ fn main() -> Result<()> {
 
     let cfg = config::from_path(&args.config)?;
 
-    match args.command {
-        Some(Command::Show) => commands::show::show(&cfg),
-        Some(Command::Single) => commands::single::single(&cfg),
-        Some(Command::Trigger) => commands::trigger::trigger(&cfg),
-        Some(Command::Autoshot) => commands::autoshot::autoshot(&cfg),
-        Some(Command::Fetch) => commands::fetch::fetch(&cfg),
-        Some(Command::Automeasure) => commands::automeasure::automeasure(&cfg),
-        Some(Command::Reference) => commands::reference::reference(&cfg),
-        Some(Command::Sensor) => commands::sensor::sensor(&cfg),
-        Some(Command::Li) => commands::li::li(&cfg),
-        Some(Command::Phase) => commands::phase::phase(&cfg),
-        Some(Command::Kerr) => commands::kerr::kerr(&cfg),
-        Some(Command::Analyze) => commands::analyze::analyze(&cfg),
-        Some(Command::Process) => commands::process::process(&cfg),
-        Some(Command::Auto) => commands::auto::auto(&cfg),
-        Some(Command::Completions { .. }) => Ok(()),
-        None => commands::show::show(&cfg),
+    #[cfg(feature = "hw")]
+    {
+        match args.command {
+            Some(Command::Show) => commands::show::show(&cfg),
+            Some(Command::Single) => commands::single::single(&cfg),
+            Some(Command::Trigger) => commands::trigger::trigger(&cfg),
+            Some(Command::Autoshot) => commands::autoshot::autoshot(&cfg),
+            Some(Command::Fetch) => commands::fetch::fetch(&cfg),
+            Some(Command::Automeasure) => commands::automeasure::automeasure(&cfg),
+            Some(Command::Reference) => commands::reference::reference(&cfg),
+            Some(Command::Sensor) => commands::sensor::sensor(&cfg),
+            Some(Command::Li) => commands::li::li(&cfg),
+            Some(Command::Phase) => commands::phase::phase(&cfg),
+            Some(Command::Kerr) => commands::kerr::kerr(&cfg),
+            Some(Command::Analyze) => commands::analyze::analyze(&cfg),
+            Some(Command::Process) => commands::process::process(&cfg),
+            Some(Command::Auto) => commands::auto::auto(&cfg),
+            Some(Command::Completions { .. }) => Ok(()),
+            None => commands::show::show(&cfg),
+        }
+    }
+
+    #[cfg(not(feature = "hw"))]
+    {
+        match args.command {
+            Some(Command::Show) => commands::show::show(&cfg),
+            Some(Command::Reference) => commands::reference::reference(&cfg),
+            Some(Command::Sensor) => commands::sensor::sensor(&cfg),
+            Some(Command::Li) => commands::li::li(&cfg),
+            Some(Command::Phase) => commands::phase::phase(&cfg),
+            Some(Command::Kerr) => commands::kerr::kerr(&cfg),
+            Some(Command::Analyze) => commands::analyze::analyze(&cfg),
+            Some(Command::Completions { .. }) => Ok(()),
+            None => commands::show::show(&cfg),
+        }
     }
 }
