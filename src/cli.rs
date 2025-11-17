@@ -26,14 +26,19 @@ pub enum Command {
     /// Display the contents of the configuration file
     Show,
     /// Set single mode to the oscilloscope
+    #[cfg(feature = "hw")]
     Single,
     /// Send trigger signal from the function generator
+    #[cfg(feature = "hw")]
     Trigger,
     /// Set single mode and send trigger signal
+    #[cfg(feature = "hw")]
     Autoshot,
     /// Fetch data from the oscilloscope and save to a file
+    #[cfg(feature = "hw")]
     Fetch,
     /// Perform auto measurement (set single mode, trigger, fetch)
+    #[cfg(feature = "hw")]
     Automeasure,
     /// Analyze the reference signal
     Reference,
@@ -48,8 +53,10 @@ pub enum Command {
     /// Run all analysis steps: reference, sensor, lock-in, phase, Kerr
     Analyze,
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)
+    #[cfg(feature = "hw")]
     Process,
     /// Run the full automatic measurement and analysis
+    #[cfg(feature = "hw")]
     Auto,
     /// Generate shell completion script
     Completions {

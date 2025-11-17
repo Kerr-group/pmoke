@@ -11,8 +11,8 @@ members = [
 ]
 
 [dependencies]
-gpib-rs = { path = "crates/gpib-rs" }
-instruments = { path = "crates/instruments" }
+gpib-rs = { path = "crates/gpib-rs" , optional = true}
+instruments = { path = "crates/instruments" , optional = true}
 anyhow = "1.0.100"
 serde = { version = "1.0.219", features = ["derive"] }
 toml = "0.9.8"
@@ -26,3 +26,7 @@ dirs = "6.0.0"
 csv = "1.4.0"
 rayon = "1.11.0"
 
+[features]
+default = ["hw"]
+
+hw = ["dep:gpib-rs", "dep:instruments"]

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use csv::{ReaderBuilder, StringRecord};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -105,6 +105,7 @@ pub fn write_csv(
     Ok(())
 }
 
+#[cfg(feature = "hw")]
 pub fn ensure_not_exists(path: &str) -> Result<()> {
     if Path::new(path).exists() {
         bail!("file {} already exists", path);

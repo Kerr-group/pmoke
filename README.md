@@ -27,6 +27,10 @@ This tool is intended for research use in laboratories performing MOKE measureme
 ```sh
 cd pmoke
 cargo install --path .
+
+# For MacOS users
+cd pmoke
+cargo install --path . --no-default-features
 ```
 
 ## 🧭 Usage
