@@ -75,6 +75,7 @@ pub fn run_phase_analysis(
         write_li_rotated_results(&fname, &headers, t, sensor_integral_ch, &rotated_result)?;
         rotated_results.push(rotated_result);
     }
+    println!("💾 Saved phase-rotated results for channels {:?}.", ch);
     println!("✅ Phase analysis completed.");
 
     PhaseRotationPlotter {}
