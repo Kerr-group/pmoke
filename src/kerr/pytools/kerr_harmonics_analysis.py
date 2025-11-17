@@ -49,6 +49,7 @@ class KerrHarmonicsAnalyser:
             True,
             size=(6, 6),
             mosaic="A",
+            ion=False,
         )
 
         gs.scatter_colormap(axs[0], x, kerr * 1e3, t)

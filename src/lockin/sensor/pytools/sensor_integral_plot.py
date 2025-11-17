@@ -16,7 +16,7 @@ class SensorIntegralPlotter:
     ):
         ch_num = len(index_arr)
         mosaic = "".join([chr(65 + i) for i in range(ch_num)])
-        axs = gs.axes(False, size=(6 * ch_num, 6), mosaic=mosaic)
+        axs = gs.axes(False, size=(6 * ch_num, 6), mosaic=mosaic, ion=False)
         for i, yi in enumerate(y):
             gs.scatter(axs[i], t * 1e6, yi)
 
