@@ -1,4 +1,4 @@
-//! Timeout helpers (linux-gpib style codes).
+//! Timeout helpers (linux-gpib style codes and VISA milliseconds).
 
 #[inline]
 pub(crate) fn secs_to_tmo_code(s: u64) -> i32 {
@@ -9,5 +9,16 @@ pub(crate) fn secs_to_tmo_code(s: u64) -> i32 {
         11..=20 => 14, // ~100s
         21..=30 => 15, // ~300s
         _ => 16,       // ~1000s
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[inline]
+pub(crate) fn secs_to_ms(s: u64) -> u32 {
+    if s == 0 {
+        // Immediate
+        1
+    } else {
+        (s * 1000) as u32
     }
 }
