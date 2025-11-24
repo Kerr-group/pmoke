@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use clap::CommandFactory;
 use clap_complete::{Shell, generate};
 use dirs;
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, io::Write}; 
 
 pub fn install_completion(shell: Shell) -> Result<()> {
     let mut cmd = Cli::command();
@@ -21,20 +21,39 @@ pub fn install_completion(shell: Shell) -> Result<()> {
             println!("✅ Installed fish completion at {}", dest.display());
         }
         Shell::PowerShell => {
-            if let Some(profile) = std::env::var_os("PROFILE") {
-                let profile_path = PathBuf::from(profile);
+            let profile_path = std::env::var_os("PROFILE")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    dirs::document_dir().map(|mut path| {
+                        path.push("WindowsPowerShell"); 
+                        path.push("Microsoft.PowerShell_profile.ps1");
+                        path
+                    })
+                });
+
+            if let Some(path) = profile_path {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+
                 let script = String::from_utf8_lossy(&buffer);
-                fs::write(&profile_path, format!("\n# pmoke completion\n{}", script))
-                    .with_context(|| {
-                        format!("failed to append completion to {:?}", profile_path)
-                    })?;
+
+                let mut file = fs::OpenOptions::new()
+                    .create(true) 
+                    .write(true)
+                    .append(true) 
+                    .open(&path)
+                    .with_context(|| format!("failed to open profile at {:?}", path))?;
+
+                writeln!(file, "\n# pmoke completion\n{}", script)?;
+
                 println!(
-                    "✅ Added pmoke completion to PowerShell profile {:?}",
-                    profile_path
+                    "✅ Appended pmoke completion to PowerShell profile {:?}",
+                    path
                 );
             } else {
-                println!("⚠️  Could not find PowerShell profile path. Try manually:");
-                println!("pmoke completions powershell | Out-String | Invoke-Expression");
+                println!("⚠️  Could not determine PowerShell profile path automatically.");
+                println!("Try manually: pmoke completions powershell | Out-String | Invoke-Expression");
             }
         }
         other => {
