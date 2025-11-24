@@ -65,6 +65,11 @@ unsafe extern "system" {
     ) -> ViStatus;
     pub fn viClear(vi: ViSession) -> ViStatus;
     
+    pub fn viReadSTB(
+        vi: ViSession,
+        status: *mut ViUInt16,
+    ) -> ViStatus;
+
     // Attributes
     pub fn viSetAttribute(
         vi: ViSession,

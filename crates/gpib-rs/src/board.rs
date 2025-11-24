@@ -15,9 +15,11 @@ use crate::tmo::secs_to_tmo_code;
 use crate::error::{Result, check_ok, err};
 
 #[cfg(target_os = "windows")]
-use crate::ffi::{viOpenDefaultRM, viClose, viOpen, ViSession, ViStatus};
+use crate::ffi::{viOpenDefaultRM, viClose, viFindRsrc, viFindNext, ViSession, ViStatus, ViUInt32};
 #[cfg(target_os = "windows")]
-use crate::consts::visa::{VI_SUCCESS, VI_NULL, VI_TMO_INFINITE};
+use crate::consts::visa::{VI_SUCCESS, VI_NULL};
+#[cfg(target_os = "windows")]
+use std::os::raw::c_char;
 
 /// Represents a GPIB board.
 /// On Linux: Handle to board (ibfind).
@@ -124,26 +126,57 @@ impl Board {
         &self.name
     }
 
-    /// Scan PAD=0..=30; exclude controller PAD unless a device is confirmed there.
+    /// Scan pads for devices.
+    /// Windows: Uses viFindRsrc (fast).
+    /// Linux: Uses ibln (listener check) on each PAD.
     pub fn scan_pads(&self) -> Result<Vec<i32>> {
         let mut v = Vec::new();
 
         #[cfg(target_os = "windows")]
         {
-            // Simple scan for VISA: Attempt viOpen on GPIB{index}::{pad}::INSTR
-            // This is slower than ibln but works generically.
-            for pad in 1..=30 {
-                let rsrc = CString::new(format!("GPIB{}::{}::INSTR", self.index, pad)).unwrap();
-                let mut vi: ViSession = 0;
-                unsafe {
-                    // Try to open with very short timeout
-                    let status = viOpen(self.rm, rsrc.as_ptr(), 0, 10, &mut vi);
-                    if status >= VI_SUCCESS {
-                        v.push(pad);
-                        viClose(vi);
+            // Use VISA Resource Manager to find devices instead of brute-force viOpen.
+            // Pattern: "GPIB{index}::?*::INSTR" matches all instruments on this board.
+            let query = CString::new(format!("GPIB{}::?*::INSTR", self.index)).unwrap();
+            
+            let mut find_list: ViSession = 0;
+            let mut ret_cnt: ViUInt32 = 0;
+            let mut desc_buf = [0i8; 256]; // Buffer for resource string (e.g. "GPIB0::17::INSTR")
+
+            unsafe {
+                let status = viFindRsrc(
+                    self.rm, 
+                    query.as_ptr(), 
+                    &mut find_list, 
+                    &mut ret_cnt, 
+                    desc_buf.as_mut_ptr()
+                );
+
+                if status >= VI_SUCCESS {
+                    // Process the first match
+                    if let Some(pad) = parse_visa_rsrc_pad(&desc_buf) {
+                         v.push(pad);
                     }
+
+                    // Process subsequent matches
+                    while ret_cnt > 1 {
+                        let next_status = viFindNext(find_list, desc_buf.as_mut_ptr());
+                        if next_status < VI_SUCCESS {
+                            break;
+                        }
+                        if let Some(pad) = parse_visa_rsrc_pad(&desc_buf) {
+                             v.push(pad);
+                        }
+                        // Note: ret_cnt isn't decremented by viFindNext, 
+                        // we loop until viFindNext fails or we assume the count was correct.
+                        // Ideally checking next_status is sufficient.
+                    }
+                    viClose(find_list);
                 }
             }
+            
+            // Sort for consistent output
+            v.sort_unstable();
+            v.dedup();
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -247,4 +280,17 @@ pub fn scan_gpib0(timeout_secs: u64) -> Result<Vec<i32>> {
 pub fn scan_board(request: &str, timeout_secs: u64) -> Result<Vec<i32>> {
     let b = Board::open(request, timeout_secs)?;
     b.scan_pads()
+}
+
+// Helper to parse "GPIB0::17::INSTR" -> 17
+#[cfg(target_os = "windows")]
+fn parse_visa_rsrc_pad(buf: &[c_char]) -> Option<i32> {
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()).to_string_lossy() };
+    // Format: "GPIB<board>::<pad>::INSTR" or "GPIB<board>::<pad>::<sad>::INSTR"
+    // We want the <pad>.
+    let parts: Vec<&str> = s.split("::").collect();
+    if parts.len() >= 3 && parts[0].starts_with("GPIB") {
+        return parts[1].parse::<i32>().ok();
+    }
+    None
 }
