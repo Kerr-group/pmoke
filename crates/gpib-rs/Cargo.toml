@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-libc = "0.2.175"
+libc = "0.2.177"
 
 [build-dependencies]
 pkg-config = "0.3.32"
