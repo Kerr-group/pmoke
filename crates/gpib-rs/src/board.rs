@@ -15,9 +15,9 @@ use crate::tmo::secs_to_tmo_code;
 use crate::error::{Result, check_ok, err};
 
 #[cfg(target_os = "windows")]
-use crate::ffi::{viOpenDefaultRM, viClose, viFindRsrc, viFindNext, ViSession, ViStatus, ViUInt32};
+use crate::consts::visa::{VI_NULL, VI_SUCCESS};
 #[cfg(target_os = "windows")]
-use crate::consts::visa::{VI_SUCCESS, VI_NULL};
+use crate::ffi::{ViSession, ViStatus, ViUInt32, viClose, viFindNext, viFindRsrc, viOpenDefaultRM};
 #[cfg(target_os = "windows")]
 use std::os::raw::c_char;
 
@@ -31,7 +31,7 @@ pub struct Board {
     rm: ViSession,
 
     index: i32, // Board index (0 for gpib0)
-    
+
     #[cfg(not(target_os = "windows"))]
     name: CString,
     #[cfg(not(target_os = "windows"))]
@@ -45,21 +45,17 @@ pub struct Board {
 impl Board {
     /// `request`: "gpib0" / "gpib1". On Windows this implies the board number.
     pub fn open(request: &str, _timeout_secs: u64) -> Result<Self> {
-        let index = crate::conf::parse_board_index(request).unwrap_or(0);
-
         #[cfg(target_os = "windows")]
         {
+            let index = crate::conf::parse_board_index(request).unwrap_or(0);
             let mut rm: ViSession = 0;
             unsafe {
                 let status = viOpenDefaultRM(&mut rm);
                 if status < VI_SUCCESS {
-                     return Err(err("viOpenDefaultRM"));
+                    return Err(err("viOpenDefaultRM"));
                 }
             }
-            Ok(Self {
-                rm,
-                index,
-            })
+            Ok(Self { rm, index })
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -119,7 +115,7 @@ impl Board {
     pub fn index(&self) -> i32 {
         self.index
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     #[inline]
     pub fn name(&self) -> &CStr {
@@ -137,24 +133,24 @@ impl Board {
             // Use VISA Resource Manager to find devices instead of brute-force viOpen.
             // Pattern: "GPIB{index}::?*::INSTR" matches all instruments on this board.
             let query = CString::new(format!("GPIB{}::?*::INSTR", self.index)).unwrap();
-            
+
             let mut find_list: ViSession = 0;
             let mut ret_cnt: ViUInt32 = 0;
             let mut desc_buf = [0i8; 256]; // Buffer for resource string (e.g. "GPIB0::17::INSTR")
 
             unsafe {
                 let status = viFindRsrc(
-                    self.rm, 
-                    query.as_ptr(), 
-                    &mut find_list, 
-                    &mut ret_cnt, 
-                    desc_buf.as_mut_ptr()
+                    self.rm,
+                    query.as_ptr(),
+                    &mut find_list,
+                    &mut ret_cnt,
+                    desc_buf.as_mut_ptr(),
                 );
 
                 if status >= VI_SUCCESS {
                     // Process the first match
                     if let Some(pad) = parse_visa_rsrc_pad(&desc_buf) {
-                         v.push(pad);
+                        v.push(pad);
                     }
 
                     // Process subsequent matches
@@ -164,16 +160,16 @@ impl Board {
                             break;
                         }
                         if let Some(pad) = parse_visa_rsrc_pad(&desc_buf) {
-                             v.push(pad);
+                            v.push(pad);
                         }
-                        // Note: ret_cnt isn't decremented by viFindNext, 
+                        // Note: ret_cnt isn't decremented by viFindNext,
                         // we loop until viFindNext fails or we assume the count was correct.
                         // Ideally checking next_status is sufficient.
                     }
                     viClose(find_list);
                 }
             }
-            
+
             // Sort for consistent output
             v.sort_unstable();
             v.dedup();
@@ -243,7 +239,7 @@ impl Drop for Board {
                 viClose(self.rm);
             }
         }
-        
+
         #[cfg(not(target_os = "windows"))]
         if self.ud >= 0 {
             unsafe {
@@ -294,3 +290,4 @@ fn parse_visa_rsrc_pad(buf: &[c_char]) -> Option<i32> {
     }
     None
 }
+

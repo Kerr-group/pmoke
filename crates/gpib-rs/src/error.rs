@@ -1,9 +1,11 @@
 //! Error type and status helpers.
 
-use crate::consts::{ERR, TIMO, END};
-use libc::c_long;
+use crate::consts::ERR;
 #[cfg(target_os = "windows")]
 use crate::consts::visa::*;
+#[cfg(target_os = "windows")]
+use crate::consts::{END, TIMO};
+use libc::c_long;
 
 #[cfg(not(target_os = "windows"))]
 use crate::ffi::{ThreadIbcntl, ThreadIberr, ThreadIbsta};
@@ -152,7 +154,7 @@ pub(crate) fn check_ok(ctx: &'static str) -> Result<()> {
 #[cfg(target_os = "windows")]
 pub(crate) fn update_status_from_visa(status: i32, cnt: u32) {
     let mut st = 0;
-    
+
     // Simple mapping: VISA Error < 0 implies failure
     if status < VI_SUCCESS {
         st |= ERR;
@@ -167,17 +169,17 @@ pub(crate) fn update_status_from_visa(status: i32, cnt: u32) {
         // Success
         set_iberr(0);
         if status == VI_SUCCESS_TERM_CHAR || status == VI_SUCCESS {
-             // If VI_SUCCESS_MAX_CNT is NOT set, implies end of transmission usually?
-             // Actually, VISA is tricky.
-             // VI_SUCCESS_TERM_CHAR -> END
-             // VI_SUCCESS -> END (often, if EOI enabled)
-             // VI_SUCCESS_MAX_CNT -> Not END (buffer full)
-             if status != VI_SUCCESS_MAX_CNT {
-                 st |= END;
-             }
+            // If VI_SUCCESS_MAX_CNT is NOT set, implies end of transmission usually?
+            // Actually, VISA is tricky.
+            // VI_SUCCESS_TERM_CHAR -> END
+            // VI_SUCCESS -> END (often, if EOI enabled)
+            // VI_SUCCESS_MAX_CNT -> Not END (buffer full)
+            if status != VI_SUCCESS_MAX_CNT {
+                st |= END;
+            }
         }
     }
-    
+
     set_ibsta(st);
     set_ibcntl(cnt as c_long);
 }
@@ -194,3 +196,4 @@ fn set_ibcntl(v: c_long) {
 fn set_iberr(v: i32) {
     LAST_IBERR.with(|c| *c.borrow_mut() = v);
 }
+
