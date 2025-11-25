@@ -39,20 +39,16 @@ fn main() {
     );
 }
 
-// ---------- Windows (VISA版) ----------
+// ---------- Windows (VISA64) ----------
 
 fn link_for_windows() {
-    // VISA_LIB_DIR が指定されていればそれを優先
-    // なければ 64-bit VISA のデフォルトパスを使う
     let visa_dir = env::var_os("VISA_LIB_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            // 一般的な IVI VISA パス (環境によって異なる場合あり)
             PathBuf::from(r"C:\Program Files\IVI Foundation\VISA\Win64\Lib_x64\msc")
         });
 
     println!("cargo:rustc-link-search=native={}", visa_dir.display());
-    // 64-bit の VISA import ライブラリ
     println!("cargo:rustc-link-lib=dylib=visa64");
 
     println!("cargo:warning=Linking against visa64 (VISA). Using VISA API wrapper.");
