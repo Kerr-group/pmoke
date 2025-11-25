@@ -8,6 +8,7 @@ fn main() {
     // Re-run the build script if these env vars change
     println!("cargo:rerun-if-env-changed=GPIB_LIB_DIR");
     println!("cargo:rerun-if-env-changed=NI_GPIB_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=VISA_LIB_DIR");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
@@ -18,19 +19,15 @@ fn main() {
 
     // --- Non-Windows path (Linux, macOS, *BSD, etc.) ---
 
-    // 1) Explicit override wins
     if let Some(dir) = env::var_os("GPIB_LIB_DIR") {
         link_unix(&PathBuf::from(dir), &target_os);
         return;
     }
 
-    // 2) pkg-config (best when available)
-    //    If found, it will emit all the right cargo metadata and we can exit.
     if try_pkg_config() {
         return;
     }
 
-    // 3) Heuristic search in common locations
     if let Some(dir) = find_unix_lib_dir(&target_os) {
         link_unix(&dir, &target_os);
         return;
@@ -42,34 +39,29 @@ fn main() {
     );
 }
 
-// ---------- Windows ----------
+// ---------- Windows (VISA64) ----------
 
 fn link_for_windows() {
-    // Prefer env-provided lib directory (either key).
-    // This is where gpib-32.lib usually resides (build-time).
-    if let Some(dir) = env::var_os("GPIB_LIB_DIR").or_else(|| env::var_os("NI_GPIB_LIB_DIR")) {
-        let dir = PathBuf::from(dir);
-        println!("cargo:rustc-link-search=native={}", dir.display());
-    }
-    // Link to NI-488.2 import lib. At runtime, gpib-32.dll must be in PATH or next to the exe.
-    println!("cargo:rustc-link-lib=dylib=gpib-32");
+    let visa_dir = env::var_os("VISA_LIB_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(r"C:\Program Files\IVI Foundation\VISA\Win64\Lib_x64\msc")
+        });
+
+    println!("cargo:rustc-link-search=native={}", visa_dir.display());
+    println!("cargo:rustc-link-lib=dylib=visa64");
+
+    println!("cargo:warning=Linking against visa64 (VISA). Using VISA API wrapper.");
 }
 
 // ---------- Unix-like (Linux/macOS/*BSD) ----------
-
 fn try_pkg_config() -> bool {
-    // Use pkg-config only on non-Windows targets.
-    // If "gpib" is present, pkg-config will print link search paths and link-libs itself.
-    // Return true if probe succeeded.
     pkg_config::Config::new().probe("gpib").is_ok()
 }
 
 fn link_unix(dir: &Path, target_os: &str) {
     println!("cargo:rustc-link-search=native={}", dir.display());
     println!("cargo:rustc-link-lib=dylib=gpib");
-
-    // Embed RPATH on ELF platforms so the loader can find libgpib.so at runtime.
-    // Skip on macOS: prefer using install_name / rpath via other means if necessary.
     if target_os != "macos" {
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
     }
@@ -79,7 +71,6 @@ fn find_unix_lib_dir(target_os: &str) -> Option<PathBuf> {
     let mut candidates = default_unix_candidates(target_os);
     add_nix_candidates(&mut candidates);
 
-    // Deduplicate to avoid redundant filesystem checks
     let mut seen = HashSet::new();
     candidates.retain(|p| seen.insert(p.clone()));
 
