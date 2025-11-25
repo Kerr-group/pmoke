@@ -36,6 +36,8 @@ This tool is intended for research use in laboratories performing MOKE measureme
 
 - linux-gpib (for GPIB communication)
 
+---
+
 ## 📦 Installation
 
 ```sh
