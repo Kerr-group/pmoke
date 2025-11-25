@@ -22,16 +22,32 @@ This tool is intended for research use in laboratories performing MOKE measureme
 
 ---
 
+## ⛓️ Dependencies
+
+- Rust (latest stable version recommended)
+
+### Windows
+
+- NI-VISA runtime (for GPIB/TCPIP/USB instrument communication)
+- NI-488.2 driver (for GPIB communication)
+- Visual C++ Build Tools (for compiling Rust dependencies)
+
+### Linux
+
+- linux-gpib (for GPIB communication)
+
 ## 📦 Installation
 
 ```sh
 cd pmoke
 cargo install --path .
 
-# For MacOS users
+# Without instrument drivers
 cd pmoke
 cargo install --path . --no-default-features
 ```
+
+---
 
 ## 🧭 Usage
 
@@ -63,6 +79,8 @@ Options:
   -h, --help           Print help
   -V, --version        Print version
 ```
+
+---
 
 ## ⚙ Example config.toml
 
@@ -128,6 +146,8 @@ use_sensor_ch = 1        # Supports only one sensor channel
 kerr_type     = "standard"  # "standard" or "harmonics"
 factor        = 1
 ```
+
+---
 
 ## 📘 Notes
 
