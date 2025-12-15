@@ -81,7 +81,7 @@ pub fn run_fit_ref_core(cfg: &Config, t: &[f64], ref_data: &[f64]) -> Result<Ref
     let fft_t_start = cfg.reference.fft_window.start;
     let fft_t_end = cfg.reference.fft_window.end;
 
-    let (idx_start, idx_end) = get_range_indices(t, fft_t_start, fft_t_end);
+    let (idx_start, idx_end) = get_range_indices(t, fft_t_start, fft_t_end)?;
 
     let fft_t = &t[idx_start..idx_end];
     let fft_ref_data = &ref_data[idx_start..idx_end];
@@ -143,18 +143,18 @@ fn fit_ref(t: &[f64], ref_data: &[f64], params: RefFitParams) -> Result<RefFitPa
     Ok(results)
 }
 
-fn get_range_indices(t: &[f64], start: f64, end: f64) -> (usize, usize) {
-    let idx_start = t.iter().position(|&ti| ti >= start).unwrap_or(0);
-    let idx_end = t.iter().position(|&ti| ti > end).unwrap_or(t.len());
+fn get_range_indices(t: &[f64], start: f64, end: f64) -> Result<(usize, usize)> {
+    let idx_start = t.partition_point(|&x| x < start);
+    let idx_end = t.partition_point(|&x| x <= end);
 
     if idx_start >= idx_end {
-        panic!(
-            "Invalid range: start index {} is not less than end index {}",
-            idx_start, idx_end
+        bail!(
+            "Invalid range: start ({}) must be less than end ({})",
+            idx_start,
+            idx_end
         );
     }
-
-    (idx_start, idx_end)
+    Ok((idx_start, idx_end))
 }
 
 fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Result<()> {
@@ -172,14 +172,14 @@ fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Resu
     }
 
     let t_period = 1.0 / f;
-    let t_start_plot = 0.0;
-    let t_end_plot = 3.0 * t_period;
+    let t_start_data = t.first().copied().unwrap_or(0.0);
+    let t_start_plot = t_start_data;
+    let t_end_plot = t_start_data + 3.0 * t_period;
 
-    let (idx_start, idx_end) = get_range_indices(t, t_start_plot, t_end_plot);
+    let (idx_start, idx_end) = get_range_indices(t, t_start_plot, t_end_plot)?;
 
     let t_plot = &t[idx_start..idx_end];
     let ref_plot = &ref_data[idx_start..idx_end];
-    // -------------------------
 
     let fit_plot: Vec<f64> = t_plot
         .iter()
