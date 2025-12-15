@@ -13,11 +13,11 @@ use anyhow::{Context, Result, anyhow, bail};
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
-    let _ = get_ref_fit_params(cfg, &t)?;
+    let _ = run_fit_ref(cfg, &t)?;
     Ok(())
 }
 
-pub fn get_ref_fit_params(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
+pub fn run_fit_ref(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
     let ref_ch = extract_single_reference_ch(cfg)?;
 
     let channels = build_channel_list(cfg)?;
@@ -49,14 +49,18 @@ pub fn get_ref_fit_params(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
         elapsed_read
     );
 
-    let results = ReferenceFitter {}
-        .fit(t, &ref_data)
-        .context("failed to fit reference signal")?;
+    let results = fit_ref(t, &ref_data).context("failed to fit reference signal")?;
 
     Ok(results)
 }
 
-pub fn run_reference(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
+pub fn run_fit_ref_core(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
+    let results = fit_ref(t, ref_data).context("failed to fit reference signal")?;
+    plot_fit_results(t, ref_data, &results).context("failed to plot reference signal")?;
+    Ok(results)
+}
+
+fn fit_ref(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
     if t.len() != ref_data.len() {
         bail!(
             "time length ({}) and reference length ({}) differ",
@@ -74,7 +78,7 @@ pub fn run_reference(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
         .fit(t, ref_data)
         .context("failed to fit reference signal")?;
 
-    plot_fit_results(t, ref_data, &results).context("failed to plot reference signal")?;
+    // plot_fit_results(t, ref_data, &results).context("failed to plot reference signal")?;
 
     Ok(results)
 }
@@ -99,7 +103,7 @@ fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Resu
 
     let idx_start = t.iter().position(|&ti| ti >= t_start_plot).unwrap_or(0);
 
-    let idx_end = t.iter().position(|&ti| ti > t_end_plot).unwrap_or(t.len()); // <--- t.len() - 1 から変更
+    let idx_end = t.iter().position(|&ti| ti > t_end_plot).unwrap_or(t.len());
 
     if idx_start >= idx_end {
         println!("(Info) No data in the specified plot time range.");
