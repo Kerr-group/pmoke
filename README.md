@@ -25,6 +25,13 @@ This tool is intended for research use in laboratories performing MOKE measureme
 ## ⛓️ Dependencies
 
 - Rust (latest stable version recommended)
+- Python
+- Python packages:
+  - numpy
+  - scipy
+  - matplotlib
+  - lmfit
+  - gsplot
 
 ### Windows
 
@@ -135,17 +142,22 @@ unit_out = "V"
 bg_window_before = { start = -5e-3, end = -0.1e-3 }
 bg_window_after  = { start = 4.2e-3, end = 15e-3 }
 
+[reference]
+fft_window = { start = 0e-3, end = 5e-3 }
+stride_samples = 100_000
+window_samples = 1_000
+
 [lockin]
 workers = 4
-filter_length_samples = 20
-stride_samples = 2000
+filter_length_samples = 1
+stride_samples = 1_000
 
 [phase]
 use_signal_ch = [3,4]
 
 [kerr]
-use_sensor_ch = 1        # Supports only one sensor channel
-kerr_type     = "standard"  # "standard" or "harmonics"
+use_sensor_ch = 1            # Supports only one sensor channel
+kerr_type     = "harmonics"  # "standard" or "harmonics"
 factor        = 1
 ```
 
