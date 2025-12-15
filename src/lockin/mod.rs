@@ -10,8 +10,8 @@ pub mod time;
 
 use crate::config::Config;
 use crate::constants::{FETCHED_FNAME, HARMONICS, LI_HEADER, LI_RESULTS_NAME};
-use crate::lockin::reference::fit::RefFitParams;
-use crate::lockin::reference::run_reference;
+use crate::lockin::reference::ref_analysis::RefFitParams;
+use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
 use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
@@ -68,7 +68,7 @@ pub fn run_li(
     let signal_data: Vec<Vec<f64>> = signal_idx.iter().map(|&idx| data[idx].clone()).collect();
 
     // Reference analysis
-    let ref_fit_params = run_reference(t, &ref_data)?;
+    let ref_fit_params = run_fit_ref_core(cfg, t, &ref_data)?;
     drop(ref_data);
 
     // Sensor analysis

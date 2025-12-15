@@ -4,7 +4,7 @@ pub mod sensor_raw_plot;
 
 use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
-use crate::lockin::reference::get_ref_fit_params;
+use crate::lockin::reference::run_fit_ref;
 use crate::lockin::resolve::sensor_column_indices;
 use crate::lockin::stride::{li_stride_1d, li_stride_2d};
 use crate::lockin::time::time_builder;
@@ -19,7 +19,7 @@ pub struct SensorMeta<'a> {
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
-    let ref_fit_params = get_ref_fit_params(cfg, &t)?;
+    let ref_fit_params = run_fit_ref(cfg, &t)?;
 
     let (sensor_ch, col_idx) = sensor_column_indices(cfg)?;
     let t0 = std::time::Instant::now();

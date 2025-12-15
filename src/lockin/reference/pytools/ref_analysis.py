@@ -1,5 +1,6 @@
-import numpy as np
 import lmfit
+import numpy as np
+from numpy.typing import NDArray
 from scipy.signal import windows
 
 
@@ -12,7 +13,7 @@ class PreciseFFT:
     5) Compute the DC component
     """
 
-    def __init__(self, time, y, pad_factor=5):
+    def __init__(self, time: NDArray, y: NDArray, pad_factor: int = 5):
         self.time = time
         self.y = y
         self.pad_factor = pad_factor
@@ -65,7 +66,7 @@ class PreciseFFT:
         phase_est = np.arctan2(im_interp, re_interp)
         return peak_pos, amp_est, phase_est
 
-    def quad_interp(self, target_omega):
+    def quad_interp(self, target_omega: float):
         """Refine peak around target angular frequency."""
         f_target = target_omega / (2 * np.pi)
         idx = np.argmin(np.abs(self.freq - f_target))
@@ -83,7 +84,7 @@ class PreciseFFT:
         self.amp = 2 * amp_est / win_sum
         self.phase = phase_est
 
-    def get_target_freq_component(self, target_omega):
+    def get_target_freq_component(self, target_omega: float):
         """Return amplitude and phase at the target frequency."""
         self.quad_interp(target_omega)
         return self.amp, self.phase
@@ -114,11 +115,11 @@ class PreciseFFT:
         return omega, amp
 
 
-class ReferenceFitter:
+class ReferenceFFT:
     def __init__(self):
         pass
 
-    def _guess_from_fft(self, t, y, pad_factor: int = 3):
+    def fft(self, t: NDArray, y: NDArray, pad_factor: int = 3):
         fft = PreciseFFT(t, y, pad_factor=pad_factor)
         omega, fft_data = fft.get_data()
         freq = omega / (2 * np.pi)
@@ -132,15 +133,27 @@ class ReferenceFitter:
 
         omega_tref = -(theta_ref + np.pi / 2)
 
-        return f_ref, A_ref, omega_tref
+        return {
+            "f_ref": f_ref,
+            "A_ref": A_ref,
+            "omega_tref": omega_tref,
+        }
 
-    def fit(self, t, y):
+
+class ReferenceFitter:
+    def __init__(self):
+        pass
+
+    def fit(
+        self,
+        t: NDArray,
+        y: NDArray,
+        f_ref: float,
+        A_ref: float,
+        omega_tref: float,
+    ):
         t = np.asarray(t)
         y = np.asarray(y)
-
-        f_ref, A_ref, omega_tref = self._guess_from_fft(t, y, pad_factor=3)
-
-        print(f"❔ Initial guess: f_ref={f_ref * 1e-6:.3f} MHz, A_ref={A_ref:.3f} V, omega_tref={omega_tref:.3f} rad")
 
         def ref_model(t, A_ref, df, omega_tref):
             return A_ref * np.sin(2 * np.pi * (f_ref + df) * t - omega_tref)
@@ -149,9 +162,9 @@ class ReferenceFitter:
         params = model.make_params()
         params["A_ref"].set(value=A_ref, min=A_ref * 0.5, max=A_ref * 2.0)
         params["df"].set(value=0.0, min=-100, max=100)
-        params["omega_tref"].set(value=omega_tref,
-                                 min=omega_tref - np.pi,
-                                 max=omega_tref + np.pi)
+        params["omega_tref"].set(
+            value=omega_tref, min=omega_tref - np.pi, max=omega_tref + np.pi
+        )
 
         result = model.fit(y, t=t, params=params, method="least_squares")
 
@@ -164,7 +177,10 @@ class ReferenceFitter:
         omega_tref_fit = float(p["omega_tref"].value)
         f_ref_fit = f_ref + df
 
-        print(f"✅ Fitted: f_ref={f_ref_fit*1e-6:.3f} MHz, A_ref={A_ref_fit:.3f} V, omega_tref={omega_tref_fit:.3f} rad")
+        print("✅ Reference Signal Fitted")
+        print(f"    Frequency : {f_ref_fit * 1e-6 :>10.8f} MHz")
+        print(f"    Amplitude : {A_ref_fit      :>10.8f} V")
+        print(f"    Phase     : {omega_tref_fit :>10.8f} rad")
 
         return {
             "f_ref": f_ref_fit,

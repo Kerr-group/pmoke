@@ -12,6 +12,7 @@ pub struct Config {
     pub channels: Vec<Channel>,
 
     pub pulse: Pulse,
+    pub reference: Reference,
     pub lockin: Lockin,
     pub phase: Phase,
     pub kerr: Kerr,
@@ -92,6 +93,13 @@ pub struct Channel {
 pub struct Pulse {
     pub bg_window_before: Window,
     pub bg_window_after: Window,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Reference {
+    pub fft_window: Window,
+    pub stride_samples: usize,
+    pub window_samples: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
