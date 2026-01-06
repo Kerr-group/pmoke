@@ -40,7 +40,7 @@ class KerrHarmonicsAnalyser:
         li6_in, li6_out = ys[10], ys[11]
 
         x0 = self.get_modulation_depth(li2_in, li4_in, li6_in)
-        mean_x0 = float(np.mean(x0))
+        mean_x0 = float(np.nanmean(x0))
 
         kerr = self.get_kerr(mean_x0, li2_in, li3_in, li4_in)
         kerr = kerr * factor
