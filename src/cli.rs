@@ -5,7 +5,7 @@ use clap_complete::Shell;
 #[derive(Parser, Debug)]
 #[command(
     name = "pMOKE",
-    version = "0.1.4",
+    version = "0.1.5",
     author = "Soichiro Yamane",
     about = "A CLI tool to conduct pulsed MOKE",
     long_about = None
