@@ -154,6 +154,7 @@ stride_samples = 1_000
 
 [phase]
 use_signal_ch = [3,4]
+m_omega_t0_offset = ["0", "0", "0", "0", "0", "0"]
 
 [kerr]
 use_sensor_ch = 1            # Supports only one sensor channel
