@@ -68,7 +68,7 @@ pub fn run_phase_analysis(
     println!("🔄 Running phase analysis for channels {:?}...", ch);
     let mut rotated_results: Vec<Vec<Vec<f64>>> = Vec::new();
     for (ch_i, li_result) in ch.iter().zip(li_results.iter()) {
-        let rotated_result = phase_analysis(li_result)?;
+        let rotated_result = phase_analysis(cfg, li_result)?;
         let li_rotated_name = LI_ROTATED_NAME;
         let fname = format!("{}_ch{}.csv", li_rotated_name, ch_i);
         let headers = get_li_rotated_headers(cfg)?;
@@ -84,7 +84,7 @@ pub fn run_phase_analysis(
     Ok(rotated_results)
 }
 
-pub fn phase_analysis(li_result: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
+pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
     let pairs: Vec<_> = li_result.chunks_exact(2).collect();
 
     let [
@@ -133,12 +133,32 @@ pub fn phase_analysis(li_result: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
         .map(|(y, x)| y.atan2(*x))
         .collect();
 
-    let m_omega_t0_1: Vec<f64> = theta_1.iter().map(|&theta| theta - PI).collect();
-    let m_omega_t0_2: Vec<f64> = theta_2.iter().map(|&theta| theta - PI / 2.0).collect();
-    let m_omega_t0_3: Vec<f64> = theta_3.iter().map(|&theta| theta - PI).collect();
-    let m_omega_t0_4: Vec<f64> = theta_4.iter().map(|&theta| theta - PI / 2.0).collect();
-    let m_omega_t0_5: Vec<f64> = theta_5.iter().map(|&theta| theta - PI).collect();
-    let m_omega_t0_6: Vec<f64> = theta_6.iter().map(|&theta| theta - PI / 2.0).collect();
+    let offset_phases = &cfg.phase.m_omega_t0_offset;
+
+    let m_omega_t0_1: Vec<f64> = theta_1
+        .iter()
+        .map(|&theta| theta - PI + offset_phases[0])
+        .collect();
+    let m_omega_t0_2: Vec<f64> = theta_2
+        .iter()
+        .map(|&theta| theta - PI / 2.0 + offset_phases[1])
+        .collect();
+    let m_omega_t0_3: Vec<f64> = theta_3
+        .iter()
+        .map(|&theta| theta - PI + offset_phases[2])
+        .collect();
+    let m_omega_t0_4: Vec<f64> = theta_4
+        .iter()
+        .map(|&theta| theta - PI / 2.0 + offset_phases[3])
+        .collect();
+    let m_omega_t0_5: Vec<f64> = theta_5
+        .iter()
+        .map(|&theta| theta - PI + offset_phases[4])
+        .collect();
+    let m_omega_t0_6: Vec<f64> = theta_6
+        .iter()
+        .map(|&theta| theta - PI / 2.0 + offset_phases[5])
+        .collect();
 
     let omega_t0: f64 = OT0Analyser {}
         .analyse(

@@ -1,6 +1,43 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::{collections::BTreeSet, fs, path::Path};
+
+fn eval_f64_expr(s: &str) -> Result<f64> {
+    let expr =
+        meval::Expr::from_str(s.trim()).map_err(|e| anyhow!("invalid expression '{s}': {e}"))?;
+
+    let mut ctx = meval::Context::new();
+    ctx.var("pi", std::f64::consts::PI);
+
+    expr.eval_with_context(ctx)
+        .map_err(|e| anyhow!("failed to evaluate '{s}': {e}"))
+}
+
+fn de_vec_f64_or_expr<'de, D>(de: D) -> std::result::Result<Vec<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrExpr {
+        Num(f64),
+        Expr(String),
+    }
+
+    let xs = Vec::<NumOrExpr>::deserialize(de)?;
+
+    let mut out = Vec::with_capacity(xs.len());
+    for x in xs {
+        let v = match x {
+            NumOrExpr::Num(v) => v,
+            NumOrExpr::Expr(s) => eval_f64_expr(&s).map_err(serde::de::Error::custom)?,
+        };
+        out.push(v);
+    }
+
+    Ok(out)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -118,6 +155,8 @@ pub struct Lockin {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Phase {
     pub use_signal_ch: Vec<u8>,
+    #[serde(default, deserialize_with = "de_vec_f64_or_expr")]
+    pub m_omega_t0_offset: Vec<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -166,6 +205,13 @@ impl Config {
             if !seen.insert(ch.index) {
                 bail!("duplicate channel index: {}", ch.index);
             }
+        }
+
+        if self.phase.m_omega_t0_offset.len() != 6 {
+            bail!(
+                "phase.m_omega_t0_offset must have length 6 (got {})",
+                self.phase.m_omega_t0_offset.len()
+            );
         }
 
         let kerr_ch = self.kerr.use_sensor_ch;
