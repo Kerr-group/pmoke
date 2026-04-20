@@ -120,12 +120,9 @@ pub fn li_process(
 ) -> Result<Vec<Vec<Vec<f64>>>> {
     let f_ref: f64 = ref_fit_params.f_ref;
     let omega_tref: f64 = ref_fit_params.omega_tref;
-    let fil_length: usize = cfg.lockin.filter_length_samples;
-    let stride: usize = cfg.lockin.stride_samples;
     let workers: usize = cfg.lockin.workers;
 
     let harmonics = HARMONICS;
-    let ref_types = [lockin_core::RefType::Sin, lockin_core::RefType::Cos];
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
@@ -139,22 +136,20 @@ pub fn li_process(
 
     for signal in signal_data.iter() {
         let li_processor =
-            lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, fil_length, stride)?;
+            lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, &cfg.lockin)?;
 
-        // [ (1,Sin), (1,Cos), (2,Sin), ... ]
-        let mut args_list = Vec::new();
-        for h in harmonics {
-            for &r in &ref_types {
-                args_list.push((h, r));
-            }
-        }
-
-        let results_list: Vec<Vec<f64>> = pool.install(|| {
-            args_list
+        let harmonic_results: Vec<(Vec<f64>, Vec<f64>)> = pool.install(|| {
+            harmonics
                 .par_iter()
-                .map(|&(harmonic, ref_type)| li_processor.compute_lockin(harmonic, ref_type))
-                .collect() // [LI1x, LI1y, LI2x, ...]
+                .map(|&harmonic| li_processor.compute_harmonic(harmonic))
+                .collect()
         });
+
+        let mut results_list = Vec::with_capacity(harmonic_results.len() * 2);
+        for (li_x, li_y) in harmonic_results {
+            results_list.push(li_x);
+            results_list.push(li_y);
+        }
 
         all_signals_results.push(results_list);
     }

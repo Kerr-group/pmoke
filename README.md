@@ -149,8 +149,13 @@ window_samples = 1_000
 
 [lockin]
 workers = 4
-filter_length_samples = 1
 stride_samples = 1_000
+demodulation = "complex"
+lpf_kind = "fir_zero_phase"
+lpf_half_window_cycles = 1.0
+lpf_stopband_atten_db = 60.0
+# deprecated:
+# filter_length_samples = 1
 
 [phase]
 use_signal_ch = [3,4]
@@ -169,3 +174,12 @@ factor        = 1
 `config.toml` defines all instrument connections, channel roles, timing settings, lock-in parameters, and Kerr-analysis settings.
 
 A minimal configuration is enough to run `pmoke process` or `pmoke auto`.
+
+`lockin.lpf_kind` selects the low-pass filter applied after complex demodulation.
+
+- `fir_zero_phase`: Default. Applies a symmetric FIR low-pass filter to the complex baseband and exports the result as legacy `LIx/LIy`. This is the recommended mode for better stopband rejection and improved S/N without changing the downstream `omega_t0` fitting flow.
+- `boxcar_legacy`: Keeps the previous moving-average / boxcar-style lock-in behavior for comparison with older results.
+
+`lpf_half_window_cycles = 1.0` corresponds to the former `filter_length_samples = 1` setting. It means the half-window is one reference cycle, so the effective lock-in window spans about two reference cycles.
+
+For backward compatibility, configs that only set the deprecated `filter_length_samples` field keep using `boxcar_legacy` unless `lpf_kind` is explicitly set.
