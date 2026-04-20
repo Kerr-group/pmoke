@@ -19,7 +19,7 @@ pub fn get_kerr_headers(cfg: &Config) -> Result<Vec<String>> {
         })
         .collect();
 
-    let use_signal_ch = &cfg.phase.use_signal_ch;
+    let use_signal_ch = cfg.phase_signal_ch();
     let kerr_headers: Vec<String> = use_signal_ch
         .iter()
         .map(|ch| format!("Ch{} {}", ch, KERR_HEADER))

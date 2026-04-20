@@ -35,7 +35,7 @@ pub fn run_analyze(cfg: &Config, t: Vec<f64>, data: Vec<Vec<f64>>) -> Result<()>
     drop(t);
 
     // run phase analysis here
-    let ch = &cfg.phase.use_signal_ch;
+    let ch = cfg.phase_signal_ch();
 
     if ch.is_empty() {
         println!("⚠️ No channels specified for phase analysis. Skipping phase analysis.");

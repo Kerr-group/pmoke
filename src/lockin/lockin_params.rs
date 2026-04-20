@@ -21,9 +21,9 @@ pub struct LockinParams {
 }
 
 impl LockinParams {
-    fn init(dt: f64, length: usize, f_ref: f64, lockin: &Lockin) -> Result<Self> {
+    fn init(dt: f64, length: usize, f_ref: f64, lockin: &Lockin) -> Self {
         let stride = lockin.stride_samples;
-        let half_window_cycles = lockin.half_window_cycles()?;
+        let half_window_cycles = lockin.lpf_half_window_cycles;
         let omega = 2.0 * PI * f_ref;
         let t_half = half_window_cycles / f_ref;
         let n_half = ((t_half / dt).floor() as usize).max(1);
@@ -31,19 +31,19 @@ impl LockinParams {
         let i_start = 2 + (n_half + 1) / stride;
         let i_end = n_int.saturating_sub(i_start);
 
-        Ok(Self {
+        Self {
             dt,
             stride,
             length,
             f_ref,
-            lpf_kind: lockin.effective_lpf_kind(),
+            lpf_kind: lockin.lpf_kind,
             lpf_stopband_atten_db: lockin.lpf_stopband_atten_db,
             omega,
             t_half,
             n_half,
             i_start,
             i_end,
-        })
+        }
     }
 
     pub fn from_config(cfg: &Config, f_ref: f64) -> Result<Self> {
@@ -55,7 +55,7 @@ impl LockinParams {
             .oscilloscope
             .memory_depth;
 
-        Self::init(dt, length, f_ref, &cfg.lockin)
+        Ok(Self::init(dt, length, f_ref, &cfg.lockin))
     }
 
     pub fn from_slice(t: &[f64], f_ref: f64, lockin: &Lockin) -> Result<Self> {
@@ -65,6 +65,6 @@ impl LockinParams {
         let dt = t[1] - t[0];
         let length = t.len();
 
-        Self::init(dt, length, f_ref, lockin)
+        Ok(Self::init(dt, length, f_ref, lockin))
     }
 }

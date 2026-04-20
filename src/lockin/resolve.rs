@@ -26,17 +26,10 @@ pub fn sensor_column_indices(cfg: &Config) -> Result<(Vec<u8>, Vec<usize>)> {
 }
 
 pub fn reference_column_index(cfg: &Config) -> Result<(u8, usize)> {
-    let ref_chs = &cfg.roles.reference_ch;
-    if ref_chs.is_empty() {
+    let ref_ch = cfg.roles.reference_ch;
+    if ref_ch == 0 {
         bail!("reference channel is not specified in the configuration");
     }
-    if ref_chs.len() != 1 {
-        bail!(
-            "expected exactly one reference channel, but found {}",
-            ref_chs.len()
-        );
-    }
-    let ref_ch = ref_chs[0];
 
     let channels = build_channel_list(cfg)?;
     let col_idx = channels.iter().position(|c| *c == ref_ch).ok_or_else(|| {

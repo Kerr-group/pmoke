@@ -194,9 +194,9 @@ fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Resu
 }
 
 fn extract_single_reference_ch(cfg: &Config) -> Result<u8> {
-    match cfg.roles.reference_ch.len() {
-        0 => bail!("reference channel is not specified in the configuration"),
-        1 => Ok(cfg.roles.reference_ch[0]),
-        _ => bail!("multiple reference channels are not supported"),
+    let ref_ch = cfg.roles.reference_ch;
+    if ref_ch == 0 {
+        bail!("reference channel is not specified in the configuration");
     }
+    Ok(ref_ch)
 }

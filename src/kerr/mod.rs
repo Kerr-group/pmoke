@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use std::time::Instant;
 
 pub fn run(cfg: &Config) -> Result<()> {
-    let ch = &cfg.phase.use_signal_ch;
+    let ch = cfg.phase_signal_ch();
 
     if ch.is_empty() {
         println!("⚠️ No channels specified for phase analysis. Skipping phase analysis.");
@@ -81,7 +81,7 @@ pub fn run_kerr_analysis(
     })?;
     let concat_label = format!("{} ({})", label, unit);
 
-    let ch = &cfg.phase.use_signal_ch;
+    let ch = cfg.phase_signal_ch();
 
     let kerr_type = &cfg.kerr.kerr_type;
 

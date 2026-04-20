@@ -15,7 +15,7 @@ use std::f64::consts::PI;
 use std::time::Instant;
 
 pub fn run(cfg: &Config) -> Result<()> {
-    let ch = &cfg.phase.use_signal_ch;
+    let ch = cfg.phase_signal_ch();
 
     if ch.is_empty() {
         println!("⚠️ No channels specified for phase analysis. Skipping phase analysis.");
@@ -63,7 +63,7 @@ pub fn run_phase_analysis(
         .iter()
         .map(|s| s.trim().replace("(V)", ""))
         .collect();
-    let ch = &cfg.phase.use_signal_ch;
+    let ch = cfg.phase_signal_ch();
 
     println!("🔄 Running phase analysis for channels {:?}...", ch);
     let mut rotated_results: Vec<Vec<Vec<f64>>> = Vec::new();

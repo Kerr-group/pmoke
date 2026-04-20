@@ -10,8 +10,10 @@ mod phase;
 mod utils;
 
 use anyhow::Result;
+use anyhow::bail;
 use clap::Parser;
 use cli::{Cli, Command};
+use config::{ConfigLoad, ValidationTarget};
 
 fn main() -> Result<()> {
     let args = Cli::parse();
@@ -21,42 +23,112 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let cfg = config::from_path(&args.config)?;
+    let load = config::load_from_path(&args.config);
+
+    match args.command.as_ref() {
+        Some(Command::Show) | None => return commands::show::show(&load),
+        _ => {}
+    }
+
+    if matches!(&load, ConfigLoad::Diagnostics(_)) {
+        commands::show::show(&load)?;
+        bail!("configuration is not runnable");
+    }
+
+    let (cfg, warnings) = load.into_ready()?;
+    commands::show::print_warnings(&warnings);
 
     #[cfg(feature = "hw")]
     {
-        match args.command {
-            Some(Command::Show) => commands::show::show(&cfg),
-            Some(Command::Single) => commands::single::single(&cfg),
-            Some(Command::Trigger) => commands::trigger::trigger(&cfg),
-            Some(Command::Autoshot) => commands::autoshot::autoshot(&cfg),
-            Some(Command::Fetch) => commands::fetch::fetch(&cfg),
-            Some(Command::Automeasure) => commands::automeasure::automeasure(&cfg),
-            Some(Command::Reference) => commands::reference::reference(&cfg),
-            Some(Command::Sensor) => commands::sensor::sensor(&cfg),
-            Some(Command::Li) => commands::li::li(&cfg),
-            Some(Command::Phase) => commands::phase::phase(&cfg),
-            Some(Command::Kerr) => commands::kerr::kerr(&cfg),
-            Some(Command::Analyze) => commands::analyze::analyze(&cfg),
-            Some(Command::Process) => commands::process::process(&cfg),
-            Some(Command::Auto) => commands::auto::auto(&cfg),
+        match args.command.as_ref() {
+            Some(Command::Show) => unreachable!(),
+            Some(Command::Single) => {
+                config::validate_for_target(&cfg, ValidationTarget::Single)?;
+                commands::single::single(&cfg)
+            }
+            Some(Command::Trigger) => {
+                config::validate_for_target(&cfg, ValidationTarget::Trigger)?;
+                commands::trigger::trigger(&cfg)
+            }
+            Some(Command::Autoshot) => {
+                config::validate_for_target(&cfg, ValidationTarget::Autoshot)?;
+                commands::autoshot::autoshot(&cfg)
+            }
+            Some(Command::Fetch) => {
+                config::validate_for_target(&cfg, ValidationTarget::Fetch)?;
+                commands::fetch::fetch(&cfg)
+            }
+            Some(Command::Automeasure) => {
+                config::validate_for_target(&cfg, ValidationTarget::Automeasure)?;
+                commands::automeasure::automeasure(&cfg)
+            }
+            Some(Command::Reference) => {
+                config::validate_for_target(&cfg, ValidationTarget::Reference)?;
+                commands::reference::reference(&cfg)
+            }
+            Some(Command::Sensor) => {
+                config::validate_for_target(&cfg, ValidationTarget::Sensor)?;
+                commands::sensor::sensor(&cfg)
+            }
+            Some(Command::Li) => {
+                config::validate_for_target(&cfg, ValidationTarget::Li)?;
+                commands::li::li(&cfg)
+            }
+            Some(Command::Phase) => {
+                config::validate_for_target(&cfg, ValidationTarget::Phase)?;
+                commands::phase::phase(&cfg)
+            }
+            Some(Command::Kerr) => {
+                config::validate_for_target(&cfg, ValidationTarget::Kerr)?;
+                commands::kerr::kerr(&cfg)
+            }
+            Some(Command::Analyze) => {
+                config::validate_for_target(&cfg, ValidationTarget::Analyze)?;
+                commands::analyze::analyze(&cfg)
+            }
+            Some(Command::Process) => {
+                config::validate_for_target(&cfg, ValidationTarget::Process)?;
+                commands::process::process(&cfg)
+            }
+            Some(Command::Auto) => {
+                config::validate_for_target(&cfg, ValidationTarget::Auto)?;
+                commands::auto::auto(&cfg)
+            }
             Some(Command::Completions { .. }) => Ok(()),
-            None => commands::show::show(&cfg),
+            None => unreachable!(),
         }
     }
 
     #[cfg(not(feature = "hw"))]
     {
-        match args.command {
-            Some(Command::Show) => commands::show::show(&cfg),
-            Some(Command::Reference) => commands::reference::reference(&cfg),
-            Some(Command::Sensor) => commands::sensor::sensor(&cfg),
-            Some(Command::Li) => commands::li::li(&cfg),
-            Some(Command::Phase) => commands::phase::phase(&cfg),
-            Some(Command::Kerr) => commands::kerr::kerr(&cfg),
-            Some(Command::Analyze) => commands::analyze::analyze(&cfg),
+        match args.command.as_ref() {
+            Some(Command::Show) => unreachable!(),
+            Some(Command::Reference) => {
+                config::validate_for_target(&cfg, ValidationTarget::Reference)?;
+                commands::reference::reference(&cfg)
+            }
+            Some(Command::Sensor) => {
+                config::validate_for_target(&cfg, ValidationTarget::Sensor)?;
+                commands::sensor::sensor(&cfg)
+            }
+            Some(Command::Li) => {
+                config::validate_for_target(&cfg, ValidationTarget::Li)?;
+                commands::li::li(&cfg)
+            }
+            Some(Command::Phase) => {
+                config::validate_for_target(&cfg, ValidationTarget::Phase)?;
+                commands::phase::phase(&cfg)
+            }
+            Some(Command::Kerr) => {
+                config::validate_for_target(&cfg, ValidationTarget::Kerr)?;
+                commands::kerr::kerr(&cfg)
+            }
+            Some(Command::Analyze) => {
+                config::validate_for_target(&cfg, ValidationTarget::Analyze)?;
+                commands::analyze::analyze(&cfg)
+            }
             Some(Command::Completions { .. }) => Ok(()),
-            None => commands::show::show(&cfg),
+            None => unreachable!(),
         }
     }
 }
