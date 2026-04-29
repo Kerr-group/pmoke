@@ -148,7 +148,13 @@ workers = 4
 stride_samples = 1_000
 lpf_kind = "fir_zero_phase"
 lpf_half_window_cycles = 1.0
+lpf_cutoff_ref_ratio = 0.05
 lpf_stopband_atten_db = 60.0
+lpf_debug_output = false
+lpf_debug_label = "trial_001"
+lpf_debug_overwrite = false
+snr_background_window = { start = -5e-3, end = -0.1e-3 }
+snr_signal_window = { start = 0e-3, end = 5e-3 }
 
 [phase]
 m_omega_t0_offset = ["0", "0", "0", "0", "0", "0"]
@@ -195,7 +201,8 @@ Legacy `version = 1` configs are still accepted. During normalization:
 
 `lockin.lpf_kind` selects the low-pass filter applied after complex demodulation.
 
-- `fir_zero_phase`: Complex-baseband FIR mode. The signal is demodulated to complex baseband, filtered by a symmetric FIR, and then exported as legacy `LIx/LIy`.
+- `fir_zero_phase`: Complex-baseband FIR mode. The signal is demodulated to complex baseband, filtered by a symmetric Kaiser-windowed FIR, and then exported as legacy `LIx/LIy`.
+- `fir_boxcar_enbw`: Comparison FIR mode. It numerically chooses the FIR cutoff so the FIR ENBW is close to the current `boxcar_legacy` discrete integration ENBW. This is not a reproduction mode for old results.
 - `boxcar_legacy`: Previous moving-average / trapezoidal-integration style lock-in, kept for comparison with older datasets.
 
 `fir_zero_phase` keeps the downstream phase-fitting flow unchanged. The `omega_t0` rotation is still handled later by the existing fitting step. The lock-in only changes how the complex baseband is formed and low-pass filtered.
@@ -208,9 +215,11 @@ The current `fir_zero_phase` path works as follows:
 4. Because the taps are symmetric around the output center, the filter is zero-phase with respect to the sampled lock-in points. There is no additional group delay to compensate in the later `omega_t0` fit.
 5. The filtered complex result `z` is exported using the legacy convention `LIx = -Im(z)` and `LIy = Re(z)`, so existing downstream phase rotation and Kerr code can stay unchanged.
 
-The FIR taps are currently designed from two quantities:
+The FIR taps are designed from these quantities:
 
 - `lpf_half_window_cycles`: Sets the half-width of the support window in reference cycles.
+- `lpf_cutoff_hz`: Optional absolute cutoff for `fir_zero_phase`.
+- `lpf_cutoff_ref_ratio`: Optional relative cutoff, evaluated as `lpf_cutoff_ref_ratio * f_ref`.
 - `lpf_stopband_atten_db`: Sets the Kaiser-window attenuation parameter used when shaping the FIR taps.
 
 The support width is determined by:
@@ -229,12 +238,17 @@ So `lpf_half_window_cycles = 1.0` means:
 
 This parameter describes the FIR support width only. It should not be interpreted as "the same setting as the old two-cycle lock-in" or as a universally safe default.
 
-The current implementation chooses a low-pass cutoff from the support width and the lock-in output rate:
+For `fir_zero_phase`, the cutoff is resolved in this order:
+
+1. Use `lpf_cutoff_hz` if specified.
+2. Otherwise use `lpf_cutoff_ref_ratio * f_ref` if specified.
+3. Otherwise use the compatibility fallback `0.5 / t_half` and print a config warning.
+
+The cutoff must remain below the lock-in output Nyquist margin:
 
 ```text
-raw_cutoff_hz = 0.5 / t_half
 output_rate = 1 / (dt * stride_samples)
-cutoff_hz = min(raw_cutoff_hz, 0.45 * output_rate)
+cutoff_hz < 0.45 * output_rate
 ```
 
 This means `stride_samples` does not only thin out the saved lock-in points. It also limits the maximum usable low-pass bandwidth, because the filtered result is only evaluated every `stride_samples` samples.
@@ -243,8 +257,42 @@ Compared with `boxcar_legacy`, `fir_zero_phase` is not expected to give numerica
 
 With the current implementation, `lpf_half_window_cycles = 1.0` and `fir_zero_phase` should be read as "an FIR supported over about two cycles", not as "legacy `filter_length_samples = 1` reproduced in FIR form". If continuity with old data matters, compare against `boxcar_legacy` first and tune from there.
 
+`fir_boxcar_enbw` is useful for migration experiments. It builds the same discrete weighting used by `boxcar_legacy` and computes that weighting's equivalent noise bandwidth:
+
+```text
+legacy_boxcar_enbw_hz = sample_rate * sum(w[n]^2) / sum(w[n])^2
+```
+
+Then it searches for a Kaiser FIR cutoff that gives a close FIR ENBW. Matching ENBW only matches white-noise variance reduction; it does not make the transient response, sidelobes, or amplitude response identical to `boxcar_legacy`.
+
+When `lpf_debug_output = true`, pmoke writes per-channel/per-harmonic files under:
+
+```text
+lockin_debug/{lpf_debug_label_or_auto}/{lpf_kind}_ch{ch}_h{m}/
+```
+
+The files are:
+
+- `metadata.csv`: effective cutoff, ENBW, tap count, output rate, and filter metadata.
+- `filter_response.csv`: FIR frequency response. For `boxcar_legacy` this file only contains the header.
+- `baseband_psd.csv`: PSD estimate from the LPF-before complex baseband in the background window. Large windows are downsampled for this diagnostic.
+- `snr_summary.csv`: S/N comparison metrics from the LPF-after lock-in output.
+
+`lpf_debug_overwrite = false` refuses to overwrite an existing debug target directory. If set to `true`, pmoke only clears directories that contain its `.pmoke_lockin_debug` marker.
+
+`snr_background_window` and `snr_signal_window` are evaluation windows only. They do not change the lock-in filtering, tap count, cutoff, or output time grid. The background window estimates noise; the signal window estimates signal amplitude. The primary comparison metric is:
+
+```text
+amp = sqrt(LIx^2 + LIy^2)
+background_amp_std = std(amp in snr_background_window)
+signal_p95_snr = p95(amp in snr_signal_window) / background_amp_std
+```
+
+Use windows that isolate a signal-free region and the signal region you actually want to compare.
+
 In practice:
 
 - Use `fir_zero_phase` when you explicitly want complex-baseband FIR filtering and are willing to re-check the resulting amplitude and phase behavior on real data.
+- Use `fir_boxcar_enbw` when you want an FIR comparison with roughly matched white-noise bandwidth to the legacy discrete boxcar.
 - Use `boxcar_legacy` when you need continuity with old results or want a direct A/B comparison during migration.
 - Treat `lpf_half_window_cycles = 1.0` as a description of support width, not as a recommended universal starting point.
