@@ -1,3 +1,4 @@
+pub mod debug;
 pub mod lockin_core;
 pub mod lockin_params;
 pub mod lockin_plot;
@@ -77,7 +78,7 @@ pub fn run_li(
     drop(sensor_data);
 
     // Lock-in processing
-    let result = li_process(cfg, t, &signal_data, ref_fit_params)?;
+    let result = li_process(cfg, t, &signal_ch, &signal_data, ref_fit_params)?;
     drop(signal_data);
 
     // Save lock-in results
@@ -115,6 +116,7 @@ pub fn run_li(
 pub fn li_process(
     cfg: &Config,
     t: &[f64],
+    signal_ch: &[u8],
     signal_data: &[Vec<f64>],
     ref_fit_params: RefFitParams,
 ) -> Result<Vec<Vec<Vec<f64>>>> {
@@ -134,21 +136,36 @@ pub fn li_process(
 
     let mut all_signals_results: Vec<Vec<Vec<f64>>> = Vec::with_capacity(signal_data.len());
 
-    for signal in signal_data.iter() {
+    for (&sig_ch, signal) in signal_ch.iter().zip(signal_data.iter()) {
         let li_processor =
             lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, &cfg.lockin)?;
+        let include_debug = cfg.lockin.lpf_debug_output;
 
-        let harmonic_results: Vec<(Vec<f64>, Vec<f64>)> = pool.install(|| {
+        let harmonic_results: Vec<lockin_core::HarmonicLockinResult> = pool.install(|| {
             harmonics
                 .par_iter()
-                .map(|&harmonic| li_processor.compute_harmonic(harmonic))
+                .map(|&harmonic| li_processor.compute_harmonic_detailed(harmonic, include_debug))
                 .collect()
         });
 
+        if include_debug {
+            let t_output = li_processor.output_times();
+            let params = li_processor.params();
+            let filter = li_processor.filter_design();
+            for (&harmonic, result) in harmonics.iter().zip(harmonic_results.iter()) {
+                debug::write_harmonic_debug(
+                    cfg, sig_ch, harmonic, params, filter, t, &t_output, result,
+                )
+                .with_context(|| {
+                    format!("failed to write lock-in debug output for ch{sig_ch} h{harmonic}")
+                })?;
+            }
+        }
+
         let mut results_list = Vec::with_capacity(harmonic_results.len() * 2);
-        for (li_x, li_y) in harmonic_results {
-            results_list.push(li_x);
-            results_list.push(li_y);
+        for result in harmonic_results {
+            results_list.push(result.li_x);
+            results_list.push(result.li_y);
         }
 
         all_signals_results.push(results_list);

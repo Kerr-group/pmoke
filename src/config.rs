@@ -154,7 +154,14 @@ pub struct Lockin {
     pub stride_samples: usize,
     pub lpf_kind: LockinLpfKind,
     pub lpf_half_window_cycles: f64,
+    pub lpf_cutoff_hz: Option<f64>,
+    pub lpf_cutoff_ref_ratio: Option<f64>,
     pub lpf_stopband_atten_db: f64,
+    pub lpf_debug_output: bool,
+    pub lpf_debug_label: Option<String>,
+    pub lpf_debug_overwrite: bool,
+    pub snr_background_window: Option<Window>,
+    pub snr_signal_window: Option<Window>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -162,6 +169,7 @@ pub struct Lockin {
 pub enum LockinLpfKind {
     FirZeroPhase,
     BoxcarLegacy,
+    FirBoxcarEnbw,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -461,8 +469,22 @@ struct LockinV1 {
     lpf_kind: Option<LockinLpfKind>,
     #[serde(default)]
     lpf_half_window_cycles: Option<f64>,
+    #[serde(default)]
+    lpf_cutoff_hz: Option<f64>,
+    #[serde(default)]
+    lpf_cutoff_ref_ratio: Option<f64>,
     #[serde(default = "default_lockin_stopband_atten_db")]
     lpf_stopband_atten_db: f64,
+    #[serde(default)]
+    lpf_debug_output: bool,
+    #[serde(default)]
+    lpf_debug_label: Option<String>,
+    #[serde(default)]
+    lpf_debug_overwrite: bool,
+    #[serde(default)]
+    snr_background_window: Option<Window>,
+    #[serde(default)]
+    snr_signal_window: Option<Window>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -473,8 +495,22 @@ struct LockinV2 {
     #[serde(default)]
     lpf_kind: Option<LockinLpfKind>,
     lpf_half_window_cycles: f64,
+    #[serde(default)]
+    lpf_cutoff_hz: Option<f64>,
+    #[serde(default)]
+    lpf_cutoff_ref_ratio: Option<f64>,
     #[serde(default = "default_lockin_stopband_atten_db")]
     lpf_stopband_atten_db: f64,
+    #[serde(default)]
+    lpf_debug_output: bool,
+    #[serde(default)]
+    lpf_debug_label: Option<String>,
+    #[serde(default)]
+    lpf_debug_overwrite: bool,
+    #[serde(default)]
+    snr_background_window: Option<Window>,
+    #[serde(default)]
+    snr_signal_window: Option<Window>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -738,7 +774,14 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
             stride_samples: raw.lockin.stride_samples,
             lpf_kind,
             lpf_half_window_cycles,
+            lpf_cutoff_hz: raw.lockin.lpf_cutoff_hz,
+            lpf_cutoff_ref_ratio: raw.lockin.lpf_cutoff_ref_ratio,
             lpf_stopband_atten_db: raw.lockin.lpf_stopband_atten_db,
+            lpf_debug_output: raw.lockin.lpf_debug_output,
+            lpf_debug_label: raw.lockin.lpf_debug_label,
+            lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
+            snr_background_window: raw.lockin.snr_background_window,
+            snr_signal_window: raw.lockin.snr_signal_window,
         },
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
@@ -783,7 +826,14 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
             stride_samples: raw.lockin.stride_samples,
             lpf_kind: raw.lockin.lpf_kind.unwrap_or(LockinLpfKind::FirZeroPhase),
             lpf_half_window_cycles: raw.lockin.lpf_half_window_cycles,
+            lpf_cutoff_hz: raw.lockin.lpf_cutoff_hz,
+            lpf_cutoff_ref_ratio: raw.lockin.lpf_cutoff_ref_ratio,
             lpf_stopband_atten_db: raw.lockin.lpf_stopband_atten_db,
+            lpf_debug_output: raw.lockin.lpf_debug_output,
+            lpf_debug_label: raw.lockin.lpf_debug_label,
+            lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
+            snr_background_window: raw.lockin.snr_background_window,
+            snr_signal_window: raw.lockin.snr_signal_window,
         },
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
@@ -869,6 +919,62 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             ),
             None,
         ));
+    }
+    if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz {
+        if cutoff_hz <= 0.0 {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin.lpf_cutoff_hz".to_string()),
+                format!("lockin.lpf_cutoff_hz must be positive (got {cutoff_hz})"),
+                None,
+            ));
+        }
+    }
+    if let Some(cutoff_ratio) = cfg.lockin.lpf_cutoff_ref_ratio {
+        if cutoff_ratio <= 0.0 {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin.lpf_cutoff_ref_ratio".to_string()),
+                format!(
+                    "lockin.lpf_cutoff_ref_ratio must be positive (got {cutoff_ratio})"
+                ),
+                None,
+            ));
+        }
+    }
+    if cfg.lockin.lpf_cutoff_hz.is_some() && cfg.lockin.lpf_cutoff_ref_ratio.is_some() {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin".to_string()),
+            "lockin.lpf_cutoff_hz and lockin.lpf_cutoff_ref_ratio are mutually exclusive",
+            None,
+        ));
+    }
+    if cfg.timebase.dt > 0.0 && cfg.lockin.stride_samples > 0 {
+        let output_rate = 1.0 / (cfg.timebase.dt * cfg.lockin.stride_samples as f64);
+        if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz {
+            if cutoff_hz >= 0.45 * output_rate {
+                errors.push(ConfigDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Some("lockin.lpf_cutoff_hz".to_string()),
+                    format!(
+                        "lockin.lpf_cutoff_hz must be < 0.45 * output_rate ({})",
+                        0.45 * output_rate
+                    ),
+                    None,
+                ));
+            }
+        }
+    }
+    if let Some(label) = &cfg.lockin.lpf_debug_label {
+        if !is_safe_debug_label(label) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin.lpf_debug_label".to_string()),
+                "lockin.lpf_debug_label must be 1-64 ASCII characters using only A-Z, a-z, 0-9, '.', '_', or '-', and must not be '.' or '..'",
+                None,
+            ));
+        }
     }
     if cfg.phase.m_omega_t0_offset.len() != 6 {
         errors.push(ConfigDiagnostic::new(
@@ -958,6 +1064,25 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     if let Some(diag) = check_win("reference.fft_window", cfg.reference.fft_window) {
         errors.push(diag);
     }
+    if let Some(window) = cfg.lockin.snr_background_window {
+        if let Some(diag) = check_win("lockin.snr_background_window", window) {
+            errors.push(diag);
+        }
+    }
+    if let Some(window) = cfg.lockin.snr_signal_window {
+        if let Some(diag) = check_win("lockin.snr_signal_window", window) {
+            errors.push(diag);
+        }
+    }
+
+    if cfg.lockin.lpf_kind == LockinLpfKind::FirZeroPhase
+        && cfg.lockin.lpf_cutoff_hz.is_none()
+        && cfg.lockin.lpf_cutoff_ref_ratio.is_none()
+    {
+        warnings.push(ConfigWarning::new(
+            "lockin.lpf_kind is fir_zero_phase but no cutoff is specified; runtime will use the compatibility fallback cutoff 0.5 / t_half",
+        ));
+    }
 
     let mut used = BTreeSet::new();
     used.extend(cfg.roles.sensor_ch.iter().copied());
@@ -975,6 +1100,16 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     cfg.channels.sort_by_key(|ch| ch.index);
 
     ValidationSummary { warnings, errors }
+}
+
+fn is_safe_debug_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 64
+        && label != "."
+        && label != ".."
+        && label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()> {
@@ -1539,5 +1674,124 @@ factor = 1
             }
             other => panic!("expected diagnostics, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn v2_fir_zero_phase_without_cutoff_warns_but_loads() {
+        let text = v2_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+        );
+
+        match load_from_str(&text) {
+            ConfigLoad::Ready { warnings, .. } => {
+                assert!(
+                    warnings
+                        .iter()
+                        .any(|warning| warning.message.contains("no cutoff is specified"))
+                );
+            }
+            other => panic!("expected ready load, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn v2_cutoff_hz_and_ratio_are_mutually_exclusive() {
+        let text = v2_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+lpf_cutoff_hz = 0.1
+lpf_cutoff_ref_ratio = 0.1
+"#,
+        );
+
+        match load_from_str(&text) {
+            ConfigLoad::Diagnostics(diag) => {
+                assert!(
+                    diag.diagnostics
+                        .iter()
+                        .any(|issue| issue.message.contains("mutually exclusive"))
+                );
+            }
+            other => panic!("expected diagnostics, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn v2_invalid_debug_label_is_diagnostic() {
+        let text = v2_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+lpf_cutoff_hz = 0.1
+lpf_debug_label = "../bad"
+"#,
+        );
+
+        match load_from_str(&text) {
+            ConfigLoad::Diagnostics(diag) => {
+                assert!(
+                    diag.diagnostics
+                        .iter()
+                        .any(|issue| issue.path.as_deref() == Some("lockin.lpf_debug_label"))
+                );
+            }
+            other => panic!("expected diagnostics, got {:?}", other),
+        }
+    }
+
+    fn v2_base_lockin(lockin: &str) -> String {
+        format!(
+            r#"
+version = 2
+
+[timebase]
+t0 = 0.0
+dt = 1.0
+
+[roles]
+sensor_ch = [1]
+reference_ch = 2
+signal_ch = [3]
+
+[[channels]]
+index = 1
+factor = 1.0
+label = "B"
+unit_out = "T"
+
+[[channels]]
+index = 2
+
+[[channels]]
+index = 3
+
+[pulse]
+bg_window_before = {{ start = -1.0, end = -0.5 }}
+bg_window_after = {{ start = 0.5, end = 1.0 }}
+
+[reference]
+fft_window = {{ start = 0.0, end = 1.0 }}
+stride_samples = 10
+window_samples = 10
+
+[lockin]
+{lockin}
+
+[phase]
+m_omega_t0_offset = [0,0,0,0,0,0]
+
+[kerr]
+use_sensor_ch = 1
+kerr_type = "harmonics"
+factor = 1
+"#
+        )
     }
 }

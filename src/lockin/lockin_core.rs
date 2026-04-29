@@ -1,6 +1,6 @@
 use crate::config::{Lockin, LockinLpfKind};
 use crate::lockin::lockin_params::LockinParams;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use num_complex::Complex64;
 use std::f64::consts::PI;
 
@@ -15,7 +15,26 @@ pub struct LockinProcessor<'a> {
     data: &'a [f64],
     omega_tref: f64,
     params: LockinParams,
-    fir_taps: Option<Vec<f64>>,
+    filter: Option<FilterDesign>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FilterDesign {
+    pub taps: Vec<f64>,
+    pub cutoff_hz: f64,
+    pub cutoff_source: &'static str,
+    pub estimated_enbw_hz: f64,
+    pub legacy_boxcar_enbw_hz: Option<f64>,
+    pub enbw_match_error_hz: Option<f64>,
+    pub enbw_match_reachable: Option<bool>,
+    pub user_cutoff_unused: bool,
+    pub kaiser_beta: f64,
+}
+
+pub struct HarmonicLockinResult {
+    pub li_x: Vec<f64>,
+    pub li_y: Vec<f64>,
+    pub mixed_signal: Option<Vec<Complex64>>,
 }
 
 impl<'a> LockinProcessor<'a> {
@@ -30,8 +49,10 @@ impl<'a> LockinProcessor<'a> {
         assert_eq!(t.len(), data.len());
 
         let params = LockinParams::from_slice(t, f_ref, lockin)?;
-        let fir_taps = match params.lpf_kind {
-            LockinLpfKind::FirZeroPhase => Some(design_fir_taps(params)),
+        let filter = match params.lpf_kind {
+            LockinLpfKind::FirZeroPhase | LockinLpfKind::FirBoxcarEnbw => {
+                Some(design_filter(params, lockin)?)
+            }
             LockinLpfKind::BoxcarLegacy => None,
         };
 
@@ -40,7 +61,7 @@ impl<'a> LockinProcessor<'a> {
             data,
             omega_tref,
             params,
-            fir_taps,
+            filter,
         })
     }
 
@@ -52,24 +73,53 @@ impl<'a> LockinProcessor<'a> {
         }
     }
 
-    pub fn compute_harmonic(&self, harmonic: usize) -> (Vec<f64>, Vec<f64>) {
+    pub fn compute_harmonic_detailed(
+        &self,
+        harmonic: usize,
+        include_debug_data: bool,
+    ) -> HarmonicLockinResult {
         match self.params.lpf_kind {
-            LockinLpfKind::FirZeroPhase => self.compute_fir_lockin(harmonic),
-            LockinLpfKind::BoxcarLegacy => (
-                self.compute_legacy_lockin(harmonic, RefType::Sin),
-                self.compute_legacy_lockin(harmonic, RefType::Cos),
-            ),
+            LockinLpfKind::FirZeroPhase | LockinLpfKind::FirBoxcarEnbw => {
+                self.compute_fir_lockin(harmonic, include_debug_data)
+            }
+            LockinLpfKind::BoxcarLegacy => HarmonicLockinResult {
+                li_x: self.compute_legacy_lockin(harmonic, RefType::Sin),
+                li_y: self.compute_legacy_lockin(harmonic, RefType::Cos),
+                mixed_signal: None,
+            },
         }
     }
 
-    fn compute_fir_lockin(&self, harmonic: usize) -> (Vec<f64>, Vec<f64>) {
+    pub fn output_times(&self) -> Vec<f64> {
+        (self.params.i_start..=self.params.i_end)
+            .map(|i_idx| self.t[i_idx * self.params.stride])
+            .collect()
+    }
+
+    pub fn params(&self) -> LockinParams {
+        self.params
+    }
+
+    pub fn filter_design(&self) -> Option<&FilterDesign> {
+        self.filter.as_ref()
+    }
+
+    fn compute_fir_lockin(
+        &self,
+        harmonic: usize,
+        include_debug_data: bool,
+    ) -> HarmonicLockinResult {
         let mixed_signal = self.compute_complex_mixed_signal(harmonic);
         let filtered = self.apply_fir(&mixed_signal);
 
         let li_x: Vec<f64> = filtered.iter().map(|z| -z.im).collect();
         let li_y: Vec<f64> = filtered.iter().map(|z| z.re).collect();
 
-        (li_x, li_y)
+        HarmonicLockinResult {
+            li_x,
+            li_y,
+            mixed_signal: include_debug_data.then_some(mixed_signal),
+        }
     }
 
     fn compute_complex_mixed_signal(&self, harmonic: usize) -> Vec<Complex64> {
@@ -94,10 +144,11 @@ impl<'a> LockinProcessor<'a> {
     }
 
     fn apply_fir(&self, mixed_signal: &[Complex64]) -> Vec<Complex64> {
-        let taps = self
-            .fir_taps
+        let filter = self
+            .filter
             .as_ref()
-            .expect("FIR taps must be present for fir_zero_phase");
+            .expect("FIR taps must be present for FIR lock-in");
+        let taps = &filter.taps;
 
         let i_start = self.params.i_start;
         let i_end = self.params.i_end;
@@ -185,13 +236,57 @@ impl<'a> LockinProcessor<'a> {
     }
 }
 
-fn design_fir_taps(params: LockinParams) -> Vec<f64> {
-    let sample_rate = 1.0 / params.dt;
-    let output_rate = sample_rate / params.stride as f64;
-    let raw_cutoff_hz = 0.5 / params.t_half;
-    let cutoff_hz = raw_cutoff_hz.min(0.45 * output_rate);
-    let cutoff_cycles = (cutoff_hz / sample_rate).min(0.499_999);
+fn design_filter(params: LockinParams, lockin: &Lockin) -> Result<FilterDesign> {
     let beta = kaiser_beta(params.lpf_stopband_atten_db);
+    match params.lpf_kind {
+        LockinLpfKind::FirZeroPhase => {
+            let cutoff_hz = params
+                .cutoff_hz
+                .ok_or_else(|| anyhow!("fir_zero_phase requires a resolved cutoff"))?;
+            let taps = design_kaiser_lowpass_taps(params, cutoff_hz, beta);
+            Ok(FilterDesign {
+                estimated_enbw_hz: enbw_hz(&taps, params.sample_rate),
+                taps,
+                cutoff_hz,
+                cutoff_source: params.cutoff_source.as_str(),
+                legacy_boxcar_enbw_hz: None,
+                enbw_match_error_hz: None,
+                enbw_match_reachable: None,
+                user_cutoff_unused: false,
+                kaiser_beta: beta,
+            })
+        }
+        LockinLpfKind::FirBoxcarEnbw => {
+            let legacy_weights = legacy_boxcar_weights(params);
+            let target_enbw = enbw_hz(&legacy_weights, params.sample_rate);
+            let matched = match_boxcar_enbw_cutoff(params, beta, target_enbw);
+            if !matched.reachable {
+                eprintln!(
+                    "⚠️ fir_boxcar_enbw target ENBW ({}) is outside the reachable FIR range; using nearest cutoff {}",
+                    target_enbw, matched.cutoff_hz
+                );
+            }
+            let taps = design_kaiser_lowpass_taps(params, matched.cutoff_hz, beta);
+            let fir_enbw = enbw_hz(&taps, params.sample_rate);
+            Ok(FilterDesign {
+                taps,
+                cutoff_hz: matched.cutoff_hz,
+                cutoff_source: "enbw_match",
+                estimated_enbw_hz: fir_enbw,
+                legacy_boxcar_enbw_hz: Some(target_enbw),
+                enbw_match_error_hz: Some((fir_enbw - target_enbw).abs()),
+                enbw_match_reachable: Some(matched.reachable),
+                user_cutoff_unused: lockin.lpf_cutoff_hz.is_some()
+                    || lockin.lpf_cutoff_ref_ratio.is_some(),
+                kaiser_beta: beta,
+            })
+        }
+        LockinLpfKind::BoxcarLegacy => Err(anyhow!("boxcar_legacy does not use FIR design")),
+    }
+}
+
+fn design_kaiser_lowpass_taps(params: LockinParams, cutoff_hz: f64, beta: f64) -> Vec<f64> {
+    let cutoff_cycles = (cutoff_hz / params.sample_rate).min(0.499_999);
     let denom = bessel_i0(beta);
 
     let len = 2 * params.n_half + 1;
@@ -222,6 +317,85 @@ fn design_fir_taps(params: LockinParams) -> Vec<f64> {
     taps
 }
 
+struct EnbwMatch {
+    cutoff_hz: f64,
+    reachable: bool,
+}
+
+fn match_boxcar_enbw_cutoff(params: LockinParams, beta: f64, target_enbw: f64) -> EnbwMatch {
+    let min_cutoff = (params.sample_rate / 1.0e12).max(f64::MIN_POSITIVE);
+    let max_cutoff = 0.45 * params.output_rate;
+    let enbw_at = |cutoff_hz: f64| {
+        let taps = design_kaiser_lowpass_taps(params, cutoff_hz, beta);
+        enbw_hz(&taps, params.sample_rate)
+    };
+
+    let min_enbw = enbw_at(min_cutoff);
+    let max_enbw = enbw_at(max_cutoff);
+    if target_enbw <= min_enbw {
+        return EnbwMatch {
+            cutoff_hz: min_cutoff,
+            reachable: false,
+        };
+    }
+    if target_enbw >= max_enbw {
+        return EnbwMatch {
+            cutoff_hz: max_cutoff,
+            reachable: false,
+        };
+    }
+
+    let mut lo = min_cutoff;
+    let mut hi = max_cutoff;
+    for _ in 0..64 {
+        let mid = 0.5 * (lo + hi);
+        if enbw_at(mid) < target_enbw {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+
+    EnbwMatch {
+        cutoff_hz: 0.5 * (lo + hi),
+        reachable: true,
+    }
+}
+
+fn enbw_hz(weights: &[f64], sample_rate: f64) -> f64 {
+    let sum: f64 = weights.iter().sum();
+    let sum_sq: f64 = weights.iter().map(|w| w * w).sum();
+    if sum == 0.0 {
+        f64::NAN
+    } else {
+        sample_rate * sum_sq / (sum * sum)
+    }
+}
+
+fn legacy_boxcar_weights(params: LockinParams) -> Vec<f64> {
+    let n = params.n_half;
+    let len = 2 * n + 3;
+    let mut weights = vec![0.0; len];
+    let norm = 1.0 / (2.0 * params.t_half);
+
+    for j in 0..(2 * n) {
+        weights[j + 1] += 0.5 * params.dt * norm;
+        weights[j + 2] += 0.5 * params.dt * norm;
+    }
+
+    let edge_dt = params.t_half - (n as f64) * params.dt;
+    if edge_dt > 0.0 {
+        let inner_coeff = 0.5 * edge_dt * (2.0 - edge_dt / params.dt) * norm;
+        let outer_coeff = 0.5 * edge_dt * (edge_dt / params.dt) * norm;
+        weights[0] += outer_coeff;
+        weights[1] += inner_coeff;
+        weights[len - 2] += inner_coeff;
+        weights[len - 1] += outer_coeff;
+    }
+
+    weights
+}
+
 fn kaiser_beta(stopband_atten_db: f64) -> f64 {
     if stopband_atten_db > 50.0 {
         0.1102 * (stopband_atten_db - 8.7)
@@ -249,4 +423,109 @@ fn bessel_i0(x: f64) -> f64 {
     }
 
     sum
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::LockinLpfKind;
+    use crate::lockin::lockin_params::CutoffSource;
+
+    fn test_params() -> LockinParams {
+        LockinParams {
+            dt: 1.0e-4,
+            sample_rate: 10_000.0,
+            output_rate: 10_000.0,
+            stride: 1,
+            length: 20_000,
+            f_ref: 1_000.0,
+            lpf_kind: LockinLpfKind::FirBoxcarEnbw,
+            lpf_stopband_atten_db: 60.0,
+            cutoff_hz: None,
+            cutoff_source: CutoffSource::EnbwMatch,
+            fallback_used: false,
+            omega: 2.0 * PI * 1_000.0,
+            t_half: 0.001,
+            n_half: 10,
+            i_start: 13,
+            i_end: 19_987,
+        }
+    }
+
+    #[test]
+    fn legacy_boxcar_weights_have_unit_dc_gain() {
+        let weights = legacy_boxcar_weights(test_params());
+        let sum: f64 = weights.iter().sum();
+        assert!((sum - 1.0).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn fir_boxcar_enbw_search_matches_reachable_target() {
+        let params = test_params();
+        let beta = kaiser_beta(params.lpf_stopband_atten_db);
+        let min_cutoff = (params.sample_rate / 1.0e12).max(f64::MIN_POSITIVE);
+        let max_cutoff = 0.45 * params.output_rate;
+        let min_enbw = enbw_hz(
+            &design_kaiser_lowpass_taps(params, min_cutoff, beta),
+            params.sample_rate,
+        );
+        let max_enbw = enbw_hz(
+            &design_kaiser_lowpass_taps(params, max_cutoff, beta),
+            params.sample_rate,
+        );
+        let target = 0.5 * (min_enbw + max_enbw);
+        let matched = match_boxcar_enbw_cutoff(params, beta, target);
+        assert!(matched.reachable);
+
+        let taps = design_kaiser_lowpass_taps(params, matched.cutoff_hz, beta);
+        let actual = enbw_hz(&taps, params.sample_rate);
+        let rel_err = (actual - target).abs() / target;
+        assert!(rel_err < 1.0e-6, "relative error: {rel_err}");
+    }
+
+    #[test]
+    fn enbw_matches_white_noise_variance_reduction() {
+        let params = test_params();
+        let weights = legacy_boxcar_weights(params);
+        let enbw = enbw_hz(&weights, params.sample_rate);
+        let expected_ratio = enbw / params.sample_rate;
+
+        let mut state = 0x1234_5678_9abc_def0_u64;
+        let mut input = Vec::with_capacity(50_000);
+        for _ in 0..50_000 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let unit = ((state >> 11) as f64) / ((1_u64 << 53) as f64);
+            input.push((unit - 0.5) * 12.0_f64.sqrt());
+        }
+
+        let input_var = population_variance(&input);
+        let mut output = Vec::new();
+        for idx in 0..(input.len() - weights.len()) {
+            let y = weights
+                .iter()
+                .zip(input[idx..].iter())
+                .map(|(w, x)| w * x)
+                .sum::<f64>();
+            output.push(y);
+        }
+        let output_var = population_variance(&output);
+        let actual_ratio = output_var / input_var;
+
+        assert!(
+            (actual_ratio - expected_ratio).abs() / expected_ratio < 0.15,
+            "actual={actual_ratio}, expected={expected_ratio}"
+        );
+    }
+
+    fn population_variance(values: &[f64]) -> f64 {
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        values
+            .iter()
+            .map(|value| {
+                let diff = value - mean;
+                diff * diff
+            })
+            .sum::<f64>()
+            / values.len() as f64
+    }
 }
