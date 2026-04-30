@@ -135,10 +135,18 @@ pub fn li_process(
     let t0 = std::time::Instant::now();
 
     let mut all_signals_results: Vec<Vec<Vec<f64>>> = Vec::with_capacity(signal_data.len());
+    let mut printed_lockin_summary = false;
 
     for (&sig_ch, signal) in signal_ch.iter().zip(signal_data.iter()) {
         let li_processor =
             lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, &cfg.lockin)?;
+        if !printed_lockin_summary {
+            println!("🔒 Lock-in settings:");
+            for line in li_processor.summary_lines() {
+                println!("  - {line}");
+            }
+            printed_lockin_summary = true;
+        }
         let include_debug = cfg.lockin.lpf_debug_output;
 
         let harmonic_results: Vec<lockin_core::HarmonicLockinResult> = if include_debug {

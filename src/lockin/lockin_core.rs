@@ -111,6 +111,45 @@ impl<'a> LockinProcessor<'a> {
         self.filter.as_ref()
     }
 
+    pub fn summary_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        lines.push(format!("lpf_kind={:?}", self.params.lpf_kind));
+        lines.push(format!("f_ref={:.6e} Hz", self.params.f_ref));
+        lines.push(format!(
+            "time_constant_half={:.6e} s, support={:.6e} s, tap_count={}",
+            self.params.t_half,
+            2.0 * self.params.t_half,
+            2 * self.params.n_half + 1
+        ));
+        lines.push(format!(
+            "sample_rate={:.6e} Hz, output_rate={:.6e} Hz, stride_samples={}",
+            self.params.sample_rate, self.params.output_rate, self.params.stride
+        ));
+        match &self.filter {
+            Some(filter) => {
+                lines.push(format!(
+                    "cutoff={:.6e} Hz ({})",
+                    filter.cutoff_hz, filter.cutoff_source
+                ));
+                lines.push(format!("estimated_enbw={:.6e} Hz", filter.estimated_enbw_hz));
+                if let Some(legacy_enbw) = filter.legacy_boxcar_enbw_hz {
+                    lines.push(format!("legacy_boxcar_enbw={legacy_enbw:.6e} Hz"));
+                }
+                if let Some(error) = filter.enbw_match_error_hz {
+                    lines.push(format!("enbw_match_error={error:.6e} Hz"));
+                }
+                if self.params.fallback_used {
+                    lines.push("cutoff_fallback_used=true".to_string());
+                }
+            }
+            None => {
+                lines.push("cutoff=none".to_string());
+                lines.push("estimated_enbw=legacy_boxcar".to_string());
+            }
+        }
+        lines
+    }
+
     fn compute_fir_lockin(
         &self,
         harmonic: usize,
