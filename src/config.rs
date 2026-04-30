@@ -950,7 +950,10 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
-    if cfg.timebase.dt > 0.0 && cfg.lockin.stride_samples > 0 {
+    if cfg.lockin.lpf_kind == LockinLpfKind::FirZeroPhase
+        && cfg.timebase.dt > 0.0
+        && cfg.lockin.stride_samples > 0
+    {
         let output_rate = 1.0 / (cfg.timebase.dt * cfg.lockin.stride_samples as f64);
         if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz {
             if cutoff_hz >= 0.45 * output_rate {

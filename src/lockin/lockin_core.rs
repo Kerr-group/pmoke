@@ -37,6 +37,13 @@ pub struct HarmonicLockinResult {
     pub mixed_signal: Option<Vec<Complex64>>,
 }
 
+impl HarmonicLockinResult {
+    pub fn without_debug_data(mut self) -> Self {
+        self.mixed_signal = None;
+        self
+    }
+}
+
 impl<'a> LockinProcessor<'a> {
     pub fn new(
         t: &'a [f64],

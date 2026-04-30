@@ -141,26 +141,30 @@ pub fn li_process(
             lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, &cfg.lockin)?;
         let include_debug = cfg.lockin.lpf_debug_output;
 
-        let harmonic_results: Vec<lockin_core::HarmonicLockinResult> = pool.install(|| {
-            harmonics
-                .par_iter()
-                .map(|&harmonic| li_processor.compute_harmonic_detailed(harmonic, include_debug))
-                .collect()
-        });
-
-        if include_debug {
+        let harmonic_results: Vec<lockin_core::HarmonicLockinResult> = if include_debug {
             let t_output = li_processor.output_times();
             let params = li_processor.params();
             let filter = li_processor.filter_design();
-            for (&harmonic, result) in harmonics.iter().zip(harmonic_results.iter()) {
+            let mut results = Vec::with_capacity(harmonics.len());
+            for &harmonic in &harmonics {
+                let result = li_processor.compute_harmonic_detailed(harmonic, true);
                 debug::write_harmonic_debug(
-                    cfg, sig_ch, harmonic, params, filter, t, &t_output, result,
+                    cfg, sig_ch, harmonic, params, filter, t, &t_output, &result,
                 )
                 .with_context(|| {
                     format!("failed to write lock-in debug output for ch{sig_ch} h{harmonic}")
                 })?;
+                results.push(result.without_debug_data());
             }
-        }
+            results
+        } else {
+            pool.install(|| {
+                harmonics
+                    .par_iter()
+                    .map(|&harmonic| li_processor.compute_harmonic_detailed(harmonic, false))
+                    .collect()
+            })
+        };
 
         let mut results_list = Vec::with_capacity(harmonic_results.len() * 2);
         for result in harmonic_results {

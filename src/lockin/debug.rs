@@ -261,10 +261,14 @@ fn write_baseband_psd(
         .lockin
         .snr_background_window
         .unwrap_or(cfg.pulse.bg_window_before);
-    let samples = finite_complex_window(t_raw, mixed_signal, window);
+    let samples = complex_window(t_raw, mixed_signal, window);
+    if samples.iter().any(|value| !value.re.is_finite() || !value.im.is_finite()) {
+        eprintln!("⚠️ baseband PSD skipped: non-finite samples found in background window");
+        return Ok(());
+    }
     if samples.len() < MIN_PSD_SAMPLES {
         eprintln!(
-            "⚠️ baseband PSD skipped: only {} finite samples in background window",
+            "⚠️ baseband PSD skipped: only {} samples in background window",
             samples.len()
         );
         return Ok(());
@@ -300,16 +304,10 @@ fn write_baseband_psd(
     Ok(())
 }
 
-fn finite_complex_window(t: &[f64], values: &[Complex64], window: Window) -> Vec<Complex64> {
+fn complex_window(t: &[f64], values: &[Complex64], window: Window) -> Vec<Complex64> {
     t.iter()
         .zip(values.iter())
-        .filter_map(|(&ti, &value)| {
-            (ti >= window.start
-                && ti <= window.end
-                && value.re.is_finite()
-                && value.im.is_finite())
-            .then_some(value)
-        })
+        .filter_map(|(&ti, &value)| (ti >= window.start && ti <= window.end).then_some(value))
         .collect()
 }
 
