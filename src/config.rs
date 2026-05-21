@@ -1,13 +1,9 @@
 use crate::constants::{FETCHED_FNAME, LI_RESULTS_NAME, LI_ROTATED_NAME};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use std::{
-    collections::BTreeSet,
-    fs,
-    path::Path,
-};
+use std::{collections::BTreeSet, fs, path::Path};
 
 fn eval_f64_expr(s: &str) -> Result<f64> {
     let expr =
@@ -157,6 +153,8 @@ pub struct Lockin {
     pub lpf_cutoff_hz: Option<f64>,
     pub lpf_cutoff_ref_ratio: Option<f64>,
     pub lpf_stopband_atten_db: f64,
+    pub lpf_sync_average_cycles: f64,
+    pub lpf_iir_order: usize,
     pub lpf_debug_output: bool,
     pub lpf_debug_label: Option<String>,
     pub lpf_debug_overwrite: bool,
@@ -170,6 +168,7 @@ pub enum LockinLpfKind {
     FirZeroPhase,
     BoxcarLegacy,
     FirBoxcarEnbw,
+    SyncIirZeroPhase,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -475,6 +474,10 @@ struct LockinV1 {
     lpf_cutoff_ref_ratio: Option<f64>,
     #[serde(default = "default_lockin_stopband_atten_db")]
     lpf_stopband_atten_db: f64,
+    #[serde(default = "default_lockin_sync_average_cycles")]
+    lpf_sync_average_cycles: f64,
+    #[serde(default = "default_lockin_iir_order")]
+    lpf_iir_order: usize,
     #[serde(default)]
     lpf_debug_output: bool,
     #[serde(default)]
@@ -501,6 +504,10 @@ struct LockinV2 {
     lpf_cutoff_ref_ratio: Option<f64>,
     #[serde(default = "default_lockin_stopband_atten_db")]
     lpf_stopband_atten_db: f64,
+    #[serde(default = "default_lockin_sync_average_cycles")]
+    lpf_sync_average_cycles: f64,
+    #[serde(default = "default_lockin_iir_order")]
+    lpf_iir_order: usize,
     #[serde(default)]
     lpf_debug_output: bool,
     #[serde(default)]
@@ -551,6 +558,14 @@ struct KerrV2 {
 
 fn default_lockin_stopband_atten_db() -> f64 {
     60.0
+}
+
+fn default_lockin_sync_average_cycles() -> f64 {
+    1.0
+}
+
+fn default_lockin_iir_order() -> usize {
+    2
 }
 
 pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
@@ -642,18 +657,20 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
                 normalized: None,
             }),
         },
-        other => ConfigLoad::Diagnostics(ConfigDiagnostics {
-            version: Some(other),
-            warnings: Vec::new(),
-            diagnostics: vec![ConfigDiagnostic::new(
+        other => {
+            ConfigLoad::Diagnostics(ConfigDiagnostics {
+                version: Some(other),
+                warnings: Vec::new(),
+                diagnostics: vec![ConfigDiagnostic::new(
                 DiagnosticKind::Parse,
                 Some("version".to_string()),
                 format!("unsupported config version: {other}"),
                 Some("use version = 1 for legacy configs or version = 2 for the normalized schema"
                     .to_string()),
             )],
-            normalized: None,
-        }),
+                normalized: None,
+            })
+        }
     }
 }
 
@@ -777,6 +794,8 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
             lpf_cutoff_hz: raw.lockin.lpf_cutoff_hz,
             lpf_cutoff_ref_ratio: raw.lockin.lpf_cutoff_ref_ratio,
             lpf_stopband_atten_db: raw.lockin.lpf_stopband_atten_db,
+            lpf_sync_average_cycles: raw.lockin.lpf_sync_average_cycles,
+            lpf_iir_order: raw.lockin.lpf_iir_order,
             lpf_debug_output: raw.lockin.lpf_debug_output,
             lpf_debug_label: raw.lockin.lpf_debug_label,
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
@@ -829,6 +848,8 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
             lpf_cutoff_hz: raw.lockin.lpf_cutoff_hz,
             lpf_cutoff_ref_ratio: raw.lockin.lpf_cutoff_ref_ratio,
             lpf_stopband_atten_db: raw.lockin.lpf_stopband_atten_db,
+            lpf_sync_average_cycles: raw.lockin.lpf_sync_average_cycles,
+            lpf_iir_order: raw.lockin.lpf_iir_order,
             lpf_debug_output: raw.lockin.lpf_debug_output,
             lpf_debug_label: raw.lockin.lpf_debug_label,
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
@@ -862,6 +883,13 @@ struct ValidationSummary {
     errors: Vec<ConfigDiagnostic>,
 }
 
+fn uses_explicit_cutoff(kind: LockinLpfKind) -> bool {
+    matches!(
+        kind,
+        LockinLpfKind::FirZeroPhase | LockinLpfKind::SyncIirZeroPhase
+    )
+}
+
 fn validate_common(cfg: &mut Config) -> ValidationSummary {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
@@ -870,7 +898,10 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("version".to_string()),
-            format!("normalized config must have version 2 (got {})", cfg.version),
+            format!(
+                "normalized config must have version 2 (got {})",
+                cfg.version
+            ),
             None,
         ));
     }
@@ -920,37 +951,69 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
-    if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz {
-        if cutoff_hz <= 0.0 {
+    if cfg.lockin.lpf_kind == LockinLpfKind::SyncIirZeroPhase {
+        let max_sync_cycles = 100.0;
+        if !cfg.lockin.lpf_sync_average_cycles.is_finite()
+            || cfg.lockin.lpf_sync_average_cycles <= 0.0
+            || cfg.lockin.lpf_sync_average_cycles > max_sync_cycles
+        {
             errors.push(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
-                Some("lockin.lpf_cutoff_hz".to_string()),
-                format!("lockin.lpf_cutoff_hz must be positive (got {cutoff_hz})"),
-                None,
-            ));
-        }
-    }
-    if let Some(cutoff_ratio) = cfg.lockin.lpf_cutoff_ref_ratio {
-        if cutoff_ratio <= 0.0 {
-            errors.push(ConfigDiagnostic::new(
-                DiagnosticKind::Validation,
-                Some("lockin.lpf_cutoff_ref_ratio".to_string()),
+                Some("lockin.lpf_sync_average_cycles".to_string()),
                 format!(
-                    "lockin.lpf_cutoff_ref_ratio must be positive (got {cutoff_ratio})"
+                    "lockin.lpf_sync_average_cycles must be finite and in (0, {max_sync_cycles}] (got {})",
+                    cfg.lockin.lpf_sync_average_cycles
                 ),
                 None,
             ));
         }
     }
-    if cfg.lockin.lpf_cutoff_hz.is_some() && cfg.lockin.lpf_cutoff_ref_ratio.is_some() {
+    if cfg.lockin.lpf_kind == LockinLpfKind::SyncIirZeroPhase
+        && (cfg.lockin.lpf_iir_order == 0
+            || cfg.lockin.lpf_iir_order % 2 != 0
+            || cfg.lockin.lpf_iir_order > 8)
+    {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
-            Some("lockin".to_string()),
-            "lockin.lpf_cutoff_hz and lockin.lpf_cutoff_ref_ratio are mutually exclusive",
+            Some("lockin.lpf_iir_order".to_string()),
+            format!(
+                "lockin.lpf_iir_order must be one of 2, 4, 6, or 8 (got {})",
+                cfg.lockin.lpf_iir_order
+            ),
             None,
         ));
     }
-    if cfg.lockin.lpf_kind == LockinLpfKind::FirZeroPhase
+    if uses_explicit_cutoff(cfg.lockin.lpf_kind) {
+        if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz {
+            if cutoff_hz <= 0.0 {
+                errors.push(ConfigDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Some("lockin.lpf_cutoff_hz".to_string()),
+                    format!("lockin.lpf_cutoff_hz must be positive (got {cutoff_hz})"),
+                    None,
+                ));
+            }
+        }
+        if let Some(cutoff_ratio) = cfg.lockin.lpf_cutoff_ref_ratio {
+            if cutoff_ratio <= 0.0 {
+                errors.push(ConfigDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Some("lockin.lpf_cutoff_ref_ratio".to_string()),
+                    format!("lockin.lpf_cutoff_ref_ratio must be positive (got {cutoff_ratio})"),
+                    None,
+                ));
+            }
+        }
+        if cfg.lockin.lpf_cutoff_hz.is_some() && cfg.lockin.lpf_cutoff_ref_ratio.is_some() {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin".to_string()),
+                "lockin.lpf_cutoff_hz and lockin.lpf_cutoff_ref_ratio are mutually exclusive for cutoff-based LPF modes",
+                None,
+            ));
+        }
+    }
+    if uses_explicit_cutoff(cfg.lockin.lpf_kind)
         && cfg.timebase.dt > 0.0
         && cfg.lockin.stride_samples > 0
     {
@@ -1053,7 +1116,10 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             Some(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
                 Some(label.to_string()),
-                format!("{label}: start must be < end (start={}, end={})", w.start, w.end),
+                format!(
+                    "{label}: start must be < end (start={}, end={})",
+                    w.start, w.end
+                ),
                 None,
             ))
         }
@@ -1078,12 +1144,12 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
         }
     }
 
-    if cfg.lockin.lpf_kind == LockinLpfKind::FirZeroPhase
+    if uses_explicit_cutoff(cfg.lockin.lpf_kind)
         && cfg.lockin.lpf_cutoff_hz.is_none()
         && cfg.lockin.lpf_cutoff_ref_ratio.is_none()
     {
         warnings.push(ConfigWarning::new(
-            "lockin.lpf_kind is fir_zero_phase but no cutoff is specified; runtime will use the compatibility fallback cutoff 0.5 / t_half",
+            "lockin.lpf_kind uses an explicit cutoff but no cutoff is specified; runtime will use the compatibility fallback cutoff 0.5 / t_half",
         ));
     }
 
@@ -1123,9 +1189,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         | ValidationTarget::Auto => {
             validate_oscilloscope_required(cfg)?;
         }
-        ValidationTarget::Trigger
-        | ValidationTarget::Autoshot
-        | ValidationTarget::Automeasure => {
+        ValidationTarget::Trigger | ValidationTarget::Autoshot | ValidationTarget::Automeasure => {
             validate_oscilloscope_required(cfg)?;
             validate_function_generator_required(cfg)?;
         }
@@ -1495,7 +1559,7 @@ impl From<KerrV2> for Kerr {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConfigLoad, LockinLpfKind, load_from_str};
+    use super::{load_from_str, ConfigLoad, LockinLpfKind};
 
     #[test]
     fn v1_filter_length_maps_to_half_window_cycles_and_legacy_boxcar() {
@@ -1691,11 +1755,9 @@ lpf_half_window_cycles = 1.0
 
         match load_from_str(&text) {
             ConfigLoad::Ready { warnings, .. } => {
-                assert!(
-                    warnings
-                        .iter()
-                        .any(|warning| warning.message.contains("no cutoff is specified"))
-                );
+                assert!(warnings
+                    .iter()
+                    .any(|warning| warning.message.contains("no cutoff is specified")));
             }
             other => panic!("expected ready load, got {:?}", other),
         }
@@ -1715,11 +1777,100 @@ lpf_cutoff_ref_ratio = 0.1
 
         match load_from_str(&text) {
             ConfigLoad::Diagnostics(diag) => {
-                assert!(
-                    diag.diagnostics
-                        .iter()
-                        .any(|issue| issue.message.contains("mutually exclusive"))
-                );
+                assert!(diag
+                    .diagnostics
+                    .iter()
+                    .any(|issue| issue.message.contains("mutually exclusive")));
+            }
+            other => panic!("expected diagnostics, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn v2_ignored_cutoffs_do_not_block_non_fir_zero_phase_modes() {
+        let text = v2_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_kind = "fir_boxcar_enbw"
+lpf_half_window_cycles = 1.0
+lpf_cutoff_hz = -0.1
+lpf_cutoff_ref_ratio = -0.1
+"#,
+        );
+
+        match load_from_str(&text) {
+            ConfigLoad::Ready { .. } => {}
+            other => panic!("expected ready load, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn v2_sync_iir_zero_phase_loads_with_iir_options() {
+        let text = v2_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_kind = "sync_iir_zero_phase"
+lpf_half_window_cycles = 1.0
+lpf_cutoff_ref_ratio = 0.02
+lpf_sync_average_cycles = 2.0
+lpf_iir_order = 4
+"#,
+        );
+
+        match load_from_str(&text) {
+            ConfigLoad::Ready { config, .. } => {
+                assert_eq!(config.lockin.lpf_kind, LockinLpfKind::SyncIirZeroPhase);
+                assert_eq!(config.lockin.lpf_sync_average_cycles, 2.0);
+                assert_eq!(config.lockin.lpf_iir_order, 4);
+            }
+            other => panic!("expected ready load, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn v2_sync_iir_zero_phase_rejects_odd_iir_order() {
+        let text = v2_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_kind = "sync_iir_zero_phase"
+lpf_half_window_cycles = 1.0
+lpf_cutoff_ref_ratio = 0.02
+lpf_iir_order = 3
+"#,
+        );
+
+        match load_from_str(&text) {
+            ConfigLoad::Diagnostics(diag) => {
+                assert!(diag
+                    .diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("lockin.lpf_iir_order")));
+            }
+            other => panic!("expected diagnostics, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn v2_sync_iir_zero_phase_rejects_non_finite_sync_cycles() {
+        let text = v2_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_kind = "sync_iir_zero_phase"
+lpf_half_window_cycles = 1.0
+lpf_cutoff_ref_ratio = 0.02
+lpf_sync_average_cycles = inf
+"#,
+        );
+
+        match load_from_str(&text) {
+            ConfigLoad::Diagnostics(diag) => {
+                assert!(diag.diagnostics.iter().any(|issue| {
+                    issue.path.as_deref() == Some("lockin.lpf_sync_average_cycles")
+                }));
             }
             other => panic!("expected diagnostics, got {:?}", other),
         }
@@ -1739,11 +1890,10 @@ lpf_debug_label = "../bad"
 
         match load_from_str(&text) {
             ConfigLoad::Diagnostics(diag) => {
-                assert!(
-                    diag.diagnostics
-                        .iter()
-                        .any(|issue| issue.path.as_deref() == Some("lockin.lpf_debug_label"))
-                );
+                assert!(diag
+                    .diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("lockin.lpf_debug_label")));
             }
             other => panic!("expected diagnostics, got {:?}", other),
         }

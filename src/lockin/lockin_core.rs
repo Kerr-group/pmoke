@@ -1,8 +1,11 @@
 use crate::config::{Lockin, LockinLpfKind};
 use crate::lockin::lockin_params::LockinParams;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use num_complex::Complex64;
+use std::collections::VecDeque;
 use std::f64::consts::PI;
+
+const MAX_SYNC_AVERAGE_SAMPLES: usize = 1_000_000;
 
 #[derive(Clone, Copy)]
 pub enum RefType {
@@ -21,7 +24,9 @@ pub struct LockinProcessor<'a> {
 #[derive(Debug, Clone)]
 pub struct FilterDesign {
     pub taps: Vec<f64>,
+    pub sos: Vec<Biquad>,
     pub cutoff_hz: f64,
+    pub design_cutoff_hz: f64,
     pub cutoff_source: &'static str,
     pub estimated_enbw_hz: f64,
     pub legacy_boxcar_enbw_hz: Option<f64>,
@@ -29,6 +34,29 @@ pub struct FilterDesign {
     pub enbw_match_reachable: Option<bool>,
     pub user_cutoff_unused: bool,
     pub kaiser_beta: f64,
+    pub sync_average_samples: Option<usize>,
+    pub iir_order: Option<usize>,
+    pub settling_samples: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Biquad {
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
+}
+
+impl FilterDesign {
+    pub fn response_abs(&self, sample_rate: f64, freq_hz: f64) -> f64 {
+        if self.sos.is_empty() {
+            fir_response_abs(&self.taps, sample_rate, freq_hz)
+        } else {
+            fir_response_abs(&self.taps, sample_rate, freq_hz)
+                * iir_response_abs(&self.sos, sample_rate, freq_hz).powi(2)
+        }
+    }
 }
 
 pub struct HarmonicLockinResult {
@@ -57,11 +85,12 @@ impl<'a> LockinProcessor<'a> {
 
         let params = LockinParams::from_slice(t, f_ref, lockin)?;
         let filter = match params.lpf_kind {
-            LockinLpfKind::FirZeroPhase | LockinLpfKind::FirBoxcarEnbw => {
-                Some(design_filter(params, lockin)?)
-            }
+            LockinLpfKind::FirZeroPhase
+            | LockinLpfKind::FirBoxcarEnbw
+            | LockinLpfKind::SyncIirZeroPhase => Some(design_filter(params, lockin)?),
             LockinLpfKind::BoxcarLegacy => None,
         };
+        validate_output_index_range(params, filter.as_ref())?;
 
         Ok(Self {
             t,
@@ -89,6 +118,9 @@ impl<'a> LockinProcessor<'a> {
             LockinLpfKind::FirZeroPhase | LockinLpfKind::FirBoxcarEnbw => {
                 self.compute_fir_lockin(harmonic, include_debug_data)
             }
+            LockinLpfKind::SyncIirZeroPhase => {
+                self.compute_sync_iir_lockin(harmonic, include_debug_data)
+            }
             LockinLpfKind::BoxcarLegacy => HarmonicLockinResult {
                 li_x: self.compute_legacy_lockin(harmonic, RefType::Sin),
                 li_y: self.compute_legacy_lockin(harmonic, RefType::Cos),
@@ -98,7 +130,8 @@ impl<'a> LockinProcessor<'a> {
     }
 
     pub fn output_times(&self) -> Vec<f64> {
-        (self.params.i_start..=self.params.i_end)
+        let (i_start, i_end) = self.output_index_range();
+        (i_start..=i_end)
             .map(|i_idx| self.t[i_idx * self.params.stride])
             .collect()
     }
@@ -111,12 +144,20 @@ impl<'a> LockinProcessor<'a> {
         self.filter.as_ref()
     }
 
+    pub fn base_index_range(&self) -> (usize, usize) {
+        (self.params.i_start, self.params.i_end)
+    }
+
+    pub fn output_index_range(&self) -> (usize, usize) {
+        output_index_range_for(self.params, self.filter.as_ref())
+    }
+
     pub fn summary_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         lines.push(format!("lpf_kind={:?}", self.params.lpf_kind));
         lines.push(format!("f_ref={:.6e} Hz", self.params.f_ref));
         lines.push(format!(
-            "time_constant_half={:.6e} s, support={:.6e} s, tap_count={}",
+            "half_window={:.6e} s, support={:.6e} s, tap_count={}",
             self.params.t_half,
             2.0 * self.params.t_half,
             2 * self.params.n_half + 1
@@ -131,13 +172,32 @@ impl<'a> LockinProcessor<'a> {
                     "cutoff={:.6e} Hz ({})",
                     filter.cutoff_hz, filter.cutoff_source
                 ));
-                lines.push(format!("estimated_enbw={:.6e} Hz", filter.estimated_enbw_hz));
+                lines.push(format!(
+                    "estimated_enbw={:.6e} Hz",
+                    filter.estimated_enbw_hz
+                ));
                 if let Some(legacy_enbw) = filter.legacy_boxcar_enbw_hz {
                     lines.push(format!("legacy_boxcar_enbw={legacy_enbw:.6e} Hz"));
                 }
                 if let Some(error) = filter.enbw_match_error_hz {
                     lines.push(format!("enbw_match_error={error:.6e} Hz"));
                 }
+                if let Some(samples) = filter.sync_average_samples {
+                    lines.push(format!(
+                        "sync_average_samples={}, sync_average_cycles={:.6e}",
+                        samples, self.params.lpf_sync_average_cycles
+                    ));
+                }
+                if let Some(order) = filter.iir_order {
+                    lines.push(format!("iir_order={order}"));
+                }
+                if filter.design_cutoff_hz != filter.cutoff_hz {
+                    lines.push(format!(
+                        "design_cutoff={:.6e} Hz, requested_zero_phase_cutoff={:.6e} Hz",
+                        filter.design_cutoff_hz, filter.cutoff_hz
+                    ));
+                }
+                lines.push(format!("settling_samples={}", filter.settling_samples));
                 if self.params.fallback_used {
                     lines.push("cutoff_fallback_used=true".to_string());
                 }
@@ -165,6 +225,43 @@ impl<'a> LockinProcessor<'a> {
             li_x,
             li_y,
             mixed_signal: include_debug_data.then_some(mixed_signal),
+        }
+    }
+
+    fn compute_sync_iir_lockin(
+        &self,
+        harmonic: usize,
+        include_debug_data: bool,
+    ) -> HarmonicLockinResult {
+        let mixed_signal = self.compute_complex_mixed_signal(harmonic);
+        let filter = self
+            .filter
+            .as_ref()
+            .expect("IIR design must be present for sync_iir_zero_phase lock-in");
+        let sync_len = filter.sync_average_samples.unwrap_or(1);
+        let debug_mixed_signal = include_debug_data.then(|| mixed_signal.clone());
+        let mut filtered = mixed_signal;
+        apply_centered_moving_average_complex_in_place(&mut filtered, sync_len);
+        apply_sos_filtfilt_in_place(&mut filtered, &filter.sos);
+
+        let (i_start, i_end) = self.output_index_range();
+        let m = if i_end >= i_start {
+            i_end - i_start + 1
+        } else {
+            0
+        };
+        let mut li_x = Vec::with_capacity(m);
+        let mut li_y = Vec::with_capacity(m);
+        for i_idx in i_start..=i_end {
+            let z = filtered[i_idx * self.params.stride];
+            li_x.push(-z.im);
+            li_y.push(z.re);
+        }
+
+        HarmonicLockinResult {
+            li_x,
+            li_y,
+            mixed_signal: debug_mixed_signal,
         }
     }
 
@@ -293,13 +390,18 @@ fn design_filter(params: LockinParams, lockin: &Lockin) -> Result<FilterDesign> 
             Ok(FilterDesign {
                 estimated_enbw_hz: enbw_hz(&taps, params.sample_rate),
                 taps,
+                sos: Vec::new(),
                 cutoff_hz,
+                design_cutoff_hz: cutoff_hz,
                 cutoff_source: params.cutoff_source.as_str(),
                 legacy_boxcar_enbw_hz: None,
                 enbw_match_error_hz: None,
                 enbw_match_reachable: None,
                 user_cutoff_unused: false,
                 kaiser_beta: beta,
+                sync_average_samples: None,
+                iir_order: None,
+                settling_samples: params.n_half,
             })
         }
         LockinLpfKind::FirBoxcarEnbw => {
@@ -316,7 +418,9 @@ fn design_filter(params: LockinParams, lockin: &Lockin) -> Result<FilterDesign> 
             let fir_enbw = enbw_hz(&taps, params.sample_rate);
             Ok(FilterDesign {
                 taps,
+                sos: Vec::new(),
                 cutoff_hz: matched.cutoff_hz,
+                design_cutoff_hz: matched.cutoff_hz,
                 cutoff_source: "enbw_match",
                 estimated_enbw_hz: fir_enbw,
                 legacy_boxcar_enbw_hz: Some(target_enbw),
@@ -325,6 +429,43 @@ fn design_filter(params: LockinParams, lockin: &Lockin) -> Result<FilterDesign> 
                 user_cutoff_unused: lockin.lpf_cutoff_hz.is_some()
                     || lockin.lpf_cutoff_ref_ratio.is_some(),
                 kaiser_beta: beta,
+                sync_average_samples: None,
+                iir_order: None,
+                settling_samples: params.n_half,
+            })
+        }
+        LockinLpfKind::SyncIirZeroPhase => {
+            let cutoff_hz = params
+                .cutoff_hz
+                .ok_or_else(|| anyhow!("sync_iir_zero_phase requires a resolved cutoff"))?;
+            let sync_average_samples = sync_average_samples(params)?;
+            let taps = moving_average_taps(sync_average_samples);
+            let design_cutoff_hz =
+                zero_phase_butterworth_design_cutoff(cutoff_hz, params.lpf_iir_order);
+            let sos = design_butterworth_lowpass_sos(
+                params.lpf_iir_order,
+                design_cutoff_hz,
+                params.sample_rate,
+            )?;
+            let estimated_enbw_hz =
+                estimate_response_enbw_hz(&taps, &sos, params.sample_rate, true);
+            let settling_samples =
+                sync_average_samples / 2 + iir_settling_samples(params, design_cutoff_hz);
+            Ok(FilterDesign {
+                taps,
+                sos,
+                cutoff_hz,
+                design_cutoff_hz,
+                cutoff_source: params.cutoff_source.as_str(),
+                estimated_enbw_hz,
+                legacy_boxcar_enbw_hz: None,
+                enbw_match_error_hz: None,
+                enbw_match_reachable: None,
+                user_cutoff_unused: false,
+                kaiser_beta: f64::NAN,
+                sync_average_samples: Some(sync_average_samples),
+                iir_order: Some(params.lpf_iir_order),
+                settling_samples,
             })
         }
         LockinLpfKind::BoxcarLegacy => Err(anyhow!("boxcar_legacy does not use FIR design")),
@@ -361,6 +502,222 @@ fn design_kaiser_lowpass_taps(params: LockinParams, cutoff_hz: f64, beta: f64) -
     }
 
     taps
+}
+
+fn output_index_range_for(params: LockinParams, filter: Option<&FilterDesign>) -> (usize, usize) {
+    let mut i_start = params.i_start;
+    let mut i_end = params.i_end;
+    if let Some(filter) = filter {
+        if filter.settling_samples > params.n_half {
+            let extra = filter.settling_samples - params.n_half;
+            let extra_idx = extra.div_ceil(params.stride);
+            i_start = i_start.saturating_add(extra_idx);
+            i_end = i_end.saturating_sub(extra_idx);
+        }
+    }
+    (i_start, i_end)
+}
+
+fn validate_output_index_range(params: LockinParams, filter: Option<&FilterDesign>) -> Result<()> {
+    let (base_start, base_end) = (params.i_start, params.i_end);
+    let (output_start, output_end) = output_index_range_for(params, filter);
+    if output_start <= output_end {
+        return Ok(());
+    }
+
+    let settling_samples = filter
+        .map(|filter| filter.settling_samples.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    Err(anyhow!(
+        "lock-in output range is empty after LPF edge trimming: base_index_range=({base_start}, {base_end}), output_index_range=({output_start}, {output_end}), settling_samples={settling_samples}; reduce LPF settling by increasing cutoff, reducing lpf_iir_order/lpf_sync_average_cycles, reducing lpf_half_window_cycles, or using a longer trace"
+    ))
+}
+
+fn sync_average_samples(params: LockinParams) -> Result<usize> {
+    let samples = (params.lpf_sync_average_cycles * params.sample_rate / params.f_ref).round();
+    if !samples.is_finite() || samples <= 0.0 || samples > MAX_SYNC_AVERAGE_SAMPLES as f64 {
+        return Err(anyhow!(
+            "sync average samples must be finite and <= {MAX_SYNC_AVERAGE_SAMPLES} (got {samples})"
+        ));
+    }
+    Ok(samples as usize)
+}
+
+fn moving_average_taps(len: usize) -> Vec<f64> {
+    let len = len.max(1);
+    vec![1.0 / len as f64; len]
+}
+
+#[cfg(test)]
+fn centered_moving_average_complex(values: &[Complex64], len: usize) -> Vec<Complex64> {
+    let mut out = values.to_vec();
+    apply_centered_moving_average_complex_in_place(&mut out, len);
+    out
+}
+
+fn apply_centered_moving_average_complex_in_place(values: &mut [Complex64], len: usize) {
+    let len = len.max(1);
+    if len == 1 || values.is_empty() {
+        return;
+    }
+
+    let left = (len - 1) / 2;
+    let right = len - left;
+    let mut start = 0usize;
+    let mut end = 0usize;
+    let mut sum = Complex64::new(0.0, 0.0);
+    let mut window = VecDeque::with_capacity(len.min(values.len()));
+
+    for idx in 0..values.len() {
+        let desired_start = idx.saturating_sub(left);
+        let desired_end = (idx + right).min(values.len());
+        while start < desired_start {
+            let value = window.pop_front().expect("moving average window underflow");
+            sum -= value;
+            start += 1;
+        }
+        while end < desired_end {
+            let value = values[end];
+            window.push_back(value);
+            sum += value;
+            end += 1;
+        }
+        values[idx] = sum / window.len() as f64;
+    }
+}
+
+fn zero_phase_butterworth_design_cutoff(target_cutoff_hz: f64, order: usize) -> f64 {
+    target_cutoff_hz / (2.0_f64.sqrt() - 1.0).powf(1.0 / (2.0 * order as f64))
+}
+
+fn iir_settling_samples(params: LockinParams, cutoff_hz: f64) -> usize {
+    let ratio = (cutoff_hz / params.sample_rate).clamp(f64::MIN_POSITIVE, 0.49);
+    let tau_samples = 1.0 / (2.0 * PI * ratio);
+    (8.0 * tau_samples).ceil() as usize
+}
+
+fn design_butterworth_lowpass_sos(
+    order: usize,
+    cutoff_hz: f64,
+    sample_rate: f64,
+) -> Result<Vec<Biquad>> {
+    if order == 0 || order % 2 != 0 || order > 8 {
+        return Err(anyhow!(
+            "sync_iir_zero_phase lpf_iir_order must be one of 2, 4, 6, or 8 (got {order})"
+        ));
+    }
+    if cutoff_hz <= 0.0 || cutoff_hz >= 0.5 * sample_rate {
+        return Err(anyhow!(
+            "sync_iir_zero_phase cutoff_hz ({cutoff_hz}) must be between 0 and sample Nyquist ({})",
+            0.5 * sample_rate
+        ));
+    }
+
+    let warped = 2.0 * sample_rate * (PI * cutoff_hz / sample_rate).tan();
+    let bilinear_scale = 2.0 * sample_rate;
+    let mut sos = Vec::with_capacity(order / 2);
+
+    for pair_idx in 0..(order / 2) {
+        let theta = PI * (2.0 * pair_idx as f64 + 1.0 + order as f64) / (2.0 * order as f64);
+        let analog_pole = Complex64::from_polar(warped, theta);
+        let digital_pole = (bilinear_scale + analog_pole) / (bilinear_scale - analog_pole);
+        let a1 = -2.0 * digital_pole.re;
+        let a2 = digital_pole.norm_sqr();
+        let gain = (1.0 + a1 + a2) / 4.0;
+        sos.push(Biquad {
+            b0: gain,
+            b1: 2.0 * gain,
+            b2: gain,
+            a1,
+            a2,
+        });
+    }
+
+    Ok(sos)
+}
+
+fn apply_sos_filtfilt_in_place(values: &mut [Complex64], sos: &[Biquad]) {
+    if values.is_empty() || sos.is_empty() {
+        return;
+    }
+
+    apply_sos_forward_in_place(values, sos);
+    values.reverse();
+    apply_sos_forward_in_place(values, sos);
+    values.reverse();
+}
+
+fn apply_sos_forward_in_place(values: &mut [Complex64], sos: &[Biquad]) {
+    for section in sos {
+        apply_biquad_forward_in_place(values, *section);
+    }
+}
+
+fn apply_biquad_forward_in_place(values: &mut [Complex64], section: Biquad) {
+    if values.is_empty() {
+        return;
+    }
+
+    let steady = values[0];
+    let mut z1 = steady * (1.0 - section.b0);
+    let mut z2 = steady * (1.0 - section.b0 - section.b1 + section.a1);
+
+    for value in values {
+        let x = *value;
+        let y = section.b0 * x + z1;
+        z1 = section.b1 * x - section.a1 * y + z2;
+        z2 = section.b2 * x - section.a2 * y;
+        *value = y;
+    }
+}
+
+fn fir_response_abs(taps: &[f64], sample_rate: f64, freq_hz: f64) -> f64 {
+    if taps.is_empty() {
+        return 1.0;
+    }
+    let omega = 2.0 * PI * freq_hz / sample_rate;
+    let center = (taps.len() / 2) as isize;
+    let mut acc = Complex64::new(0.0, 0.0);
+    for (idx, &tap) in taps.iter().enumerate() {
+        let n = idx as isize - center;
+        acc += tap * Complex64::from_polar(1.0, -omega * n as f64);
+    }
+    acc.norm()
+}
+
+fn iir_response_abs(sos: &[Biquad], sample_rate: f64, freq_hz: f64) -> f64 {
+    let omega = 2.0 * PI * freq_hz / sample_rate;
+    let z1 = Complex64::from_polar(1.0, -omega);
+    let z2 = Complex64::from_polar(1.0, -2.0 * omega);
+    sos.iter().fold(1.0, |acc, section| {
+        let numerator = section.b0 + section.b1 * z1 + section.b2 * z2;
+        let denominator = Complex64::new(1.0, 0.0) + section.a1 * z1 + section.a2 * z2;
+        acc * (numerator / denominator).norm()
+    })
+}
+
+fn estimate_response_enbw_hz(
+    taps: &[f64],
+    sos: &[Biquad],
+    sample_rate: f64,
+    iir_forward_backward: bool,
+) -> f64 {
+    const BINS: usize = 16_384;
+    let df = 0.5 * sample_rate / BINS as f64;
+    let mut integral = 0.0;
+    for idx in 0..=BINS {
+        let freq = idx as f64 * df;
+        let fir = fir_response_abs(taps, sample_rate, freq);
+        let iir = iir_response_abs(sos, sample_rate, freq);
+        let response_abs = if iir_forward_backward {
+            fir * iir.powi(2)
+        } else {
+            fir * iir
+        };
+        let weight = if idx == 0 || idx == BINS { 0.5 } else { 1.0 };
+        integral += weight * response_abs * response_abs;
+    }
+    2.0 * integral * df
 }
 
 struct EnbwMatch {
@@ -446,8 +803,7 @@ fn kaiser_beta(stopband_atten_db: f64) -> f64 {
     if stopband_atten_db > 50.0 {
         0.1102 * (stopband_atten_db - 8.7)
     } else if stopband_atten_db >= 21.0 {
-        0.5842 * (stopband_atten_db - 21.0).powf(0.4)
-            + 0.07886 * (stopband_atten_db - 21.0)
+        0.5842 * (stopband_atten_db - 21.0).powf(0.4) + 0.07886 * (stopband_atten_db - 21.0)
     } else {
         0.0
     }
@@ -487,6 +843,8 @@ mod tests {
             f_ref: 1_000.0,
             lpf_kind: LockinLpfKind::FirBoxcarEnbw,
             lpf_stopband_atten_db: 60.0,
+            lpf_sync_average_cycles: 1.0,
+            lpf_iir_order: 2,
             cutoff_hz: None,
             cutoff_source: CutoffSource::EnbwMatch,
             fallback_used: false,
@@ -527,6 +885,140 @@ mod tests {
         let actual = enbw_hz(&taps, params.sample_rate);
         let rel_err = (actual - target).abs() / target;
         assert!(rel_err < 1.0e-6, "relative error: {rel_err}");
+    }
+
+    #[test]
+    fn fir_boxcar_enbw_legacy_target_reachability_is_reported() {
+        let params = test_params();
+        let beta = kaiser_beta(params.lpf_stopband_atten_db);
+        let min_cutoff = (params.sample_rate / 1.0e12).max(f64::MIN_POSITIVE);
+        let max_cutoff = 0.45 * params.output_rate;
+        let target = enbw_hz(&legacy_boxcar_weights(params), params.sample_rate);
+        let min_enbw = enbw_hz(
+            &design_kaiser_lowpass_taps(params, min_cutoff, beta),
+            params.sample_rate,
+        );
+        let max_enbw = enbw_hz(
+            &design_kaiser_lowpass_taps(params, max_cutoff, beta),
+            params.sample_rate,
+        );
+        let matched = match_boxcar_enbw_cutoff(params, beta, target);
+
+        assert_eq!(
+            matched.reachable,
+            target > min_enbw && target < max_enbw,
+            "target={target}, min={min_enbw}, max={max_enbw}"
+        );
+    }
+
+    #[test]
+    fn fir_boxcar_enbw_unreachable_low_target_uses_min_cutoff() {
+        let params = test_params();
+        let beta = kaiser_beta(params.lpf_stopband_atten_db);
+        let min_cutoff = (params.sample_rate / 1.0e12).max(f64::MIN_POSITIVE);
+        let min_enbw = enbw_hz(
+            &design_kaiser_lowpass_taps(params, min_cutoff, beta),
+            params.sample_rate,
+        );
+        let matched = match_boxcar_enbw_cutoff(params, beta, 0.5 * min_enbw);
+
+        assert!(!matched.reachable);
+        assert_eq!(matched.cutoff_hz, min_cutoff);
+    }
+
+    #[test]
+    fn butterworth_response_is_half_power_at_cutoff() {
+        let sample_rate = 100_000.0;
+        let cutoff = 1_000.0;
+        let sos = design_butterworth_lowpass_sos(4, cutoff, sample_rate).unwrap();
+        let response = iir_response_abs(&sos, sample_rate, cutoff);
+        assert!((response - 1.0 / 2.0_f64.sqrt()).abs() < 1.0e-10);
+    }
+
+    #[test]
+    fn zero_phase_design_cutoff_compensates_half_power_point() {
+        let sample_rate = 100_000.0;
+        let requested_cutoff = 1_000.0;
+        let order = 4;
+        let design_cutoff = zero_phase_butterworth_design_cutoff(requested_cutoff, order);
+        let sos = design_butterworth_lowpass_sos(order, design_cutoff, sample_rate).unwrap();
+        let response = iir_response_abs(&sos, sample_rate, requested_cutoff).powi(2);
+        assert!((response - 1.0 / 2.0_f64.sqrt()).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn centered_moving_average_preserves_constant_signal() {
+        let input = vec![Complex64::new(2.0, -3.0); 101];
+        let output = centered_moving_average_complex(&input, 7);
+        assert!(output
+            .iter()
+            .all(|&value| value == Complex64::new(2.0, -3.0)));
+    }
+
+    #[test]
+    fn centered_moving_average_in_place_matches_reference() {
+        let input = (0..29)
+            .map(|idx| Complex64::new(idx as f64, -(idx as f64) * 0.25))
+            .collect::<Vec<_>>();
+        let len = 6;
+        let left = (len - 1) / 2;
+        let right = len - left;
+        let expected = (0..input.len())
+            .map(|idx| {
+                let start = idx.saturating_sub(left);
+                let end = (idx + right).min(input.len());
+                input[start..end].iter().copied().sum::<Complex64>() / (end - start) as f64
+            })
+            .collect::<Vec<_>>();
+
+        let mut actual = input;
+        apply_centered_moving_average_complex_in_place(&mut actual, len);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rejects_empty_output_range_after_iir_settling_trim() {
+        let mut lockin = Lockin {
+            workers: 1,
+            stride_samples: 1,
+            lpf_kind: LockinLpfKind::SyncIirZeroPhase,
+            lpf_half_window_cycles: 1.0,
+            lpf_cutoff_hz: Some(1.0),
+            lpf_cutoff_ref_ratio: None,
+            lpf_stopband_atten_db: 60.0,
+            lpf_sync_average_cycles: 1.0,
+            lpf_iir_order: 2,
+            lpf_debug_output: false,
+            lpf_debug_label: None,
+            lpf_debug_overwrite: false,
+            snr_background_window: None,
+            snr_signal_window: None,
+        };
+        let dt = 1.0e-4;
+        let t = (0..1000).map(|idx| idx as f64 * dt).collect::<Vec<_>>();
+        let data = vec![0.0; t.len()];
+
+        let err = match LockinProcessor::new(&t, &data, 1_000.0, 0.0, &lockin) {
+            Ok(_) => panic!("expected empty output range error"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("output range is empty"));
+
+        lockin.lpf_cutoff_hz = Some(1_000.0);
+        LockinProcessor::new(&t, &data, 1_000.0, 0.0, &lockin).unwrap();
+    }
+
+    #[test]
+    fn narrow_iir_filtfilt_preserves_constant_signal() {
+        let sos = design_butterworth_lowpass_sos(4, 20_000.0, 2.0e9).unwrap();
+        let mut values = vec![Complex64::new(1.25, -0.5); 10_000];
+        apply_sos_filtfilt_in_place(&mut values, &sos);
+        let max_err = values
+            .iter()
+            .map(|&value| (value - Complex64::new(1.25, -0.5)).norm())
+            .fold(0.0, f64::max);
+        assert!(max_err < 1.0e-6, "max_err={max_err}");
     }
 
     #[test]

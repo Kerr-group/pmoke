@@ -1,7 +1,7 @@
 use crate::config::{Config, LockinLpfKind, Window};
 use crate::lockin::lockin_core::{FilterDesign, HarmonicLockinResult};
 use crate::lockin::lockin_params::LockinParams;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use num_complex::Complex64;
 use std::f64::consts::PI;
 use std::fs;
@@ -48,14 +48,12 @@ fn prepare_debug_dir(
         .lpf_debug_label
         .clone()
         .unwrap_or_else(|| auto_label(cfg, params, filter));
-    let dir = PathBuf::from("lockin_debug")
-        .join(label)
-        .join(format!(
-            "{}_ch{}_h{}",
-            lpf_kind_name(cfg.lockin.lpf_kind),
-            signal_ch,
-            harmonic
-        ));
+    let dir = PathBuf::from("lockin_debug").join(label).join(format!(
+        "{}_ch{}_h{}",
+        lpf_kind_name(cfg.lockin.lpf_kind),
+        signal_ch,
+        harmonic
+    ));
 
     if dir.exists() {
         if !cfg.lockin.lpf_debug_overwrite {
@@ -113,6 +111,7 @@ fn lpf_kind_name(kind: LockinLpfKind) -> &'static str {
         LockinLpfKind::FirZeroPhase => "fir_zero_phase",
         LockinLpfKind::BoxcarLegacy => "boxcar_legacy",
         LockinLpfKind::FirBoxcarEnbw => "fir_boxcar_enbw",
+        LockinLpfKind::SyncIirZeroPhase => "sync_iir_zero_phase",
     }
 }
 
@@ -127,7 +126,10 @@ fn write_metadata(
     let mut rows = Vec::new();
     rows.push(("signal_ch".to_string(), signal_ch.to_string()));
     rows.push(("harmonic".to_string(), harmonic.to_string()));
-    rows.push(("lpf_kind".to_string(), lpf_kind_name(cfg.lockin.lpf_kind).to_string()));
+    rows.push((
+        "lpf_kind".to_string(),
+        lpf_kind_name(cfg.lockin.lpf_kind).to_string(),
+    ));
     rows.push(("f_ref".to_string(), params.f_ref.to_string()));
     rows.push(("dt".to_string(), params.dt.to_string()));
     rows.push(("sample_rate".to_string(), params.sample_rate.to_string()));
@@ -140,21 +142,40 @@ fn write_metadata(
     rows.push(("t_half".to_string(), params.t_half.to_string()));
     rows.push(("n_half".to_string(), params.n_half.to_string()));
     rows.push(("tap_count".to_string(), (2 * params.n_half + 1).to_string()));
-    rows.push(("cutoff_source".to_string(), params.cutoff_source.as_str().to_string()));
-    rows.push(("fallback_used".to_string(), params.fallback_used.to_string()));
+    rows.push((
+        "cutoff_source".to_string(),
+        params.cutoff_source.as_str().to_string(),
+    ));
+    rows.push((
+        "fallback_used".to_string(),
+        params.fallback_used.to_string(),
+    ));
     rows.push((
         "stopband_atten_db".to_string(),
         cfg.lockin.lpf_stopband_atten_db.to_string(),
     ));
-    rows.push((
-        "attenuation_is_guaranteed".to_string(),
-        "false".to_string(),
-    ));
+    rows.push(("attenuation_is_guaranteed".to_string(), "false".to_string()));
 
     if let Some(filter) = filter {
         rows.push(("cutoff_hz".to_string(), filter.cutoff_hz.to_string()));
-        rows.push(("filter_cutoff_source".to_string(), filter.cutoff_source.to_string()));
+        rows.push((
+            "design_cutoff_hz".to_string(),
+            filter.design_cutoff_hz.to_string(),
+        ));
+        rows.push((
+            "filter_cutoff_source".to_string(),
+            filter.cutoff_source.to_string(),
+        ));
         rows.push(("kaiser_beta".to_string(), filter.kaiser_beta.to_string()));
+        rows.push((
+            "sync_average_samples".to_string(),
+            opt_usize(filter.sync_average_samples),
+        ));
+        rows.push(("iir_order".to_string(), opt_usize(filter.iir_order)));
+        rows.push((
+            "settling_samples".to_string(),
+            filter.settling_samples.to_string(),
+        ));
         rows.push((
             "estimated_enbw_hz".to_string(),
             filter.estimated_enbw_hz.to_string(),
@@ -193,10 +214,18 @@ fn write_metadata(
 }
 
 fn opt_f64(value: Option<f64>) -> String {
-    value.map(|v| v.to_string()).unwrap_or_else(|| "NaN".to_string())
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "NaN".to_string())
 }
 
 fn opt_bool(value: Option<bool>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "NaN".to_string())
+}
+
+fn opt_usize(value: Option<usize>) -> String {
     value
         .map(|v| v.to_string())
         .unwrap_or_else(|| "NaN".to_string())
@@ -208,8 +237,8 @@ fn write_filter_response(
     filter: Option<&FilterDesign>,
 ) -> Result<()> {
     let path = dir.join("filter_response.csv");
-    let file = fs::File::create(&path)
-        .with_context(|| format!("failed to create {}", path.display()))?;
+    let file =
+        fs::File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
     let mut writer = BufWriter::new(file);
     writeln!(writer, "frequency_hz,response_abs,response_db")?;
 
@@ -217,7 +246,7 @@ fn write_filter_response(
         let max_freq = 0.5 * params.output_rate;
         for idx in 0..=RESPONSE_BINS {
             let freq = max_freq * idx as f64 / RESPONSE_BINS as f64;
-            let response = fir_response_abs(&filter.taps, params.sample_rate, freq);
+            let response = filter.response_abs(params.sample_rate, freq);
             let response_db = if response > 0.0 {
                 20.0 * response.log10()
             } else {
@@ -230,17 +259,6 @@ fn write_filter_response(
     Ok(())
 }
 
-fn fir_response_abs(taps: &[f64], sample_rate: f64, freq_hz: f64) -> f64 {
-    let omega = 2.0 * PI * freq_hz / sample_rate;
-    let center = (taps.len() / 2) as isize;
-    let mut acc = Complex64::new(0.0, 0.0);
-    for (idx, &tap) in taps.iter().enumerate() {
-        let n = idx as isize - center;
-        acc += tap * Complex64::from_polar(1.0, -omega * n as f64);
-    }
-    acc.norm()
-}
-
 fn write_baseband_psd(
     dir: &Path,
     cfg: &Config,
@@ -248,8 +266,8 @@ fn write_baseband_psd(
     mixed_signal: Option<&[Complex64]>,
 ) -> Result<()> {
     let path = dir.join("baseband_psd.csv");
-    let file = fs::File::create(&path)
-        .with_context(|| format!("failed to create {}", path.display()))?;
+    let file =
+        fs::File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
     let mut writer = BufWriter::new(file);
     writeln!(writer, "frequency_hz,psd_re,psd_im,psd_abs")?;
 
@@ -262,7 +280,10 @@ fn write_baseband_psd(
         .snr_background_window
         .unwrap_or(cfg.pulse.bg_window_before);
     let samples = complex_window(t_raw, mixed_signal, window);
-    if samples.iter().any(|value| !value.re.is_finite() || !value.im.is_finite()) {
+    if samples
+        .iter()
+        .any(|value| !value.re.is_finite() || !value.im.is_finite())
+    {
         eprintln!("⚠️ baseband PSD skipped: non-finite samples found in background window");
         return Ok(());
     }
@@ -374,10 +395,22 @@ fn write_snr_summary(
     let signal_p95_snr = snr(signal_p95_amp, background_amp_std);
 
     let rows = vec![
-        ("background_amp_mean".to_string(), background_amp_mean.to_string()),
-        ("background_amp_std".to_string(), background_amp_std.to_string()),
-        ("background_lix_std".to_string(), background_lix_std.to_string()),
-        ("background_liy_std".to_string(), background_liy_std.to_string()),
+        (
+            "background_amp_mean".to_string(),
+            background_amp_mean.to_string(),
+        ),
+        (
+            "background_amp_std".to_string(),
+            background_amp_std.to_string(),
+        ),
+        (
+            "background_lix_std".to_string(),
+            background_lix_std.to_string(),
+        ),
+        (
+            "background_liy_std".to_string(),
+            background_liy_std.to_string(),
+        ),
         ("signal_peak_amp".to_string(), signal_peak_amp.to_string()),
         ("signal_p95_amp".to_string(), signal_p95_amp.to_string()),
         ("signal_peak_snr".to_string(), signal_peak_snr.to_string()),
@@ -395,7 +428,12 @@ struct LockinSample {
     amp: f64,
 }
 
-fn finite_lockin_window(t: &[f64], li_x: &[f64], li_y: &[f64], window: Window) -> Vec<LockinSample> {
+fn finite_lockin_window(
+    t: &[f64],
+    li_x: &[f64],
+    li_y: &[f64],
+    window: Window,
+) -> Vec<LockinSample> {
     t.iter()
         .zip(li_x.iter())
         .zip(li_y.iter())
@@ -411,7 +449,11 @@ fn finite_lockin_window(t: &[f64], li_x: &[f64], li_y: &[f64], window: Window) -
 }
 
 fn metric_if(condition: bool, f: impl FnOnce() -> f64) -> f64 {
-    if condition { f() } else { f64::NAN }
+    if condition {
+        f()
+    } else {
+        f64::NAN
+    }
 }
 
 fn mean(values: &[f64]) -> f64 {
