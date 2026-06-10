@@ -96,18 +96,14 @@ where
         writeln!(w)?;
     }
 
-    let mut line = String::new();
     for row in 0..nrows {
-        line.clear();
         for (col_idx, col) in column_refs.iter().enumerate() {
-            if col_idx > 0 {
-                line.push(',');
+            write!(w, "{}", col[row])?;
+            if col_idx + 1 != ncols {
+                write!(w, ",")?;
             }
-            use std::fmt::Write as _;
-            write!(&mut line, "{}", col[row])?;
         }
-        line.push('\n');
-        w.write_all(line.as_bytes())?;
+        writeln!(w)?;
     }
 
     w.flush()?;
