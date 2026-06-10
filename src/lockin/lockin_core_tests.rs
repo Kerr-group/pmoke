@@ -153,6 +153,59 @@ fn centered_moving_average_in_place_matches_reference() {
 }
 
 #[test]
+fn fir_fast_path_matches_debug_full_mixed_path() {
+    let lockin = Lockin {
+        workers: 1,
+        stride_samples: 13,
+        lpf_kind: LockinLpfKind::FirZeroPhase,
+        lpf_half_window_cycles: 2.75,
+        lpf_cutoff_hz: Some(300.0),
+        lpf_cutoff_ref_ratio: None,
+        lpf_stopband_atten_db: 60.0,
+        lpf_sync_average_cycles: 1.0,
+        lpf_iir_order: 2,
+        lpf_debug_output: false,
+        lpf_debug_label: None,
+        lpf_debug_overwrite: false,
+        snr_background_window: None,
+        snr_signal_window: None,
+    };
+    let dt = 1.0e-5;
+    let f_ref = 1_000.0;
+    let t = (0..12_000).map(|idx| idx as f64 * dt).collect::<Vec<_>>();
+    let data = t
+        .iter()
+        .map(|&ti| {
+            0.17 * (2.0 * PI * 1_000.0 * ti + 0.2).sin()
+                + 0.05 * (2.0 * PI * 250.0 * ti).cos()
+                + 0.03 * (2.0 * PI * 3_000.0 * ti + 0.7).sin()
+        })
+        .collect::<Vec<_>>();
+
+    let processor = LockinProcessor::new(&t, &data, f_ref, 0.31, &lockin).unwrap();
+    let fast = processor.compute_harmonic_detailed(3, false);
+    let debug = processor.compute_harmonic_detailed(3, true);
+
+    assert_eq!(fast.li_x.len(), debug.li_x.len());
+    assert_eq!(fast.li_y.len(), debug.li_y.len());
+    let max_x_err = fast
+        .li_x
+        .iter()
+        .zip(debug.li_x.iter())
+        .map(|(fast, debug)| (fast - debug).abs())
+        .fold(0.0, f64::max);
+    let max_y_err = fast
+        .li_y
+        .iter()
+        .zip(debug.li_y.iter())
+        .map(|(fast, debug)| (fast - debug).abs())
+        .fold(0.0, f64::max);
+
+    assert!(max_x_err < 1.0e-13, "max_x_err={max_x_err}");
+    assert!(max_y_err < 1.0e-13, "max_y_err={max_y_err}");
+}
+
+#[test]
 fn legacy_boxcar_prefix_path_matches_direct_integration() {
     let lockin = Lockin {
         workers: 1,

@@ -215,16 +215,24 @@ impl<'a> LockinProcessor<'a> {
         harmonic: usize,
         include_debug_data: bool,
     ) -> HarmonicLockinResult {
+        if !include_debug_data {
+            let (raw_start, raw_end) = self.fir_required_raw_range();
+            let mixed_signal =
+                self.compute_complex_mixed_signal_range(harmonic, raw_start, raw_end);
+            let (li_x, li_y) = self.apply_fir_to_li(&mixed_signal, raw_start);
+            return HarmonicLockinResult {
+                li_x,
+                li_y,
+                mixed_signal: None,
+            };
+        }
+
         let mixed_signal = self.compute_complex_mixed_signal(harmonic);
-        let filtered = self.apply_fir(&mixed_signal);
-
-        let li_x: Vec<f64> = filtered.iter().map(|z| -z.im).collect();
-        let li_y: Vec<f64> = filtered.iter().map(|z| z.re).collect();
-
+        let (li_x, li_y) = self.apply_fir_to_li(&mixed_signal, 0);
         HarmonicLockinResult {
             li_x,
             li_y,
-            mixed_signal: include_debug_data.then_some(mixed_signal),
+            mixed_signal: Some(mixed_signal),
         }
     }
 
@@ -266,16 +274,30 @@ impl<'a> LockinProcessor<'a> {
     }
 
     fn compute_complex_mixed_signal(&self, harmonic: usize) -> Vec<Complex64> {
+        self.compute_complex_mixed_signal_range(harmonic, 0, self.data.len())
+    }
+
+    fn compute_complex_mixed_signal_range(
+        &self,
+        harmonic: usize,
+        start: usize,
+        end: usize,
+    ) -> Vec<Complex64> {
         let harmonic = harmonic as f64;
-        let phase0 = harmonic * (self.params.omega * self.t[0] - self.omega_tref);
         let step_phase = -harmonic * self.params.omega * self.params.dt;
         let step = Complex64::from_polar(1.0, step_phase);
-        let mut osc = Complex64::from_polar(1.0, -phase0);
+        let anchor = start - (start % 4096);
+        let anchor_phase = -harmonic * (self.params.omega * self.t[anchor] - self.omega_tref);
+        let mut osc = Complex64::from_polar(1.0, anchor_phase);
+        for _ in anchor..start {
+            osc *= step;
+        }
 
-        let mut mixed = Vec::with_capacity(self.data.len());
-        for (idx, &sample) in self.data.iter().enumerate() {
-            if idx > 0 && idx % 4096 == 0 {
-                let phase = -phase0 + (idx as f64) * step_phase;
+        let mut mixed = Vec::with_capacity(end - start);
+        for (idx, &sample) in self.data[start..end].iter().enumerate() {
+            let raw_idx = start + idx;
+            if idx > 0 && raw_idx % 4096 == 0 {
+                let phase = -harmonic * (self.params.omega * self.t[raw_idx] - self.omega_tref);
                 osc = Complex64::from_polar(1.0, phase);
             }
 
@@ -286,36 +308,51 @@ impl<'a> LockinProcessor<'a> {
         mixed
     }
 
-    fn apply_fir(&self, mixed_signal: &[Complex64]) -> Vec<Complex64> {
+    fn fir_required_raw_range(&self) -> (usize, usize) {
+        let (i_start, i_end) = self.output_index_range();
+        let raw_start = i_start * self.params.stride - self.params.n_half;
+        let raw_end = i_end * self.params.stride + self.params.n_half + 1;
+        (raw_start, raw_end)
+    }
+
+    fn apply_fir_to_li(
+        &self,
+        mixed_signal: &[Complex64],
+        raw_start: usize,
+    ) -> (Vec<f64>, Vec<f64>) {
         let filter = self
             .filter
             .as_ref()
             .expect("FIR taps must be present for FIR lock-in");
         let taps = &filter.taps;
 
-        let i_start = self.params.i_start;
-        let i_end = self.params.i_end;
+        let (i_start, i_end) = self.output_index_range();
         let m = if i_end >= i_start {
             i_end - i_start + 1
         } else {
             0
         };
-        let mut out = Vec::with_capacity(m);
+        let mut li_x = Vec::with_capacity(m);
+        let mut li_y = Vec::with_capacity(m);
 
         for i_idx in i_start..=i_end {
             let i_base = i_idx * self.params.stride;
-            let base_start = i_base - self.params.n_half;
-            let mut acc = Complex64::new(0.0, 0.0);
+            let base_start = i_base - self.params.n_half - raw_start;
+            let mut acc_re = 0.0;
+            let mut acc_im = 0.0;
 
             for (tap_idx, &tap) in taps.iter().enumerate() {
                 let sample_idx = base_start + tap_idx;
-                acc += mixed_signal[sample_idx] * tap;
+                let sample = mixed_signal[sample_idx];
+                acc_re += sample.re * tap;
+                acc_im += sample.im * tap;
             }
 
-            out.push(acc);
+            li_x.push(-acc_im);
+            li_y.push(acc_re);
         }
 
-        out
+        (li_x, li_y)
     }
 
     fn compute_legacy_lockin(&self, harmonic: usize, ref_type: RefType) -> Vec<f64> {
