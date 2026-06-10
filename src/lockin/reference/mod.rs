@@ -102,6 +102,21 @@ pub fn run_fit_ref_core(cfg: &Config, t: &[f64], ref_data: &[f64]) -> Result<Ref
     let (fit_t, fit_ref_data) = stride_samples(cfg, t, ref_data);
     let results =
         fit_ref(&fit_t, &fit_ref_data, fft_results).context("failed to fit reference signal")?;
+    ui::summary_table(
+        "Reference fit",
+        &["Metric", "Value"],
+        vec![
+            vec![
+                "frequency".to_string(),
+                format!("{:.8} MHz", results.f_ref * 1e-6),
+            ],
+            vec!["amplitude".to_string(), format!("{:.8} V", results.a_ref)],
+            vec![
+                "phase".to_string(),
+                format!("{:.8} rad", results.omega_tref),
+            ],
+        ],
+    );
     plot_fit_results(&fit_t, &fit_ref_data, &results).context("failed to plot reference signal")?;
     Ok(results)
 }
@@ -191,9 +206,11 @@ fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Resu
         .map(|&ti| a * (2.0 * PI * f * ti - omegat).sin())
         .collect();
 
+    let pb = ui::spinner("plotting reference fit");
     ref_plot::ReferencePlotter {}
         .plot(t_plot, ref_plot, &fit_plot)
         .context("failed to plot reference signal")?;
+    ui::finish_success(pb, "reference plot completed");
 
     Ok(())
 }

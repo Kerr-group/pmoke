@@ -67,9 +67,11 @@ pub fn run_sensor(
     let t_stride = li_stride_1d(cfg, t, f_ref)?;
     let s_stride = li_stride_2d(cfg, s_cols, f_ref)?;
 
+    let pb = ui::spinner("plotting sensor raw data");
     sensor_raw_plot::SensorRawPlotter {}
         .plot(&t_stride, s_stride, sensor_ch, &c_bg_arr)
         .context("failed to plot sensor data")?;
+    ui::finish_success(pb, "sensor raw plot completed");
 
     let pb = ui::progress("integrating sensor pulses", s_cols.len() as u64);
     let start = std::time::Instant::now();
@@ -101,9 +103,11 @@ pub fn run_sensor(
     let labels: Vec<&str> = sensor_meta.iter().map(|m| m.label).collect();
     let units: Vec<&str> = sensor_meta.iter().map(|m| m.unit).collect();
 
+    let pb = ui::spinner("plotting sensor integrals");
     sensor_integral_plot::SensorIntegralPlotter {}
         .plot(&t_stride, &s_integral_stride, sensor_ch, &labels, &units)
         .context("failed to plot sensor integrals")?;
+    ui::finish_success(pb, "sensor integral plot completed");
 
     Ok((t_stride, s_integral_stride))
 }

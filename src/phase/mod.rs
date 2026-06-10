@@ -15,6 +15,12 @@ use rayon::prelude::*;
 use std::f64::consts::PI;
 use std::time::Instant;
 
+pub struct PhaseAnalysisOutput {
+    pub rotated_result: Vec<Vec<f64>>,
+    pub omega_t0: f64,
+    pub deltas: [f64; 6],
+}
+
 pub fn run(cfg: &Config) -> Result<()> {
     let ch = cfg.phase_signal_ch();
 
@@ -78,24 +84,53 @@ pub fn run_phase_analysis(
     let mut rotated_results: Vec<Vec<Vec<f64>>> = Vec::new();
     for (ch_i, li_result) in ch.iter().zip(li_results.iter()) {
         pb.set_message(format!("phase analysis ch{ch_i}"));
-        let rotated_result = phase_analysis(cfg, li_result)?;
+        let phase_output = phase_analysis(cfg, li_result)?;
+        ui::suspend_progress(&pb, || {
+            ui::summary_table(
+                format!("Phase rotation ch{ch_i}"),
+                &["Metric", "Value"],
+                vec![
+                    vec![
+                        "omega_t0".to_string(),
+                        format!("{:.8} rad", phase_output.omega_t0),
+                    ],
+                    vec![
+                        "delta[1..6]".to_string(),
+                        phase_output
+                            .deltas
+                            .iter()
+                            .map(|delta| format!("{delta:.4}"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ],
+                ],
+            );
+        });
         let li_rotated_name = LI_ROTATED_NAME;
         let fname = format!("{}_ch{}.csv", li_rotated_name, ch_i);
         let headers = get_li_rotated_headers(cfg)?;
-        write_li_rotated_results(&fname, &headers, t, sensor_integral_ch, &rotated_result)?;
-        rotated_results.push(rotated_result);
+        write_li_rotated_results(
+            &fname,
+            &headers,
+            t,
+            sensor_integral_ch,
+            &phase_output.rotated_result,
+        )?;
+        rotated_results.push(phase_output.rotated_result);
         pb.inc(1);
     }
     ui::finish_saved(pb, format!("phase-rotated results for channels {:?}", ch));
     ui::success("phase analysis completed");
 
+    let pb = ui::spinner("plotting phase-rotated results");
     PhaseRotationPlotter {}
         .plot(t, &rotated_results, ch, &labels)
         .context("failed to plot phase-rotated results")?;
+    ui::finish_success(pb, "phase plot completed");
     Ok(rotated_results)
 }
 
-pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
+pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnalysisOutput> {
     let pairs: Vec<_> = li_result.chunks_exact(2).collect();
 
     let [[li1x, li1y], [li2x, li2y], [li3x, li3y], [li4x, li4y], [li5x, li5y], [li6x, li6y], ..] =
@@ -181,6 +216,7 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<Vec<Vec<f6
     let delta_4 = PI / 2.0 - 4.0 * omega_t0;
     let delta_5 = PI - 5.0 * omega_t0;
     let delta_6 = PI / 2.0 - 6.0 * omega_t0;
+    let deltas = [delta_1, delta_2, delta_3, delta_4, delta_5, delta_6];
 
     let (li1_in, li1_out) = rotate_phase(li1x, li1y, delta_1);
     let (li2_in, li2_out) = rotate_phase(li2x, li2y, delta_2);
@@ -194,5 +230,9 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<Vec<Vec<f6
         li6_in, li6_out,
     ];
 
-    Ok(rotated_result)
+    Ok(PhaseAnalysisOutput {
+        rotated_result,
+        omega_t0,
+        deltas,
+    })
 }

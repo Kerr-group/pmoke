@@ -1,3 +1,7 @@
+use comfy_table::{
+    modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Attribute, Cell, Color, ContentArrangement,
+    Table,
+};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fmt::Display;
@@ -93,6 +97,29 @@ pub fn section_err(title: impl Display) {
     eprintln!("{}", style(format!("{title}")).bold().underlined());
 }
 
-pub fn bullet(message: impl Display) {
-    println!("  {} {}", style("•").dim(), message);
+pub fn summary_table(title: impl Display, headers: &[&str], rows: Vec<Vec<String>>) {
+    section(title);
+    println!("{}", table(headers, rows));
+}
+
+pub fn table(headers: &[&str], rows: Vec<Vec<String>>) -> Table {
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+    table.set_header(
+        headers
+            .iter()
+            .map(|header| {
+                Cell::new(header)
+                    .fg(Color::Cyan)
+                    .add_attribute(Attribute::Bold)
+            })
+            .collect::<Vec<_>>(),
+    );
+    for row in rows {
+        table.add_row(row);
+    }
+    table
 }

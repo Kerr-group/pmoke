@@ -122,9 +122,11 @@ pub fn run_li(
         .map(|s| s.trim().replace("(V)", ""))
         .collect();
 
+    let pb = ui::spinner("plotting lock-in results");
     lockin_plot::LIPlotter {}
         .plot(&t_stride, &lockin_output.result, &signal_ch, &labels)
         .context("failed to plot lock-in results")?;
+    ui::finish_success(pb, "lock-in plot completed");
 
     Ok((t_stride, sensor_integral_stride, lockin_output.result))
 }
@@ -188,10 +190,18 @@ pub fn li_process(
         }
         if !printed_lockin_summary {
             ui::suspend_progress(&pb, || {
-                ui::section("Lock-in settings");
-                for line in li_processor.summary_lines() {
-                    ui::bullet(line);
-                }
+                ui::summary_table(
+                    "Lock-in settings",
+                    &["Setting", "Value"],
+                    li_processor
+                        .summary_lines()
+                        .into_iter()
+                        .map(|line| {
+                            let (setting, value) = line.split_once('=').unwrap_or((&line, ""));
+                            vec![setting.to_string(), value.to_string()]
+                        })
+                        .collect(),
+                );
             });
             printed_lockin_summary = true;
         }
