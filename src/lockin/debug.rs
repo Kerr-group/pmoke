@@ -1,6 +1,7 @@
 use crate::config::{Config, LockinLpfKind, Window};
 use crate::lockin::lockin_core::{FilterDesign, HarmonicLockinResult};
 use crate::lockin::lockin_params::LockinParams;
+use crate::ui;
 use anyhow::{bail, Context, Result};
 use num_complex::Complex64;
 use std::f64::consts::PI;
@@ -284,14 +285,14 @@ fn write_baseband_psd(
         .iter()
         .any(|value| !value.re.is_finite() || !value.im.is_finite())
     {
-        eprintln!("⚠️ baseband PSD skipped: non-finite samples found in background window");
+        ui::warn("baseband PSD skipped: non-finite samples found in background window");
         return Ok(());
     }
     if samples.len() < MIN_PSD_SAMPLES {
-        eprintln!(
-            "⚠️ baseband PSD skipped: only {} samples in background window",
+        ui::warn(format!(
+            "baseband PSD skipped: only {} samples in background window",
             samples.len()
-        );
+        ));
         return Ok(());
     }
 
@@ -360,16 +361,16 @@ fn write_snr_summary(
     let sig = finite_lockin_window(t_output, &result.li_x, &result.li_y, signal_window);
 
     if bg.len() < MIN_BACKGROUND_SAMPLES {
-        eprintln!(
-            "⚠️ S/N background window has only {} finite samples; writing NaN metrics",
+        ui::warn(format!(
+            "S/N background window has only {} finite samples; writing NaN metrics",
             bg.len()
-        );
+        ));
     }
     if sig.len() < MIN_SIGNAL_P95_SAMPLES {
-        eprintln!(
-            "⚠️ S/N signal window has only {} finite samples; signal_p95 metrics will be NaN",
+        ui::warn(format!(
+            "S/N signal window has only {} finite samples; signal_p95 metrics will be NaN",
             sig.len()
-        );
+        ));
     }
 
     let bg_amp: Vec<f64> = bg.iter().map(|sample| sample.amp).collect();

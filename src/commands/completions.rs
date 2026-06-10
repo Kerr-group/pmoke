@@ -1,9 +1,10 @@
 use crate::cli::Cli;
+use crate::ui;
 use anyhow::{Context, Result};
 use clap::CommandFactory;
-use clap_complete::{Shell, generate};
+use clap_complete::{generate, Shell};
 use dirs;
-use std::{fs, path::PathBuf, io::Write}; 
+use std::{fs, io::Write, path::PathBuf};
 
 pub fn install_completion(shell: Shell) -> Result<()> {
     let mut cmd = Cli::command();
@@ -18,18 +19,16 @@ pub fn install_completion(shell: Shell) -> Result<()> {
             fs::create_dir_all(dest.parent().unwrap())?;
             fs::write(&dest, buffer)
                 .with_context(|| format!("failed to write completion to {:?}", dest))?;
-            println!("✅ Installed fish completion at {}", dest.display());
+            ui::success(format!("installed fish completion at {}", dest.display()));
         }
         Shell::PowerShell => {
-            let profile_path = std::env::var_os("PROFILE")
-                .map(PathBuf::from)
-                .or_else(|| {
-                    dirs::document_dir().map(|mut path| {
-                        path.push("WindowsPowerShell"); 
-                        path.push("Microsoft.PowerShell_profile.ps1");
-                        path
-                    })
-                });
+            let profile_path = std::env::var_os("PROFILE").map(PathBuf::from).or_else(|| {
+                dirs::document_dir().map(|mut path| {
+                    path.push("WindowsPowerShell");
+                    path.push("Microsoft.PowerShell_profile.ps1");
+                    path
+                })
+            });
 
             if let Some(path) = profile_path {
                 if let Some(parent) = path.parent() {
@@ -39,27 +38,32 @@ pub fn install_completion(shell: Shell) -> Result<()> {
                 let script = String::from_utf8_lossy(&buffer);
 
                 let mut file = fs::OpenOptions::new()
-                    .create(true) 
+                    .create(true)
                     .write(true)
-                    .append(true) 
+                    .append(true)
                     .open(&path)
                     .with_context(|| format!("failed to open profile at {:?}", path))?;
 
                 writeln!(file, "\n# pmoke completion\n{}", script)?;
 
-                println!(
-                    "✅ Appended pmoke completion to PowerShell profile {:?}",
+                ui::success(format!(
+                    "appended pmoke completion to PowerShell profile {:?}",
                     path
-                );
+                ));
             } else {
-                println!("⚠️  Could not determine PowerShell profile path automatically.");
-                println!("Try manually: pmoke completions powershell | Out-String | Invoke-Expression");
+                ui::warn("could not determine PowerShell profile path automatically");
+                ui::info(
+                    "try manually: pmoke completions powershell | Out-String | Invoke-Expression",
+                );
             }
         }
         other => {
-            println!("{} is not yet supported for automatic installation.", other);
-            println!("You can manually install with:");
-            println!("pmoke completions {} > <completion-path>", other);
+            ui::skipped(format!(
+                "{other} is not yet supported for automatic installation"
+            ));
+            ui::info(format!(
+                "manual install: pmoke completions {other} > <completion-path>"
+            ));
         }
     }
     Ok(())

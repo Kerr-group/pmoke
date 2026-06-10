@@ -8,6 +8,7 @@ use crate::phase::omega_t0_analysis::OT0Analyser;
 use crate::phase::phase_rotation_plot::PhaseRotationPlotter;
 use crate::phase::rotator::rotate_phase;
 use crate::phase::save::{get_li_rotated_headers, write_li_rotated_results};
+use crate::ui;
 use crate::{config::Config, constants::LI_RESULTS_NAME, utils::csv::read_csv};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
@@ -18,13 +19,14 @@ pub fn run(cfg: &Config) -> Result<()> {
     let ch = cfg.phase_signal_ch();
 
     if ch.is_empty() {
-        println!("⚠️ No channels specified for phase analysis. Skipping phase analysis.");
+        ui::skipped("phase analysis: no channels specified");
         return Ok(());
     }
 
     let num_sensor_ch = cfg.roles.sensor_ch.len();
 
     let t0 = Instant::now();
+    let pb = ui::spinner(format!("reading lock-in results for channels {:?}", ch));
 
     let all_data: Vec<Vec<Vec<f64>>> = ch
         .par_iter()
@@ -35,9 +37,13 @@ pub fn run(cfg: &Config) -> Result<()> {
         .collect::<Result<Vec<_>, _>>()?;
 
     let elapsed_read = t0.elapsed();
-    println!(
-        "📥 Read lock-in rotated results for ch {:?} in {:.2?}",
-        ch, elapsed_read
+    ui::finish_read(
+        pb,
+        format!(
+            "lock-in results for channels {:?} ({})",
+            ch,
+            ui::fmt_duration(elapsed_read)
+        ),
     );
 
     let t = all_data[0][0].clone(); // time column
@@ -65,18 +71,23 @@ pub fn run_phase_analysis(
         .collect();
     let ch = cfg.phase_signal_ch();
 
-    println!("🔄 Running phase analysis for channels {:?}...", ch);
+    let pb = ui::progress(
+        format!("phase analysis for channels {:?}", ch),
+        ch.len() as u64,
+    );
     let mut rotated_results: Vec<Vec<Vec<f64>>> = Vec::new();
     for (ch_i, li_result) in ch.iter().zip(li_results.iter()) {
+        pb.set_message(format!("phase analysis ch{ch_i}"));
         let rotated_result = phase_analysis(cfg, li_result)?;
         let li_rotated_name = LI_ROTATED_NAME;
         let fname = format!("{}_ch{}.csv", li_rotated_name, ch_i);
         let headers = get_li_rotated_headers(cfg)?;
         write_li_rotated_results(&fname, &headers, t, sensor_integral_ch, &rotated_result)?;
         rotated_results.push(rotated_result);
+        pb.inc(1);
     }
-    println!("💾 Saved phase-rotated results for channels {:?}.", ch);
-    println!("✅ Phase analysis completed.");
+    ui::finish_saved(pb, format!("phase-rotated results for channels {:?}", ch));
+    ui::success("phase analysis completed");
 
     PhaseRotationPlotter {}
         .plot(t, &rotated_results, ch, &labels)
@@ -87,15 +98,8 @@ pub fn run_phase_analysis(
 pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
     let pairs: Vec<_> = li_result.chunks_exact(2).collect();
 
-    let [
-        [li1x, li1y],
-        [li2x, li2y],
-        [li3x, li3y],
-        [li4x, li4y],
-        [li5x, li5y],
-        [li6x, li6y],
-        ..,
-    ] = pairs.as_slice()
+    let [[li1x, li1y], [li2x, li2y], [li3x, li3y], [li4x, li4y], [li5x, li5y], [li6x, li6y], ..] =
+        pairs.as_slice()
     else {
         panic!(
             "Expected at least 6 pairs (12 elements), but got {}",

@@ -1,5 +1,6 @@
 use crate::config::{Lockin, LockinLpfKind};
 use crate::lockin::lockin_params::LockinParams;
+use crate::ui;
 use anyhow::{anyhow, Result};
 use num_complex::Complex64;
 use std::collections::VecDeque;
@@ -574,10 +575,10 @@ fn design_filter(params: LockinParams, lockin: &Lockin) -> Result<FilterDesign> 
             let target_enbw = enbw_hz(&legacy_weights, params.sample_rate);
             let matched = match_boxcar_enbw_cutoff(params, beta, target_enbw);
             if !matched.reachable {
-                eprintln!(
-                    "⚠️ fir_boxcar_enbw target ENBW ({}) is outside the reachable FIR range; using nearest cutoff {}",
-                    target_enbw, matched.cutoff_hz
-                );
+                ui::warn(format!(
+                    "fir_boxcar_enbw target ENBW ({target_enbw}) is outside the reachable FIR range; using nearest cutoff {}",
+                    matched.cutoff_hz
+                ));
             }
             let taps = design_kaiser_lowpass_taps(params, matched.cutoff_hz, beta);
             let fir_enbw = enbw_hz(&taps, params.sample_rate);

@@ -16,6 +16,7 @@ use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
 use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
+use crate::ui;
 use crate::utils::csv::read_csv;
 use anyhow::{bail, Context, Result};
 use rayon::prelude::*;
@@ -27,15 +28,19 @@ pub struct LockinProcessOutput {
 }
 
 pub fn run(cfg: &Config) -> Result<()> {
+    let pb = ui::spinner(format!("reading {FETCHED_FNAME}"));
     let t0 = std::time::Instant::now();
     let data = read_csv(FETCHED_FNAME)?;
     let elapsed_read = t0.elapsed();
 
-    println!(
-        "📥 Read fetched data ({} rows, {} columns) in {:.2?}",
-        data.len(),
-        if data.is_empty() { 0 } else { data[0].len() },
-        elapsed_read
+    ui::finish_read(
+        pb,
+        format!(
+            "fetched data: {} rows, {} columns ({})",
+            data.len(),
+            if data.is_empty() { 0 } else { data[0].len() },
+            ui::fmt_duration(elapsed_read)
+        ),
     );
 
     if data.is_empty() {
@@ -105,10 +110,11 @@ pub fn run_li(
         )?;
     }
     let elapsed_save = t0.elapsed();
-    println!(
-        "💾 Saved lock-in results for signals {:?} in {:.2?}",
-        signal_ch, elapsed_save
-    );
+    ui::saved(format!(
+        "lock-in results for signals {:?} ({})",
+        signal_ch,
+        ui::fmt_duration(elapsed_save)
+    ));
 
     let headers = LI_HEADER;
     let labels: Vec<String> = headers
@@ -141,7 +147,10 @@ pub fn li_process(
         .build()
         .context("Failed to build rayon thread pool")?;
 
-    println!("🔒 Starting lock-in processing with {} workers...", workers);
+    let pb = ui::progress(
+        format!("lock-in processing with {workers} workers"),
+        (signal_data.len() * harmonics.len()) as u64,
+    );
     let t0 = std::time::Instant::now();
 
     let mut all_signals_results: Vec<Vec<Vec<f64>>> = Vec::with_capacity(signal_data.len());
@@ -150,6 +159,7 @@ pub fn li_process(
     let mut output_index_range = None;
 
     for (&sig_ch, signal) in signal_ch.iter().zip(signal_data.iter()) {
+        pb.set_message(format!("lock-in ch{sig_ch}"));
         let li_processor =
             lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, &cfg.lockin)?;
         let processor_base_range = li_processor.base_index_range();
@@ -177,10 +187,12 @@ pub fn li_process(
             output_index_range = Some(processor_output_range);
         }
         if !printed_lockin_summary {
-            println!("🔒 Lock-in settings:");
-            for line in li_processor.summary_lines() {
-                println!("  - {line}");
-            }
+            ui::suspend_progress(&pb, || {
+                ui::section("Lock-in settings");
+                for line in li_processor.summary_lines() {
+                    ui::bullet(line);
+                }
+            });
             printed_lockin_summary = true;
         }
         let include_debug = cfg.lockin.lpf_debug_output;
@@ -191,6 +203,7 @@ pub fn li_process(
             let filter = li_processor.filter_design();
             let mut results = Vec::with_capacity(harmonics.len());
             for &harmonic in &harmonics {
+                pb.set_message(format!("lock-in ch{sig_ch} h{harmonic}"));
                 let result = li_processor.compute_harmonic_detailed(harmonic, include_debug);
                 if include_debug {
                     debug::write_harmonic_debug(
@@ -203,13 +216,20 @@ pub fn li_process(
                 } else {
                     results.push(result);
                 }
+                pb.inc(1);
             }
             results
         } else {
+            let progress = pb.clone();
             pool.install(|| {
                 harmonics
                     .par_iter()
-                    .map(|&harmonic| li_processor.compute_harmonic_detailed(harmonic, false))
+                    .map(|&harmonic| {
+                        progress.set_message(format!("lock-in ch{sig_ch} h{harmonic}"));
+                        let result = li_processor.compute_harmonic_detailed(harmonic, false);
+                        progress.inc(1);
+                        result
+                    })
                     .collect()
             })
         };
@@ -224,7 +244,13 @@ pub fn li_process(
     }
 
     let elapsed_li = t0.elapsed();
-    println!("🔒 Completed lock-in processing in {:.2?}", elapsed_li);
+    ui::finish_success(
+        pb,
+        format!(
+            "lock-in processing completed ({})",
+            ui::fmt_duration(elapsed_li)
+        ),
+    );
 
     Ok(LockinProcessOutput {
         result: all_signals_results,

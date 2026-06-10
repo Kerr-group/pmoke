@@ -7,9 +7,10 @@ use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
 use crate::lockin::reference::ref_analysis::{RefFitParams, ReferenceFFT, ReferenceFitter};
 use crate::lockin::time::time_builder;
+use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::read_selected_columns;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
@@ -32,6 +33,7 @@ pub fn run_fit_ref(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
             )
         })?;
 
+    let pb = ui::spinner(format!("reading reference column {}", col_idx + 1));
     let t0 = std::time::Instant::now();
     let ref_data = read_selected_columns(FETCHED_FNAME, &[col_idx])
         .context("failed to read reference column from csv")?
@@ -43,10 +45,13 @@ pub fn run_fit_ref(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
             )
         })?;
     let elapsed_read = t0.elapsed();
-    println!(
-        "📥 Read reference column {} in {:.2?}",
-        col_idx + 1,
-        elapsed_read
+    ui::finish_read(
+        pb,
+        format!(
+            "reference column {} ({})",
+            col_idx + 1,
+            ui::fmt_duration(elapsed_read)
+        ),
     );
 
     let results = run_fit_ref_core(cfg, t, &ref_data).context("failed to fit reference signal")?;
@@ -87,12 +92,12 @@ pub fn run_fit_ref_core(cfg: &Config, t: &[f64], ref_data: &[f64]) -> Result<Ref
     let fft_ref_data = &ref_data[idx_start..idx_end];
     let fft_results = fft_ref(fft_t, fft_ref_data).context("failed to fft reference signal")?;
 
-    println!(
-        "🔍 Reference FFT results: f_ref = {:.6} MHz, A_ref = {:.6}, omega_tref = {:.6} rad",
+    ui::info(format!(
+        "reference FFT: f_ref = {:.6} MHz, A_ref = {:.6}, omega_tref = {:.6} rad",
         fft_results.f_ref * 1e-6,
         fft_results.a_ref,
         fft_results.omega_tref
-    );
+    ));
 
     let (fit_t, fit_ref_data) = stride_samples(cfg, t, ref_data);
     let results =
@@ -111,7 +116,7 @@ fn fft_ref(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
     }
 
     if t.is_empty() {
-        println!("(Info) Time and reference data are empty. Skipping fft.");
+        ui::skipped("reference FFT: time and reference data are empty");
         bail!("Cannot fft empty data.");
     }
 
@@ -132,7 +137,7 @@ fn fit_ref(t: &[f64], ref_data: &[f64], params: RefFitParams) -> Result<RefFitPa
     }
 
     if t.is_empty() {
-        println!("(Info) Time and reference data are empty. Skipping fit.");
+        ui::skipped("reference fit: time and reference data are empty");
         bail!("Cannot fit empty data.");
     }
 
@@ -159,7 +164,7 @@ fn get_range_indices(t: &[f64], start: f64, end: f64) -> Result<(usize, usize)> 
 
 fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Result<()> {
     if t.is_empty() {
-        println!("(Info) No data to plot.");
+        ui::skipped("reference plot: no data");
         return Ok(());
     }
 

@@ -1,4 +1,5 @@
 use crate::config::{Config, Lockin, LockinLpfKind};
+use crate::ui;
 use anyhow::{anyhow, bail, Result};
 use std::f64::consts::PI;
 
@@ -82,10 +83,9 @@ impl LockinParams {
                 );
             }
             if cutoff_hz >= 0.4 * output_rate {
-                eprintln!(
-                    "⚠️ lockin cutoff_hz ({}) is close to output Nyquist; output_rate={}",
-                    cutoff_hz, output_rate
-                );
+                ui::warn(format!(
+                    "lockin cutoff_hz ({cutoff_hz}) is close to output Nyquist; output_rate={output_rate}"
+                ));
             }
             if lockin.lpf_kind == LockinLpfKind::SyncIirZeroPhase {
                 let design_cutoff_hz =

@@ -7,10 +7,11 @@ mod constants;
 mod kerr;
 mod lockin;
 mod phase;
+mod ui;
 mod utils;
 
-use anyhow::Result;
 use anyhow::bail;
+use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
 use config::{ConfigLoad, ValidationTarget};

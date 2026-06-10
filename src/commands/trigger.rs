@@ -1,5 +1,6 @@
 use crate::communications::function_generator::FGHandler;
 use crate::config::Config;
+use crate::ui;
 use anyhow::{Context, Result};
 
 pub fn trigger(cfg: &Config) -> Result<()> {
@@ -7,6 +8,6 @@ pub fn trigger(cfg: &Config) -> Result<()> {
         FGHandler::initialize(cfg).context("failed to initialize function generator handler")?;
     handler.trigger().context("failed to trigger")?;
 
-    println!("📈 Trigger command sent successfully.");
+    ui::success("trigger command sent");
     Ok(())
 }

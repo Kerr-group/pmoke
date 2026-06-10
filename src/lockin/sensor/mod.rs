@@ -8,6 +8,7 @@ use crate::lockin::reference::run_fit_ref;
 use crate::lockin::resolve::sensor_column_indices;
 use crate::lockin::stride::{li_stride_1d, li_stride_2d};
 use crate::lockin::time::time_builder;
+use crate::ui;
 use crate::utils::csv::read_selected_columns;
 use anyhow::{bail, Context, Result};
 
@@ -22,14 +23,18 @@ pub fn run(cfg: &Config) -> Result<()> {
     let ref_fit_params = run_fit_ref(cfg, &t)?;
 
     let (sensor_ch, col_idx) = sensor_column_indices(cfg)?;
+    let pb = ui::spinner(format!("reading sensor columns {:?}", col_idx));
     let t0 = std::time::Instant::now();
     let s_cols = read_selected_columns(FETCHED_FNAME, &col_idx)
         .context("failed to read sensor columns from csv")?;
     let s_col_refs: Vec<&[f64]> = s_cols.iter().map(|col| col.as_slice()).collect();
-    println!(
-        "📥 Read sensor columns {:?} in {:.2?}",
-        col_idx,
-        t0.elapsed()
+    ui::finish_read(
+        pb,
+        format!(
+            "sensor columns {:?} ({})",
+            col_idx,
+            ui::fmt_duration(t0.elapsed())
+        ),
     );
 
     let _ = run_sensor(cfg, &t, &s_col_refs, &sensor_ch, ref_fit_params.f_ref)?;
@@ -66,6 +71,7 @@ pub fn run_sensor(
         .plot(&t_stride, s_stride, sensor_ch, &c_bg_arr)
         .context("failed to plot sensor data")?;
 
+    let pb = ui::progress("integrating sensor pulses", s_cols.len() as u64);
     let start = std::time::Instant::now();
 
     let dt = cfg.timebase.dt;
@@ -74,12 +80,21 @@ pub fn run_sensor(
         .zip(c_bg_arr.iter())
         .zip(sensor_meta.iter())
         .map(|((s, &c_bg), meta)| {
-            pulse_calculator::PulseIntegralCalculator::new(dt).integrate(s, c_bg, meta.factor)
+            let integral =
+                pulse_calculator::PulseIntegralCalculator::new(dt).integrate(s, c_bg, meta.factor);
+            pb.inc(1);
+            integral
         })
         .collect::<Vec<_>>();
 
     let elapsed = start.elapsed();
-    println!("💻 Sensor integrations completed in {:.2?}", elapsed);
+    ui::finish_success(
+        pb,
+        format!(
+            "sensor integrations completed ({})",
+            ui::fmt_duration(elapsed)
+        ),
+    );
 
     let s_integral_stride = li_stride_2d(cfg, &s_integral, f_ref)?;
 
