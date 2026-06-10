@@ -9,7 +9,7 @@ pub mod sensor;
 pub mod stride;
 pub mod time;
 
-use crate::config::{Config, LockinLpfKind};
+use crate::config::Config;
 use crate::constants::{FETCHED_FNAME, HARMONICS, LI_HEADER, LI_RESULTS_NAME};
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
@@ -185,10 +185,7 @@ pub fn li_process(
         }
         let include_debug = cfg.lockin.lpf_debug_output;
 
-        let sequential_harmonics =
-            include_debug || cfg.lockin.lpf_kind == LockinLpfKind::SyncIirZeroPhase;
-
-        let harmonic_results: Vec<lockin_core::HarmonicLockinResult> = if sequential_harmonics {
+        let harmonic_results: Vec<lockin_core::HarmonicLockinResult> = if include_debug {
             let t_output = li_processor.output_times();
             let params = li_processor.params();
             let filter = li_processor.filter_design();

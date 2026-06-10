@@ -153,6 +153,120 @@ fn centered_moving_average_in_place_matches_reference() {
 }
 
 #[test]
+fn legacy_boxcar_prefix_path_matches_direct_integration() {
+    let lockin = Lockin {
+        workers: 1,
+        stride_samples: 7,
+        lpf_kind: LockinLpfKind::BoxcarLegacy,
+        lpf_half_window_cycles: 2.25,
+        lpf_cutoff_hz: None,
+        lpf_cutoff_ref_ratio: None,
+        lpf_stopband_atten_db: 60.0,
+        lpf_sync_average_cycles: 1.0,
+        lpf_iir_order: 2,
+        lpf_debug_output: false,
+        lpf_debug_label: None,
+        lpf_debug_overwrite: false,
+        snr_background_window: None,
+        snr_signal_window: None,
+    };
+    let dt = 1.0e-5;
+    let f_ref = 1_000.0;
+    let t = (0..5_000).map(|idx| idx as f64 * dt).collect::<Vec<_>>();
+    let data = t
+        .iter()
+        .map(|&ti| {
+            0.2 * (2.0 * PI * 1_000.0 * ti).sin()
+                + 0.07 * (2.0 * PI * 2_000.0 * ti + 0.3).cos()
+                + 0.01 * ti
+        })
+        .collect::<Vec<_>>();
+
+    let processor = LockinProcessor::new(&t, &data, f_ref, 0.17, &lockin).unwrap();
+    let actual = processor.compute_harmonic_detailed(2, false);
+    let expected_x = direct_legacy_lockin(&processor, 2, RefType::Sin);
+    let expected_y = direct_legacy_lockin(&processor, 2, RefType::Cos);
+
+    assert_eq!(actual.li_x.len(), expected_x.len());
+    assert_eq!(actual.li_y.len(), expected_y.len());
+    let max_x_err = actual
+        .li_x
+        .iter()
+        .zip(expected_x.iter())
+        .map(|(actual, expected)| (actual - expected).abs())
+        .fold(0.0, f64::max);
+    let max_y_err = actual
+        .li_y
+        .iter()
+        .zip(expected_y.iter())
+        .map(|(actual, expected)| (actual - expected).abs())
+        .fold(0.0, f64::max);
+
+    assert!(max_x_err < 1.0e-13, "max_x_err={max_x_err}");
+    assert!(max_y_err < 1.0e-13, "max_y_err={max_y_err}");
+}
+
+fn direct_legacy_lockin(
+    processor: &LockinProcessor<'_>,
+    harmonic: usize,
+    ref_type: RefType,
+) -> Vec<f64> {
+    let mixed_signal: Vec<f64> = processor
+        .t
+        .iter()
+        .zip(processor.data.iter())
+        .map(|(&t, &data)| data * processor.ref_signal(t, harmonic, ref_type))
+        .collect();
+
+    let i_start = processor.params.i_start;
+    let i_end = processor.params.i_end;
+    let mut out = Vec::with_capacity(i_end - i_start + 1);
+
+    for i_idx in i_start..=i_end {
+        let i_base = i_idx * processor.params.stride;
+
+        let mut integ = 0.0;
+        for j in 0..(2 * processor.params.n_half) {
+            let j0 = j as isize - processor.params.n_half as isize;
+            let j1 = j0 + 1;
+            let idx0 = (i_base as isize + j0) as usize;
+            let idx1 = (i_base as isize + j1) as usize;
+
+            let f0 = mixed_signal[idx0];
+            let f1 = mixed_signal[idx1];
+
+            integ += 0.5 * (f0 + f1) * processor.params.dt;
+        }
+
+        let neg_idx0 = i_base - processor.params.n_half;
+        let neg_idx1 = i_base - processor.params.n_half - 1;
+
+        let y0_neg = mixed_signal[neg_idx0];
+        let y1_neg = mixed_signal[neg_idx1];
+
+        let edge_dt =
+            processor.params.t_half - (processor.params.n_half as f64) * processor.params.dt;
+        let ym_neg =
+            (y1_neg * edge_dt + y0_neg * (processor.params.dt - edge_dt)) / processor.params.dt;
+        let edge_neg = edge_dt * 0.5 * (y0_neg + ym_neg);
+
+        let pos_idx0 = i_base + processor.params.n_half;
+        let pos_idx1 = i_base + processor.params.n_half + 1;
+
+        let y0_pos = mixed_signal[pos_idx0];
+        let y1_pos = mixed_signal[pos_idx1];
+
+        let ym_pos =
+            (y1_pos * edge_dt + y0_pos * (processor.params.dt - edge_dt)) / processor.params.dt;
+        let edge_pos = edge_dt * 0.5 * (y0_pos + ym_pos);
+
+        out.push((integ + edge_neg + edge_pos) / (2.0 * processor.params.t_half));
+    }
+
+    out
+}
+
+#[test]
 fn rejects_empty_output_range_after_iir_settling_trim() {
     let mut lockin = Lockin {
         workers: 1,

@@ -325,6 +325,7 @@ impl<'a> LockinProcessor<'a> {
             .zip(self.data.iter())
             .map(|(&t, &data)| data * self.ref_signal(t, harmonic, ref_type))
             .collect();
+        let prefix = prefix_sum(&mixed_signal);
 
         let i_start = self.params.i_start;
         let i_end = self.params.i_end;
@@ -338,21 +339,11 @@ impl<'a> LockinProcessor<'a> {
         for k in 0..m {
             let i_idx = i_start + k;
             let i_base = i_idx * self.params.stride;
-
-            let mut integ = 0.0;
-            for j in 0..(2 * self.params.n_half) {
-                let j0 = j as isize - self.params.n_half as isize;
-                let j1 = j0 + 1;
-                let idx0 = (i_base as isize + j0) as usize;
-                let idx1 = (i_base as isize + j1) as usize;
-
-                let f0 = mixed_signal[idx0];
-                let f1 = mixed_signal[idx1];
-
-                integ += 0.5 * (f0 + f1) * self.params.dt;
-            }
-
             let neg_idx0 = i_base - self.params.n_half;
+            let pos_idx0 = i_base + self.params.n_half;
+            let integ = trapezoid_integral_from_prefix(&mixed_signal, &prefix, neg_idx0, pos_idx0)
+                * self.params.dt;
+
             let neg_idx1 = i_base - self.params.n_half - 1;
 
             let y0_neg = mixed_signal[neg_idx0];
@@ -362,7 +353,6 @@ impl<'a> LockinProcessor<'a> {
             let ym_neg = (y1_neg * edge_dt + y0_neg * (self.params.dt - edge_dt)) / self.params.dt;
             let edge_neg = edge_dt * 0.5 * (y0_neg + ym_neg);
 
-            let pos_idx0 = i_base + self.params.n_half;
             let pos_idx1 = i_base + self.params.n_half + 1;
 
             let y0_pos = mixed_signal[pos_idx0];
@@ -377,6 +367,23 @@ impl<'a> LockinProcessor<'a> {
 
         out
     }
+}
+
+fn prefix_sum(values: &[f64]) -> Vec<f64> {
+    let mut prefix = Vec::with_capacity(values.len() + 1);
+    prefix.push(0.0);
+    let mut acc = 0.0;
+    for &value in values {
+        acc += value;
+        prefix.push(acc);
+    }
+    prefix
+}
+
+fn trapezoid_integral_from_prefix(values: &[f64], prefix: &[f64], start: usize, end: usize) -> f64 {
+    debug_assert!(start < end);
+    debug_assert_eq!(prefix.len(), values.len() + 1);
+    0.5 * values[start] + (prefix[end] - prefix[start + 1]) + 0.5 * values[end]
 }
 
 fn design_filter(params: LockinParams, lockin: &Lockin) -> Result<FilterDesign> {
