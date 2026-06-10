@@ -121,11 +121,7 @@ impl<'a> LockinProcessor<'a> {
             LockinLpfKind::SyncIirZeroPhase => {
                 self.compute_sync_iir_lockin(harmonic, include_debug_data)
             }
-            LockinLpfKind::BoxcarLegacy => HarmonicLockinResult {
-                li_x: self.compute_legacy_lockin(harmonic, RefType::Sin),
-                li_y: self.compute_legacy_lockin(harmonic, RefType::Cos),
-                mixed_signal: None,
-            },
+            LockinLpfKind::BoxcarLegacy => self.compute_legacy_lockin_pair(harmonic),
         }
     }
 
@@ -241,16 +237,11 @@ impl<'a> LockinProcessor<'a> {
         harmonic: usize,
         include_debug_data: bool,
     ) -> HarmonicLockinResult {
-        let mixed_signal = self.compute_complex_mixed_signal(harmonic);
         let filter = self
             .filter
             .as_ref()
             .expect("IIR design must be present for sync_iir_zero_phase lock-in");
         let sync_len = filter.sync_average_samples.unwrap_or(1);
-        let debug_mixed_signal = include_debug_data.then(|| mixed_signal.clone());
-        let mut filtered = mixed_signal;
-        apply_centered_moving_average_complex_in_place(&mut filtered, sync_len);
-        apply_sos_filtfilt_in_place(&mut filtered, &filter.sos);
 
         let (i_start, i_end) = self.output_index_range();
         let m = if i_end >= i_start {
@@ -258,6 +249,32 @@ impl<'a> LockinProcessor<'a> {
         } else {
             0
         };
+
+        if !include_debug_data {
+            let (mut re, mut im) = self.compute_sync_averaged_real_imag_signal(harmonic, sync_len);
+            apply_sos_filtfilt_pair_in_place(&mut re, &mut im, &filter.sos);
+
+            let mut li_x = Vec::with_capacity(m);
+            let mut li_y = Vec::with_capacity(m);
+            for i_idx in i_start..=i_end {
+                let sample_idx = i_idx * self.params.stride;
+                li_x.push(-im[sample_idx]);
+                li_y.push(re[sample_idx]);
+            }
+
+            return HarmonicLockinResult {
+                li_x,
+                li_y,
+                mixed_signal: None,
+            };
+        }
+
+        let mixed_signal = self.compute_complex_mixed_signal(harmonic);
+        let debug_mixed_signal = mixed_signal.clone();
+        let mut filtered = mixed_signal;
+        apply_centered_moving_average_complex_in_place(&mut filtered, sync_len);
+        apply_sos_filtfilt_in_place(&mut filtered, &filter.sos);
+
         let mut li_x = Vec::with_capacity(m);
         let mut li_y = Vec::with_capacity(m);
         for i_idx in i_start..=i_end {
@@ -269,7 +286,7 @@ impl<'a> LockinProcessor<'a> {
         HarmonicLockinResult {
             li_x,
             li_y,
-            mixed_signal: debug_mixed_signal,
+            mixed_signal: Some(debug_mixed_signal),
         }
     }
 
@@ -306,6 +323,87 @@ impl<'a> LockinProcessor<'a> {
         }
 
         mixed
+    }
+
+    fn compute_real_imag_mixed_signal(&self, harmonic: usize) -> (Vec<f64>, Vec<f64>) {
+        let harmonic = harmonic as f64;
+        let phase0 = harmonic * (self.params.omega * self.t[0] - self.omega_tref);
+        let step_phase = -harmonic * self.params.omega * self.params.dt;
+        let step = Complex64::from_polar(1.0, step_phase);
+        let mut osc = Complex64::from_polar(1.0, -phase0);
+
+        let mut re = Vec::with_capacity(self.data.len());
+        let mut im = Vec::with_capacity(self.data.len());
+        for (idx, &sample) in self.data.iter().enumerate() {
+            if idx > 0 && idx % 4096 == 0 {
+                let phase = -phase0 + (idx as f64) * step_phase;
+                osc = Complex64::from_polar(1.0, phase);
+            }
+
+            re.push(sample * osc.re);
+            im.push(sample * osc.im);
+            osc *= step;
+        }
+
+        (re, im)
+    }
+
+    fn compute_sync_averaged_real_imag_signal(
+        &self,
+        harmonic: usize,
+        sync_len: usize,
+    ) -> (Vec<f64>, Vec<f64>) {
+        let sync_len = sync_len.max(1);
+        if sync_len == 1 {
+            return self.compute_real_imag_mixed_signal(harmonic);
+        }
+
+        let harmonic = harmonic as f64;
+        let step_phase = -harmonic * self.params.omega * self.params.dt;
+        let step = Complex64::from_polar(1.0, step_phase);
+        let phase0 = harmonic * (self.params.omega * self.t[0] - self.omega_tref);
+        let mut osc = Complex64::from_polar(1.0, -phase0);
+
+        let left = (sync_len - 1) / 2;
+        let right = sync_len - left;
+        let mut start = 0usize;
+        let mut end = 0usize;
+        let mut sum_re = 0.0;
+        let mut sum_im = 0.0;
+        let mut window = VecDeque::with_capacity(sync_len.min(self.data.len()));
+        let mut out_re = Vec::with_capacity(self.data.len());
+        let mut out_im = Vec::with_capacity(self.data.len());
+
+        for idx in 0..self.data.len() {
+            let desired_start = idx.saturating_sub(left);
+            let desired_end = (idx + right).min(self.data.len());
+            while start < desired_start {
+                let (value_re, value_im) =
+                    window.pop_front().expect("moving average window underflow");
+                sum_re -= value_re;
+                sum_im -= value_im;
+                start += 1;
+            }
+            while end < desired_end {
+                if end > 0 && end % 4096 == 0 {
+                    let phase = -harmonic * (self.params.omega * self.t[end] - self.omega_tref);
+                    osc = Complex64::from_polar(1.0, phase);
+                }
+                let sample = self.data[end];
+                let value_re = sample * osc.re;
+                let value_im = sample * osc.im;
+                window.push_back((value_re, value_im));
+                sum_re += value_re;
+                sum_im += value_im;
+                osc *= step;
+                end += 1;
+            }
+            let scale = 1.0 / window.len() as f64;
+            out_re.push(sum_re * scale);
+            out_im.push(sum_im * scale);
+        }
+
+        (out_re, out_im)
     }
 
     fn fir_required_raw_range(&self) -> (usize, usize) {
@@ -355,14 +453,10 @@ impl<'a> LockinProcessor<'a> {
         (li_x, li_y)
     }
 
-    fn compute_legacy_lockin(&self, harmonic: usize, ref_type: RefType) -> Vec<f64> {
-        let mixed_signal: Vec<f64> = self
-            .t
-            .iter()
-            .zip(self.data.iter())
-            .map(|(&t, &data)| data * self.ref_signal(t, harmonic, ref_type))
-            .collect();
-        let prefix = prefix_sum(&mixed_signal);
+    fn compute_legacy_lockin_pair(&self, harmonic: usize) -> HarmonicLockinResult {
+        let (mixed_re, mixed_im) = self.compute_real_imag_mixed_signal(harmonic);
+        let prefix_re = prefix_sum(&mixed_re);
+        let prefix_im = prefix_sum(&mixed_im);
 
         let i_start = self.params.i_start;
         let i_end = self.params.i_end;
@@ -371,38 +465,60 @@ impl<'a> LockinProcessor<'a> {
         } else {
             0
         };
-        let mut out = Vec::with_capacity(m);
+        let mut li_x = Vec::with_capacity(m);
+        let mut li_y = Vec::with_capacity(m);
 
         for k in 0..m {
             let i_idx = i_start + k;
             let i_base = i_idx * self.params.stride;
             let neg_idx0 = i_base - self.params.n_half;
             let pos_idx0 = i_base + self.params.n_half;
-            let integ = trapezoid_integral_from_prefix(&mixed_signal, &prefix, neg_idx0, pos_idx0)
-                * self.params.dt;
+            let integ_re =
+                trapezoid_integral_from_prefix(&mixed_re, &prefix_re, neg_idx0, pos_idx0)
+                    * self.params.dt;
+            let integ_im =
+                trapezoid_integral_from_prefix(&mixed_im, &prefix_im, neg_idx0, pos_idx0)
+                    * self.params.dt;
 
             let neg_idx1 = i_base - self.params.n_half - 1;
-
-            let y0_neg = mixed_signal[neg_idx0];
-            let y1_neg = mixed_signal[neg_idx1];
-
-            let edge_dt = self.params.t_half - (self.params.n_half as f64) * self.params.dt;
-            let ym_neg = (y1_neg * edge_dt + y0_neg * (self.params.dt - edge_dt)) / self.params.dt;
-            let edge_neg = edge_dt * 0.5 * (y0_neg + ym_neg);
-
             let pos_idx1 = i_base + self.params.n_half + 1;
+            let edge_dt = self.params.t_half - (self.params.n_half as f64) * self.params.dt;
 
-            let y0_pos = mixed_signal[pos_idx0];
-            let y1_pos = mixed_signal[pos_idx1];
+            let edge_neg_re = legacy_edge_integral(
+                mixed_re[neg_idx0],
+                mixed_re[neg_idx1],
+                edge_dt,
+                self.params.dt,
+            );
+            let edge_pos_re = legacy_edge_integral(
+                mixed_re[pos_idx0],
+                mixed_re[pos_idx1],
+                edge_dt,
+                self.params.dt,
+            );
+            let edge_neg_im = legacy_edge_integral(
+                mixed_im[neg_idx0],
+                mixed_im[neg_idx1],
+                edge_dt,
+                self.params.dt,
+            );
+            let edge_pos_im = legacy_edge_integral(
+                mixed_im[pos_idx0],
+                mixed_im[pos_idx1],
+                edge_dt,
+                self.params.dt,
+            );
 
-            let ym_pos = (y1_pos * edge_dt + y0_pos * (self.params.dt - edge_dt)) / self.params.dt;
-            let edge_pos = edge_dt * 0.5 * (y0_pos + ym_pos);
-
-            let li = (integ + edge_neg + edge_pos) / (2.0 * self.params.t_half);
-            out.push(li);
+            let scale = 1.0 / (2.0 * self.params.t_half);
+            li_x.push(-(integ_im + edge_neg_im + edge_pos_im) * scale);
+            li_y.push((integ_re + edge_neg_re + edge_pos_re) * scale);
         }
 
-        out
+        HarmonicLockinResult {
+            li_x,
+            li_y,
+            mixed_signal: None,
+        }
     }
 }
 
@@ -421,6 +537,11 @@ fn trapezoid_integral_from_prefix(values: &[f64], prefix: &[f64], start: usize, 
     debug_assert!(start < end);
     debug_assert_eq!(prefix.len(), values.len() + 1);
     0.5 * values[start] + (prefix[end] - prefix[start + 1]) + 0.5 * values[end]
+}
+
+fn legacy_edge_integral(y0: f64, y1: f64, edge_dt: f64, dt: f64) -> f64 {
+    let ym = (y1 * edge_dt + y0 * (dt - edge_dt)) / dt;
+    edge_dt * 0.5 * (y0 + ym)
 }
 
 fn design_filter(params: LockinParams, lockin: &Lockin) -> Result<FilterDesign> {
@@ -684,9 +805,29 @@ fn apply_sos_filtfilt_in_place(values: &mut [Complex64], sos: &[Biquad]) {
     values.reverse();
 }
 
+fn apply_sos_filtfilt_pair_in_place(re: &mut [f64], im: &mut [f64], sos: &[Biquad]) {
+    debug_assert_eq!(re.len(), im.len());
+    if re.is_empty() || sos.is_empty() {
+        return;
+    }
+
+    apply_sos_forward_pair_in_place(re, im, sos);
+    re.reverse();
+    im.reverse();
+    apply_sos_forward_pair_in_place(re, im, sos);
+    re.reverse();
+    im.reverse();
+}
+
 fn apply_sos_forward_in_place(values: &mut [Complex64], sos: &[Biquad]) {
     for section in sos {
         apply_biquad_forward_in_place(values, *section);
+    }
+}
+
+fn apply_sos_forward_pair_in_place(re: &mut [f64], im: &mut [f64], sos: &[Biquad]) {
+    for section in sos {
+        apply_biquad_forward_pair_in_place(re, im, *section);
     }
 }
 
@@ -705,6 +846,34 @@ fn apply_biquad_forward_in_place(values: &mut [Complex64], section: Biquad) {
         z1 = section.b1 * x - section.a1 * y + z2;
         z2 = section.b2 * x - section.a2 * y;
         *value = y;
+    }
+}
+
+fn apply_biquad_forward_pair_in_place(re: &mut [f64], im: &mut [f64], section: Biquad) {
+    debug_assert_eq!(re.len(), im.len());
+    if re.is_empty() {
+        return;
+    }
+
+    let steady_re = re[0];
+    let steady_im = im[0];
+    let mut z1_re = steady_re * (1.0 - section.b0);
+    let mut z2_re = steady_re * (1.0 - section.b0 - section.b1 + section.a1);
+    let mut z1_im = steady_im * (1.0 - section.b0);
+    let mut z2_im = steady_im * (1.0 - section.b0 - section.b1 + section.a1);
+
+    for (value_re, value_im) in re.iter_mut().zip(im.iter_mut()) {
+        let x_re = *value_re;
+        let y_re = section.b0 * x_re + z1_re;
+        z1_re = section.b1 * x_re - section.a1 * y_re + z2_re;
+        z2_re = section.b2 * x_re - section.a2 * y_re;
+        *value_re = y_re;
+
+        let x_im = *value_im;
+        let y_im = section.b0 * x_im + z1_im;
+        z1_im = section.b1 * x_im - section.a1 * y_im + z2_im;
+        z2_im = section.b2 * x_im - section.a2 * y_im;
+        *value_im = y_im;
     }
 }
 
