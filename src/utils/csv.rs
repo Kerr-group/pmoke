@@ -52,25 +52,30 @@ pub fn read_selected_columns<P: AsRef<Path>>(path: P, cols: &[usize]) -> Result<
     Ok(columns)
 }
 
-pub fn write_csv(
-    path: &str,
+pub fn write_csv<P, C>(
+    path: P,
     headers: &[&str],
-    columns: &[Vec<f64>], // column-major: columns[i][row]
-) -> Result<()> {
+    columns: &[C], // column-major: columns[i][row]
+) -> Result<()>
+where
+    P: AsRef<Path>,
+    C: AsRef<[f64]>,
+{
     let ncols = columns.len();
     if ncols == 0 {
-        File::create(path)?;
+        File::create(path.as_ref())?;
         return Ok(());
     }
 
-    let nrows = columns[0].len();
-    for (i, col) in columns.iter().enumerate() {
+    let column_refs: Vec<&[f64]> = columns.iter().map(|col| col.as_ref()).collect();
+    let nrows = column_refs[0].len();
+    for (i, col) in column_refs.iter().enumerate() {
         if col.len() != nrows {
             anyhow::bail!("column {i} has length {}, expected {nrows}", col.len());
         }
     }
 
-    let file = File::create(path).context("failed to create csv file")?;
+    let file = File::create(path.as_ref()).context("failed to create csv file")?;
     let mut w = BufWriter::new(file);
 
     if !headers.is_empty() {
@@ -91,14 +96,18 @@ pub fn write_csv(
         writeln!(w)?;
     }
 
+    let mut line = String::new();
     for row in 0..nrows {
-        for (col_idx, col) in columns.iter().enumerate() {
-            write!(w, "{}", col[row])?;
-            if col_idx + 1 != ncols {
-                write!(w, ",")?;
+        line.clear();
+        for (col_idx, col) in column_refs.iter().enumerate() {
+            if col_idx > 0 {
+                line.push(',');
             }
+            use std::fmt::Write as _;
+            write!(&mut line, "{}", col[row])?;
         }
-        writeln!(w)?;
+        line.push('\n');
+        w.write_all(line.as_bytes())?;
     }
 
     w.flush()?;

@@ -70,22 +70,19 @@ pub fn run_li(
         );
     }
 
-    let sensor_data: Vec<Vec<f64>> = sensor_idx.iter().map(|&idx| data[idx].clone()).collect();
-    let ref_data: Vec<f64> = data[ref_idx].clone();
-    let signal_data: Vec<Vec<f64>> = signal_idx.iter().map(|&idx| data[idx].clone()).collect();
+    let sensor_data: Vec<&[f64]> = sensor_idx.iter().map(|&idx| data[idx].as_slice()).collect();
+    let ref_data = data[ref_idx].as_slice();
+    let signal_data: Vec<&[f64]> = signal_idx.iter().map(|&idx| data[idx].as_slice()).collect();
 
     // Reference analysis
-    let ref_fit_params = run_fit_ref_core(cfg, t, &ref_data)?;
-    drop(ref_data);
+    let ref_fit_params = run_fit_ref_core(cfg, t, ref_data)?;
 
     // Sensor analysis
     let (mut t_stride, mut sensor_integral_stride) =
         run_sensor(cfg, t, &sensor_data, &sensor_ch, ref_fit_params.f_ref)?;
-    drop(sensor_data);
 
     // Lock-in processing
     let lockin_output = li_process(cfg, t, &signal_ch, &signal_data, ref_fit_params)?;
-    drop(signal_data);
     trim_lockin_context_to_result(
         &mut t_stride,
         &mut sensor_integral_stride,
@@ -130,7 +127,7 @@ pub fn li_process(
     cfg: &Config,
     t: &[f64],
     signal_ch: &[u8],
-    signal_data: &[Vec<f64>],
+    signal_data: &[&[f64]],
     ref_fit_params: RefFitParams,
 ) -> Result<LockinProcessOutput> {
     let f_ref: f64 = ref_fit_params.f_ref;

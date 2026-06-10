@@ -8,29 +8,28 @@ pub fn get_li_range(cfg: &Config, f_ref: f64) -> Result<(usize, usize, usize)> {
     Ok((params.i_start, params.i_end, params.stride))
 }
 
-pub fn stride_1d(data: &[f64], stride: usize) -> Vec<f64> {
-    data.iter().step_by(stride).cloned().collect()
-}
-
-pub fn stride_2d(data: &[Vec<f64>], stride: usize) -> Vec<Vec<f64>> {
-    data.iter().map(|col| stride_1d(col, stride)).collect()
-}
-
 pub fn li_stride_1d(cfg: &Config, data: &[f64], f_ref: f64) -> Result<Vec<f64>> {
     let (start_idx, end_idx, stride_samples) = get_li_range(cfg, f_ref)?;
 
-    let strided_data = stride_1d(data, stride_samples);
-    let sliced_data = &strided_data[start_idx..=end_idx];
-    Ok(sliced_data.to_vec())
+    Ok((start_idx..=end_idx)
+        .map(|idx| data[idx * stride_samples])
+        .collect())
 }
 
-pub fn li_stride_2d(cfg: &Config, data: &[Vec<f64>], f_ref: f64) -> Result<Vec<Vec<f64>>> {
+pub fn li_stride_2d<C>(cfg: &Config, data: &[C], f_ref: f64) -> Result<Vec<Vec<f64>>>
+where
+    C: AsRef<[f64]>,
+{
     let (start_idx, end_idx, stride_samples) = get_li_range(cfg, f_ref)?;
 
-    let strided_data = stride_2d(data, stride_samples);
-    let sliced_data: Vec<Vec<f64>> = strided_data
+    let sliced_data = data
         .iter()
-        .map(|col| col[start_idx..=end_idx].to_vec())
+        .map(|col| {
+            let col = col.as_ref();
+            (start_idx..=end_idx)
+                .map(|idx| col[idx * stride_samples])
+                .collect()
+        })
         .collect();
     Ok(sliced_data)
 }

@@ -9,7 +9,7 @@ use crate::lockin::resolve::sensor_column_indices;
 use crate::lockin::stride::{li_stride_1d, li_stride_2d};
 use crate::lockin::time::time_builder;
 use crate::utils::csv::read_selected_columns;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 pub struct SensorMeta<'a> {
     pub factor: f64,
@@ -25,20 +25,21 @@ pub fn run(cfg: &Config) -> Result<()> {
     let t0 = std::time::Instant::now();
     let s_cols = read_selected_columns(FETCHED_FNAME, &col_idx)
         .context("failed to read sensor columns from csv")?;
+    let s_col_refs: Vec<&[f64]> = s_cols.iter().map(|col| col.as_slice()).collect();
     println!(
         "📥 Read sensor columns {:?} in {:.2?}",
         col_idx,
         t0.elapsed()
     );
 
-    let _ = run_sensor(cfg, &t, &s_cols, &sensor_ch, ref_fit_params.f_ref)?;
+    let _ = run_sensor(cfg, &t, &s_col_refs, &sensor_ch, ref_fit_params.f_ref)?;
     Ok(())
 }
 
 pub fn run_sensor(
     cfg: &Config,
     t: &[f64],
-    s_cols: &[Vec<f64>],
+    s_cols: &[&[f64]],
     sensor_ch: &[u8],
     f_ref: f64,
 ) -> Result<(Vec<f64>, Vec<Vec<f64>>)> {
@@ -124,7 +125,7 @@ pub fn extract_sensor_metadata<'a>(cfg: &'a Config) -> Result<Vec<SensorMeta<'a>
         .collect::<Result<Vec<_>>>()
 }
 
-fn fit_background(cfg: &Config, t: &[f64], s_cols: &[Vec<f64>]) -> Result<Vec<f64>> {
+fn fit_background(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>> {
     let bg_window_before = &cfg.pulse.bg_window_before;
     let bg_window_after = &cfg.pulse.bg_window_after;
 
