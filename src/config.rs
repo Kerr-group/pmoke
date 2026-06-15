@@ -1,5 +1,5 @@
 use crate::constants::{FETCHED_FNAME, LI_RESULTS_NAME, LI_ROTATED_NAME};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -970,7 +970,7 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     }
     if cfg.lockin.lpf_kind == LockinLpfKind::SyncIirZeroPhase
         && (cfg.lockin.lpf_iir_order == 0
-            || cfg.lockin.lpf_iir_order % 2 != 0
+            || !cfg.lockin.lpf_iir_order.is_multiple_of(2)
             || cfg.lockin.lpf_iir_order > 8)
     {
         errors.push(ConfigDiagnostic::new(
@@ -984,25 +984,25 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
         ));
     }
     if uses_explicit_cutoff(cfg.lockin.lpf_kind) {
-        if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz {
-            if cutoff_hz <= 0.0 {
-                errors.push(ConfigDiagnostic::new(
-                    DiagnosticKind::Validation,
-                    Some("lockin.lpf_cutoff_hz".to_string()),
-                    format!("lockin.lpf_cutoff_hz must be positive (got {cutoff_hz})"),
-                    None,
-                ));
-            }
+        if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz
+            && cutoff_hz <= 0.0
+        {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin.lpf_cutoff_hz".to_string()),
+                format!("lockin.lpf_cutoff_hz must be positive (got {cutoff_hz})"),
+                None,
+            ));
         }
-        if let Some(cutoff_ratio) = cfg.lockin.lpf_cutoff_ref_ratio {
-            if cutoff_ratio <= 0.0 {
-                errors.push(ConfigDiagnostic::new(
-                    DiagnosticKind::Validation,
-                    Some("lockin.lpf_cutoff_ref_ratio".to_string()),
-                    format!("lockin.lpf_cutoff_ref_ratio must be positive (got {cutoff_ratio})"),
-                    None,
-                ));
-            }
+        if let Some(cutoff_ratio) = cfg.lockin.lpf_cutoff_ref_ratio
+            && cutoff_ratio <= 0.0
+        {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin.lpf_cutoff_ref_ratio".to_string()),
+                format!("lockin.lpf_cutoff_ref_ratio must be positive (got {cutoff_ratio})"),
+                None,
+            ));
         }
         if cfg.lockin.lpf_cutoff_hz.is_some() && cfg.lockin.lpf_cutoff_ref_ratio.is_some() {
             errors.push(ConfigDiagnostic::new(
@@ -1018,29 +1018,29 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
         && cfg.lockin.stride_samples > 0
     {
         let output_rate = 1.0 / (cfg.timebase.dt * cfg.lockin.stride_samples as f64);
-        if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz {
-            if cutoff_hz >= 0.45 * output_rate {
-                errors.push(ConfigDiagnostic::new(
-                    DiagnosticKind::Validation,
-                    Some("lockin.lpf_cutoff_hz".to_string()),
-                    format!(
-                        "lockin.lpf_cutoff_hz must be < 0.45 * output_rate ({})",
-                        0.45 * output_rate
-                    ),
-                    None,
-                ));
-            }
-        }
-    }
-    if let Some(label) = &cfg.lockin.lpf_debug_label {
-        if !is_safe_debug_label(label) {
+        if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz
+            && cutoff_hz >= 0.45 * output_rate
+        {
             errors.push(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
-                Some("lockin.lpf_debug_label".to_string()),
-                "lockin.lpf_debug_label must be 1-64 ASCII characters using only A-Z, a-z, 0-9, '.', '_', or '-', and must not be '.' or '..'",
+                Some("lockin.lpf_cutoff_hz".to_string()),
+                format!(
+                    "lockin.lpf_cutoff_hz must be < 0.45 * output_rate ({})",
+                    0.45 * output_rate
+                ),
                 None,
             ));
         }
+    }
+    if let Some(label) = &cfg.lockin.lpf_debug_label
+        && !is_safe_debug_label(label)
+    {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.lpf_debug_label".to_string()),
+            "lockin.lpf_debug_label must be 1-64 ASCII characters using only A-Z, a-z, 0-9, '.', '_', or '-', and must not be '.' or '..'",
+            None,
+        ));
     }
     if cfg.phase.m_omega_t0_offset.len() != 6 {
         errors.push(ConfigDiagnostic::new(
@@ -1133,15 +1133,15 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     if let Some(diag) = check_win("reference.fft_window", cfg.reference.fft_window) {
         errors.push(diag);
     }
-    if let Some(window) = cfg.lockin.snr_background_window {
-        if let Some(diag) = check_win("lockin.snr_background_window", window) {
-            errors.push(diag);
-        }
+    if let Some(window) = cfg.lockin.snr_background_window
+        && let Some(diag) = check_win("lockin.snr_background_window", window)
+    {
+        errors.push(diag);
     }
-    if let Some(window) = cfg.lockin.snr_signal_window {
-        if let Some(diag) = check_win("lockin.snr_signal_window", window) {
-            errors.push(diag);
-        }
+    if let Some(window) = cfg.lockin.snr_signal_window
+        && let Some(diag) = check_win("lockin.snr_signal_window", window)
+    {
+        errors.push(diag);
     }
 
     if uses_explicit_cutoff(cfg.lockin.lpf_kind)

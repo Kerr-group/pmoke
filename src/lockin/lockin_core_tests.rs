@@ -119,9 +119,11 @@ fn zero_phase_design_cutoff_compensates_half_power_point() {
 fn centered_moving_average_preserves_constant_signal() {
     let input = vec![Complex64::new(2.0, -3.0); 101];
     let output = centered_moving_average_complex(&input, 7);
-    assert!(output
-        .iter()
-        .all(|&value| value == Complex64::new(2.0, -3.0)));
+    assert!(
+        output
+            .iter()
+            .all(|&value| value == Complex64::new(2.0, -3.0))
+    );
 }
 
 fn centered_moving_average_complex(values: &[Complex64], len: usize) -> Vec<Complex64> {

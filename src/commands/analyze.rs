@@ -7,7 +7,7 @@ use crate::{
     ui,
     utils::csv::read_csv,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 pub fn analyze(cfg: &Config) -> Result<()> {
     let pb = ui::spinner(format!("reading {FETCHED_FNAME}"));

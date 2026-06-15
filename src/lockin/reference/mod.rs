@@ -10,7 +10,7 @@ use crate::lockin::time::time_builder;
 use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::read_selected_columns;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;

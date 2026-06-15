@@ -1,13 +1,14 @@
 use crate::config::{Lockin, LockinLpfKind};
 use crate::lockin::lockin_params::LockinParams;
 use crate::ui;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use num_complex::Complex64;
 use std::collections::VecDeque;
 use std::f64::consts::PI;
 
 const MAX_SYNC_AVERAGE_SAMPLES: usize = 1_000_000;
 
+#[cfg(test)]
 #[derive(Clone, Copy)]
 pub enum RefType {
     Sin,
@@ -102,6 +103,7 @@ impl<'a> LockinProcessor<'a> {
         })
     }
 
+    #[cfg(test)]
     fn ref_signal(&self, t: f64, harmonic: usize, ref_type: RefType) -> f64 {
         let arg = (harmonic as f64) * (self.params.omega * t - self.omega_tref);
         match ref_type {
@@ -314,7 +316,7 @@ impl<'a> LockinProcessor<'a> {
         let mut mixed = Vec::with_capacity(end - start);
         for (idx, &sample) in self.data[start..end].iter().enumerate() {
             let raw_idx = start + idx;
-            if idx > 0 && raw_idx % 4096 == 0 {
+            if idx > 0 && raw_idx.is_multiple_of(4096) {
                 let phase = -harmonic * (self.params.omega * self.t[raw_idx] - self.omega_tref);
                 osc = Complex64::from_polar(1.0, phase);
             }
@@ -386,7 +388,7 @@ impl<'a> LockinProcessor<'a> {
                 start += 1;
             }
             while end < desired_end {
-                if end > 0 && end % 4096 == 0 {
+                if end > 0 && end.is_multiple_of(4096) {
                     let phase = -harmonic * (self.params.omega * self.t[end] - self.omega_tref);
                     osc = Complex64::from_polar(1.0, phase);
                 }
@@ -673,13 +675,13 @@ fn design_kaiser_lowpass_taps(params: LockinParams, cutoff_hz: f64, beta: f64) -
 fn output_index_range_for(params: LockinParams, filter: Option<&FilterDesign>) -> (usize, usize) {
     let mut i_start = params.i_start;
     let mut i_end = params.i_end;
-    if let Some(filter) = filter {
-        if filter.settling_samples > params.n_half {
-            let extra = filter.settling_samples - params.n_half;
-            let extra_idx = extra.div_ceil(params.stride);
-            i_start = i_start.saturating_add(extra_idx);
-            i_end = i_end.saturating_sub(extra_idx);
-        }
+    if let Some(filter) = filter
+        && filter.settling_samples > params.n_half
+    {
+        let extra = filter.settling_samples - params.n_half;
+        let extra_idx = extra.div_ceil(params.stride);
+        i_start = i_start.saturating_add(extra_idx);
+        i_end = i_end.saturating_sub(extra_idx);
     }
     (i_start, i_end)
 }
@@ -760,7 +762,7 @@ fn design_butterworth_lowpass_sos(
     cutoff_hz: f64,
     sample_rate: f64,
 ) -> Result<Vec<Biquad>> {
-    if order == 0 || order % 2 != 0 || order > 8 {
+    if order == 0 || !order.is_multiple_of(2) || order > 8 {
         return Err(anyhow!(
             "sync_iir_zero_phase lpf_iir_order must be one of 2, 4, 6, or 8 (got {order})"
         ));

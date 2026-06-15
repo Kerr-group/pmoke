@@ -133,8 +133,15 @@ pub fn run_phase_analysis(
 pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnalysisOutput> {
     let pairs: Vec<_> = li_result.chunks_exact(2).collect();
 
-    let [[li1x, li1y], [li2x, li2y], [li3x, li3y], [li4x, li4y], [li5x, li5y], [li6x, li6y], ..] =
-        pairs.as_slice()
+    let [
+        [li1x, li1y],
+        [li2x, li2y],
+        [li3x, li3y],
+        [li4x, li4y],
+        [li5x, li5y],
+        [li6x, li6y],
+        ..,
+    ] = pairs.as_slice()
     else {
         panic!(
             "Expected at least 6 pairs (12 elements), but got {}",

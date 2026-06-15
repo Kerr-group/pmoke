@@ -2,7 +2,7 @@ use crate::config::{Config, LockinLpfKind, Window};
 use crate::lockin::lockin_core::{FilterDesign, HarmonicLockinResult};
 use crate::lockin::lockin_params::LockinParams;
 use crate::ui;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use num_complex::Complex64;
 use std::f64::consts::PI;
 use std::fs;
@@ -17,6 +17,7 @@ const PSD_MAX_SAMPLES: usize = 2048;
 const PSD_BINS: usize = 512;
 const RESPONSE_BINS: usize = 1024;
 
+#[allow(clippy::too_many_arguments)]
 pub fn write_harmonic_debug(
     cfg: &Config,
     signal_ch: u8,
@@ -124,38 +125,39 @@ fn write_metadata(
     params: LockinParams,
     filter: Option<&FilterDesign>,
 ) -> Result<()> {
-    let mut rows = Vec::new();
-    rows.push(("signal_ch".to_string(), signal_ch.to_string()));
-    rows.push(("harmonic".to_string(), harmonic.to_string()));
-    rows.push((
-        "lpf_kind".to_string(),
-        lpf_kind_name(cfg.lockin.lpf_kind).to_string(),
-    ));
-    rows.push(("f_ref".to_string(), params.f_ref.to_string()));
-    rows.push(("dt".to_string(), params.dt.to_string()));
-    rows.push(("sample_rate".to_string(), params.sample_rate.to_string()));
-    rows.push(("stride_samples".to_string(), params.stride.to_string()));
-    rows.push(("output_rate".to_string(), params.output_rate.to_string()));
-    rows.push((
-        "lpf_half_window_cycles".to_string(),
-        cfg.lockin.lpf_half_window_cycles.to_string(),
-    ));
-    rows.push(("t_half".to_string(), params.t_half.to_string()));
-    rows.push(("n_half".to_string(), params.n_half.to_string()));
-    rows.push(("tap_count".to_string(), (2 * params.n_half + 1).to_string()));
-    rows.push((
-        "cutoff_source".to_string(),
-        params.cutoff_source.as_str().to_string(),
-    ));
-    rows.push((
-        "fallback_used".to_string(),
-        params.fallback_used.to_string(),
-    ));
-    rows.push((
-        "stopband_atten_db".to_string(),
-        cfg.lockin.lpf_stopband_atten_db.to_string(),
-    ));
-    rows.push(("attenuation_is_guaranteed".to_string(), "false".to_string()));
+    let mut rows = vec![
+        ("signal_ch".to_string(), signal_ch.to_string()),
+        ("harmonic".to_string(), harmonic.to_string()),
+        (
+            "lpf_kind".to_string(),
+            lpf_kind_name(cfg.lockin.lpf_kind).to_string(),
+        ),
+        ("f_ref".to_string(), params.f_ref.to_string()),
+        ("dt".to_string(), params.dt.to_string()),
+        ("sample_rate".to_string(), params.sample_rate.to_string()),
+        ("stride_samples".to_string(), params.stride.to_string()),
+        ("output_rate".to_string(), params.output_rate.to_string()),
+        (
+            "lpf_half_window_cycles".to_string(),
+            cfg.lockin.lpf_half_window_cycles.to_string(),
+        ),
+        ("t_half".to_string(), params.t_half.to_string()),
+        ("n_half".to_string(), params.n_half.to_string()),
+        ("tap_count".to_string(), (2 * params.n_half + 1).to_string()),
+        (
+            "cutoff_source".to_string(),
+            params.cutoff_source.as_str().to_string(),
+        ),
+        (
+            "fallback_used".to_string(),
+            params.fallback_used.to_string(),
+        ),
+        (
+            "stopband_atten_db".to_string(),
+            cfg.lockin.lpf_stopband_atten_db.to_string(),
+        ),
+        ("attenuation_is_guaranteed".to_string(), "false".to_string()),
+    ];
 
     if let Some(filter) = filter {
         rows.push(("cutoff_hz".to_string(), filter.cutoff_hz.to_string()));
@@ -450,11 +452,7 @@ fn finite_lockin_window(
 }
 
 fn metric_if(condition: bool, f: impl FnOnce() -> f64) -> f64 {
-    if condition {
-        f()
-    } else {
-        f64::NAN
-    }
+    if condition { f() } else { f64::NAN }
 }
 
 fn mean(values: &[f64]) -> f64 {

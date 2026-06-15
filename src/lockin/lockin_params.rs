@@ -1,6 +1,6 @@
 use crate::config::{Config, Lockin, LockinLpfKind};
 use crate::ui;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use std::f64::consts::PI;
 
 #[derive(Debug, Clone, Copy)]

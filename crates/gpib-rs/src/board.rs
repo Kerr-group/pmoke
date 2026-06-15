@@ -290,4 +290,3 @@ fn parse_visa_rsrc_pad(buf: &[c_char]) -> Option<i32> {
     }
     None
 }
-

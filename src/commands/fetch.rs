@@ -4,7 +4,7 @@ use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::write_csv;
 use crate::{communications::oscilloscope::OscilloscopeHandler, utils::csv::ensure_not_exists};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use std::time::Instant;
 
 pub fn fetch(cfg: &Config) -> Result<()> {

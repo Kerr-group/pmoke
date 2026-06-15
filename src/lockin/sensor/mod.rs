@@ -10,7 +10,7 @@ use crate::lockin::stride::{li_stride_1d, li_stride_2d};
 use crate::lockin::time::time_builder;
 use crate::ui;
 use crate::utils::csv::read_selected_columns;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 pub struct SensorMeta<'a> {
     pub factor: f64,

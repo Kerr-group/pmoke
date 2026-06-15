@@ -10,8 +10,8 @@ mod phase;
 mod ui;
 mod utils;
 
-use anyhow::bail;
 use anyhow::Result;
+use anyhow::bail;
 use clap::Parser;
 use cli::{Cli, Command};
 use config::{ConfigLoad, ValidationTarget};
@@ -27,7 +27,8 @@ fn main() -> Result<()> {
     let load = config::load_from_path(&args.config);
 
     match args.command.as_ref() {
-        Some(Command::Show) | None => return commands::show::show(&load),
+        Some(Command::Show) => return commands::show::show(&load),
+        None | Some(Command::Monitor) => return commands::monitor::monitor(&args.config, load),
         _ => {}
     }
 
@@ -43,6 +44,7 @@ fn main() -> Result<()> {
     {
         match args.command.as_ref() {
             Some(Command::Show) => unreachable!(),
+            Some(Command::Monitor) => unreachable!(),
             Some(Command::Single) => {
                 config::validate_for_target(&cfg, ValidationTarget::Single)?;
                 commands::single::single(&cfg)
@@ -104,6 +106,7 @@ fn main() -> Result<()> {
     {
         match args.command.as_ref() {
             Some(Command::Show) => unreachable!(),
+            Some(Command::Monitor) => unreachable!(),
             Some(Command::Reference) => {
                 config::validate_for_target(&cfg, ValidationTarget::Reference)?;
                 commands::reference::reference(&cfg)

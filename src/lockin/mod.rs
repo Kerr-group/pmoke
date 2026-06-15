@@ -18,7 +18,7 @@ use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
 use crate::ui;
 use crate::utils::csv::read_csv;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 
 pub struct LockinProcessOutput {
@@ -26,6 +26,8 @@ pub struct LockinProcessOutput {
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
 }
+
+type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>);
 
 pub fn run(cfg: &Config) -> Result<()> {
     let pb = ui::spinner(format!("reading {FETCHED_FNAME}"));
@@ -54,11 +56,7 @@ pub fn run(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn run_li(
-    cfg: &Config,
-    t: &[f64],
-    data: &[Vec<f64>],
-) -> Result<(Vec<f64>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>)> {
+pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOutput> {
     let (sensor_ch, sensor_idx) = resolve::sensor_column_indices(cfg)?;
     let (_, ref_idx) = resolve::reference_column_index(cfg)?;
     let (signal_ch, signal_idx) = resolve::signal_column_indices(cfg)?;
@@ -190,15 +188,14 @@ pub fn li_process(
         }
         if !printed_lockin_summary {
             ui::suspend_progress(&pb, || {
-                ui::summary_table(
+                ui::settings_table(
                     "Lock-in settings",
-                    &["Setting", "Value"],
                     li_processor
                         .summary_lines()
                         .into_iter()
                         .map(|line| {
                             let (setting, value) = line.split_once('=').unwrap_or((&line, ""));
-                            vec![setting.to_string(), value.to_string()]
+                            (setting.trim().to_string(), value.trim().to_string())
                         })
                         .collect(),
                 );

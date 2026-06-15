@@ -1,4 +1,4 @@
-use super::{load_from_str, ConfigLoad, LockinLpfKind};
+use super::{ConfigLoad, LockinLpfKind, load_from_str};
 
 #[test]
 fn v1_filter_length_maps_to_half_window_cycles_and_legacy_boxcar() {
@@ -194,9 +194,11 @@ lpf_half_window_cycles = 1.0
 
     match load_from_str(&text) {
         ConfigLoad::Ready { warnings, .. } => {
-            assert!(warnings
-                .iter()
-                .any(|warning| warning.message.contains("no cutoff is specified")));
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.message.contains("no cutoff is specified"))
+            );
         }
         other => panic!("expected ready load, got {:?}", other),
     }
@@ -216,10 +218,11 @@ lpf_cutoff_ref_ratio = 0.1
 
     match load_from_str(&text) {
         ConfigLoad::Diagnostics(diag) => {
-            assert!(diag
-                .diagnostics
-                .iter()
-                .any(|issue| issue.message.contains("mutually exclusive")));
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.message.contains("mutually exclusive"))
+            );
         }
         other => panic!("expected diagnostics, got {:?}", other),
     }
@@ -283,10 +286,11 @@ lpf_iir_order = 3
 
     match load_from_str(&text) {
         ConfigLoad::Diagnostics(diag) => {
-            assert!(diag
-                .diagnostics
-                .iter()
-                .any(|issue| issue.path.as_deref() == Some("lockin.lpf_iir_order")));
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("lockin.lpf_iir_order"))
+            );
         }
         other => panic!("expected diagnostics, got {:?}", other),
     }
@@ -307,10 +311,11 @@ lpf_sync_average_cycles = inf
 
     match load_from_str(&text) {
         ConfigLoad::Diagnostics(diag) => {
-            assert!(diag
-                .diagnostics
-                .iter()
-                .any(|issue| issue.path.as_deref() == Some("lockin.lpf_sync_average_cycles")));
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("lockin.lpf_sync_average_cycles"))
+            );
         }
         other => panic!("expected diagnostics, got {:?}", other),
     }
@@ -330,10 +335,11 @@ lpf_debug_label = "../bad"
 
     match load_from_str(&text) {
         ConfigLoad::Diagnostics(diag) => {
-            assert!(diag
-                .diagnostics
-                .iter()
-                .any(|issue| issue.path.as_deref() == Some("lockin.lpf_debug_label")));
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("lockin.lpf_debug_label"))
+            );
         }
         other => panic!("expected diagnostics, got {:?}", other),
     }

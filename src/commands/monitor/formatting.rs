@@ -1,0 +1,145 @@
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use std::time::Duration;
+
+pub(super) fn centered_text(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len >= width {
+        return text.to_string();
+    }
+    let padding = width - len;
+    let left = padding / 2;
+    let right = padding - left;
+    format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
+}
+
+pub(super) fn strip_ansi_codes(text: &str) -> String {
+    let mut stripped = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for code in chars.by_ref() {
+                if code.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        stripped.push(ch);
+    }
+    stripped
+}
+
+pub(super) fn format_age(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    if secs < 60 {
+        format!("{secs}s ago")
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else {
+        format!("{}h ago", secs / 3600)
+    }
+}
+
+pub(super) fn format_duration(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    let millis = duration.subsec_millis();
+    if secs < 60 {
+        format!("{secs}.{millis:03}s")
+    } else {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    }
+}
+
+pub(super) fn format_live_duration(duration: Duration) -> String {
+    let total_centis = duration.as_millis() / 10;
+    let secs = total_centis / 100;
+    let centis = total_centis % 100;
+    if secs < 60 {
+        format!("{secs}.{centis:02}s")
+    } else {
+        format!("{}m{:02}.{:02}s", secs / 60, secs % 60, centis)
+    }
+}
+
+pub(super) fn fit_text(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let len = text.chars().count();
+    if len <= width {
+        return text.to_string();
+    }
+    if width <= 3 {
+        return text.chars().take(width).collect();
+    }
+
+    let mut fitted = text.chars().take(width - 3).collect::<String>();
+    fitted.push_str("...");
+    fitted
+}
+
+pub(super) fn fit_path(path: &str, width: usize) -> String {
+    if path.chars().count() <= width {
+        return path.to_string();
+    }
+    if width <= 3 {
+        return fit_text(path, width);
+    }
+
+    let tail_width = width - 3;
+    let tail = path
+        .chars()
+        .rev()
+        .take(tail_width)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    format!("...{tail}")
+}
+
+pub(super) fn percent_width(total: usize, percent: usize) -> usize {
+    ((total * percent) / 100).max(1)
+}
+
+pub(super) fn contains(area: Rect, x: u16, y: u16) -> bool {
+    x >= area.x
+        && y >= area.y
+        && x < area.x.saturating_add(area.width)
+        && y < area.y.saturating_add(area.height)
+}
+
+pub(super) fn bordered_inner(area: Rect) -> Rect {
+    Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    }
+}
+
+pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let percent_x = percent_x.min(100);
+    let percent_y = percent_y.min(100);
+    let vertical_margin = (100 - percent_y) / 2;
+    let horizontal_margin = (100 - percent_x) / 2;
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(vertical_margin),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage(100 - percent_y - vertical_margin),
+        ])
+        .split(area);
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(horizontal_margin),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage(100 - percent_x - horizontal_margin),
+        ])
+        .split(vertical[1]);
+    horizontal[1]
+}

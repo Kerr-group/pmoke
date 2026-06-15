@@ -2,7 +2,7 @@ use crate::cli::Cli;
 use crate::ui;
 use anyhow::{Context, Result};
 use clap::CommandFactory;
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use dirs;
 use std::{fs, io::Write, path::PathBuf};
 
@@ -39,7 +39,6 @@ pub fn install_completion(shell: Shell) -> Result<()> {
 
                 let mut file = fs::OpenOptions::new()
                     .create(true)
-                    .write(true)
                     .append(true)
                     .open(&path)
                     .with_context(|| format!("failed to open profile at {:?}", path))?;

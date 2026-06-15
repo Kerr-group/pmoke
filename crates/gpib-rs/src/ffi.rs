@@ -35,11 +35,8 @@ unsafe extern "system" {
         retCnt: *mut ViUInt32,
         desc: *mut c_char,
     ) -> ViStatus;
-    pub fn viFindNext(
-        vi: ViSession,
-        desc: *mut c_char,
-    ) -> ViStatus;
-    
+    pub fn viFindNext(vi: ViSession, desc: *mut c_char) -> ViStatus;
+
     // Resource
     pub fn viOpen(
         sesn: ViSession,
@@ -49,38 +46,17 @@ unsafe extern "system" {
         vi: *mut ViSession,
     ) -> ViStatus;
     pub fn viClose(vi: ViObject) -> ViStatus;
-    
+
     // I/O
-    pub fn viWrite(
-        vi: ViSession,
-        buf: ViConstBuf,
-        cnt: ViUInt32,
-        retCnt: ViUInt32Ptr,
-    ) -> ViStatus;
-    pub fn viRead(
-        vi: ViSession,
-        buf: ViBuf,
-        cnt: ViUInt32,
-        retCnt: ViUInt32Ptr,
-    ) -> ViStatus;
+    pub fn viWrite(vi: ViSession, buf: ViConstBuf, cnt: ViUInt32, retCnt: ViUInt32Ptr) -> ViStatus;
+    pub fn viRead(vi: ViSession, buf: ViBuf, cnt: ViUInt32, retCnt: ViUInt32Ptr) -> ViStatus;
     pub fn viClear(vi: ViSession) -> ViStatus;
-    
-    pub fn viReadSTB(
-        vi: ViSession,
-        status: *mut ViUInt16,
-    ) -> ViStatus;
+
+    pub fn viReadSTB(vi: ViSession, status: *mut ViUInt16) -> ViStatus;
 
     // Attributes
-    pub fn viSetAttribute(
-        vi: ViSession,
-        attrName: ViAttr,
-        attrValue: ViAttrState,
-    ) -> ViStatus;
-    pub fn viGetAttribute(
-        vi: ViSession,
-        attrName: ViAttr,
-        attrValue: *mut c_void, 
-    ) -> ViStatus;
+    pub fn viSetAttribute(vi: ViSession, attrName: ViAttr, attrValue: ViAttrState) -> ViStatus;
+    pub fn viGetAttribute(vi: ViSession, attrName: ViAttr, attrValue: *mut c_void) -> ViStatus;
 }
 
 #[cfg(not(target_os = "windows"))]
