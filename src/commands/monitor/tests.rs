@@ -298,6 +298,17 @@ fn display_output_text_reframes_cli_tables_for_tui() {
         display_output_text(LogKind::Metric, "│ cutoff ┆ 2.3e4 Hz │").as_deref(),
         Some("cutoff  →  2.3e4 Hz")
     );
+    assert_eq!(
+        display_output_text(
+            LogKind::Metric,
+            "│ Channel ┆ Role ┆ Label ┆ Unit ┆ Factor │"
+        ),
+        None
+    );
+    assert_eq!(
+        display_output_text(LogKind::Metric, "│ ch3 ┆ reference ┆ - ┆ - ┆ - │").as_deref(),
+        Some("ch3  →  reference  /  -  /  -  /  -")
+    );
 }
 
 #[test]

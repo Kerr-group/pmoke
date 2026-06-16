@@ -93,11 +93,6 @@ pub fn section(title: impl Display) {
     println!("{}", style(format!("{title}")).bold().underlined());
 }
 
-pub fn section_err(title: impl Display) {
-    eprintln!();
-    eprintln!("{}", style(format!("{title}")).bold().underlined());
-}
-
 pub fn summary_table(title: impl Display, headers: &[&str], rows: Vec<Vec<String>>) {
     let _ = headers;
     summary_panel(

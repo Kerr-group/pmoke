@@ -2402,11 +2402,13 @@ fn output_display(kind: LogKind, text: &str) -> Option<OutputDisplay> {
     if is_table_border_line(trimmed) {
         return None;
     }
-    if let Some((key, value)) = parse_table_row(trimmed) {
-        if is_table_header_row(&key, &value) {
+    if let Some(cells) = parse_table_cells(trimmed) {
+        if is_table_header_cells(&cells) {
             return None;
         }
-        return Some(OutputDisplay::Metric { key, value });
+        if let Some((key, value)) = table_cells_to_metric(cells) {
+            return Some(OutputDisplay::Metric { key, value });
+        }
     }
 
     match kind {
@@ -2462,7 +2464,7 @@ fn classify_log_entry(stream: OutputStream, text: &str) -> LogKind {
     if trimmed.contains("Fit result") || trimmed.starts_with("[[") {
         return LogKind::Fit;
     }
-    if parse_table_row(trimmed).is_some()
+    if parse_table_cells(trimmed).is_some()
         || parse_panel_row(trimmed).is_some()
         || parse_panel_continuation(trimmed).is_some()
     {
@@ -2534,27 +2536,45 @@ fn parse_panel_continuation(text: &str) -> Option<String> {
     Some(value.to_string())
 }
 
-fn parse_table_row(text: &str) -> Option<(String, String)> {
+fn parse_table_cells(text: &str) -> Option<Vec<String>> {
     let trimmed = text.trim();
     if !(trimmed.starts_with('│') && trimmed.ends_with('│')) {
         return None;
     }
 
     let inner = trimmed.trim_start_matches('│').trim_end_matches('│').trim();
-    let (key, value) = inner.split_once('┆')?;
-    let key = key.trim();
-    let value = value.trim();
-    if key.is_empty() || value.is_empty() {
+    let cells = inner
+        .split('┆')
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if cells.len() < 2 {
         return None;
     }
 
-    Some((key.to_string(), value.to_string()))
+    Some(cells)
 }
 
-fn is_table_header_row(key: &str, value: &str) -> bool {
+fn table_cells_to_metric(cells: Vec<String>) -> Option<(String, String)> {
+    let mut iter = cells.into_iter();
+    let key = iter.next()?;
+    let values = iter.collect::<Vec<_>>();
+    if key.is_empty() || values.is_empty() {
+        return None;
+    }
+
+    Some((key, values.join("  /  ")))
+}
+
+fn is_table_header_cells(cells: &[String]) -> bool {
+    let normalized = cells.iter().map(|cell| cell.trim()).collect::<Vec<_>>();
     matches!(
-        (key.trim(), value.trim()),
-        ("Metric", "Value") | ("Setting", "Value")
+        normalized.as_slice(),
+        ["Metric", "Value"]
+            | ["Setting", "Value"]
+            | ["Item", "Value"]
+            | ["Channel", "Role", "Label", "Unit", "Factor"]
     )
 }
 

@@ -1,4 +1,4 @@
-use crate::config::{Config, ConfigDiagnostics, ConfigLoad, ConfigWarning};
+use crate::config::{Channel, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning};
 use crate::ui;
 use anyhow::Result;
 
@@ -8,7 +8,7 @@ pub fn show(load: &ConfigLoad) -> Result<()> {
             print_warnings(warnings);
             print_config_summary(config);
             let rendered = toml::to_string_pretty(config)?;
-            ui::section_err("Normalized Config");
+            ui::section("Normalized Config");
             println!("{rendered}");
         }
         ConfigLoad::Diagnostics(diag) => {
@@ -30,9 +30,8 @@ fn missing(value: Option<&str>) -> String {
 }
 
 fn print_config_summary(config: &Config) {
-    ui::section_err("Config Summary");
-
-    let summary = ui::table(
+    ui::summary_table(
+        "Config Summary",
         &["Item", "Value"],
         vec![
             vec!["Version".to_string(), config.version.to_string()],
@@ -86,43 +85,49 @@ fn print_config_summary(config: &Config) {
             ],
         ],
     );
-    eprintln!("{summary}");
 
-    let channels = ui::table(
-        &["Channel", "Role", "Label", "Unit", "Factor"],
+    ui::settings_table(
+        "Channels",
         config
             .channels
             .iter()
-            .map(|channel| {
-                let mut roles = Vec::new();
-                if config.roles.sensor_ch.contains(&channel.index) {
-                    roles.push("sensor");
-                }
-                if config.roles.reference_ch == channel.index {
-                    roles.push("reference");
-                }
-                if config.roles.signal_ch.contains(&channel.index) {
-                    roles.push("signal");
-                }
-
-                vec![
-                    format!("ch{}", channel.index),
-                    if roles.is_empty() {
-                        "-".to_string()
-                    } else {
-                        roles.join(", ")
-                    },
-                    missing(channel.label.as_deref()),
-                    missing(channel.unit_out.as_deref()),
-                    channel
-                        .factor
-                        .map(|factor| factor.to_string())
-                        .unwrap_or_else(|| "-".to_string()),
-                ]
-            })
+            .map(|channel| channel_row(config, channel))
             .collect(),
     );
-    eprintln!("{channels}");
+}
+
+fn channel_row(config: &Config, channel: &Channel) -> (String, String) {
+    let mut roles = Vec::new();
+    if config.roles.sensor_ch.contains(&channel.index) {
+        roles.push("sensor");
+    }
+    if config.roles.reference_ch == channel.index {
+        roles.push("reference");
+    }
+    if config.roles.signal_ch.contains(&channel.index) {
+        roles.push("signal");
+    }
+
+    let role = if roles.is_empty() {
+        "-".to_string()
+    } else {
+        roles.join(", ")
+    };
+    let factor = channel
+        .factor
+        .map(|factor| factor.to_string())
+        .unwrap_or_else(|| "-".to_string());
+
+    (
+        format!("ch{}", channel.index),
+        format!(
+            "role={}, label={}, unit={}, factor={}",
+            role,
+            missing(channel.label.as_deref()),
+            missing(channel.unit_out.as_deref()),
+            factor
+        ),
+    )
 }
 
 pub fn print_warnings(warnings: &[ConfigWarning]) {
