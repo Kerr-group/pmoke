@@ -3,7 +3,6 @@ name = "pmoke"
 version = "0.1.6"
 edition = "2024"
 
-
 [workspace]
 members = [
   "crates/gpib-rs",
@@ -11,21 +10,29 @@ members = [
 ]
 
 [dependencies]
-gpib-rs = { path = "crates/gpib-rs" , optional = true}
-instruments = { path = "crates/instruments" , optional = true}
-anyhow = "1.0.100"
+gpib-rs = { path = "crates/gpib-rs", optional = true }
+instruments = { path = "crates/instruments", optional = true }
+anyhow = "1.0.102"
 serde = { version = "1.0.228", features = ["derive"] }
-toml = "0.9.8"
-serde_path_to_error= "0.1.20"
-clap = { version = "4.5.51", features = ["derive"] }
-serde_json = "1.0.145"
-pyo3 = { version = "0.27.1", features = ["auto-initialize"] }
-colored = "3.0.0"
-clap_complete = "4.5.60"
+toml = "1.1.2"
+serde_path_to_error = "0.1.20"
+clap = { version = "4.6.1", features = ["derive"] }
+serde_json = "1.0.150"
+pyo3 = { version = "0.29.0", features = ["auto-initialize"] }
+console = "0.16.3"
+indicatif = "0.18.4"
+comfy-table = "7.2.2"
+ratatui = { version = "0.30.1", default-features = false, features = ["crossterm"] }
+crossterm = "0.29"
+arboard = "3.6.1"
+clap_complete = "4.6.5"
 dirs = "6.0.0"
 csv = "1.4.0"
-rayon = "1.11.0"
+rayon = "1.12.0"
 meval = "0.2.0"
+num-complex = "0.4.6"
+tachyonfx = "0.25.0"
+tui-spinner = "0.2.3"
 
 [features]
 default = ["hw"]

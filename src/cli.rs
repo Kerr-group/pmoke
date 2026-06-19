@@ -25,6 +25,8 @@ pub struct Cli {
 pub enum Command {
     /// Display the contents of the configuration file
     Show,
+    /// Open a live terminal dashboard for configuration and analysis artifacts
+    Monitor,
     /// Set single mode to the oscilloscope
     #[cfg(feature = "hw")]
     Single,

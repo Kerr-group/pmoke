@@ -35,12 +35,12 @@ pub fn write_li_rotated_results(
     s_integral: &[Vec<f64>],
     li_rotated_result: &[Vec<f64>],
 ) -> Result<()> {
-    let mut export_data: Vec<Vec<f64>> =
+    let mut export_data: Vec<&[f64]> =
         Vec::with_capacity(1 + s_integral.len() + li_rotated_result.len());
 
-    export_data.push(t.to_vec());
-    export_data.extend_from_slice(s_integral);
-    export_data.extend_from_slice(li_rotated_result);
+    export_data.push(t);
+    export_data.extend(s_integral.iter().map(|col| col.as_slice()));
+    export_data.extend(li_rotated_result.iter().map(|col| col.as_slice()));
 
     let headers_slice: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
 

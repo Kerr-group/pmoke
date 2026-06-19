@@ -10,6 +10,7 @@ pub mod completions;
 pub mod fetch;
 pub mod kerr;
 pub mod li;
+pub mod monitor;
 pub mod phase;
 #[cfg(feature = "hw")]
 pub mod process;

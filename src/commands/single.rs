@@ -1,5 +1,6 @@
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::Config;
+use crate::ui;
 use anyhow::{Context, Result};
 
 pub fn single(cfg: &Config) -> Result<()> {
@@ -9,6 +10,6 @@ pub fn single(cfg: &Config) -> Result<()> {
         .set_single()
         .context("failed to set oscilloscope to single mode")?;
 
-    println!("⏱️ Oscilloscope set to single mode successfully.",);
+    ui::success("oscilloscope set to single mode");
     Ok(())
 }

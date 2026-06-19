@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
 use crate::lockin::reference::ref_analysis::{RefFitParams, ReferenceFFT, ReferenceFitter};
 use crate::lockin::time::time_builder;
+use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::read_selected_columns;
 use anyhow::{Context, Result, anyhow, bail};
@@ -32,6 +33,7 @@ pub fn run_fit_ref(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
             )
         })?;
 
+    let pb = ui::spinner(format!("reading reference column {}", col_idx + 1));
     let t0 = std::time::Instant::now();
     let ref_data = read_selected_columns(FETCHED_FNAME, &[col_idx])
         .context("failed to read reference column from csv")?
@@ -43,10 +45,13 @@ pub fn run_fit_ref(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
             )
         })?;
     let elapsed_read = t0.elapsed();
-    println!(
-        "📥 Read reference column {} in {:.2?}",
-        col_idx + 1,
-        elapsed_read
+    ui::finish_read(
+        pb,
+        format!(
+            "reference column {} ({})",
+            col_idx + 1,
+            ui::fmt_duration(elapsed_read)
+        ),
     );
 
     let results = run_fit_ref_core(cfg, t, &ref_data).context("failed to fit reference signal")?;
@@ -87,16 +92,31 @@ pub fn run_fit_ref_core(cfg: &Config, t: &[f64], ref_data: &[f64]) -> Result<Ref
     let fft_ref_data = &ref_data[idx_start..idx_end];
     let fft_results = fft_ref(fft_t, fft_ref_data).context("failed to fft reference signal")?;
 
-    println!(
-        "🔍 Reference FFT results: f_ref = {:.6} MHz, A_ref = {:.6}, omega_tref = {:.6} rad",
+    ui::info(format!(
+        "reference FFT: f_ref = {:.6} MHz, A_ref = {:.6}, omega_tref = {:.6} rad",
         fft_results.f_ref * 1e-6,
         fft_results.a_ref,
         fft_results.omega_tref
-    );
+    ));
 
     let (fit_t, fit_ref_data) = stride_samples(cfg, t, ref_data);
     let results =
         fit_ref(&fit_t, &fit_ref_data, fft_results).context("failed to fit reference signal")?;
+    ui::summary_table(
+        "Reference fit",
+        &["Metric", "Value"],
+        vec![
+            vec![
+                "frequency".to_string(),
+                format!("{:.8} MHz", results.f_ref * 1e-6),
+            ],
+            vec!["amplitude".to_string(), format!("{:.8} V", results.a_ref)],
+            vec![
+                "phase".to_string(),
+                format!("{:.8} rad", results.omega_tref),
+            ],
+        ],
+    );
     plot_fit_results(&fit_t, &fit_ref_data, &results).context("failed to plot reference signal")?;
     Ok(results)
 }
@@ -111,7 +131,7 @@ fn fft_ref(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
     }
 
     if t.is_empty() {
-        println!("(Info) Time and reference data are empty. Skipping fft.");
+        ui::skipped("reference FFT: time and reference data are empty");
         bail!("Cannot fft empty data.");
     }
 
@@ -132,7 +152,7 @@ fn fit_ref(t: &[f64], ref_data: &[f64], params: RefFitParams) -> Result<RefFitPa
     }
 
     if t.is_empty() {
-        println!("(Info) Time and reference data are empty. Skipping fit.");
+        ui::skipped("reference fit: time and reference data are empty");
         bail!("Cannot fit empty data.");
     }
 
@@ -159,7 +179,7 @@ fn get_range_indices(t: &[f64], start: f64, end: f64) -> Result<(usize, usize)> 
 
 fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Result<()> {
     if t.is_empty() {
-        println!("(Info) No data to plot.");
+        ui::skipped("reference plot: no data");
         return Ok(());
     }
 
@@ -186,17 +206,19 @@ fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Resu
         .map(|&ti| a * (2.0 * PI * f * ti - omegat).sin())
         .collect();
 
+    let pb = ui::spinner("plotting reference fit");
     ref_plot::ReferencePlotter {}
         .plot(t_plot, ref_plot, &fit_plot)
         .context("failed to plot reference signal")?;
+    ui::finish_success(pb, "reference plot completed");
 
     Ok(())
 }
 
 fn extract_single_reference_ch(cfg: &Config) -> Result<u8> {
-    match cfg.roles.reference_ch.len() {
-        0 => bail!("reference channel is not specified in the configuration"),
-        1 => Ok(cfg.roles.reference_ch[0]),
-        _ => bail!("multiple reference channels are not supported"),
+    let ref_ch = cfg.roles.reference_ch;
+    if ref_ch == 0 {
+        bail!("reference channel is not specified in the configuration");
     }
+    Ok(ref_ch)
 }

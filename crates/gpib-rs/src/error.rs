@@ -196,4 +196,3 @@ fn set_ibcntl(v: c_long) {
 fn set_iberr(v: i32) {
     LAST_IBERR.with(|c| *c.borrow_mut() = v);
 }
-

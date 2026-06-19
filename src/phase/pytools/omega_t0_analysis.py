@@ -1,7 +1,14 @@
 import gsplot as gs
 import lmfit
 import numpy as np
+import warnings
 from numpy.typing import NDArray
+
+warnings.filterwarnings(
+    "ignore",
+    message='Creating legend with loc="best" can be slow.*',
+    category=UserWarning,
+)
 
 
 class OT0Analyser:
@@ -26,8 +33,6 @@ class OT0Analyser:
         # do not vary the intercept
         params["intercept"].vary = False
         result = model.fit(m_omega_t0_even, params, x=harmonics_even)
-        print("🛠️ Fit result:")
-        print(result.fit_report())
 
         # Create data for plotting
         harmonics_even_plot = np.linspace(0, 7, 100)

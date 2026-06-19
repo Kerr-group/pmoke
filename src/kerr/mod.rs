@@ -7,22 +7,27 @@ use crate::constants::{KERR_NAME, LI_ROTATED_NAME};
 use crate::kerr::kerr_harmonics_analysis::KerrHarmonicsAnalyser;
 use crate::kerr::kerr_standard_analysis::KerrStandardAnalyser;
 use crate::kerr::save::{get_kerr_headers, write_kerr_results};
+use crate::ui;
 use crate::{config::Config, utils::csv::read_csv};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::time::Instant;
 
 pub fn run(cfg: &Config) -> Result<()> {
-    let ch = &cfg.phase.use_signal_ch;
+    let ch = cfg.phase_signal_ch();
 
     if ch.is_empty() {
-        println!("⚠️ No channels specified for phase analysis. Skipping phase analysis.");
+        ui::skipped("Kerr analysis: no phase signal channels specified");
         return Ok(());
     }
 
     let num_sensor_ch = cfg.roles.sensor_ch.len();
 
     let t0 = Instant::now();
+    let pb = ui::spinner(format!(
+        "reading phase-rotated lock-in results for channels {:?}",
+        ch
+    ));
 
     let all_data: Vec<Vec<Vec<f64>>> = ch
         .par_iter()
@@ -33,9 +38,13 @@ pub fn run(cfg: &Config) -> Result<()> {
         .collect::<Result<Vec<_>, _>>()?;
 
     let elapsed_read = t0.elapsed();
-    println!(
-        "📥 Read lock-in rotated results for ch {:?} in {:.2?}",
-        ch, elapsed_read
+    ui::finish_read(
+        pb,
+        format!(
+            "phase-rotated lock-in results for channels {:?} ({})",
+            ch,
+            ui::fmt_duration(elapsed_read)
+        ),
     );
 
     let t = all_data[0][0].clone(); // time column
@@ -57,8 +66,6 @@ pub fn run_kerr_analysis(
     sensor_integral_ch: &[Vec<f64>],
     li_rotated_results: &[Vec<Vec<f64>>],
 ) -> Result<()> {
-    println!("🔍 Running Kerr analysis...");
-
     let kerr_sensor_ch_index = cfg.kerr.use_sensor_ch;
 
     let ch_conf: &Channel = cfg
@@ -81,14 +88,16 @@ pub fn run_kerr_analysis(
     })?;
     let concat_label = format!("{} ({})", label, unit);
 
-    let ch = &cfg.phase.use_signal_ch;
+    let ch = cfg.phase_signal_ch();
 
     let kerr_type = &cfg.kerr.kerr_type;
 
     let sensor_integral = &sensor_integral_ch[kerr_sensor_ch_index as usize - 1];
     let factor = cfg.kerr.factor;
     let mut kerr_results: Vec<Vec<f64>> = Vec::new();
+    let pb = ui::progress("running Kerr analysis", ch.len() as u64);
     for (ch_i, li_rotated_result) in ch.iter().zip(li_rotated_results.iter()) {
+        pb.set_message(format!("Kerr analysis ch{ch_i}"));
         let fig_name = format!("{}_ch{}", KERR_NAME, ch_i);
 
         let kerr_i = match kerr_type {
@@ -115,13 +124,14 @@ pub fn run_kerr_analysis(
         };
 
         kerr_results.push(kerr_i);
+        pb.inc(1);
     }
     let fname = format!("{}_results.csv", KERR_NAME);
     let headers = get_kerr_headers(cfg)?;
     write_kerr_results(&fname, &headers, t, sensor_integral_ch, &kerr_results)?;
 
-    println!("💾 Saved Kerr analysis results for channels {:?}.", ch);
-    println!("✅ Kerr analysis completed.");
+    ui::finish_saved(pb, format!("Kerr analysis results for channels {:?}", ch));
+    ui::success("Kerr analysis completed");
 
     Ok(())
 }

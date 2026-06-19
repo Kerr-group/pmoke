@@ -168,19 +168,11 @@ class ReferenceFitter:
 
         result = model.fit(y, t=t, params=params, method="least_squares")
 
-        print("🛠️ Fit result:")
-        lmfit.report_fit(result)
-
         p = result.params
         df = float(p["df"].value)
         A_ref_fit = float(p["A_ref"].value)
         omega_tref_fit = float(p["omega_tref"].value)
         f_ref_fit = f_ref + df
-
-        print("✅ Reference Signal Fitted")
-        print(f"    Frequency : {f_ref_fit * 1e-6 :>10.8f} MHz")
-        print(f"    Amplitude : {A_ref_fit      :>10.8f} V")
-        print(f"    Phase     : {omega_tref_fit :>10.8f} rad")
 
         return {
             "f_ref": f_ref_fit,

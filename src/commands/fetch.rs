@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
+use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::write_csv;
 use crate::{communications::oscilloscope::OscilloscopeHandler, utils::csv::ensure_not_exists};
@@ -17,10 +18,10 @@ pub fn fetch(cfg: &Config) -> Result<()> {
     write_csv(FETCHED_FNAME, &header_refs, &data)?;
     let t_write_end = Instant::now();
 
-    println!(
-        "📝 Data written to raw.csv in {:.2?}",
-        t_write_end - t_write_start
-    );
+    ui::saved(format!(
+        "{FETCHED_FNAME} ({})",
+        ui::fmt_duration(t_write_end - t_write_start)
+    ));
     Ok(())
 }
 
@@ -39,24 +40,26 @@ pub fn run_fetch(cfg: &Config) -> Result<Vec<Vec<f64>>> {
     let depth = osc_cfg.memory_depth;
 
     let channels = build_channel_list(cfg)?;
-    println!(
-        "⏳ Fetching {} samples from {} channels...",
-        depth,
-        channels.len()
+    let pb = ui::progress(
+        format!("fetching {depth} samples from {} channels", channels.len()),
+        channels.len() as u64,
     );
 
     let t_fetch_start = Instant::now();
-    let data = fetch_all_channels(&mut handler, &channels, depth)?;
+    let data = fetch_all_channels(&mut handler, &channels, depth, &pb)?;
     let t_fetch_end = Instant::now();
 
     let fetch_elapsed = t_fetch_end - t_fetch_start;
 
-    println!(
-        "✅ Fetched {} samples from {} channels in {:.2?} ({:.2} samples/sec)",
-        depth,
-        channels.len(),
-        fetch_elapsed,
-        (depth * channels.len()) as f64 / fetch_elapsed.as_secs_f64()
+    ui::finish_success(
+        pb,
+        format!(
+            "fetched {} samples from {} channels ({}, {:.2} samples/sec)",
+            depth,
+            channels.len(),
+            ui::fmt_duration(fetch_elapsed),
+            (depth * channels.len()) as f64 / fetch_elapsed.as_secs_f64()
+        ),
     );
     Ok(data)
 }
@@ -65,10 +68,12 @@ pub fn fetch_all_channels(
     handler: &mut OscilloscopeHandler,
     channels: &[u8],
     depth: usize,
+    progress: &indicatif::ProgressBar,
 ) -> Result<Vec<Vec<f64>>> {
     let mut data: Vec<Vec<f64>> = Vec::with_capacity(channels.len());
 
     for &ch in channels {
+        progress.set_message(format!("fetching ch{ch}"));
         let v = handler
             .fetch(ch, depth)
             .with_context(|| format!("failed to fetch channel {ch}"))?;
@@ -82,6 +87,7 @@ pub fn fetch_all_channels(
         }
 
         data.push(v);
+        progress.inc(1);
     }
 
     Ok(data)

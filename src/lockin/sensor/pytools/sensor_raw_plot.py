@@ -1,5 +1,12 @@
 import gsplot as gs
+import warnings
 from numpy.typing import NDArray
+
+warnings.filterwarnings(
+    "ignore",
+    message='Creating legend with loc="best" can be slow.*',
+    category=UserWarning,
+)
 
 
 class SensorRawPlotter:

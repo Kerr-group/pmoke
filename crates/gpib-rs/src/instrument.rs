@@ -3,7 +3,7 @@
 use std::cmp::min;
 
 #[cfg(not(target_os = "windows"))]
-use crate::consts::{EOS_NONE, EOT_ENABLE, ERR, NO_SAD, TIMO, END};
+use crate::consts::{END, EOS_NONE, EOT_ENABLE, ERR, NO_SAD, TIMO};
 #[cfg(not(target_os = "windows"))]
 use crate::ffi::{ibclr, ibdev, ibonl, ibrd, ibtmo, ibwrt};
 #[cfg(not(target_os = "windows"))]
@@ -13,24 +13,25 @@ use crate::error::{Result, check_ok, err, ibsta_val};
 use libc::{c_long, c_void};
 
 #[cfg(target_os = "windows")]
-use std::ffi::CString;
-#[cfg(target_os = "windows")]
-use crate::consts::{ERR, TIMO, END};
-#[cfg(target_os = "windows")]
 use crate::consts::visa::*;
 #[cfg(target_os = "windows")]
-use crate::ffi::{viOpenDefaultRM, viOpen, viClose, viWrite, viRead, viClear, viSetAttribute, ViSession};
+use crate::consts::{END, ERR, TIMO};
 #[cfg(target_os = "windows")]
 use crate::error::update_status_from_visa;
 #[cfg(target_os = "windows")]
+use crate::ffi::{
+    ViSession, viClear, viClose, viOpen, viOpenDefaultRM, viRead, viSetAttribute, viWrite,
+};
+#[cfg(target_os = "windows")]
 use crate::tmo::secs_to_ms;
-
+#[cfg(target_os = "windows")]
+use std::ffi::CString;
 
 /// GPIB instrument handle (closed automatically on Drop).
 pub struct Instrument {
     #[cfg(not(target_os = "windows"))]
     pub(crate) ud: i32,
-    
+
     #[cfg(target_os = "windows")]
     pub(crate) rm: ViSession, // We hold our own RM or share? Simplest is local RM.
     #[cfg(target_os = "windows")]
@@ -59,7 +60,14 @@ impl Instrument {
 
     /// Open with given board index, PAD and timeout seconds.
     pub fn open_with(board: i32, pad: i32, timeout_secs: u64) -> Result<Self> {
-        Self::open_with_opts(board, pad, OpenOptions { timeout_secs, clear_on_open: true })
+        Self::open_with_opts(
+            board,
+            pad,
+            OpenOptions {
+                timeout_secs,
+                clear_on_open: true,
+            },
+        )
     }
 
     /// Open with options (optionally skip device clear for speed).
@@ -68,14 +76,14 @@ impl Instrument {
         {
             let mut rm: ViSession = 0;
             let mut vi: ViSession = 0;
-            
+
             unsafe {
                 let s1 = viOpenDefaultRM(&mut rm);
                 if s1 < VI_SUCCESS {
                     update_status_from_visa(s1, 0);
                     return Err(err("viOpenDefaultRM"));
                 }
-                
+
                 let rsrc = CString::new(format!("GPIB{}::{}::INSTR", board, pad)).unwrap();
                 let s2 = viOpen(rm, rsrc.as_ptr(), 0, 0, &mut vi);
                 if s2 < VI_SUCCESS {
@@ -83,21 +91,21 @@ impl Instrument {
                     update_status_from_visa(s2, 0);
                     return Err(err("viOpen"));
                 }
-                
+
                 // Set Timeout
                 let tmo_ms = secs_to_ms(opts.timeout_secs);
                 viSetAttribute(vi, VI_ATTR_TMO_VALUE, tmo_ms as u64);
                 // Enable TermChar if needed (usually defaults to LF in many setups or disabled)
                 // We typically handle EOS manually or let VISA handle EOI.
                 viSetAttribute(vi, VI_ATTR_SEND_END_EN, 1); // Assert EOI at end of write
-                
+
                 if opts.clear_on_open {
                     viClear(vi);
                 }
-                
+
                 update_status_from_visa(VI_SUCCESS, 0);
             }
-            
+
             Ok(Self { rm, vi })
         }
 
@@ -145,7 +153,7 @@ impl Instrument {
     /// Read into caller buffer to reduce allocations; returns bytes added.
     pub fn read_into(&self, out: &mut Vec<u8>) -> Result<usize> {
         let mut buf = [0u8; 65536];
-        
+
         #[cfg(target_os = "windows")]
         {
             let mut ret: u32 = 0;
@@ -186,7 +194,7 @@ impl Instrument {
         self.write_line_fast(cmd)?;
         out.clear();
         let _ = self.read_into(out)?;
-        
+
         // Loop until END bit is set (EOI or TermChar)
         // update_status_from_visa sets END properly.
         while (ibsta_val() & END) == 0 {
@@ -305,7 +313,7 @@ impl Instrument {
 
     pub fn read_string(&self) -> Result<String> {
         let mut buf = [0u8; 4096];
-        
+
         #[cfg(target_os = "windows")]
         {
             let mut ret: u32 = 0;
@@ -345,7 +353,7 @@ impl Instrument {
         loop {
             let mut buf = [0u8; 8192];
             let n: usize;
-            
+
             #[cfg(target_os = "windows")]
             {
                 let mut ret: u32 = 0;
@@ -405,8 +413,8 @@ impl Instrument {
         {
             let tmo_ms = secs_to_ms(secs);
             unsafe {
-                 let s = viSetAttribute(self.vi, VI_ATTR_TMO_VALUE, tmo_ms as u64);
-                 update_status_from_visa(s, 0);
+                let s = viSetAttribute(self.vi, VI_ATTR_TMO_VALUE, tmo_ms as u64);
+                update_status_from_visa(s, 0);
             }
             check_ok("viSetAttribute")
         }

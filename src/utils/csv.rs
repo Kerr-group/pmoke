@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use csv::{ReaderBuilder, StringRecord};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -52,25 +52,30 @@ pub fn read_selected_columns<P: AsRef<Path>>(path: P, cols: &[usize]) -> Result<
     Ok(columns)
 }
 
-pub fn write_csv(
-    path: &str,
+pub fn write_csv<P, C>(
+    path: P,
     headers: &[&str],
-    columns: &[Vec<f64>], // column-major: columns[i][row]
-) -> Result<()> {
+    columns: &[C], // column-major: columns[i][row]
+) -> Result<()>
+where
+    P: AsRef<Path>,
+    C: AsRef<[f64]>,
+{
     let ncols = columns.len();
     if ncols == 0 {
-        File::create(path)?;
+        File::create(path.as_ref())?;
         return Ok(());
     }
 
-    let nrows = columns[0].len();
-    for (i, col) in columns.iter().enumerate() {
+    let column_refs: Vec<&[f64]> = columns.iter().map(|col| col.as_ref()).collect();
+    let nrows = column_refs[0].len();
+    for (i, col) in column_refs.iter().enumerate() {
         if col.len() != nrows {
             anyhow::bail!("column {i} has length {}, expected {nrows}", col.len());
         }
     }
 
-    let file = File::create(path).context("failed to create csv file")?;
+    let file = File::create(path.as_ref()).context("failed to create csv file")?;
     let mut w = BufWriter::new(file);
 
     if !headers.is_empty() {
@@ -92,7 +97,7 @@ pub fn write_csv(
     }
 
     for row in 0..nrows {
-        for (col_idx, col) in columns.iter().enumerate() {
+        for (col_idx, col) in column_refs.iter().enumerate() {
             write!(w, "{}", col[row])?;
             if col_idx + 1 != ncols {
                 write!(w, ",")?;
@@ -108,7 +113,7 @@ pub fn write_csv(
 #[cfg(feature = "hw")]
 pub fn ensure_not_exists(path: &str) -> Result<()> {
     if Path::new(path).exists() {
-        bail!("file {} already exists", path);
+        anyhow::bail!("file {} already exists", path);
     }
     Ok(())
 }
