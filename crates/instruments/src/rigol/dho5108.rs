@@ -13,6 +13,7 @@ impl DHO5108 {
         let stream = TcpStream::connect(addr)?;
         stream.set_read_timeout(timeout)?;
         stream.set_write_timeout(timeout)?;
+        stream.set_nodelay(true)?;
         let reader = BufReader::new(stream);
         Ok(DHO5108 { reader })
     }
@@ -28,6 +29,17 @@ impl DHO5108 {
         self.inner_mut().write_all(s.as_bytes())?;
         self.inner_mut().flush()?;
         Ok(())
+    }
+
+    fn write_lines(&mut self, commands: &[String]) -> io::Result<()> {
+        let capacity = commands.iter().map(|command| command.len() + 1).sum();
+        let mut request = String::with_capacity(capacity);
+        for command in commands {
+            request.push_str(command);
+            request.push('\n');
+        }
+        self.inner_mut().write_all(request.as_bytes())?;
+        self.inner_mut().flush()
     }
 
     pub fn read_line(&mut self) -> io::Result<String> {
@@ -82,26 +94,38 @@ impl DHO5108 {
     }
 
     pub fn fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<Vec<f64>> {
-        // Set data source to channel ch
-        self.write_line(&format!("WAV:SOUR CHAN{ch}"))?;
-
-        // Set Raw
-        self.write_line("WAV:MODE RAW")?;
-        let _ = self.write_line("*OPC?");
-        let _ = self.read_line()?;
-
-        // Set format to WORD, set start/stop points
-        self.write_line("WAV:FORM WORD")?;
-        self.write_line("WAV:STAR 1")?;
-        self.write_line(&format!("WAV:POIN {memory_depth}"))?;
-        self.write_line(&format!("WAV:STOP {memory_depth}"))?;
-        self.write_line("*OPC?")?;
+        // Send sequential setup commands in one write and synchronize once at the end.
+        self.write_lines(&[
+            format!("WAV:SOUR CHAN{ch}"),
+            "WAV:MODE RAW".to_string(),
+            "WAV:FORM WORD".to_string(),
+            "WAV:STAR 1".to_string(),
+            format!("WAV:POIN {memory_depth}"),
+            format!("WAV:STOP {memory_depth}"),
+            "*OPC?".to_string(),
+        ])?;
         let _ = self.read_line()?; // "1"
 
-        // scale info
-        let y_inc: f64 = self.query("WAV:YINC?")?.parse().unwrap();
-        let y_ori: f64 = self.query("WAV:YOR?")?.parse().unwrap();
-        let y_ref: f64 = self.query("WAV:YREF?")?.parse().unwrap();
+        // PREamble returns all scaling fields in one query.
+        let preamble = self.query("WAV:PRE?")?;
+        let fields: Vec<&str> = preamble.split(',').collect();
+        if fields.len() != 10 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected 10 waveform preamble fields, got {}", fields.len()),
+            ));
+        }
+        let parse_field = |index: usize, name: &str| -> io::Result<f64> {
+            fields[index].parse().map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid waveform preamble {name}: {error}"),
+                )
+            })
+        };
+        let y_inc = parse_field(7, "yincrement")?;
+        let y_ori = parse_field(8, "yorigin")?;
+        let y_ref = parse_field(9, "yreference")?;
 
         // read actual data
         let raw_bytes = self.query_binary("WAV:DATA?")?;
