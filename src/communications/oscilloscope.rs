@@ -25,6 +25,10 @@ impl OscilloscopeHandler {
                 let dho = DHO5108::open(ip, *port, None)?;
                 Oscilloscope::DHO5108(dho)
             }
+            ("DHO5108", Connection::Usbtmc { resource }) => {
+                let dho = DHO5108::open_usbtmc(resource, None)?;
+                Oscilloscope::DHO5108(dho)
+            }
             (other, _) => return Err(anyhow!("Unknown oscilloscope model: {other}")),
         };
 

@@ -2,8 +2,14 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
+enum DhoTransport {
+    Tcp(BufReader<TcpStream>),
+    #[cfg(target_os = "windows")]
+    Visa(gpib_rs::Instrument),
+}
+
 pub struct DHO5108 {
-    reader: BufReader<TcpStream>,
+    transport: DhoTransport,
 }
 
 #[allow(dead_code)]
@@ -15,20 +21,63 @@ impl DHO5108 {
         stream.set_write_timeout(timeout)?;
         stream.set_nodelay(true)?;
         let reader = BufReader::new(stream);
-        Ok(DHO5108 { reader })
+        Ok(DHO5108 {
+            transport: DhoTransport::Tcp(reader),
+        })
     }
 
-    fn inner_mut(&mut self) -> &mut TcpStream {
-        self.reader.get_mut()
+    pub fn open_usbtmc(resource: &str, timeout: Option<Duration>) -> io::Result<Self> {
+        #[cfg(target_os = "windows")]
+        {
+            let instrument = gpib_rs::Instrument::open_resource(resource, timeout)
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            Ok(Self {
+                transport: DhoTransport::Visa(instrument),
+            })
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (resource, timeout);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "USB-TMC currently requires NI-VISA on Windows",
+            ))
+        }
     }
 
     fn close(self) {}
 
+    fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
+        match &mut self.transport {
+            DhoTransport::Tcp(reader) => {
+                reader.get_mut().write_all(data)?;
+                reader.get_mut().flush()
+            }
+            #[cfg(target_os = "windows")]
+            DhoTransport::Visa(instrument) => instrument
+                .write_raw(data)
+                .map_err(|error| io::Error::other(error.to_string())),
+        }
+    }
+
+    fn tcp_reader_mut(&mut self) -> &mut BufReader<TcpStream> {
+        #[cfg(target_os = "windows")]
+        match &mut self.transport {
+            DhoTransport::Tcp(reader) => reader,
+            DhoTransport::Visa(_) => unreachable!("VISA transport is handled separately"),
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let DhoTransport::Tcp(reader) = &mut self.transport;
+            reader
+        }
+    }
+
     pub fn write_line(&mut self, cmd: &str) -> io::Result<()> {
         let s = format!("{cmd}\n");
-        self.inner_mut().write_all(s.as_bytes())?;
-        self.inner_mut().flush()?;
-        Ok(())
+        self.write_raw(s.as_bytes())
     }
 
     fn write_lines(&mut self, commands: &[String]) -> io::Result<()> {
@@ -38,14 +87,21 @@ impl DHO5108 {
             request.push_str(command);
             request.push('\n');
         }
-        self.inner_mut().write_all(request.as_bytes())?;
-        self.inner_mut().flush()
+        self.write_raw(request.as_bytes())
     }
 
     pub fn read_line(&mut self) -> io::Result<String> {
-        let mut s = String::new();
-        self.reader.read_line(&mut s)?;
-        Ok(s.trim().to_string())
+        match &mut self.transport {
+            DhoTransport::Tcp(reader) => {
+                let mut s = String::new();
+                reader.read_line(&mut s)?;
+                Ok(s.trim().to_string())
+            }
+            #[cfg(target_os = "windows")]
+            DhoTransport::Visa(instrument) => instrument
+                .read_string()
+                .map_err(|error| io::Error::other(error.to_string())),
+        }
     }
 
     pub fn query(&mut self, cmd: &str) -> io::Result<String> {
@@ -54,7 +110,18 @@ impl DHO5108 {
     }
 
     pub fn query_binary(&mut self, cmd: &str) -> io::Result<Vec<u8>> {
+        #[cfg(target_os = "windows")]
+        if let DhoTransport::Visa(instrument) = &mut self.transport {
+            let mut data = Vec::new();
+            instrument
+                .query_ieee_block(cmd, &mut data)
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            return Ok(data);
+        }
+
         self.write_line(cmd)?;
+
+        let reader = self.tcp_reader_mut();
 
         // SCPI binary block structure:
         // 1  1         n             length          1
@@ -62,7 +129,7 @@ impl DHO5108 {
 
         // SCPI binary block starts with '#'
         let mut one = [0u8; 1];
-        self.reader.read_exact(&mut one)?;
+        reader.read_exact(&mut one)?;
         if one[0] != b'#' {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -70,11 +137,11 @@ impl DHO5108 {
             ));
         }
 
-        self.reader.read_exact(&mut one)?;
+        reader.read_exact(&mut one)?;
         let n = (one[0] - b'0') as usize;
 
         let mut len_buf = vec![0u8; n];
-        self.reader.read_exact(&mut len_buf)?;
+        reader.read_exact(&mut len_buf)?;
         let len_str = String::from_utf8(len_buf)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let length: usize = len_str
@@ -82,9 +149,9 @@ impl DHO5108 {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         let mut data = vec![0u8; length];
-        self.reader.read_exact(&mut data)?;
+        reader.read_exact(&mut data)?;
 
-        let _ = self.reader.read(&mut one);
+        let _ = reader.read(&mut one);
 
         Ok(data)
     }

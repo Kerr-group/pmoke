@@ -16,6 +16,14 @@ pub fn validate_connection(conn: &Connection) -> anyhow::Result<Connection> {
             ip: ip.clone(),
             port: *port,
         }),
+        Connection::Usbtmc { resource } => {
+            if resource.trim().is_empty() {
+                bail!("USB-TMC VISA resource must not be empty.");
+            }
+            Ok(Connection::Usbtmc {
+                resource: resource.clone(),
+            })
+        }
     }
 }
 
@@ -31,9 +39,9 @@ pub fn validate_oscilloscope(cfg: &Config) -> Result<()> {
 
     match osc_cfg.model.as_str() {
         "DHO5108" => match endpoint {
-            Connection::Tcpip { .. } => {}
+            Connection::Tcpip { .. } | Connection::Usbtmc { .. } => {}
             _ => {
-                bail!("DHO5108 must be connected over TCP/IP.");
+                bail!("DHO5108 must be connected over TCP/IP or USB-TMC.");
             }
         },
         other => {
@@ -68,4 +76,19 @@ pub fn validate_fg(cfg: &Config) -> Result<()> {
         }
     };
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_empty_usbtmc_resource() {
+        let error = validate_connection(&Connection::Usbtmc {
+            resource: "  ".to_string(),
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("must not be empty"));
+    }
 }

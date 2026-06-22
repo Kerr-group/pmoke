@@ -165,6 +165,16 @@ kerr_type     = "harmonics"  # "standard" or "harmonics"
 factor        = 1
 ```
 
+On Windows with NI-VISA installed, DHO5108 can instead use its USB-TMC VISA
+resource:
+
+```toml
+[instruments.oscilloscope]
+connection = { protocol = "usbtmc", resource = "USB0::0x1AB1::0x0450::DHO5A27090041::INSTR" }
+model = "DHO5108"
+memory_depth = 200_000_000
+```
+
 ---
 
 ## 📘 Notes

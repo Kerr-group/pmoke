@@ -102,6 +102,7 @@ pub struct Oscilloscope {
 pub enum Connection {
     Gpib { board: u8, address: u8 },
     Tcpip { ip: String, port: u16 },
+    Usbtmc { resource: String },
 }
 
 #[derive(Debug, Clone, Serialize)]

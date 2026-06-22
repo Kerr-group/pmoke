@@ -1,4 +1,37 @@
-use super::{ConfigLoad, LockinLpfKind, load_from_str};
+use super::{ConfigLoad, Connection, LockinLpfKind, load_from_str};
+
+#[test]
+fn v2_usbtmc_connection_loads() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 2",
+        r#"version = 2
+
+[instruments.oscilloscope]
+connection = { protocol = "usbtmc", resource = "USB0::0x1AB1::0x0450::DHO5A27090041::INSTR" }
+model = "DHO5108"
+memory_depth = 200_000_000"#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            let connection = &config.instruments.unwrap().oscilloscope.connection;
+            assert!(matches!(
+                connection,
+                Connection::Usbtmc { resource }
+                    if resource == "USB0::0x1AB1::0x0450::DHO5A27090041::INSTR"
+            ));
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
 
 #[test]
 fn v1_filter_length_maps_to_half_window_cycles_and_legacy_boxcar() {
