@@ -478,6 +478,74 @@ fn visual_output_line_count_does_not_overcount_exact_width() {
 }
 
 #[test]
+fn selected_output_status_uses_wrapped_visual_line_range() {
+    let entries = vec![
+        LogEntry {
+            stream: OutputStream::Stdout,
+            text: "abcdefghijklmnopqrstuvwxyz".to_string(),
+        },
+        LogEntry {
+            stream: OutputStream::Stdout,
+            text: "tail".to_string(),
+        },
+    ];
+
+    let lines = visual_output_lines(&entries, 26, None, None);
+
+    assert_eq!(visual_entry_range(&lines, 0), Some((0, 1)));
+    assert_eq!(visual_selection_range(&lines, Some((0, 0))), Some((0, 1)));
+    assert_eq!(
+        output_selection_status(visual_selection_range(&lines, Some((0, 0)))),
+        "selected 1-2 / 2 lines"
+    );
+    assert_eq!(
+        output_selection_status(visual_selection_range(&lines, Some((1, 1)))),
+        "selected 3"
+    );
+}
+
+#[test]
+fn output_selection_skips_entries_that_are_not_rendered() {
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        "╭────────\nvisible one\n╰─\nvisible two\n╰─",
+    );
+
+    app.focus_output();
+    assert_eq!(app.output_selected, Some(3));
+
+    app.select_previous_output(false);
+    assert_eq!(app.output_selected, Some(1));
+
+    app.select_next_output(false);
+    assert_eq!(app.output_selected, Some(3));
+
+    app.select_first_output(false);
+    assert_eq!(app.output_selected, Some(1));
+
+    app.select_last_output(false);
+    assert_eq!(app.output_selected, Some(3));
+}
+
+#[test]
+fn selected_output_text_skips_entries_that_are_not_rendered() {
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        "╭────────\nvisible one\n╰─\nvisible two\n╰─",
+    );
+    app.output_selected = Some(3);
+    app.output_selection_anchor = Some(1);
+
+    assert_eq!(
+        app.selected_output_text().as_deref(),
+        Some("visible one\nvisible two")
+    );
+    assert_eq!(app.output_selection_line_count(), 2);
+}
+
+#[test]
 fn output_scroll_clamps_when_all_lines_are_visible() {
     let mut app = test_app();
     app.push_output(OutputStream::Stdout, "one\ntwo\nthree");

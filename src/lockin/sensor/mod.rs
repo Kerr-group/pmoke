@@ -7,8 +7,8 @@ use crate::constants::FETCHED_FNAME;
 use crate::lockin::reference::run_fit_ref;
 use crate::lockin::stride::{li_stride_1d, li_stride_2d};
 use crate::lockin::time::time_builder;
-use crate::ui;
 use crate::utils::waveform::read_waveform_channels;
+use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
 
 pub struct SensorMeta<'a> {
@@ -61,16 +61,36 @@ pub fn run_sensor(
 
     let sensor_meta = extract_sensor_metadata(cfg)?;
 
-    let c_bg_arr = fit_background(cfg, t, s_cols)?;
+    let pb = ui::spinner("fitting sensor backgrounds");
+    let t0 = std::time::Instant::now();
+    let c_bg_arr = match fit_background(cfg, t, s_cols) {
+        Ok(c_bg_arr) => c_bg_arr,
+        Err(err) => {
+            pb.finish_and_clear();
+            return Err(err);
+        }
+    };
+    ui::finish_success(
+        pb,
+        format!(
+            "sensor backgrounds fitted ({})",
+            ui::fmt_duration(t0.elapsed())
+        ),
+    );
 
     let t_stride = li_stride_1d(cfg, t, f_ref)?;
-    let s_stride = li_stride_2d(cfg, s_cols, f_ref)?;
 
-    let pb = ui::spinner("plotting sensor raw data");
-    sensor_raw_plot::SensorRawPlotter {}
-        .plot(&t_stride, s_stride, sensor_ch, &c_bg_arr)
-        .context("failed to plot sensor data")?;
-    ui::finish_success(pb, "sensor raw plot completed");
+    plot::run_plot(
+        &cfg.plot,
+        "plotting sensor raw data",
+        "sensor raw plot completed",
+        || {
+            let s_stride = li_stride_2d(cfg, s_cols, f_ref)?;
+            sensor_raw_plot::SensorRawPlotter {}
+                .plot(&cfg.plot, &t_stride, s_stride, sensor_ch, &c_bg_arr)
+                .context("failed to plot sensor data")
+        },
+    )?;
 
     let pb = ui::progress("integrating sensor pulses", s_cols.len() as u64);
     let start = std::time::Instant::now();
@@ -102,11 +122,23 @@ pub fn run_sensor(
     let labels: Vec<&str> = sensor_meta.iter().map(|m| m.label).collect();
     let units: Vec<&str> = sensor_meta.iter().map(|m| m.unit).collect();
 
-    let pb = ui::spinner("plotting sensor integrals");
-    sensor_integral_plot::SensorIntegralPlotter {}
-        .plot(&t_stride, &s_integral_stride, sensor_ch, &labels, &units)
-        .context("failed to plot sensor integrals")?;
-    ui::finish_success(pb, "sensor integral plot completed");
+    plot::run_plot(
+        &cfg.plot,
+        "plotting sensor integrals",
+        "sensor integral plot completed",
+        || {
+            sensor_integral_plot::SensorIntegralPlotter {}
+                .plot(
+                    &cfg.plot,
+                    &t_stride,
+                    &s_integral_stride,
+                    sensor_ch,
+                    &labels,
+                    &units,
+                )
+                .context("failed to plot sensor integrals")
+        },
+    )?;
 
     Ok((t_stride, s_integral_stride))
 }

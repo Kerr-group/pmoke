@@ -1,3 +1,5 @@
+use crate::config::Plot;
+use crate::plot::{decimate_1d, decimate_2d};
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -11,6 +13,7 @@ pub struct SensorIntegralPlotter {}
 impl SensorIntegralPlotter {
     pub fn plot(
         &self,
+        plot: &Plot,
         t: &[f64],
         y: &[Vec<f64>],
         index_arr: &[u8],
@@ -32,8 +35,10 @@ impl SensorIntegralPlotter {
             .context("failed to load sensor_integral_plot.py")?;
 
             let np = py.import("numpy").context("failed to import numpy")?;
-            let t_obj = np.call_method1("array", (t,))?;
-            let y_obj = np.call_method1("array", (y,))?;
+            let t_plot = decimate_1d(plot, t);
+            let y_plot = decimate_2d(plot, y);
+            let t_obj = np.call_method1("array", (t_plot,))?;
+            let y_obj = np.call_method1("array", (y_plot,))?;
 
             let plotter = plot_mod
                 .getattr("SensorIntegralPlotter")?
@@ -41,7 +46,19 @@ impl SensorIntegralPlotter {
                 .context("failed to create SensorIntegralPlotter instance")?;
 
             plotter
-                .call_method1("plot", (t_obj, y_obj, index_arr, label_arr, unit_arr))
+                .call_method1(
+                    "plot",
+                    (
+                        t_obj,
+                        y_obj,
+                        index_arr,
+                        label_arr,
+                        unit_arr,
+                        plot.save,
+                        plot.interactive,
+                        &plot.output_dir,
+                    ),
+                )
                 .context("python SensorIntegralPlotter.plot(...) failed")?;
 
             Ok(())

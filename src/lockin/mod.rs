@@ -16,8 +16,8 @@ use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
 use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
-use crate::ui;
 use crate::utils::waveform::read_all_fetched_waveforms;
+use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 
@@ -120,11 +120,22 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOut
         .map(|s| s.trim().replace("(V)", ""))
         .collect();
 
-    let pb = ui::spinner("plotting lock-in results");
-    lockin_plot::LIPlotter {}
-        .plot(&t_stride, &lockin_output.result, &signal_ch, &labels)
-        .context("failed to plot lock-in results")?;
-    ui::finish_success(pb, "lock-in plot completed");
+    plot::run_plot(
+        &cfg.plot,
+        "plotting lock-in results",
+        "lock-in plot completed",
+        || {
+            lockin_plot::LIPlotter {}
+                .plot(
+                    &cfg.plot,
+                    &t_stride,
+                    &lockin_output.result,
+                    &signal_ch,
+                    &labels,
+                )
+                .context("failed to plot lock-in results")
+        },
+    )?;
 
     Ok((t_stride, sensor_integral_stride, lockin_output.result))
 }

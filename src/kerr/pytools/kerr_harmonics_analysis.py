@@ -4,6 +4,27 @@ from numpy.typing import NDArray
 from scipy.special import jn
 
 
+def finish_plot(fname: str, save: bool, interactive: bool, output_dir: str):
+    if interactive:
+        import matplotlib.pyplot as plt
+
+        plt.ioff()
+        if save:
+            import os
+
+            os.makedirs(output_dir, exist_ok=True)
+            path = os.path.join(output_dir, fname)
+            plt.savefig(f"{path}.png", bbox_inches="tight")
+        plt.show(block=True)
+        plt.close("all")
+    elif save:
+        import os
+
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, fname)
+        gs.show(path, ft_list=["png"], show=False)
+
+
 class KerrHarmonicsAnalyser:
     def __init__(self):
         pass
@@ -30,6 +51,10 @@ class KerrHarmonicsAnalyser:
         factor: float,
         xlabel: str,
         fig_name: str,
+        save: bool,
+        interactive: bool,
+        output_dir: str,
+        max_points: int,
     ):
 
         li1_in, li1_out = ys[0], ys[1]
@@ -45,21 +70,32 @@ class KerrHarmonicsAnalyser:
         kerr = self.get_kerr(mean_x0, li2_in, li3_in, li4_in)
         kerr = kerr * factor
 
-        axs = gs.axes(
-            True,
-            size=(6, 6),
-            mosaic="A",
-            ion=False,
-        )
+        plot_error = None
+        if save or interactive:
+            try:
+                stride = max(1, int(np.ceil(len(t) / max_points)))
+                t_plot = t[::stride]
+                x_plot = x[::stride]
+                kerr_plot = kerr[::stride]
 
-        gs.scatter_colormap(axs[0], x, kerr * 1e3, t)
-        axs[0].grid()
-        title = fig_name + " using Harmonics"
-        gs.title(title)
+                axs = gs.axes(
+                    True,
+                    size=(6, 6),
+                    mosaic="A",
+                    ion=interactive,
+                )
 
-        gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
-        gs.show(fig_name, ft_list=["png"])
+                gs.scatter_colormap(axs[0], x_plot, kerr_plot * 1e3, t_plot)
+                axs[0].grid()
+                title = fig_name + " using Harmonics"
+                gs.title(title)
+
+                gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
+                finish_plot(fig_name, save, interactive, output_dir)
+            except Exception as exc:
+                plot_error = str(exc)
 
         return {
             "kerr": kerr,
+            "plot_error": plot_error,
         }

@@ -7,6 +7,7 @@ mod constants;
 mod kerr;
 mod lockin;
 mod phase;
+mod plot;
 mod ui;
 mod utils;
 

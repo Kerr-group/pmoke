@@ -1,99 +1,136 @@
-# 💥pmoke — Pulsed MOKE Measurement CLI
+# pmoke
 
-`pmoke` is a command-line tool designed to control a pulsed Magneto-Optical Kerr Effect (MOKE) measurement system.  
-It automates oscilloscope control, trigger handling, data fetching, numerical lock-in analysis, phase rotation, and Kerr angle extraction, enabling fully reproducible experiments and analysis pipelines.
+`pmoke` is a command-line tool for pulsed Magneto-Optical Kerr Effect
+(MOKE) measurements. It controls the oscilloscope and function generator,
+fetches waveform data, runs reference/sensor/lock-in/phase/Kerr analysis, and
+keeps the measurement settings in a reproducible TOML config.
 
-This tool is intended for research use in laboratories performing MOKE measurements under pulsed magnetic fields.
+The current code is optimized for Rigol DHO5000-series oscilloscope workflows,
+including large-memory WORD waveform transfer and raw binary preservation.
 
----
+## Features
 
-## 🚀 Features
+- Single TOML config for instruments, channel roles, timing, filtering, plotting,
+  and Kerr conversion.
+- Hardware commands for oscilloscope single mode, function-generator trigger,
+  data fetch, and automated measurement.
+- CSV output for compatibility and raw WORD output for large DHO5000 captures.
+- Analysis can read either `raw.csv` or preserved raw binary waveform files.
+- Reference fitting, sensor background/integral processing, numerical lock-in,
+  phase rotation, and Kerr-angle extraction.
+- Non-interactive PNG plot generation by default, with optional interactive
+  matplotlib windows.
+- Live terminal dashboard through `pmoke monitor`.
 
-- Configure measurement devices from a single TOML file  
-- Control oscilloscope modes (single, fetch, trigger synchronization)  
-- Send trigger signals from a function generator  
-- Perform automated measurements (single → trigger → fetch)  
-- Numerical lock-in analysis  
-- Automatic phase rotation based on our zero-area Sagnac interferometer system
-- Calculate Kerr angle
-- Run a full analysis pipeline with a single command (`process`)  
-- Fully automated measurement + analysis workflow (`auto`)  
-- Shell completion script generation
+## Requirements
 
----
+### Core
 
-## ⛓️ Dependencies
-
-- Rust (latest stable version recommended)
-- Python
+- Rust stable
+- Python 3
 - Python packages:
-  - numpy
-  - scipy
-  - matplotlib
-  - lmfit
-  - gsplot
+  - `numpy`
+  - `scipy`
+  - `matplotlib`
+  - `lmfit`
+  - `gsplot`
 
-### Windows
+### Hardware I/O
 
-- NI-VISA runtime (for GPIB/TCPIP/USB instrument communication)
-- NI-488.2 driver (for GPIB communication)
-- Visual C++ Build Tools (for compiling Rust dependencies)
+Default builds include hardware support.
 
-### Linux
+- Windows:
+  - NI-VISA for TCPIP/USB-TMC VISA resources
+  - NI-488.2 when using GPIB
+  - Visual C++ Build Tools for Rust native dependencies
+- Linux:
+  - `linux-gpib` when using GPIB
+  - VISA/USB-TMC support as required by the selected backend
 
-- linux-gpib (for GPIB communication)
-
----
-
-## 📦 Installation
+For analysis-only use, install without hardware features:
 
 ```sh
-cd pmoke
-cargo install --path .
-
-# Without instrument drivers
-cd pmoke
 cargo install --path . --no-default-features
 ```
 
----
-
-## 🧭 Usage
+## Installation
 
 ```sh
-A CLI tool to conduct pulsed MOKE
+cargo install --path .
+```
 
-Usage: pmoke [OPTIONS] [COMMAND]
+From the repository root during development:
+
+```sh
+cargo run -- --config config.toml show
+cargo run --no-default-features -- --config config.toml analyze
+```
+
+## Commands
+
+```text
+pmoke [OPTIONS] [COMMAND]
+
+Options:
+  -c, --config <FILE>  Path to the configuration file (default: config.toml)
 
 Commands:
-  show         Display the contents of the configuration file
-  single       Set single mode to the oscilloscope
+  show         Validate and print the normalized config
+  monitor      Open the live terminal dashboard
+  single       Set the oscilloscope to single mode
   trigger      Send trigger signal from the function generator
-  autoshot     Set single mode and send trigger signal
-  fetch        Fetch data from the oscilloscope and save to a file
-  automeasure  Perform auto measurement (set single mode, trigger, fetch)
+  autoshot     Run single + trigger
+  fetch        Fetch oscilloscope data
+  automeasure  Run single + trigger + fetch
   reference    Analyze the reference signal
   sensor       Analyze the sensor signal
   li           Run numerical lock-in analysis
-  phase        Rotate the reference phase for lock-in analysis
-  kerr         Calculate the Kerr angle
-  process      Automated analysis after manually triggering the pulse
-               (fetch, lock-in, phase, Kerr)
-  auto         Run the full automatic measurement and analysis
+  phase        Rotate lock-in phase
+  kerr         Calculate Kerr angle
+  analyze      Run reference + sensor + lock-in + phase + Kerr
+  process      Run fetch + analyze after manual pulse triggering
+  auto         Run automeasure + analyze
   completions  Generate shell completion script
-  help         Print this message or the help of the given subcommand(s)
-
-Options:
-  -c, --config <FILE>  Path to the configuration file (default: ./config.toml)
-  -h, --help           Print help
-  -V, --version        Print version
 ```
 
----
+If no command is provided, `pmoke` opens `monitor`.
 
-## ⚙ Example config.toml
+Hardware commands are available only in default builds. Analysis commands are
+available with `--no-default-features`.
 
-Below is an example configuration file used with `pmoke`:
+## Typical Workflows
+
+Validate a config:
+
+```sh
+pmoke --config config.toml show
+```
+
+Fetch data only:
+
+```sh
+pmoke --config config.toml fetch
+```
+
+Run the full analysis after data already exists:
+
+```sh
+pmoke --config config.toml analyze
+```
+
+Fetch and analyze:
+
+```sh
+pmoke --config config.toml process
+```
+
+Fully automated shot:
+
+```sh
+pmoke --config config.toml auto
+```
+
+## Example `config.toml`
 
 ```toml
 version = 2
@@ -103,272 +140,327 @@ connection = { protocol = "gpib", board = 0, address = 11 }
 model = "WF1946B"
 
 [instruments.oscilloscope]
-connection = { protocol = "tcpip", ip = "10.249.11.19", port = 55255 }
+connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
 model = "DHO5108"
-memory_depth = 10_000_000
+memory_depth = 200_000_000
+
+[fetch]
+output = "csv_and_raw"      # "csv", "raw", or "csv_and_raw"
+analysis_input = "auto"    # "csv", "raw", or "auto"
+
+[plot]
+enabled = true
+save = true
+interactive = false
+output_dir = "plots"
+max_points = 100_000
+decimation = "stride"
+fail_on_error = false
 
 [timebase]
-t0 = -0.5e-3 # seconds
-dt = 500e-12 # seconds
+t0 = -30.0e-3
+dt = 500e-12
 
 [roles]
-sensor_ch = [1]
-reference_ch = 3
-signal_ch = [2]
-
-# Channel for current sensor
+sensor_ch = [1, 4]
+reference_ch = 2
+signal_ch = [3]
 
 [[channels]]
 index = 1
 factor = -39364.84663082185
-label = "$B$"
+label = "$\\mu_0H$"
 unit_out = "T"
-
-# Channel for signal
 
 [[channels]]
 index = 2
 
-# Channel for reference
-
 [[channels]]
 index = 3
 
+[[channels]]
+index = 4
+factor = 1.0
+label = "test"
+unit_out = "a.u."
+
 [pulse]
 bg_window_before = { start = -5e-3, end = -0.1e-3 }
-bg_window_after  = { start = 4.2e-3, end = 15e-3 }
+bg_window_after  = { start = 43e-3, end = 46e-3 }
 
 [reference]
-fft_window = { start = 0e-3, end = 5e-3 }
-stride_samples = 100_000
+fft_window = { start = 0e-3, end = 15e-3 }
+stride_samples = 10_000
 window_samples = 1_000
 
 [lockin]
-workers = 4
+workers = 2
 stride_samples = 1_000
-lpf_kind = "fir_zero_phase"
+lpf_kind = "sync_iir_zero_phase"
 lpf_half_window_cycles = 1.0
-lpf_cutoff_ref_ratio = 0.05
+lpf_cutoff_ref_ratio = 2e-2
 lpf_stopband_atten_db = 60.0
+lpf_sync_average_cycles = 1.0
+lpf_iir_order = 2
 lpf_debug_output = false
-lpf_debug_label = "trial_001"
 lpf_debug_overwrite = false
-snr_background_window = { start = -5e-3, end = -0.1e-3 }
-snr_signal_window = { start = 0e-3, end = 5e-3 }
 
 [phase]
 m_omega_t0_offset = ["0", "0", "0", "0", "0", "0"]
 
 [kerr]
-use_sensor_ch = 1            # Supports only one sensor channel
-kerr_type     = "harmonics"  # "standard" or "harmonics"
-factor        = 1
+use_sensor_ch = 1
+kerr_type = "harmonics"    # "standard" or "harmonics"
+factor = -1.0
 ```
 
-On Windows with NI-VISA installed, DHO5108 can instead use its USB-TMC VISA
-resource:
+## Instrument Connections
+
+Supported connection protocols:
 
 ```toml
-[instruments.oscilloscope]
+connection = { protocol = "gpib", board = 0, address = 11 }
+connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
 connection = { protocol = "usbtmc", resource = "USB0::0x1AB1::0x0450::DHO5A27090041::INSTR" }
-model = "DHO5108"
-memory_depth = 200_000_000
 ```
 
----
+USB-TMC uses a VISA resource string. On Windows, confirm the exact resource name
+with NI MAX or a VISA resource listing tool before putting it in the config.
 
-## 📘 Notes
+## Fetch Output
 
-`config.toml` defines all instrument connections, channel roles, timing settings, lock-in parameters, and Kerr-analysis settings.
-
-### Fetch output formats
-
-By default, `pmoke fetch` writes converted voltage columns to `raw.csv`. You can
-choose the fetch output in `config.toml`:
+`pmoke fetch` uses `[fetch].output` unless overridden on the command line:
 
 ```toml
 [fetch]
-output = "csv"              # "csv", "raw", or "csv_and_raw"
-analysis_input = "csv"      # "csv", "raw", or "auto"
+output = "csv"              # writes raw.csv
+output = "raw"              # writes raw_waveform/
+output = "csv_and_raw"      # writes both
 ```
 
-The command-line `--format` option overrides the config for a single run:
+Command-line overrides:
 
 ```sh
-pmoke fetch
 pmoke fetch --format csv --out raw.csv
+pmoke fetch --format raw --out raw_waveform
+pmoke fetch --format csv-and-raw
 ```
 
-For large DHO5108 captures where the original ADC codes should be preserved, use
-raw WORD output:
+`--out` is accepted for `csv` and `raw`. It is intentionally rejected for
+`csv-and-raw`; that mode writes the standard `raw.csv` and `raw_waveform/`
+outputs together.
 
-```sh
-pmoke fetch --format raw --out shot_001
-```
+### CSV Output
 
-This writes one little-endian WORD file per channel plus metadata:
+CSV output writes converted voltage data to:
 
 ```text
-shot_001/
+raw.csv
+```
+
+This is convenient for inspection and compatibility, but very large captures can
+become slow and large. For 200 Mpts data, prefer raw WORD output as the primary
+archive format.
+
+### Raw WORD Output
+
+Raw output writes:
+
+```text
+raw_waveform/
   metadata.toml
   ch1.u16le
   ch2.u16le
+  ch3.u16le
+  ...
 ```
 
-The raw files contain the binary `WAV:FORM WORD` payload exactly as received from
-the oscilloscope. `metadata.toml` stores the `WAV:PRE?` scaling values needed to
-reconstruct the voltage axis later. The current analysis commands still read
-`raw.csv` by default. Set `analysis_input = "raw"` to analyze
-`raw_waveform/metadata.toml` and `chN.u16le` directly, or `analysis_input = "auto"`
-to use complete raw output when it exists and fall back to `raw.csv` only when raw
-output is absent.
+Each `chN.u16le` file stores the little-endian DHO WORD payload exactly as
+received. The metadata stores the preamble and scaling values:
 
-A `version = 2` config is the normalized schema used internally by the current code. Unknown keys in `version = 2` are rejected, so `pmoke show` is the easiest way to confirm that your file matches the expected structure.
+- `x_increment`, `x_origin`, `x_reference`
+- `y_increment`, `y_origin`, `y_reference`
+- `vertical_offset`, `vertical_scale`
+- sample count and channel file names
 
-`pmoke show` behaves differently depending on the config state.
-
-- Runnable config: prints warnings, then prints the normalized `version = 2` config.
-- Non-runnable config: prints diagnostics and stops before any measurement or analysis command runs.
-
-This is useful when migrating old files, because `version = 1` configs are still readable and normalized on load.
-
-## 🔧 Config schema
-
-The main structural changes in the current schema are:
-
-- `roles.reference_ch` is a single channel index, not an array.
-- `phase.use_signal_ch` is removed. Phase rotation and Kerr analysis always target `roles.signal_ch`.
-- Unused `[[channels]]` entries are allowed, but they produce a warning instead of an error.
-- Most analysis commands still require `instruments.oscilloscope.memory_depth`, because the time axis and lock-in indexing are reconstructed from the oscilloscope sampling settings.
-
-Legacy `version = 1` configs are still accepted. During normalization:
-
-- `roles.reference_ch = [n]` is migrated to `roles.reference_ch = n`
-- `lockin.filter_length_samples` is migrated to `lockin.lpf_half_window_cycles`
-- if a legacy file only uses `lockin.filter_length_samples`, `lpf_kind` defaults to `boxcar_legacy` for backward-compatible behavior
-- deprecated `phase.use_signal_ch` is rejected if it differs from `roles.signal_ch`
-- deprecated `lockin.demodulation` is ignored because complex demodulation is now always used
-
-## 🎚️ Lock-in LPF
-
-`lockin.lpf_kind` selects the low-pass filter applied after complex demodulation.
-
-- `fir_zero_phase`: Complex-baseband FIR mode. The signal is demodulated to complex baseband, filtered by a symmetric Kaiser-windowed FIR, and then exported as legacy `LIx/LIy`.
-- `fir_boxcar_enbw`: Comparison FIR mode. It numerically chooses the FIR cutoff so the FIR ENBW is close to the current `boxcar_legacy` discrete integration ENBW. This is not a reproduction mode for old results.
-- `sync_iir_zero_phase`: Fast-pulse mode. It applies short integer-cycle synchronous averaging, then a Butterworth IIR low-pass filter forward and backward for zero-phase offline analysis.
-- `boxcar_legacy`: Previous moving-average / trapezoidal-integration style lock-in, kept for comparison with older datasets.
-
-`fir_zero_phase` keeps the downstream phase-fitting flow unchanged. The `omega_t0` rotation is still handled later by the existing fitting step. The lock-in only changes how the complex baseband is formed and low-pass filtered.
-
-The current `fir_zero_phase` path works as follows:
-
-1. The reference analysis determines `f_ref` and `omega_tref`.
-2. For harmonic `m`, the raw signal is multiplied by `exp(-i m (omega t - omega_tref))` to shift that harmonic to baseband.
-3. A symmetric odd-length FIR is applied to the complex baseband at each output center.
-4. Because the taps are symmetric around the output center, the filter is zero-phase with respect to the sampled lock-in points. There is no additional group delay to compensate in the later `omega_t0` fit.
-5. The filtered complex result `z` is exported using the legacy convention `LIx = -Im(z)` and `LIy = Re(z)`, so existing downstream phase rotation and Kerr code can stay unchanged.
-
-The FIR taps are designed from these quantities:
-
-- `lpf_half_window_cycles`: Sets the half-width of the support window in reference cycles.
-- `lpf_cutoff_hz`: Optional absolute cutoff for `fir_zero_phase`.
-- `lpf_cutoff_ref_ratio`: Optional relative cutoff, evaluated as `lpf_cutoff_ref_ratio * f_ref`.
-- `lpf_stopband_atten_db`: Sets the Kaiser-window attenuation parameter used when shaping the FIR taps.
-- `lpf_sync_average_cycles`: Number of modulation cycles used by `sync_iir_zero_phase` for the short synchronous moving average. Default is `1.0`.
-- `lpf_iir_order`: Butterworth order used by `sync_iir_zero_phase`. Supported values are `2`, `4`, `6`, and `8`; start with `2` or `4`.
-
-The support width is determined by:
+Voltage reconstruction uses the DHO scaling formula:
 
 ```text
-t_half = lpf_half_window_cycles / f_ref
-n_half = floor(t_half / dt)
-tap_count = 2 * n_half + 1
+voltage = (word - y_origin - y_reference) * y_increment
 ```
 
-So `lpf_half_window_cycles = 1.0` means:
+Use raw output when precision and reproducibility matter. It preserves the
+oscilloscope WORD data and avoids CSV formatting as the primary storage format.
 
-- the half-window is one reference cycle
-- the full FIR support is about two reference cycles
-- the number of taps is determined from that physical width and the oscilloscope sample interval `dt`
+## Analysis Input
 
-This parameter describes the FIR support width only. It should not be interpreted as "the same setting as the old two-cycle lock-in" or as a universally safe default.
+Analysis commands read waveform input according to `[fetch].analysis_input`:
 
-For `fir_zero_phase` and `sync_iir_zero_phase`, the cutoff is resolved in this order:
+```toml
+[fetch]
+analysis_input = "csv"   # read raw.csv
+analysis_input = "raw"   # read raw_waveform/metadata.toml and chN.u16le
+analysis_input = "auto"  # prefer complete raw_waveform/, otherwise raw.csv
+```
 
-1. Use `lpf_cutoff_hz` if specified.
-2. Otherwise use `lpf_cutoff_ref_ratio * f_ref` if specified.
-3. Otherwise use the compatibility fallback `0.5 / t_half` and print a config warning.
+`raw` is strict: missing metadata or channel files is an error.
 
-The cutoff must remain below the lock-in output Nyquist margin:
+`auto` is useful while migrating. It uses raw binary data only when
+`raw_waveform/metadata.toml` and all required channel files are complete. If
+`raw_waveform/` is absent, it falls back to `raw.csv`.
+
+## Generated Files
+
+Typical analysis output:
 
 ```text
-output_rate = 1 / (dt * stride_samples)
+raw.csv
+raw_waveform/
+lockin_results_ch3.csv
+lockin_rotated_ch3.csv
+kerr_results.csv
+plots/
+  reference_fit.png
+  sensor_raw.png
+  sensor_integral.png
+  lockin_results.png
+  phase_rotated.png
+  omega_t0_analysis.png
+  kerr_ch3.png
+```
+
+For multiple signal channels, lock-in, rotated, and Kerr files are generated per
+configured signal channel.
+
+## Plot Settings
+
+Plotting is configured under `[plot]`:
+
+```toml
+[plot]
+enabled = true
+save = true
+interactive = false
+output_dir = "plots"
+max_points = 100_000
+decimation = "stride"
+fail_on_error = false
+```
+
+Defaults are chosen for unattended analysis:
+
+- `interactive = false`: do not open GUI windows during analysis.
+- `save = true`: write PNG files.
+- `output_dir = "plots"`: keep generated images out of the top-level shot
+  directory.
+- `max_points = 100_000`: decimate plot data only. Analysis still uses the full
+  data.
+- `fail_on_error = false`: plot failures are reported as warnings unless this is
+  set to `true`.
+
+Set `interactive = true` only when you want each plot window to block progress
+until the window is closed.
+
+## Config Notes
+
+`version = 2` is the normalized schema used by the current code.
+
+Important rules:
+
+- `roles.reference_ch` is a single channel index.
+- `roles.sensor_ch` and `roles.signal_ch` are arrays.
+- Sensor channels used for field/current conversion must define `factor`,
+  `label`, and `unit_out`.
+- `kerr.use_sensor_ch` must be one of `roles.sensor_ch`.
+- `phase.m_omega_t0_offset` must contain six values, one for each harmonic.
+- Unknown keys in `version = 2` are rejected.
+- Unused `[[channels]]` entries are allowed but produce warnings.
+
+`version = 1` configs are still read and normalized where migration is
+unambiguous. Use `pmoke show` to inspect the normalized result.
+
+## Lock-in LPF
+
+`lockin.lpf_kind` selects the low-pass filter after complex demodulation:
+
+- `sync_iir_zero_phase`: recommended starting point for MHz modulation and
+  millisecond-scale pulse data. It applies short synchronous averaging followed
+  by forward/backward Butterworth IIR filtering for zero-phase offline analysis.
+- `fir_zero_phase`: complex-baseband FIR filtering with a symmetric
+  Kaiser-windowed low-pass filter.
+- `fir_boxcar_enbw`: FIR comparison mode that approximately matches the
+  equivalent noise bandwidth of the legacy boxcar weighting.
+- `boxcar_legacy`: old moving-average/trapezoidal-integration style lock-in,
+  useful for continuity with older datasets.
+
+For `fir_zero_phase` and `sync_iir_zero_phase`, set exactly one cutoff:
+
+```toml
+lpf_cutoff_hz = 20_000.0
+# or
+lpf_cutoff_ref_ratio = 2e-2
+```
+
+The cutoff must fit within the output sampling rate:
+
+```text
+output_rate = 1 / (timebase.dt * lockin.stride_samples)
 cutoff_hz < 0.45 * output_rate
 ```
 
-This means `stride_samples` does not only thin out the saved lock-in points. It also limits the maximum usable low-pass bandwidth, because the filtered result is only evaluated every `stride_samples` samples.
-
-Compared with `boxcar_legacy`, `fir_zero_phase` is not expected to give numerically identical results even when `lpf_half_window_cycles` is set to the same nominal width. The legacy path uses separate sine/cosine mixing plus finite-window integration, whose frequency response is sinc-like and has relatively large sidelobes. The FIR path instead uses complex baseband filtering with a Kaiser-windowed low-pass response, so leakage, noise folding, and apparent signal amplitude can change noticeably.
-
-With the current implementation, `lpf_half_window_cycles = 1.0` and `fir_zero_phase` should be read as "an FIR supported over about two cycles", not as "legacy `filter_length_samples = 1` reproduced in FIR form". If continuity with old data matters, compare against `boxcar_legacy` first and tune from there.
-
-`fir_boxcar_enbw` is useful for migration experiments. It builds the same discrete weighting used by `boxcar_legacy` and computes that weighting's equivalent noise bandwidth:
-
-```text
-legacy_boxcar_enbw_hz = sample_rate * sum(w[n]^2) / sum(w[n])^2
-```
-
-Then it searches for a Kaiser FIR cutoff that gives a close FIR ENBW. Matching ENBW only matches white-noise variance reduction; it does not make the transient response, sidelobes, or amplitude response identical to `boxcar_legacy`.
-
-`sync_iir_zero_phase` is intended for high modulation frequency and finite pulse-width data where a long FIR would visibly smear the pulse. It works as follows:
-
-1. Demodulate to complex baseband in the same way as `fir_zero_phase`.
-2. Apply a centered moving average whose width is `round(lpf_sync_average_cycles * sample_rate / f_ref)` raw samples. This removes cycle-synchronous ripple with a short time footprint.
-3. Apply a Butterworth low-pass filter to the complex baseband.
-4. Reverse the filtered trace, apply the same IIR again, and reverse back. This cancels phase delay for offline analysis. The internal IIR design cutoff is compensated so the requested cutoff corresponds approximately to the final zero-phase -3 dB point.
-5. Export `LIx = -Im(z)` and `LIy = Re(z)` using the existing convention.
-
-For `f_ref = 1 MHz` and a `4 ms` pulse, a practical starting point is:
+Example starting point for `f_ref = 1 MHz`:
 
 ```toml
+[lockin]
 lpf_kind = "sync_iir_zero_phase"
 lpf_half_window_cycles = 1.0
-lpf_cutoff_ref_ratio = 2e-2  # 20 kHz at 1 MHz modulation
+lpf_cutoff_ref_ratio = 2e-2
 lpf_sync_average_cycles = 1.0
 lpf_iir_order = 2
 ```
 
-If the pulse is still too noisy, try `lpf_iir_order = 4` or `lpf_cutoff_ref_ratio = 1e-2`. If the pulse shape is too rounded, try `lpf_cutoff_ref_ratio = 5e-2`. Avoid using very small cutoffs such as `5e-3` unless the expected signal varies slowly enough to tolerate a roughly 100 us scale response. The implementation drops additional edge samples based on the IIR settling estimate, so output length can be slightly shorter than FIR modes.
+If the result is noisy, try `lpf_iir_order = 4` or a smaller cutoff. If the pulse
+shape is too rounded, use a larger cutoff. `lpf_half_window_cycles` describes
+support width for FIR-related calculations; it is not a universal precision
+setting.
 
-When `lpf_debug_output = true`, pmoke writes per-channel/per-harmonic files under:
+## Lock-in Debug Output
 
-```text
-lockin_debug/{lpf_debug_label_or_auto}/{lpf_kind}_ch{ch}_h{m}/
+Enable debug output when comparing filters:
+
+```toml
+[lockin]
+lpf_debug_output = true
+lpf_debug_label = "trial_001"
+lpf_debug_overwrite = false
+snr_background_window = { start = -5e-3, end = -0.1e-3 }
+snr_signal_window = { start = 0e-3, end = 5e-3 }
 ```
 
-The files are:
-
-- `metadata.csv`: effective cutoff, ENBW, tap count, output rate, and filter metadata.
-- `filter_response.csv`: LPF magnitude response on the output frequency range. For `boxcar_legacy` this file only contains the header.
-- `baseband_psd.csv`: PSD estimate from the LPF-before complex baseband in the background window. Large windows are downsampled for this diagnostic.
-- `snr_summary.csv`: S/N comparison metrics from the LPF-after lock-in output.
-
-`lpf_debug_overwrite = false` refuses to overwrite an existing debug target directory. If set to `true`, pmoke only clears directories that contain its `.pmoke_lockin_debug` marker.
-
-`snr_background_window` and `snr_signal_window` are evaluation windows only. They do not change the lock-in filtering, tap count, cutoff, or output time grid. The background window estimates noise; the signal window estimates signal amplitude. The primary comparison metric is:
+Files are written under:
 
 ```text
-amp = sqrt(LIx^2 + LIy^2)
-background_amp_std = std(amp in snr_background_window)
-signal_p95_snr = p95(amp in snr_signal_window) / background_amp_std
+lockin_debug/{label}/{lpf_kind}_ch{ch}_h{m}/
 ```
 
-Use windows that isolate a signal-free region and the signal region you actually want to compare.
+Typical files:
 
-In practice:
+- `metadata.csv`
+- `filter_response.csv`
+- `baseband_psd.csv`
+- `snr_summary.csv`
 
-- Use `fir_zero_phase` when you explicitly want complex-baseband FIR filtering and are willing to re-check the resulting amplitude and phase behavior on real data.
-- Use `sync_iir_zero_phase` when the pulse shape matters and a long FIR support would smear the signal; this is the recommended starting point for `f_ref = 1 MHz`, millisecond pulses, and `stride_samples = 1000`.
-- Use `fir_boxcar_enbw` when you want an FIR comparison with roughly matched white-noise bandwidth to the legacy discrete boxcar.
-- Use `boxcar_legacy` when you need continuity with old results or want a direct A/B comparison during migration.
-- Treat `lpf_half_window_cycles = 1.0` as a description of support width, not as a recommended universal starting point.
+Debug windows affect only diagnostics. They do not change the lock-in result.
+
+## Precision Guidance
+
+For DHO5000 large-memory measurements:
+
+- Prefer `fetch.output = "raw"` or `"csv_and_raw"` for acquisition.
+- Prefer `fetch.analysis_input = "raw"` or `"auto"` for analysis.
+- Keep raw WORD files and `metadata.toml` as the primary archived data.
+- Use CSV for compatibility, quick inspection, or exported subsets.
+- Avoid BYTE waveform transfer for precision-sensitive work.
+
+The raw path preserves the original WORD bytes and stores the exact parsed
+preamble values used for voltage reconstruction.

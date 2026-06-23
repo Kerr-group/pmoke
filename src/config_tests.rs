@@ -1,5 +1,6 @@
 use super::{
-    ConfigLoad, Connection, FetchAnalysisInput, FetchOutput, LockinLpfKind, load_from_str,
+    ConfigLoad, Connection, FetchAnalysisInput, FetchOutput, LockinLpfKind, PlotDecimation,
+    load_from_str,
 };
 
 #[test]
@@ -58,6 +59,128 @@ analysis_input = "{input}""#
             }
             other => panic!("expected ready load for {output}/{input}, got {other:?}"),
         }
+    }
+}
+
+#[test]
+fn v2_plot_options_default_to_safe_noninteractive_save() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert!(config.plot.enabled);
+            assert!(config.plot.save);
+            assert!(!config.plot.interactive);
+            assert_eq!(config.plot.output_dir, "plots");
+            assert_eq!(config.plot.max_points, 100_000);
+            assert_eq!(config.plot.decimation, PlotDecimation::Stride);
+            assert!(!config.plot.fail_on_error);
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
+fn v2_plot_options_load() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 2",
+        r#"version = 2
+
+[plot]
+enabled = false
+save = false
+interactive = true
+output_dir = "figures"
+max_points = 1234
+decimation = "stride"
+fail_on_error = true"#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert!(!config.plot.enabled);
+            assert!(!config.plot.save);
+            assert!(config.plot.interactive);
+            assert_eq!(config.plot.output_dir, "figures");
+            assert_eq!(config.plot.max_points, 1234);
+            assert_eq!(config.plot.decimation, PlotDecimation::Stride);
+            assert!(config.plot.fail_on_error);
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
+fn v2_plot_output_dir_must_not_be_empty() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 2",
+        r#"version = 2
+
+[plot]
+output_dir = """#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => {
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("plot.output_dir"))
+            );
+        }
+        other => panic!("expected diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
+fn v2_plot_max_points_must_be_positive() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 2",
+        r#"version = 2
+
+[plot]
+max_points = 0"#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => {
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("plot.max_points"))
+            );
+        }
+        other => panic!("expected diagnostics, got {other:?}"),
     }
 }
 
