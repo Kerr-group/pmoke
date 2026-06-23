@@ -333,7 +333,7 @@ impl MonitorApp {
         self.active_tab = 0;
         self.focus = FocusPane::Output;
         if self.output_selected.is_none() && !self.run_output.is_empty() {
-            self.output_selected = Some(self.run_output.len() - 1);
+            self.output_selected = last_renderable_output_index(&self.run_output);
         }
     }
 
@@ -356,7 +356,9 @@ impl MonitorApp {
         let Some(selected) = self.output_selected else {
             return;
         };
-        self.set_output_selection(selected.saturating_sub(1), extend);
+        if let Some(index) = previous_renderable_output_index(&self.run_output, selected) {
+            self.set_output_selection(index, extend);
+        }
     }
 
     fn select_next_output(&mut self, extend: bool) {
@@ -364,8 +366,9 @@ impl MonitorApp {
         let Some(selected) = self.output_selected else {
             return;
         };
-        let last = self.run_output.len().saturating_sub(1);
-        self.set_output_selection((selected + 1).min(last), extend);
+        if let Some(index) = next_renderable_output_index(&self.run_output, selected) {
+            self.set_output_selection(index, extend);
+        }
     }
 
     fn select_first_output(&mut self, extend: bool) {
@@ -373,7 +376,9 @@ impl MonitorApp {
         if self.run_output.is_empty() {
             return;
         }
-        self.set_output_selection(0, extend);
+        if let Some(index) = first_renderable_output_index(&self.run_output) {
+            self.set_output_selection(index, extend);
+        }
     }
 
     fn select_last_output(&mut self, extend: bool) {
@@ -381,8 +386,10 @@ impl MonitorApp {
         if self.run_output.is_empty() {
             return;
         }
-        self.set_output_selection(self.run_output.len() - 1, extend);
-        self.follow_output();
+        if let Some(index) = last_renderable_output_index(&self.run_output) {
+            self.set_output_selection(index, extend);
+            self.follow_output();
+        }
     }
 
     fn enter_output_line_visual_mode(&mut self) {
@@ -402,19 +409,32 @@ impl MonitorApp {
         } else {
             self.output_selection_anchor = None;
         }
-        self.output_selected = Some(index.min(self.run_output.len().saturating_sub(1)));
-        self.scroll_selected_output_into_view();
+        self.output_selected = nearest_renderable_output_index(&self.run_output, index);
     }
 
     fn selected_output_text(&self) -> Option<String> {
+        let entries = self.selected_output_entries()?;
+        if entries.is_empty() {
+            return None;
+        }
+
+        Some(
+            entries
+                .into_iter()
+                .map(|entry| strip_ansi_codes(&entry.text))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
+    fn selected_output_entries(&self) -> Option<Vec<&LogEntry>> {
         let (start, end) = self.output_selection_range()?;
         Some(
             self.run_output
                 .get(start..=end)?
                 .iter()
-                .map(|entry| strip_ansi_codes(&entry.text))
-                .collect::<Vec<_>>()
-                .join("\n"),
+                .filter(|entry| is_renderable_output_entry(entry))
+                .collect(),
         )
     }
 
@@ -425,8 +445,8 @@ impl MonitorApp {
     }
 
     fn output_selection_line_count(&self) -> usize {
-        self.output_selection_range()
-            .map(|(start, end)| end - start + 1)
+        self.selected_output_entries()
+            .map(|entries| entries.len())
             .unwrap_or(0)
     }
 
@@ -437,14 +457,6 @@ impl MonitorApp {
             method.label()
         ));
         self.output_selection_anchor = None;
-    }
-
-    fn scroll_selected_output_into_view(&mut self) {
-        let Some(selected) = self.output_selected else {
-            return;
-        };
-        let total_after_selected = self.run_output.len().saturating_sub(selected + 1);
-        self.run_output_scroll = self.run_output_scroll.max(total_after_selected);
     }
 
     fn copy_selected_output(&mut self) {
@@ -488,6 +500,53 @@ impl MonitorApp {
 
 fn shift_log_index_after_drain(index: Option<usize>, drained: usize) -> Option<usize> {
     index.and_then(|idx| idx.checked_sub(drained))
+}
+
+fn is_renderable_output_entry(entry: &LogEntry) -> bool {
+    let text = strip_ansi_codes(&entry.text);
+    let kind = classify_log_entry(entry.stream, &text);
+    output_display(kind, &text).is_some()
+}
+
+fn first_renderable_output_index(entries: &[LogEntry]) -> Option<usize> {
+    entries.iter().position(is_renderable_output_entry)
+}
+
+fn last_renderable_output_index(entries: &[LogEntry]) -> Option<usize> {
+    entries.iter().rposition(is_renderable_output_entry)
+}
+
+fn previous_renderable_output_index(entries: &[LogEntry], selected: usize) -> Option<usize> {
+    entries
+        .iter()
+        .take(selected)
+        .rposition(is_renderable_output_entry)
+}
+
+fn next_renderable_output_index(entries: &[LogEntry], selected: usize) -> Option<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .skip(selected.saturating_add(1))
+        .find_map(|(idx, entry)| is_renderable_output_entry(entry).then_some(idx))
+}
+
+fn nearest_renderable_output_index(entries: &[LogEntry], index: usize) -> Option<usize> {
+    if entries.get(index).is_some_and(is_renderable_output_entry) {
+        return Some(index);
+    }
+
+    entries
+        .iter()
+        .enumerate()
+        .skip(index.saturating_add(1))
+        .find_map(|(idx, entry)| is_renderable_output_entry(entry).then_some(idx))
+        .or_else(|| {
+            entries
+                .iter()
+                .take(index)
+                .rposition(is_renderable_output_entry)
+        })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -958,6 +1017,37 @@ fn visual_entry_range(lines: &[VisualOutputLine], entry_index: usize) -> Option<
         .iter()
         .rposition(|line| line.entry_index == entry_index)?;
     Some((start, end))
+}
+
+fn visual_selection_range(
+    lines: &[VisualOutputLine],
+    selection: Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    let (start_entry, end_entry) = selection?;
+    let start = lines
+        .iter()
+        .position(|line| (start_entry..=end_entry).contains(&line.entry_index))?;
+    let end = lines
+        .iter()
+        .rposition(|line| (start_entry..=end_entry).contains(&line.entry_index))?;
+    Some((start, end))
+}
+
+fn output_selection_status(selected_visual_range: Option<(usize, usize)>) -> String {
+    selected_visual_range
+        .map(|(start, end)| {
+            if start == end {
+                format!("selected {}", start + 1)
+            } else {
+                format!(
+                    "selected {}-{} / {} lines",
+                    start + 1,
+                    end + 1,
+                    end - start + 1
+                )
+            }
+        })
+        .unwrap_or_else(|| "select --".to_string())
 }
 
 fn select_tab_at(app: &mut MonitorApp, area: Rect, column: u16) {
@@ -1546,12 +1636,6 @@ fn render_run_output(
     area: Rect,
     effect_delta: FxDuration,
 ) {
-    let content_width = area.width.saturating_sub(3);
-    let visual_line_count = if app.run_output.is_empty() {
-        0
-    } else {
-        visual_output_line_count(&app.run_output, content_width)
-    };
     let block_base = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -1563,6 +1647,15 @@ fn render_run_output(
     let inner = block_base.inner(area);
     let output_sections = output_inner_layout(inner);
     let log_area = output_sections.log;
+    let log_width = log_area.width.saturating_sub(1);
+    let visual_lines_for_layout = if app.run_output.is_empty() {
+        Vec::new()
+    } else {
+        visual_output_lines(&app.run_output, log_width, None, None)
+    };
+    let visual_line_count = visual_lines_for_layout.len();
+    let selected_visual_range =
+        visual_selection_range(&visual_lines_for_layout, app.output_selection_range());
     let visible_rows = output_visible_rows(log_area);
     let effective_scroll = effective_output_scroll(app, log_area, visual_line_count);
     let title = if app.run_output.is_empty() {
@@ -1582,6 +1675,7 @@ fn render_run_output(
         output_sections.status,
         visual_line_count,
         effective_scroll,
+        selected_visual_range,
     );
     render_run_timeline(frame, app, output_sections.timeline);
 
@@ -1590,7 +1684,6 @@ fn render_run_output(
         return;
     }
 
-    let log_width = log_area.width.saturating_sub(1);
     let lines = if app.run_output.is_empty() {
         vec![Line::styled(
             "  ready",
@@ -1781,6 +1874,7 @@ fn render_output_status_bar(
     area: Rect,
     visual_line_count: usize,
     effective_scroll: usize,
+    selected_visual_range: Option<(usize, usize)>,
 ) {
     let (state, color) = if let Some(run) = &app.active_run {
         if run.cancel_requested {
@@ -1803,21 +1897,7 @@ fn render_output_status_bar(
     } else {
         format!("-{effective_scroll} lines")
     };
-    let selection = app
-        .output_selection_range()
-        .map(|(start, end)| {
-            if start == end {
-                format!("selected {}", start + 1)
-            } else {
-                format!(
-                    "selected {}-{} / {} lines",
-                    start + 1,
-                    end + 1,
-                    end - start + 1
-                )
-            }
-        })
-        .unwrap_or_else(|| "select --".to_string());
+    let selection = output_selection_status(selected_visual_range);
 
     let mut spans = vec![
         Span::styled(
