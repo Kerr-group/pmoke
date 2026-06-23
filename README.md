@@ -66,6 +66,25 @@ cargo run -- --config config.toml show
 cargo run --no-default-features -- --config config.toml analyze
 ```
 
+For performance-sensitive runs, build or run the optimized release binary:
+
+```sh
+cargo build --release
+cargo run --release -- --config config.toml analyze
+cargo run --release --no-default-features -- --config config.toml analyze
+```
+
+For a machine-local binary, `target-cpu=native` may improve CPU-bound analysis by
+enabling instructions available on the build machine:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+RUSTFLAGS="-C target-cpu=native" cargo run --release --no-default-features -- --config config.toml analyze
+```
+
+Use this only for binaries that will run on the same class of CPU. For portable
+release artifacts, omit `target-cpu=native`.
+
 ## Commands
 
 ```text

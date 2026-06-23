@@ -38,3 +38,8 @@ tui-spinner = "0.2.3"
 default = ["hw"]
 
 hw = ["dep:gpib-rs", "dep:instruments"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
