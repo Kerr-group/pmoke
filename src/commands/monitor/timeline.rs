@@ -30,70 +30,36 @@ pub(super) fn render_run_timeline(frame: &mut Frame<'_>, app: &MonitorApp, area:
     };
 
     let motion_frame = timeline_motion_frame(app);
-    let mut step_spans = Vec::new();
-    for (idx, step) in timeline.steps.iter().enumerate() {
-        if idx > 0 {
-            step_spans.push(timeline_connector_span(step, motion_frame));
-        }
-        step_spans.extend(timeline_step_spans(step, motion_frame));
-    }
+    let step_lines = timeline_step_lines(&timeline.steps, area.width, area.height, motion_frame);
+    let header = timeline_header_line(
+        app.command_running(),
+        timeline.done,
+        timeline.total,
+        motion_frame,
+    );
 
     let lines = if area.height >= 3 {
-        vec![
-            Line::from(vec![
-                Span::styled(
-                    " RUN TIMELINE ",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                if app.command_running() {
-                    Span::styled(
-                        format!("{} ", timeline_spinner_symbol(motion_frame)),
-                        Style::default()
-                            .fg(timeline_pulse_color(motion_frame))
-                            .add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    Span::raw("")
-                },
-                Span::styled(
-                    format!("{}/{} complete", timeline.done, timeline.total),
-                    Style::default().fg(Color::Gray),
-                ),
-            ]),
-            Line::from(step_spans),
-            timeline_separator(area.width),
-        ]
+        let mut lines = Vec::with_capacity(area.height as usize);
+        lines.push(header);
+        let available_step_rows = area.height.saturating_sub(1) as usize;
+        let include_separator = step_lines.len() < available_step_rows;
+        let take_steps = if include_separator {
+            available_step_rows.saturating_sub(1)
+        } else {
+            available_step_rows
+        };
+        lines.extend(step_lines.into_iter().take(take_steps));
+        if include_separator {
+            lines.push(timeline_separator(area.width));
+        }
+        lines
     } else if area.height >= 2 {
         vec![
-            Line::from(vec![
-                Span::styled(
-                    " RUN TIMELINE ",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                if app.command_running() {
-                    Span::styled(
-                        format!("{} ", timeline_spinner_symbol(motion_frame)),
-                        Style::default()
-                            .fg(timeline_pulse_color(motion_frame))
-                            .add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    Span::raw("")
-                },
-                Span::styled(
-                    format!("{}/{} complete", timeline.done, timeline.total),
-                    Style::default().fg(Color::Gray),
-                ),
-            ]),
-            Line::from(step_spans),
+            header,
+            timeline_compact_step_lines(&timeline.steps, area.width, 1, motion_frame)
+                .into_iter()
+                .next()
+                .unwrap_or_default(),
         ]
     } else {
         let mut compact = vec![Span::styled(
@@ -104,10 +70,116 @@ pub(super) fn render_run_timeline(frame: &mut Frame<'_>, app: &MonitorApp, area:
                 .add_modifier(Modifier::BOLD),
         )];
         compact.push(Span::raw(" "));
-        compact.extend(step_spans);
+        compact.extend(timeline_compact_step_spans(&timeline.steps, motion_frame));
         vec![Line::from(compact)]
     };
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn timeline_header_line(
+    running: bool,
+    done: usize,
+    total: usize,
+    motion_frame: usize,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            " RUN TIMELINE ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        if running {
+            Span::styled(
+                format!("{} ", timeline_spinner_symbol(motion_frame)),
+                Style::default()
+                    .fg(timeline_pulse_color(motion_frame))
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        },
+        Span::styled(
+            format!("{done}/{total} complete"),
+            Style::default().fg(Color::Gray),
+        ),
+    ])
+}
+
+pub(super) fn timeline_step_lines(
+    steps: &[TimelineStep],
+    width: u16,
+    height: u16,
+    frame: usize,
+) -> Vec<Line<'static>> {
+    let full = timeline_full_step_line(steps, frame);
+    if line_width(&full) <= width as usize {
+        return vec![full];
+    }
+
+    timeline_compact_step_lines(steps, width, height.saturating_sub(1) as usize, frame)
+}
+
+fn timeline_full_step_line(steps: &[TimelineStep], frame: usize) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (idx, step) in steps.iter().enumerate() {
+        if idx > 0 {
+            spans.push(timeline_connector_span(step, frame));
+        }
+        spans.extend(timeline_step_spans(step, frame));
+    }
+    Line::from(spans)
+}
+
+fn timeline_compact_step_lines(
+    steps: &[TimelineStep],
+    width: u16,
+    max_lines: usize,
+    frame: usize,
+) -> Vec<Line<'static>> {
+    if steps.is_empty() || max_lines == 0 {
+        return Vec::new();
+    }
+
+    let width = width.max(1) as usize;
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+    let mut current_width = 0usize;
+
+    for (idx, step) in steps.iter().enumerate() {
+        let mut item = Vec::new();
+        if idx > 0 {
+            item.push(timeline_compact_connector_span(step, frame));
+        }
+        item.push(timeline_compact_step_span(step, frame));
+        let item_width = spans_width(&item);
+
+        if !current.is_empty() && current_width + item_width > width && lines.len() + 1 < max_lines
+        {
+            lines.push(Line::from(current));
+            current = vec![timeline_compact_step_span(step, frame)];
+            current_width = spans_width(&current);
+        } else {
+            current_width += item_width;
+            current.extend(item);
+        }
+    }
+
+    lines.push(Line::from(current));
+    lines
+}
+
+fn timeline_compact_step_spans(steps: &[TimelineStep], frame: usize) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (idx, step) in steps.iter().enumerate() {
+        if idx > 0 {
+            spans.push(timeline_compact_connector_span(step, frame));
+        }
+        spans.push(timeline_compact_step_span(step, frame));
+    }
+    spans
 }
 
 pub(super) fn timeline_separator(width: u16) -> Line<'static> {
@@ -152,6 +224,20 @@ fn timeline_connector_span(next_step: &TimelineStep, frame: usize) -> Span<'stat
         Style::default().fg(Color::DarkGray)
     };
     Span::styled(" ─ ", style)
+}
+
+fn timeline_compact_connector_span(next_step: &TimelineStep, frame: usize) -> Span<'static> {
+    let style = if matches!(
+        next_step.state,
+        TimelineStepState::Current | TimelineStepState::Stopping
+    ) {
+        Style::default()
+            .fg(timeline_pulse_color(frame))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    Span::styled("─", style)
 }
 
 pub(super) fn timeline_step_spans(step: &TimelineStep, frame: usize) -> Vec<Span<'static>> {
@@ -214,6 +300,54 @@ pub(super) fn timeline_step_spans(step: &TimelineStep, frame: usize) -> Vec<Span
 
 pub(super) fn timeline_badge_cell(icon: &str) -> String {
     centered_text(icon, TIMELINE_BADGE_WIDTH)
+}
+
+fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static> {
+    let (icon, fg, bg, modifier) = match step.state {
+        TimelineStepState::Done => ("✓".to_string(), Color::Black, Color::Green, Modifier::BOLD),
+        TimelineStepState::Current => (
+            timeline_spinner_symbol(frame).to_string(),
+            Color::Black,
+            timeline_pulse_color(frame),
+            Modifier::BOLD,
+        ),
+        TimelineStepState::Pending => (
+            "○".to_string(),
+            Color::DarkGray,
+            Color::Reset,
+            Modifier::empty(),
+        ),
+        TimelineStepState::Failed => (
+            "×".to_string(),
+            Color::Black,
+            Color::LightRed,
+            Modifier::BOLD,
+        ),
+        TimelineStepState::Stopping => (
+            "!".to_string(),
+            Color::Black,
+            if frame.is_multiple_of(2) {
+                Color::Yellow
+            } else {
+                Color::LightRed
+            },
+            Modifier::BOLD,
+        ),
+    };
+    let style = if matches!(step.state, TimelineStepState::Pending) {
+        Style::default().fg(fg)
+    } else {
+        Style::default().fg(fg).bg(bg).add_modifier(modifier)
+    };
+    Span::styled(icon, style)
+}
+
+fn line_width(line: &Line<'_>) -> usize {
+    spans_width(&line.spans)
+}
+
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(|span| span.content.chars().count()).sum()
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StageProgressState {

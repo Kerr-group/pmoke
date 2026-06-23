@@ -1,4 +1,6 @@
-use crate::config::{self, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning, FetchOutput};
+use crate::config::{
+    self, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning, FetchAnalysisInput, FetchOutput,
+};
 use crate::constants::{
     FETCHED_FNAME, KERR_NAME, LI_RESULTS_NAME, LI_ROTATED_NAME, RAW_METADATA_FNAME,
     RAW_WAVEFORM_DIR,
@@ -55,7 +57,7 @@ use layout::{
 #[cfg(test)]
 use timeline::{
     StageProgressState, TimelineStep, TimelineStepState, timeline_badge_cell, timeline_for_action,
-    timeline_separator, timeline_step_spans,
+    timeline_separator, timeline_step_lines, timeline_step_spans,
 };
 use timeline::{render_run_timeline, spinner_frame, timeline_motion_frame};
 
@@ -2017,7 +2019,7 @@ fn metric_output_lines(
                 " ".to_string()
             };
             let rail = selected_output_style(
-                live_output_rail_style(context.live_latest && idx == 0, context.frame),
+                live_output_rail_style(context.live_latest, context.frame),
                 context.selected,
             );
             let spans = if idx == 0 {
@@ -2035,7 +2037,10 @@ fn metric_output_lines(
                     Span::styled("  ", rail),
                     Span::styled(
                         value_line,
-                        selected_output_style(Style::default().fg(Color::White), context.selected),
+                        selected_output_style(
+                            live_output_metric_value_style(context.live_latest, context.frame),
+                            context.selected,
+                        ),
                     ),
                 ]
             } else {
@@ -2045,7 +2050,13 @@ fn metric_output_lines(
                     Span::styled("  ", rail),
                     Span::styled(
                         value_line,
-                        selected_output_style(Style::default().fg(Color::Gray), context.selected),
+                        selected_output_style(
+                            live_output_metric_continuation_style(
+                                context.live_latest,
+                                context.frame,
+                            ),
+                            context.selected,
+                        ),
                     ),
                 ]
             };
@@ -2064,14 +2075,18 @@ fn metric_continuation_lines(context: OutputRenderContext, value: &str) -> Vec<V
         .enumerate()
         .map(|(idx, value_line)| {
             let marker = if context.cursor && idx == 0 {
-                "◆"
+                "◆".to_string()
             } else if context.selected && idx == 0 {
-                "▌"
+                "▌".to_string()
+            } else if context.live_latest && idx == 0 {
+                event_feed_spinner_symbol(context.frame).to_string()
             } else {
-                " "
+                " ".to_string()
             };
-            let rail =
-                selected_output_style(Style::default().fg(Color::DarkGray), context.selected);
+            let rail = selected_output_style(
+                live_output_rail_style(context.live_latest, context.frame),
+                context.selected,
+            );
             VisualOutputLine {
                 entry_index: context.entry_index,
                 line: Line::from(vec![
@@ -2085,7 +2100,13 @@ fn metric_continuation_lines(context: OutputRenderContext, value: &str) -> Vec<V
                     ),
                     Span::styled(
                         value_line,
-                        selected_output_style(Style::default().fg(Color::Gray), context.selected),
+                        selected_output_style(
+                            live_output_metric_continuation_style(
+                                context.live_latest,
+                                context.frame,
+                            ),
+                            context.selected,
+                        ),
                     ),
                 ]),
             }
@@ -2139,13 +2160,16 @@ fn event_output_lines(
                     Span::styled(
                         "   │       ",
                         selected_output_style(
-                            Style::default().fg(Color::DarkGray),
+                            live_output_rail_style(context.live_latest, context.frame),
                             context.selected,
                         ),
                     ),
                     Span::styled(
                         line,
-                        selected_output_style(event_text_style(kind), context.selected),
+                        selected_output_style(
+                            live_output_text_style(kind, context.live_latest, context.frame),
+                            context.selected,
+                        ),
                     ),
                 ]
             };
@@ -2266,6 +2290,26 @@ fn live_output_rail_style(live_latest: bool, frame: usize) -> Style {
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
+    }
+}
+
+fn live_output_metric_value_style(live_latest: bool, frame: usize) -> Style {
+    if live_latest {
+        Style::default()
+            .fg(event_feed_pulse_color(frame))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    }
+}
+
+fn live_output_metric_continuation_style(live_latest: bool, frame: usize) -> Style {
+    if live_latest {
+        Style::default()
+            .fg(event_feed_pulse_color(frame))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
     }
 }
 
@@ -2933,7 +2977,7 @@ fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
     let mut files = vec![("raw".to_string(), FETCHED_FNAME.to_string())];
 
     if let Some(cfg) = cfg {
-        if matches!(cfg.fetch.output, FetchOutput::Raw | FetchOutput::CsvAndRaw) {
+        if uses_raw_waveform_artifact(cfg) {
             files.push((
                 "raw word".to_string(),
                 format!("{RAW_WAVEFORM_DIR}/{RAW_METADATA_FNAME}"),
@@ -2964,6 +3008,14 @@ fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
             }
         })
         .collect()
+}
+
+fn uses_raw_waveform_artifact(cfg: &Config) -> bool {
+    matches!(cfg.fetch.output, FetchOutput::Raw | FetchOutput::CsvAndRaw)
+        || matches!(
+            cfg.fetch.analysis_input,
+            FetchAnalysisInput::Raw | FetchAnalysisInput::Auto
+        )
 }
 
 struct FileStatus {

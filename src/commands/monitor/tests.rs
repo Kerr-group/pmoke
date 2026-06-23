@@ -156,6 +156,80 @@ fn timeline_badges_are_centered_in_fixed_cells() {
 }
 
 #[test]
+fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
+    let steps = vec![
+        TimelineStep {
+            label: "Read",
+            state: TimelineStepState::Done,
+        },
+        TimelineStep {
+            label: "Reference",
+            state: TimelineStepState::Done,
+        },
+        TimelineStep {
+            label: "Sensor",
+            state: TimelineStepState::Current,
+        },
+        TimelineStep {
+            label: "Lock-in",
+            state: TimelineStepState::Pending,
+        },
+        TimelineStep {
+            label: "Phase",
+            state: TimelineStepState::Pending,
+        },
+        TimelineStep {
+            label: "Kerr",
+            state: TimelineStepState::Pending,
+        },
+    ];
+
+    let lines = timeline_step_lines(&steps, 10, 3, 0);
+    let rendered = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(lines.len(), 2);
+    assert!(lines.iter().all(|line| {
+        line.spans
+            .iter()
+            .map(|span| span.content.chars().count())
+            .sum::<usize>()
+            <= 10
+    }));
+    assert_eq!(rendered.chars().filter(|ch| *ch == '✓').count(), 2);
+    assert_eq!(rendered.chars().filter(|ch| *ch == '○').count(), 3);
+    assert!(rendered.contains('⣾'));
+}
+
+#[test]
+fn wide_timeline_keeps_labeled_steps() {
+    let steps = vec![
+        TimelineStep {
+            label: "Read",
+            state: TimelineStepState::Done,
+        },
+        TimelineStep {
+            label: "Reference",
+            state: TimelineStepState::Current,
+        },
+    ];
+
+    let lines = timeline_step_lines(&steps, 80, 3, 0);
+    let rendered = lines[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(lines.len(), 1);
+    assert!(rendered.contains("Read"));
+    assert!(rendered.contains("Reference"));
+}
+
+#[test]
 fn selected_output_text_strips_ansi_codes() {
     let mut app = test_app();
     app.push_output(OutputStream::Stdout, "\x1b[31mhello\x1b[0m");
@@ -270,6 +344,47 @@ fn latest_event_feed_line_animates_when_running() {
     assert!(first_text.starts_with("▁ "));
     assert!(second_text.starts_with("▃ "));
     assert_ne!(first_text, second_text);
+}
+
+#[test]
+fn latest_wrapped_event_line_keeps_live_highlight_on_continuation() {
+    let entries = vec![LogEntry {
+        stream: OutputStream::System,
+        text: "pmoke --config config.toml fetch Fetch oscilloscope data using the configured output format.".to_string(),
+    }];
+
+    let lines = visual_output_lines_with_motion(&entries, 36, None, None, true, 0);
+
+    assert!(lines.len() >= 2);
+    assert_eq!(
+        lines[1].line.spans[0].style.fg,
+        Some(event_feed_pulse_color(0))
+    );
+    assert_eq!(
+        lines[1].line.spans[1].style.fg,
+        Some(event_feed_pulse_color(0))
+    );
+}
+
+#[test]
+fn latest_wrapped_metric_line_keeps_live_highlight_on_continuation() {
+    let entries = vec![LogEntry {
+        stream: OutputStream::Stdout,
+        text: "│ output     Fetch oscilloscope data using the configured output format."
+            .to_string(),
+    }];
+
+    let lines = visual_output_lines_with_motion(&entries, 34, None, None, true, 0);
+
+    assert!(lines.len() >= 2);
+    assert_eq!(
+        lines[1].line.spans[0].style.fg,
+        Some(event_feed_pulse_color(0))
+    );
+    assert_eq!(
+        lines[1].line.spans[3].style.fg,
+        Some(event_feed_pulse_color(0))
+    );
 }
 
 #[test]
