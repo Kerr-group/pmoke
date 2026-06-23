@@ -61,7 +61,22 @@ pub fn run_sensor(
 
     let sensor_meta = extract_sensor_metadata(cfg)?;
 
-    let c_bg_arr = fit_background(cfg, t, s_cols)?;
+    let pb = ui::spinner("fitting sensor backgrounds");
+    let t0 = std::time::Instant::now();
+    let c_bg_arr = match fit_background(cfg, t, s_cols) {
+        Ok(c_bg_arr) => c_bg_arr,
+        Err(err) => {
+            pb.finish_and_clear();
+            return Err(err);
+        }
+    };
+    ui::finish_success(
+        pb,
+        format!(
+            "sensor backgrounds fitted ({})",
+            ui::fmt_duration(t0.elapsed())
+        ),
+    );
 
     let t_stride = li_stride_1d(cfg, t, f_ref)?;
 
