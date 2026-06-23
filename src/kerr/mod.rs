@@ -4,8 +4,8 @@ pub mod save;
 
 use crate::config::{Channel, KerrType};
 use crate::constants::{KERR_NAME, LI_ROTATED_NAME};
-use crate::kerr::kerr_harmonics_analysis::KerrHarmonicsAnalyser;
-use crate::kerr::kerr_standard_analysis::KerrStandardAnalyser;
+use crate::kerr::kerr_harmonics_analysis::{KerrHarmonicsAnalyser, KerrHarmonicsAnalysisInput};
+use crate::kerr::kerr_standard_analysis::{KerrStandardAnalyser, KerrStandardAnalysisInput};
 use crate::kerr::save::{get_kerr_headers, write_kerr_results};
 use crate::ui;
 use crate::{config::Config, utils::csv::read_csv};
@@ -102,24 +102,26 @@ pub fn run_kerr_analysis(
 
         let kerr_i = match kerr_type {
             KerrType::Standard => KerrStandardAnalyser {}
-                .analyse(
+                .analyse(KerrStandardAnalysisInput {
+                    plot: &cfg.plot,
                     t,
-                    sensor_integral,
-                    li_rotated_result,
+                    x: sensor_integral,
+                    ys: li_rotated_result,
                     factor,
-                    &concat_label,
+                    xlabel: &concat_label,
                     fig_name,
-                )
+                })
                 .context("failed to run Kerr analysis")?,
             KerrType::Harmonics => KerrHarmonicsAnalyser {}
-                .analyse(
+                .analyse(KerrHarmonicsAnalysisInput {
+                    plot: &cfg.plot,
                     t,
-                    sensor_integral,
-                    li_rotated_result,
+                    x: sensor_integral,
+                    ys: li_rotated_result,
                     factor,
-                    &concat_label,
+                    xlabel: &concat_label,
                     fig_name,
-                )
+                })
                 .context("failed to run Kerr harmonics analysis")?,
         };
 

@@ -13,13 +13,21 @@ class LIPlotter:
     def __init__(self):
         pass
 
-    def plot(self, t: NDArray, y: NDArray, index_arr: list[int], labels: list[str]):
+    def plot(
+        self,
+        t: NDArray,
+        y: NDArray,
+        index_arr: list[int],
+        labels: list[str],
+        save: bool,
+        interactive: bool,
+    ):
         ch_num = len(index_arr)
         mosaic = ";".join(
             [f"{chr(65 + 2*i)}{chr(65 + 2*i + 1)}" for i in range(ch_num)]
         )
 
-        axs = gs.axes(False, size=(12, 6 * ch_num), mosaic=mosaic, ion=False)
+        axs = gs.axes(False, size=(12, 6 * ch_num), mosaic=mosaic, ion=interactive)
 
         label = []
         for i, si in enumerate(y):
@@ -36,13 +44,25 @@ class LIPlotter:
             cm = gs.get_cmap("viridis", len(li_odd))
 
             for j, li_odd_j in enumerate(li_odd):
-                gs.scatter(
-                    axs[2 * i], t * 1e6, li_odd_j, label=label_odd[j], color=cm[j]
+                gs.line(
+                    axs[2 * i],
+                    t * 1e6,
+                    li_odd_j,
+                    label=label_odd[j],
+                    color=cm[j],
+                    marker="",
+                    linestyle="-",
                 )
 
             for j, li_even_j in enumerate(li_even):
-                gs.scatter(
-                    axs[2 * i + 1], t * 1e6, li_even_j, label=label_even[j], color=cm[j]
+                gs.line(
+                    axs[2 * i + 1],
+                    t * 1e6,
+                    li_even_j,
+                    label=label_even[j],
+                    color=cm[j],
+                    marker="",
+                    linestyle="-",
                 )
 
             label_i = [
@@ -53,4 +73,9 @@ class LIPlotter:
 
         gs.legend_axes(markerscale=3)
         gs.label(label)
-        gs.show()
+        if save:
+            gs.show("lockin_results", ft_list=["png"], show=interactive)
+        elif interactive:
+            import matplotlib.pyplot as plt
+
+            plt.show()

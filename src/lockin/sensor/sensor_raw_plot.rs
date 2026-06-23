@@ -1,3 +1,5 @@
+use crate::config::Plot;
+use crate::plot::{decimate_1d, decimate_2d};
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -11,7 +13,8 @@ pub struct SensorRawPlotter {}
 impl SensorRawPlotter {
     pub fn plot(
         &self,
-        t: &Vec<f64>,
+        plot: &Plot,
+        t: &[f64],
         y: Vec<Vec<f64>>,
         index_arr: &[u8],
         c_bg_arr: &[f64],
@@ -31,8 +34,10 @@ impl SensorRawPlotter {
             .context("failed to load sensor_raw_plot.py")?;
 
             let np = py.import("numpy").context("failed to import numpy")?;
-            let t_obj = np.call_method1("array", (t,))?;
-            let y_obj = np.call_method1("array", (y,))?;
+            let t_plot = decimate_1d(plot, t);
+            let y_plot = decimate_2d(plot, &y);
+            let t_obj = np.call_method1("array", (t_plot,))?;
+            let y_obj = np.call_method1("array", (y_plot,))?;
             let c_bg_obj = np.call_method1("array", (c_bg_arr,))?;
 
             let plotter = plot_mod
@@ -41,7 +46,17 @@ impl SensorRawPlotter {
                 .context("failed to create SensorRawPlotter instance")?;
 
             plotter
-                .call_method1("plot", (t_obj, y_obj, index_arr, c_bg_obj))
+                .call_method1(
+                    "plot",
+                    (
+                        t_obj,
+                        y_obj,
+                        index_arr,
+                        c_bg_obj,
+                        plot.save,
+                        plot.interactive,
+                    ),
+                )
                 .context("python SensorRawPlotter.plot(...) failed")?;
 
             Ok(())

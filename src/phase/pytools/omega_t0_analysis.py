@@ -23,6 +23,9 @@ class OT0Analyser:
         m_ot0_4: NDArray,
         m_ot0_5: NDArray,
         m_ot0_6: NDArray,
+        save: bool,
+        interactive: bool,
+        max_points: int,
     ):
         ones = np.ones(len(m_ot0_2))
         harmonics_even = np.concatenate([ones * 2, ones * 4, ones * 6])
@@ -40,33 +43,47 @@ class OT0Analyser:
 
         label = f"$-\\omega t_0$ = {result.params['slope'].value:.2e}$n$"
 
-        axs = gs.axes(False, size=(6, 6), mosaic="A", ion=False)
-        cm = gs.get_cmap(cmap="viridis", N=6)
+        plot_error = None
+        if save or interactive:
+            try:
+                stride = max(1, int(np.ceil(len(ones) / max_points)))
+                ones_plot = ones[::stride]
 
-        gs.scatter(axs[0], ones * 1, m_ot0_1, label="1", color=cm[0])
-        gs.scatter(axs[0], ones * 2, m_ot0_2, label="2", color=cm[1])
-        gs.scatter(axs[0], ones * 3, m_ot0_3, label="3", color=cm[2])
-        gs.scatter(axs[0], ones * 4, m_ot0_4, label="4", color=cm[3])
-        gs.scatter(axs[0], ones * 5, m_ot0_5, label="5", color=cm[4])
-        gs.scatter(axs[0], ones * 6, m_ot0_6, label="6", color=cm[5])
+                axs = gs.axes(False, size=(6, 6), mosaic="A", ion=interactive)
+                cm = gs.get_cmap(cmap="viridis", N=6)
 
-        gs.line(
-            axs[0],
-            harmonics_even_plot,
-            m_omega_t0_even_plot,
-            label=label,
-            ms=0,
-            ls="--",
-            color="red",
-        )
+                gs.scatter(axs[0], ones_plot * 1, m_ot0_1[::stride], label="1", color=cm[0])
+                gs.scatter(axs[0], ones_plot * 2, m_ot0_2[::stride], label="2", color=cm[1])
+                gs.scatter(axs[0], ones_plot * 3, m_ot0_3[::stride], label="3", color=cm[2])
+                gs.scatter(axs[0], ones_plot * 4, m_ot0_4[::stride], label="4", color=cm[3])
+                gs.scatter(axs[0], ones_plot * 5, m_ot0_5[::stride], label="5", color=cm[4])
+                gs.scatter(axs[0], ones_plot * 6, m_ot0_6[::stride], label="6", color=cm[5])
 
-        gs.legend(axs[0], loc="best", markerscale=5)
+                gs.line(
+                    axs[0],
+                    harmonics_even_plot,
+                    m_omega_t0_even_plot,
+                    label=label,
+                    ms=0,
+                    ls="--",
+                    color="red",
+                )
 
-        gs.label([["$n$", "$-\\omega t_0$ (rad)", [0, 7], ["", ""]]])
-        gs.show()
+                gs.legend(axs[0], loc="best", markerscale=5)
+
+                gs.label([["$n$", "$-\\omega t_0$ (rad)", [0, 7], ["", ""]]])
+                if save:
+                    gs.show("omega_t0_analysis", ft_list=["png"], show=interactive)
+                elif interactive:
+                    import matplotlib.pyplot as plt
+
+                    plt.show()
+            except Exception as exc:
+                plot_error = str(exc)
 
         omega_t0 = -result.params["slope"].value
 
         return {
             "omega_t0": omega_t0,
+            "plot_error": plot_error,
         }

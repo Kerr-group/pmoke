@@ -6,8 +6,8 @@ use std::f64::consts::PI;
 use crate::config::Config;
 use crate::lockin::reference::ref_analysis::{RefFitParams, ReferenceFFT, ReferenceFitter};
 use crate::lockin::time::time_builder;
-use crate::ui;
 use crate::utils::waveform::read_waveform_channels;
+use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
 
 pub fn run(cfg: &Config) -> Result<()> {
@@ -97,7 +97,8 @@ pub fn run_fit_ref_core(cfg: &Config, t: &[f64], ref_data: &[f64]) -> Result<Ref
             ],
         ],
     );
-    plot_fit_results(&fit_t, &fit_ref_data, &results).context("failed to plot reference signal")?;
+    plot_fit_results(cfg, &fit_t, &fit_ref_data, &results)
+        .context("failed to plot reference signal")?;
     Ok(results)
 }
 
@@ -157,40 +158,50 @@ fn get_range_indices(t: &[f64], start: f64, end: f64) -> Result<(usize, usize)> 
     Ok((idx_start, idx_end))
 }
 
-fn plot_fit_results(t: &[f64], ref_data: &[f64], results: &RefFitParams) -> Result<()> {
+fn plot_fit_results(
+    cfg: &Config,
+    t: &[f64],
+    ref_data: &[f64],
+    results: &RefFitParams,
+) -> Result<()> {
     if t.is_empty() {
         ui::skipped("reference plot: no data");
         return Ok(());
     }
 
-    let f = results.f_ref;
-    let a = results.a_ref;
-    let omegat = results.omega_tref;
+    plot::run_plot(
+        &cfg.plot,
+        "plotting reference fit",
+        "reference plot completed",
+        || {
+            let f = results.f_ref;
+            let a = results.a_ref;
+            let omegat = results.omega_tref;
 
-    if f == 0.0 {
-        bail!("Reference frequency is zero, cannot plot results.");
-    }
+            if f == 0.0 {
+                bail!("Reference frequency is zero, cannot plot results.");
+            }
 
-    let t_period = 1.0 / f;
-    let t_start_data = t.first().copied().unwrap_or(0.0);
-    let t_start_plot = t_start_data;
-    let t_end_plot = t_start_data + 3.0 * t_period;
+            let t_period = 1.0 / f;
+            let t_start_data = t.first().copied().unwrap_or(0.0);
+            let t_start_plot = t_start_data;
+            let t_end_plot = t_start_data + 3.0 * t_period;
 
-    let (idx_start, idx_end) = get_range_indices(t, t_start_plot, t_end_plot)?;
+            let (idx_start, idx_end) = get_range_indices(t, t_start_plot, t_end_plot)?;
 
-    let t_plot = &t[idx_start..idx_end];
-    let ref_plot = &ref_data[idx_start..idx_end];
+            let t_plot = &t[idx_start..idx_end];
+            let ref_plot = &ref_data[idx_start..idx_end];
 
-    let fit_plot: Vec<f64> = t_plot
-        .iter()
-        .map(|&ti| a * (2.0 * PI * f * ti - omegat).sin())
-        .collect();
+            let fit_plot: Vec<f64> = t_plot
+                .iter()
+                .map(|&ti| a * (2.0 * PI * f * ti - omegat).sin())
+                .collect();
 
-    let pb = ui::spinner("plotting reference fit");
-    ref_plot::ReferencePlotter {}
-        .plot(t_plot, ref_plot, &fit_plot)
-        .context("failed to plot reference signal")?;
-    ui::finish_success(pb, "reference plot completed");
+            ref_plot::ReferencePlotter {}
+                .plot(&cfg.plot, t_plot, ref_plot, &fit_plot)
+                .context("failed to plot reference signal")
+        },
+    )?;
 
     Ok(())
 }

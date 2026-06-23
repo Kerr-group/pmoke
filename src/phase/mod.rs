@@ -8,8 +8,8 @@ use crate::phase::omega_t0_analysis::OT0Analyser;
 use crate::phase::phase_rotation_plot::PhaseRotationPlotter;
 use crate::phase::rotator::rotate_phase;
 use crate::phase::save::{get_li_rotated_headers, write_li_rotated_results};
-use crate::ui;
 use crate::{config::Config, constants::LI_RESULTS_NAME, utils::csv::read_csv};
+use crate::{plot, ui};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::f64::consts::PI;
@@ -122,11 +122,16 @@ pub fn run_phase_analysis(
     ui::finish_saved(pb, format!("phase-rotated results for channels {:?}", ch));
     ui::success("phase analysis completed");
 
-    let pb = ui::spinner("plotting phase-rotated results");
-    PhaseRotationPlotter {}
-        .plot(t, &rotated_results, ch, &labels)
-        .context("failed to plot phase-rotated results")?;
-    ui::finish_success(pb, "phase plot completed");
+    plot::run_plot(
+        &cfg.plot,
+        "plotting phase-rotated results",
+        "phase plot completed",
+        || {
+            PhaseRotationPlotter {}
+                .plot(&cfg.plot, t, &rotated_results, ch, &labels)
+                .context("failed to plot phase-rotated results")
+        },
+    )?;
     Ok(rotated_results)
 }
 
@@ -208,12 +213,15 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
 
     let omega_t0: f64 = OT0Analyser {}
         .analyse(
-            &m_omega_t0_1,
-            &m_omega_t0_2,
-            &m_omega_t0_3,
-            &m_omega_t0_4,
-            &m_omega_t0_5,
-            &m_omega_t0_6,
+            &cfg.plot,
+            [
+                &m_omega_t0_1,
+                &m_omega_t0_2,
+                &m_omega_t0_3,
+                &m_omega_t0_4,
+                &m_omega_t0_5,
+                &m_omega_t0_6,
+            ],
         )
         .context("failed to analyse omega_t0")?;
 

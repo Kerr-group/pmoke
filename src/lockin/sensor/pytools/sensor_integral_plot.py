@@ -13,16 +13,23 @@ class SensorIntegralPlotter:
         index_arr: list[int],
         label_arr: list[str],
         unit_arr: list[str],
+        save: bool,
+        interactive: bool,
     ):
         ch_num = len(index_arr)
         mosaic = "".join([chr(65 + i) for i in range(ch_num)])
-        axs = gs.axes(False, size=(6 * ch_num, 6), mosaic=mosaic, ion=False)
+        axs = gs.axes(False, size=(6 * ch_num, 6), mosaic=mosaic, ion=interactive)
         for i, yi in enumerate(y):
-            gs.scatter(axs[i], t * 1e6, yi)
+            gs.line(axs[i], t * 1e6, yi, marker="", linestyle="-")
 
         label = [
             ["$t$ ($\\mu$s)", f"Ch {index_arr[i]} : {label_arr[i]} ({unit_arr[i]})"]
             for i in range(ch_num)
         ]
         gs.label(label)
-        gs.show()
+        if save:
+            gs.show("sensor_integral", ft_list=["png"], show=interactive)
+        elif interactive:
+            import matplotlib.pyplot as plt
+
+            plt.show()

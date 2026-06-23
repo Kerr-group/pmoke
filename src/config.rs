@@ -65,6 +65,7 @@ pub struct Config {
     pub version: u32,
     pub instruments: Option<Instruments>,
     pub fetch: Fetch,
+    pub plot: Plot,
     pub timebase: Timebase,
     pub roles: Roles,
     pub channels: Vec<Channel>,
@@ -112,6 +113,35 @@ impl Default for Fetch {
             analysis_input: FetchAnalysisInput::Csv,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Plot {
+    pub enabled: bool,
+    pub save: bool,
+    pub interactive: bool,
+    pub max_points: usize,
+    pub decimation: PlotDecimation,
+    pub fail_on_error: bool,
+}
+
+impl Default for Plot {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            save: true,
+            interactive: false,
+            max_points: 100_000,
+            decimation: PlotDecimation::Stride,
+            fail_on_error: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlotDecimation {
+    Stride,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -354,6 +384,8 @@ struct ConfigV2 {
     instruments: Option<InstrumentsV2>,
     #[serde(default)]
     fetch: FetchV2,
+    #[serde(default)]
+    plot: PlotV2,
     timebase: TimebaseV2,
     roles: RolesV2,
     channels: Vec<ChannelV2>,
@@ -371,6 +403,31 @@ struct FetchV2 {
     output: FetchOutput,
     #[serde(default)]
     analysis_input: FetchAnalysisInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PlotV2 {
+    enabled: bool,
+    save: bool,
+    interactive: bool,
+    max_points: usize,
+    decimation: PlotDecimation,
+    fail_on_error: bool,
+}
+
+impl Default for PlotV2 {
+    fn default() -> Self {
+        let default = Plot::default();
+        Self {
+            enabled: default.enabled,
+            save: default.save,
+            interactive: default.interactive,
+            max_points: default.max_points,
+            decimation: default.decimation,
+            fail_on_error: default.fail_on_error,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -826,6 +883,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
         version: 2,
         instruments: raw.instruments.map(Into::into),
         fetch: Fetch::default(),
+        plot: Plot::default(),
         timebase: raw.timebase.into(),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -881,6 +939,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         version: raw.version,
         instruments: raw.instruments.map(Into::into),
         fetch: raw.fetch.into(),
+        plot: raw.plot.into(),
         timebase: raw.timebase.into(),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -960,6 +1019,14 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             DiagnosticKind::Validation,
             Some("timebase.dt".to_string()),
             format!("timebase.dt must be positive (got {})", cfg.timebase.dt),
+            None,
+        ));
+    }
+    if cfg.plot.max_points == 0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("plot.max_points".to_string()),
+            "plot.max_points must be positive",
             None,
         ));
     }
@@ -1499,6 +1566,19 @@ impl From<FetchV2> for Fetch {
         Self {
             output: value.output,
             analysis_input: value.analysis_input,
+        }
+    }
+}
+
+impl From<PlotV2> for Plot {
+    fn from(value: PlotV2) -> Self {
+        Self {
+            enabled: value.enabled,
+            save: value.save,
+            interactive: value.interactive,
+            max_points: value.max_points,
+            decimation: value.decimation,
+            fail_on_error: value.fail_on_error,
         }
     }
 }

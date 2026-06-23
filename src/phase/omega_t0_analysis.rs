@@ -1,4 +1,5 @@
-use anyhow::{Context, Result};
+use crate::config::Plot;
+use anyhow::{Context, Result, bail};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::ffi::CString;
@@ -10,15 +11,7 @@ const OT0_ANALYSIS_PY: &str = include_str!("pytools/omega_t0_analysis.py");
 pub struct OT0Analyser {}
 
 impl OT0Analyser {
-    pub fn analyse(
-        &self,
-        m_ot0_1: &[f64],
-        m_ot0_2: &[f64],
-        m_ot0_3: &[f64],
-        m_ot0_4: &[f64],
-        m_ot0_5: &[f64],
-        m_ot0_6: &[f64],
-    ) -> Result<f64> {
+    pub fn analyse(&self, plot: &Plot, m_omega_t0: [&[f64]; 6]) -> Result<f64> {
         Python::attach(|py| {
             let code =
                 CString::new(OT0_ANALYSIS_PY).expect("omega_t0_analysis.py contains interior NUL");
@@ -34,12 +27,12 @@ impl OT0Analyser {
             .context("failed to load omega_t0_analysis.py")?;
 
             let np = py.import("numpy").context("failed to import numpy")?;
-            let m_ot0_1_obj = np.call_method1("array", (m_ot0_1,))?;
-            let m_ot0_2_obj = np.call_method1("array", (m_ot0_2,))?;
-            let m_ot0_3_obj = np.call_method1("array", (m_ot0_3,))?;
-            let m_ot0_4_obj = np.call_method1("array", (m_ot0_4,))?;
-            let m_ot0_5_obj = np.call_method1("array", (m_ot0_5,))?;
-            let m_ot0_6_obj = np.call_method1("array", (m_ot0_6,))?;
+            let m_ot0_1_obj = np.call_method1("array", (m_omega_t0[0],))?;
+            let m_ot0_2_obj = np.call_method1("array", (m_omega_t0[1],))?;
+            let m_ot0_3_obj = np.call_method1("array", (m_omega_t0[2],))?;
+            let m_ot0_4_obj = np.call_method1("array", (m_omega_t0[3],))?;
+            let m_ot0_5_obj = np.call_method1("array", (m_omega_t0[4],))?;
+            let m_ot0_6_obj = np.call_method1("array", (m_omega_t0[5],))?;
 
             let analyser = analysis_mod
                 .getattr("OT0Analyser")?
@@ -56,11 +49,21 @@ impl OT0Analyser {
                         m_ot0_4_obj,
                         m_ot0_5_obj,
                         m_ot0_6_obj,
+                        plot.save && plot.enabled,
+                        plot.interactive && plot.enabled,
+                        plot.max_points,
                     ),
                 )
                 .context("python OT0Analyser.analyse(...) failed")?;
 
             let omega_t0: f64 = res.get_item("omega_t0")?.extract()?;
+            let plot_error: Option<String> = res.get_item("plot_error")?.extract()?;
+            if let Some(plot_error) = plot_error {
+                if plot.fail_on_error {
+                    bail!("failed to plot omega_t0 analysis: {plot_error}");
+                }
+                crate::ui::warn(format!("omega_t0 plot skipped: {plot_error}"));
+            }
 
             Ok(omega_t0)
         })
