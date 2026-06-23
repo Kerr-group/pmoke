@@ -59,6 +59,16 @@ fn wide_actions_layout_keeps_output_visible() {
 }
 
 #[test]
+fn actions_panel_width_fits_command_rows_without_fixed_padding() {
+    let area = Rect::new(0, 0, 120, 28);
+    let (commands, _, output) = actions_full_layout(area);
+
+    assert!(commands.width < 36);
+    assert_eq!(commands.width, actions_panel_width(area.width));
+    assert!(output.width >= 40);
+}
+
+#[test]
 fn output_table_width_fits_inside_live_output_text_area() {
     let mut app = test_app();
     app.active_tab = 0;

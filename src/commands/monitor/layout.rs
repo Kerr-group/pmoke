@@ -1,4 +1,10 @@
+use super::actions::monitor_actions;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::text::Line;
+
+const ACTIONS_MIN_WIDTH: u16 = 24;
+const ACTIONS_OUTPUT_MIN_WIDTH: u16 = 40;
+const ACTIONS_VERTICAL_WIDTH: u16 = 86;
 
 pub(super) struct UiLayout {
     pub(super) tabs: Rect,
@@ -46,10 +52,14 @@ pub(super) fn actions_layout(area: Rect) -> (Rect, Rect) {
 }
 
 pub(super) fn actions_full_layout(area: Rect) -> (Rect, Rect, Rect) {
-    let chunks = if area.width >= 86 {
+    let command_width = actions_panel_width(area.width);
+    let chunks = if area.width >= ACTIONS_VERTICAL_WIDTH {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(36), Constraint::Min(40)])
+            .constraints([
+                Constraint::Length(command_width),
+                Constraint::Min(ACTIONS_OUTPUT_MIN_WIDTH),
+            ])
             .split(area)
     } else {
         Layout::default()
@@ -63,6 +73,32 @@ pub(super) fn actions_full_layout(area: Rect) -> (Rect, Rect, Rect) {
         .constraints([Constraint::Length(4), Constraint::Min(6)])
         .split(chunks[1]);
     (chunks[0], output[0], output[1])
+}
+
+pub(super) fn actions_panel_width(available_width: u16) -> u16 {
+    let content_width = monitor_actions()
+        .iter()
+        .enumerate()
+        .map(|(idx, action)| {
+            // Matches the command list row content:
+            // marker + number + icon + command name + status message.
+            display_width(&format!(
+                "▌ {:02} ●  {} STP",
+                idx + 1,
+                action.command_name()
+            ))
+        })
+        .max()
+        .unwrap_or(ACTIONS_MIN_WIDTH);
+    let panel_width = content_width.saturating_add(2);
+    let max_width = available_width.saturating_sub(ACTIONS_OUTPUT_MIN_WIDTH);
+    panel_width
+        .max(ACTIONS_MIN_WIDTH)
+        .min(max_width.max(ACTIONS_MIN_WIDTH))
+}
+
+fn display_width(text: &str) -> u16 {
+    Line::from(text).width().try_into().unwrap_or(u16::MAX)
 }
 
 pub(super) fn command_palette_layout(area: Rect) -> (Rect, Rect) {

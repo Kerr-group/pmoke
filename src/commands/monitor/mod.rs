@@ -50,6 +50,8 @@ use formatting::{
     bordered_inner, centered_rect, centered_text, contains, fit_path, fit_text, format_age,
     format_duration, format_live_duration, percent_width, strip_ansi_codes,
 };
+#[cfg(test)]
+use layout::actions_panel_width;
 use layout::{
     UiLayout, actions_full_layout, active_panel_layout, command_palette_layout,
     latest_event_feed_effect_area, output_inner_layout, output_visible_rows,
@@ -1507,7 +1509,7 @@ fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
                 Span::raw(" "),
                 Span::styled(icon, icon_style),
                 Span::raw("  "),
-                Span::styled(action.label(), selected_style),
+                Span::styled(action.command_name(), selected_style),
                 Span::raw(" "),
                 Span::styled(badge.trim(), badge_style),
             ]))
@@ -1534,7 +1536,7 @@ fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp, area: Rec
     frame.render_widget(
         Paragraph::new(action.description())
             .style(Style::default().fg(Color::Gray))
-            .block(accent_panel(format!(" DETAIL {} ", action.label())))
+            .block(accent_panel(format!(" DETAIL {} ", action.command_name())))
             .wrap(Wrap { trim: true }),
         area,
     );
