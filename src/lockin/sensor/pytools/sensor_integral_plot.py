@@ -2,6 +2,19 @@ import gsplot as gs
 from numpy.typing import NDArray
 
 
+def finish_plot(fname: str, save: bool, interactive: bool):
+    if interactive:
+        import matplotlib.pyplot as plt
+
+        plt.ioff()
+        if save:
+            plt.savefig(f"{fname}.png", bbox_inches="tight")
+        plt.show(block=True)
+        plt.close("all")
+    elif save:
+        gs.show(fname, ft_list=["png"], show=False)
+
+
 class SensorIntegralPlotter:
     def __init__(self):
         pass
@@ -27,9 +40,4 @@ class SensorIntegralPlotter:
             for i in range(ch_num)
         ]
         gs.label(label)
-        if save:
-            gs.show("sensor_integral", ft_list=["png"], show=interactive)
-        elif interactive:
-            import matplotlib.pyplot as plt
-
-            plt.show()
+        finish_plot("sensor_integral", save, interactive)

@@ -20,7 +20,12 @@ pub fn run_plot(
         return Ok(());
     }
 
-    let pb = ui::spinner(progress.clone());
+    let progress_message = if plot.interactive {
+        format!("{progress} (close plot window to continue)")
+    } else {
+        progress.clone()
+    };
+    let pb = ui::spinner(progress_message);
     match f().with_context(|| progress.clone()) {
         Ok(()) => {
             ui::finish_success(pb, completed);

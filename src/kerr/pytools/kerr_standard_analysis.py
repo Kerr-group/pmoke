@@ -4,6 +4,19 @@ from numpy.typing import NDArray
 from scipy.special import jn
 
 
+def finish_plot(fname: str, save: bool, interactive: bool):
+    if interactive:
+        import matplotlib.pyplot as plt
+
+        plt.ioff()
+        if save:
+            plt.savefig(f"{fname}.png", bbox_inches="tight")
+        plt.show(block=True)
+        plt.close("all")
+    elif save:
+        gs.show(fname, ft_list=["png"], show=False)
+
+
 class KerrStandardAnalyser:
     def __init__(self):
         pass
@@ -58,12 +71,7 @@ class KerrStandardAnalyser:
                 gs.title(title)
 
                 gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
-                if save:
-                    gs.show(fig_name, ft_list=["png"], show=interactive)
-                elif interactive:
-                    import matplotlib.pyplot as plt
-
-                    plt.show()
+                finish_plot(fig_name, save, interactive)
             except Exception as exc:
                 plot_error = str(exc)
 

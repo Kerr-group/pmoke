@@ -9,6 +9,19 @@ warnings.filterwarnings(
 )
 
 
+def finish_plot(fname: str, save: bool, interactive: bool):
+    if interactive:
+        import matplotlib.pyplot as plt
+
+        plt.ioff()
+        if save:
+            plt.savefig(f"{fname}.png", bbox_inches="tight")
+        plt.show(block=True)
+        plt.close("all")
+    elif save:
+        gs.show(fname, ft_list=["png"], show=False)
+
+
 class LIPlotter:
     def __init__(self):
         pass
@@ -73,9 +86,4 @@ class LIPlotter:
 
         gs.legend_axes(markerscale=3)
         gs.label(label)
-        if save:
-            gs.show("lockin_results", ft_list=["png"], show=interactive)
-        elif interactive:
-            import matplotlib.pyplot as plt
-
-            plt.show()
+        finish_plot("lockin_results", save, interactive)

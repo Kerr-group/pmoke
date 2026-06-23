@@ -11,6 +11,19 @@ warnings.filterwarnings(
 )
 
 
+def finish_plot(fname: str, save: bool, interactive: bool):
+    if interactive:
+        import matplotlib.pyplot as plt
+
+        plt.ioff()
+        if save:
+            plt.savefig(f"{fname}.png", bbox_inches="tight")
+        plt.show(block=True)
+        plt.close("all")
+    elif save:
+        gs.show(fname, ft_list=["png"], show=False)
+
+
 class OT0Analyser:
     def __init__(self):
         pass
@@ -72,12 +85,7 @@ class OT0Analyser:
                 gs.legend(axs[0], loc="best", markerscale=5)
 
                 gs.label([["$n$", "$-\\omega t_0$ (rad)", [0, 7], ["", ""]]])
-                if save:
-                    gs.show("omega_t0_analysis", ft_list=["png"], show=interactive)
-                elif interactive:
-                    import matplotlib.pyplot as plt
-
-                    plt.show()
+                finish_plot("omega_t0_analysis", save, interactive)
             except Exception as exc:
                 plot_error = str(exc)
 
