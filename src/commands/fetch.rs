@@ -48,6 +48,8 @@ struct RawChannelMetadata {
     y_increment: f64,
     y_origin: f64,
     y_reference: f64,
+    vertical_offset: f64,
+    vertical_scale: f64,
 }
 
 pub fn fetch(cfg: &Config) -> Result<()> {
@@ -449,6 +451,8 @@ fn write_raw_channel(
         y_increment: raw.preamble.y_increment,
         y_origin: raw.preamble.y_origin,
         y_reference: raw.preamble.y_reference,
+        vertical_offset: raw.preamble.vertical_offset,
+        vertical_scale: raw.preamble.vertical_scale,
     })
 }
 
@@ -496,6 +500,8 @@ fn write_raw_channel_streamed(
         y_increment: written.preamble.y_increment,
         y_origin: written.preamble.y_origin,
         y_reference: written.preamble.y_reference,
+        vertical_offset: written.preamble.vertical_offset,
+        vertical_scale: written.preamble.vertical_scale,
     })
 }
 
@@ -665,6 +671,8 @@ mod tests {
                 y_increment: 0.001,
                 y_origin: 0.0,
                 y_reference: 32768.0,
+                vertical_offset: 0.0,
+                vertical_scale: 0.1,
             },
             data: raw_bytes.clone(),
         };

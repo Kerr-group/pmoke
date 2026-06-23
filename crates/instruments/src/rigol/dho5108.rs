@@ -21,6 +21,8 @@ pub struct DhoWaveformPreamble {
     pub y_increment: f64,
     pub y_origin: f64,
     pub y_reference: f64,
+    pub vertical_offset: f64,
+    pub vertical_scale: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -209,7 +211,7 @@ impl DHO5108 {
         Ok(())
     }
 
-    fn query_waveform_preamble(&mut self) -> io::Result<DhoWaveformPreamble> {
+    fn query_waveform_preamble(&mut self, ch: u8) -> io::Result<DhoWaveformPreamble> {
         // PREamble preserves the full instrument context in metadata, but Rigol
         // rounds some scaling fields there. Query voltage scaling separately so
         // CSV/raw replay matches the older high-precision conversion path.
@@ -235,6 +237,10 @@ impl DHO5108 {
         let y_increment = self.query_f64("WAV:YINC?", "yincrement")?;
         let y_origin = self.query_f64("WAV:YOR?", "yorigin")?;
         let y_reference = self.query_f64("WAV:YREF?", "yreference")?;
+        let vertical_offset =
+            self.query_f64(&format!(":CHANnel{ch}:OFFSet?"), "channel vertical offset")?;
+        let vertical_scale =
+            self.query_f64(&format!(":CHANnel{ch}:SCALe?"), "channel vertical scale")?;
 
         Ok(DhoWaveformPreamble {
             raw: preamble,
@@ -244,6 +250,8 @@ impl DHO5108 {
             y_increment,
             y_origin,
             y_reference,
+            vertical_offset,
+            vertical_scale,
         })
     }
 
@@ -258,7 +266,7 @@ impl DHO5108 {
 
     pub fn fetch_raw_word(&mut self, ch: u8, memory_depth: usize) -> io::Result<DhoRawWaveform> {
         self.setup_raw_word_fetch(ch, memory_depth)?;
-        let preamble = self.query_waveform_preamble()?;
+        let preamble = self.query_waveform_preamble(ch)?;
 
         let data = self.query_binary("WAV:DATA?")?;
 
@@ -279,7 +287,7 @@ impl DHO5108 {
         writer: &mut W,
     ) -> io::Result<DhoRawWaveformWritten> {
         self.setup_raw_word_fetch(ch, memory_depth)?;
-        let preamble = self.query_waveform_preamble()?;
+        let preamble = self.query_waveform_preamble(ch)?;
 
         let byte_count = self.query_binary_into("WAV:DATA?", writer)?;
 
