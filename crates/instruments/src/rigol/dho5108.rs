@@ -210,7 +210,9 @@ impl DHO5108 {
     }
 
     fn query_waveform_preamble(&mut self) -> io::Result<DhoWaveformPreamble> {
-        // PREamble returns all scaling fields in one query.
+        // PREamble preserves the full instrument context in metadata, but Rigol
+        // rounds some scaling fields there. Query voltage scaling separately so
+        // CSV/raw replay matches the older high-precision conversion path.
         let preamble = self.query("WAV:PRE?")?;
         let fields: Vec<&str> = preamble.split(',').collect();
         if fields.len() != 10 {
@@ -230,9 +232,9 @@ impl DHO5108 {
         let x_increment = parse_field(4, "xincrement")?;
         let x_origin = parse_field(5, "xorigin")?;
         let x_reference = parse_field(6, "xreference")?;
-        let y_increment = parse_field(7, "yincrement")?;
-        let y_origin = parse_field(8, "yorigin")?;
-        let y_reference = parse_field(9, "yreference")?;
+        let y_increment = self.query_f64("WAV:YINC?", "yincrement")?;
+        let y_origin = self.query_f64("WAV:YOR?", "yorigin")?;
+        let y_reference = self.query_f64("WAV:YREF?", "yreference")?;
 
         Ok(DhoWaveformPreamble {
             raw: preamble,
@@ -242,6 +244,15 @@ impl DHO5108 {
             y_increment,
             y_origin,
             y_reference,
+        })
+    }
+
+    fn query_f64(&mut self, cmd: &str, name: &str) -> io::Result<f64> {
+        self.query(cmd)?.parse().map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid waveform {name}: {error}"),
+            )
         })
     }
 
