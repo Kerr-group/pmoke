@@ -1,4 +1,6 @@
 pub const FETCHED_FNAME: &str = "raw.csv";
+pub const RAW_METADATA_FNAME: &str = "metadata.toml";
+pub const RAW_WAVEFORM_DIR: &str = "raw_waveform";
 pub const HARMONICS: [usize; 6] = [1, 2, 3, 4, 5, 6];
 pub const T_HEADER: &str = "time (s)";
 pub const LI_HEADER: [&str; 12] = [

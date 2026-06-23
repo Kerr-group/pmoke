@@ -10,14 +10,14 @@ pub mod stride;
 pub mod time;
 
 use crate::config::Config;
-use crate::constants::{FETCHED_FNAME, HARMONICS, LI_HEADER, LI_RESULTS_NAME};
+use crate::constants::{HARMONICS, LI_HEADER, LI_RESULTS_NAME};
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
 use crate::lockin::sensor::run_sensor;
 use crate::lockin::time::time_builder;
 use crate::ui;
-use crate::utils::csv::read_csv;
+use crate::utils::waveform::read_all_fetched_waveforms;
 use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 
@@ -30,9 +30,9 @@ pub struct LockinProcessOutput {
 type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>);
 
 pub fn run(cfg: &Config) -> Result<()> {
-    let pb = ui::spinner(format!("reading {FETCHED_FNAME}"));
+    let pb = ui::spinner("reading fetched waveform data");
     let t0 = std::time::Instant::now();
-    let data = read_csv(FETCHED_FNAME)?;
+    let data = read_all_fetched_waveforms(cfg)?;
     let elapsed_read = t0.elapsed();
 
     ui::finish_read(
@@ -67,7 +67,7 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOut
 
     if max_needed_idx >= data.len() {
         bail!(
-            "Configuration error: required channel index {} is out of bounds. CSV only has {} columns.",
+            "Configuration error: required channel index {} is out of bounds. Fetched data only has {} columns.",
             max_needed_idx,
             data.len()
         );

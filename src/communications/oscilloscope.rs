@@ -1,7 +1,8 @@
 use crate::communications::validator::validate_oscilloscope;
 use crate::config::{Config, Connection};
 use anyhow::{Result, anyhow};
-use instruments::rigol::DHO5108;
+use instruments::rigol::{DHO5108, DhoRawWaveform, DhoRawWaveformWritten};
+use std::io::Write;
 
 pub enum Oscilloscope {
     DHO5108(DHO5108),
@@ -59,6 +60,33 @@ impl OscilloscopeHandler {
             Oscilloscope::DHO5108(dev) => Ok(dev.fetch(ch, depth)?),
             #[allow(unreachable_patterns)]
             _ => Err(anyhow!("fetch is not supported on this oscilloscope")),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn fetch_raw_word(&mut self, ch: u8, depth: usize) -> Result<DhoRawWaveform> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.fetch_raw_word(ch, depth)?),
+            #[allow(unreachable_patterns)]
+            _ => Err(anyhow!(
+                "raw WORD fetch is not supported on this oscilloscope"
+            )),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn fetch_raw_word_into<W: Write>(
+        &mut self,
+        ch: u8,
+        depth: usize,
+        writer: &mut W,
+    ) -> Result<DhoRawWaveformWritten> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.fetch_raw_word_into(ch, depth, writer)?),
+            #[allow(unreachable_patterns)]
+            _ => Err(anyhow!(
+                "raw WORD fetch is not supported on this oscilloscope"
+            )),
         }
     }
 }

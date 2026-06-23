@@ -1,4 +1,65 @@
-use super::{ConfigLoad, Connection, LockinLpfKind, load_from_str};
+use super::{
+    ConfigLoad, Connection, FetchAnalysisInput, FetchOutput, LockinLpfKind, load_from_str,
+};
+
+#[test]
+fn v2_fetch_output_defaults_to_csv() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert_eq!(config.fetch.output, FetchOutput::Csv);
+            assert_eq!(config.fetch.analysis_input, FetchAnalysisInput::Csv);
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
+fn v2_fetch_options_accept_raw_csv_and_auto() {
+    for (output, expected_output, input, expected_input) in [
+        ("raw", FetchOutput::Raw, "raw", FetchAnalysisInput::Raw),
+        (
+            "csv_and_raw",
+            FetchOutput::CsvAndRaw,
+            "auto",
+            FetchAnalysisInput::Auto,
+        ),
+    ] {
+        let text = v2_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+        )
+        .replacen(
+            "version = 2",
+            &format!(
+                r#"version = 2
+
+[fetch]
+output = "{output}"
+analysis_input = "{input}""#
+            ),
+            1,
+        );
+
+        match load_from_str(&text) {
+            ConfigLoad::Ready { config, .. } => {
+                assert_eq!(config.fetch.output, expected_output);
+                assert_eq!(config.fetch.analysis_input, expected_input);
+            }
+            other => panic!("expected ready load for {output}/{input}, got {other:?}"),
+        }
+    }
+}
 
 #[test]
 fn v2_usbtmc_connection_loads() {

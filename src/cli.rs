@@ -1,3 +1,8 @@
+#[cfg(feature = "hw")]
+use std::path::PathBuf;
+
+#[cfg(feature = "hw")]
+use clap::ValueEnum;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
@@ -38,7 +43,14 @@ pub enum Command {
     Autoshot,
     /// Fetch data from the oscilloscope and save to a file
     #[cfg(feature = "hw")]
-    Fetch,
+    Fetch {
+        /// Override output format from config [fetch].output
+        #[arg(long, value_enum)]
+        format: Option<FetchFormat>,
+        /// Output path. CSV defaults to raw.csv; raw defaults to raw_waveform/
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
     /// Perform auto measurement (set single mode, trigger, fetch)
     #[cfg(feature = "hw")]
     Automeasure,
@@ -66,4 +78,12 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+}
+
+#[cfg(feature = "hw")]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum FetchFormat {
+    Csv,
+    Raw,
+    CsvAndRaw,
 }

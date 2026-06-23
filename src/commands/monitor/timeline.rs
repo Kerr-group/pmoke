@@ -461,7 +461,7 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
         #[cfg(feature = "hw")]
         MonitorAction::Fetch => vec![StageSpec {
             label: "Fetch",
-            markers: &["fetched data"],
+            markers: &["fetched data", "fetched raw WORD"],
         }],
         #[cfg(feature = "hw")]
         MonitorAction::Automeasure => vec![
@@ -475,14 +475,14 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
             },
             StageSpec {
                 label: "Fetch",
-                markers: &["fetched data"],
+                markers: &["fetched data", "fetched raw WORD"],
             },
         ],
         #[cfg(feature = "hw")]
         MonitorAction::Process => vec![
             StageSpec {
                 label: "Fetch",
-                markers: &["fetched data"],
+                markers: &["fetched data", "fetched raw WORD"],
             },
             StageSpec {
                 label: "Reference",

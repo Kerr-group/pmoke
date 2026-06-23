@@ -68,7 +68,7 @@ impl MonitorAction {
             #[cfg(feature = "hw")]
             Self::Autoshot => "Set single mode and send trigger.",
             #[cfg(feature = "hw")]
-            Self::Fetch => "Fetch oscilloscope data into raw.csv.",
+            Self::Fetch => "Fetch oscilloscope data using the configured output format.",
             #[cfg(feature = "hw")]
             Self::Automeasure => "Single, trigger, then fetch waveform data.",
             #[cfg(feature = "hw")]

@@ -1,5 +1,8 @@
-use crate::config::{self, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning};
-use crate::constants::{FETCHED_FNAME, KERR_NAME, LI_RESULTS_NAME, LI_ROTATED_NAME};
+use crate::config::{self, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning, FetchOutput};
+use crate::constants::{
+    FETCHED_FNAME, KERR_NAME, LI_RESULTS_NAME, LI_ROTATED_NAME, RAW_METADATA_FNAME,
+    RAW_WAVEFORM_DIR,
+};
 use anyhow::Result;
 use crossterm::{
     event::{
@@ -2930,6 +2933,12 @@ fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
     let mut files = vec![("raw".to_string(), FETCHED_FNAME.to_string())];
 
     if let Some(cfg) = cfg {
+        if matches!(cfg.fetch.output, FetchOutput::Raw | FetchOutput::CsvAndRaw) {
+            files.push((
+                "raw word".to_string(),
+                format!("{RAW_WAVEFORM_DIR}/{RAW_METADATA_FNAME}"),
+            ));
+        }
         for ch in cfg.phase_signal_ch() {
             files.push((
                 format!("li ch{ch}"),

@@ -1,4 +1,6 @@
-use crate::constants::{FETCHED_FNAME, LI_RESULTS_NAME, LI_ROTATED_NAME};
+use crate::constants::{
+    FETCHED_FNAME, LI_RESULTS_NAME, LI_ROTATED_NAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR,
+};
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -62,6 +64,7 @@ where
 pub struct Config {
     pub version: u32,
     pub instruments: Option<Instruments>,
+    pub fetch: Fetch,
     pub timebase: Timebase,
     pub roles: Roles,
     pub channels: Vec<Channel>,
@@ -75,6 +78,39 @@ pub struct Config {
 impl Config {
     pub fn phase_signal_ch(&self) -> &[u8] {
         &self.roles.signal_ch
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FetchOutput {
+    #[default]
+    Csv,
+    Raw,
+    CsvAndRaw,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FetchAnalysisInput {
+    #[default]
+    Csv,
+    Raw,
+    Auto,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Fetch {
+    pub output: FetchOutput,
+    pub analysis_input: FetchAnalysisInput,
+}
+
+impl Default for Fetch {
+    fn default() -> Self {
+        Self {
+            output: FetchOutput::Csv,
+            analysis_input: FetchAnalysisInput::Csv,
+        }
     }
 }
 
@@ -316,6 +352,8 @@ struct ConfigV1 {
 struct ConfigV2 {
     version: u32,
     instruments: Option<InstrumentsV2>,
+    #[serde(default)]
+    fetch: FetchV2,
     timebase: TimebaseV2,
     roles: RolesV2,
     channels: Vec<ChannelV2>,
@@ -324,6 +362,15 @@ struct ConfigV2 {
     lockin: LockinV2,
     phase: PhaseV2,
     kerr: KerrV2,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct FetchV2 {
+    #[serde(default)]
+    output: FetchOutput,
+    #[serde(default)]
+    analysis_input: FetchAnalysisInput,
 }
 
 #[derive(Debug, Deserialize)]
@@ -778,6 +825,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
     let mut cfg = Config {
         version: 2,
         instruments: raw.instruments.map(Into::into),
+        fetch: Fetch::default(),
         timebase: raw.timebase.into(),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -832,6 +880,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
     let mut cfg = Config {
         version: raw.version,
         instruments: raw.instruments.map(Into::into),
+        fetch: raw.fetch.into(),
         timebase: raw.timebase.into(),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -1207,7 +1256,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_oscilloscope_required(cfg)?;
             validate_timebase(cfg)?;
             validate_reference_roles(cfg)?;
-            validate_raw_csv_exists()?;
+            validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Sensor => {
             validate_oscilloscope_required(cfg)?;
@@ -1215,7 +1264,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
-            validate_raw_csv_exists()?;
+            validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Li => {
             validate_oscilloscope_required(cfg)?;
@@ -1224,7 +1273,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_sensor_roles(cfg)?;
             validate_signal_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
-            validate_raw_csv_exists()?;
+            validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Phase => {
             validate_signal_roles(cfg)?;
@@ -1245,7 +1294,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_sensor_roles(cfg)?;
             validate_signal_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
-            validate_raw_csv_exists()?;
+            validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Process => {
             validate_timebase(cfg)?;
@@ -1355,8 +1404,31 @@ fn validate_sensor_metadata(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
+fn validate_analysis_input_exists(cfg: &Config) -> Result<()> {
+    match cfg.fetch.analysis_input {
+        FetchAnalysisInput::Csv => validate_raw_csv_exists(),
+        FetchAnalysisInput::Raw => validate_raw_metadata_exists(),
+        FetchAnalysisInput::Auto => {
+            let raw_dir = Path::new(RAW_WAVEFORM_DIR);
+            let metadata = raw_dir.join(RAW_METADATA_FNAME);
+            if metadata.exists() {
+                Ok(())
+            } else if raw_dir.exists() {
+                bail!("raw metadata not found: {}", metadata.display())
+            } else {
+                validate_raw_csv_exists()
+            }
+        }
+    }
+}
+
 fn validate_raw_csv_exists() -> Result<()> {
     validate_file_exists(Path::new(FETCHED_FNAME), FETCHED_FNAME)
+}
+
+fn validate_raw_metadata_exists() -> Result<()> {
+    let path = Path::new(RAW_WAVEFORM_DIR).join(RAW_METADATA_FNAME);
+    validate_file_exists(&path, &path.display().to_string())
 }
 
 fn validate_lockin_results_exist(cfg: &Config) -> Result<()> {
@@ -1418,6 +1490,15 @@ impl From<InstrumentsV2> for Instruments {
         Self {
             function_generator: value.function_generator.map(Into::into),
             oscilloscope: value.oscilloscope.into(),
+        }
+    }
+}
+
+impl From<FetchV2> for Fetch {
+    fn from(value: FetchV2) -> Self {
+        Self {
+            output: value.output,
+            analysis_input: value.analysis_input,
         }
     }
 }
