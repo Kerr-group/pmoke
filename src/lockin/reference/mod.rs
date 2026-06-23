@@ -4,13 +4,11 @@ pub mod ref_plot;
 use std::f64::consts::PI;
 
 use crate::config::Config;
-use crate::constants::FETCHED_FNAME;
 use crate::lockin::reference::ref_analysis::{RefFitParams, ReferenceFFT, ReferenceFitter};
 use crate::lockin::time::time_builder;
 use crate::ui;
-use crate::utils::channels::build_channel_list;
-use crate::utils::csv::read_selected_columns;
-use anyhow::{Context, Result, anyhow, bail};
+use crate::utils::waveform::read_waveform_channels;
+use anyhow::{Context, Result, bail};
 
 pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
@@ -21,35 +19,17 @@ pub fn run(cfg: &Config) -> Result<()> {
 pub fn run_fit_ref(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
     let ref_ch = extract_single_reference_ch(cfg)?;
 
-    let channels = build_channel_list(cfg)?;
-    let col_idx = channels
-        .iter()
-        .position(|ch| *ch == ref_ch)
-        .ok_or_else(|| {
-            anyhow!(
-                "reference channel {} not found in fetched channels {:?}",
-                ref_ch,
-                channels
-            )
-        })?;
-
-    let pb = ui::spinner(format!("reading reference column {}", col_idx + 1));
+    let pb = ui::spinner(format!("reading reference channel {ref_ch}"));
     let t0 = std::time::Instant::now();
-    let ref_data = read_selected_columns(FETCHED_FNAME, &[col_idx])
-        .context("failed to read reference column from csv")?
+    let ref_data = read_waveform_channels(cfg, &[ref_ch])
+        .context("failed to read reference channel")?
         .pop()
-        .ok_or_else(|| {
-            anyhow!(
-                "read_selected_columns returned no data for column index {}",
-                col_idx
-            )
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("read_waveform_channels returned no data for ch{ref_ch}"))?;
     let elapsed_read = t0.elapsed();
     ui::finish_read(
         pb,
         format!(
-            "reference column {} ({})",
-            col_idx + 1,
+            "reference channel {ref_ch} ({})",
             ui::fmt_duration(elapsed_read)
         ),
     );

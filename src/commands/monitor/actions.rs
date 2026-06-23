@@ -55,7 +55,9 @@ impl MonitorAction {
     pub(super) fn description(self) -> &'static str {
         match self {
             Self::Show => "Print normalized config and diagnostics.",
-            Self::Reference => "Fit reference frequency and phase from raw.csv.",
+            Self::Reference => {
+                "Fit reference frequency and phase from the configured waveform input."
+            }
             Self::Sensor => "Integrate sensor pulse channels.",
             Self::Li => "Run numerical lock-in and write lockin_results.",
             Self::Phase => "Rotate lock-in phase and write lockin_rotated.",
@@ -68,7 +70,7 @@ impl MonitorAction {
             #[cfg(feature = "hw")]
             Self::Autoshot => "Set single mode and send trigger.",
             #[cfg(feature = "hw")]
-            Self::Fetch => "Fetch oscilloscope data into raw.csv.",
+            Self::Fetch => "Fetch oscilloscope data using the configured output format.",
             #[cfg(feature = "hw")]
             Self::Automeasure => "Single, trigger, then fetch waveform data.",
             #[cfg(feature = "hw")]

@@ -165,11 +165,63 @@ kerr_type     = "harmonics"  # "standard" or "harmonics"
 factor        = 1
 ```
 
+On Windows with NI-VISA installed, DHO5108 can instead use its USB-TMC VISA
+resource:
+
+```toml
+[instruments.oscilloscope]
+connection = { protocol = "usbtmc", resource = "USB0::0x1AB1::0x0450::DHO5A27090041::INSTR" }
+model = "DHO5108"
+memory_depth = 200_000_000
+```
+
 ---
 
 ## 📘 Notes
 
 `config.toml` defines all instrument connections, channel roles, timing settings, lock-in parameters, and Kerr-analysis settings.
+
+### Fetch output formats
+
+By default, `pmoke fetch` writes converted voltage columns to `raw.csv`. You can
+choose the fetch output in `config.toml`:
+
+```toml
+[fetch]
+output = "csv"              # "csv", "raw", or "csv_and_raw"
+analysis_input = "csv"      # "csv", "raw", or "auto"
+```
+
+The command-line `--format` option overrides the config for a single run:
+
+```sh
+pmoke fetch
+pmoke fetch --format csv --out raw.csv
+```
+
+For large DHO5108 captures where the original ADC codes should be preserved, use
+raw WORD output:
+
+```sh
+pmoke fetch --format raw --out shot_001
+```
+
+This writes one little-endian WORD file per channel plus metadata:
+
+```text
+shot_001/
+  metadata.toml
+  ch1.u16le
+  ch2.u16le
+```
+
+The raw files contain the binary `WAV:FORM WORD` payload exactly as received from
+the oscilloscope. `metadata.toml` stores the `WAV:PRE?` scaling values needed to
+reconstruct the voltage axis later. The current analysis commands still read
+`raw.csv` by default. Set `analysis_input = "raw"` to analyze
+`raw_waveform/metadata.toml` and `chN.u16le` directly, or `analysis_input = "auto"`
+to use complete raw output when it exists and fall back to `raw.csv` only when raw
+output is absent.
 
 A `version = 2` config is the normalized schema used internally by the current code. Unknown keys in `version = 2` are rejected, so `pmoke show` is the easiest way to confirm that your file matches the expected structure.
 

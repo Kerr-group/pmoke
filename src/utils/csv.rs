@@ -109,11 +109,3 @@ where
     w.flush()?;
     Ok(())
 }
-
-#[cfg(feature = "hw")]
-pub fn ensure_not_exists(path: &str) -> Result<()> {
-    if Path::new(path).exists() {
-        anyhow::bail!("file {} already exists", path);
-    }
-    Ok(())
-}

@@ -26,6 +26,8 @@ use crate::ffi::{
 use crate::tmo::secs_to_ms;
 #[cfg(target_os = "windows")]
 use std::ffi::CString;
+#[cfg(target_os = "windows")]
+use std::time::Duration;
 
 /// GPIB instrument handle (closed automatically on Drop).
 pub struct Instrument {
@@ -53,6 +55,74 @@ impl Default for OpenOptions {
 }
 
 impl Instrument {
+    #[cfg(target_os = "windows")]
+    fn open_visa_resource(
+        resource: &str,
+        timeout_ms: Option<u32>,
+        clear_on_open: bool,
+    ) -> Result<Self> {
+        let rsrc = CString::new(resource)
+            .map_err(|_| crate::error::sys_err("viOpen", "VISA resource contains a NUL byte"))?;
+        let mut rm: ViSession = 0;
+        let mut vi: ViSession = 0;
+
+        unsafe {
+            let s1 = viOpenDefaultRM(&mut rm);
+            if s1 < VI_SUCCESS {
+                update_status_from_visa(s1, 0);
+                return Err(err("viOpenDefaultRM"));
+            }
+
+            let s2 = viOpen(rm, rsrc.as_ptr(), 0, 0, &mut vi);
+            if s2 < VI_SUCCESS {
+                viClose(rm);
+                update_status_from_visa(s2, 0);
+                return Err(err("viOpen"));
+            }
+
+            let timeout_value = timeout_ms.unwrap_or(VI_TMO_INFINITE) as u64;
+            let timeout_status = viSetAttribute(vi, VI_ATTR_TMO_VALUE, timeout_value);
+            if timeout_status < VI_SUCCESS {
+                viClose(vi);
+                viClose(rm);
+                update_status_from_visa(timeout_status, 0);
+                return Err(err("viSetAttribute"));
+            }
+            let send_end_status = viSetAttribute(vi, VI_ATTR_SEND_END_EN, 1);
+            if send_end_status < VI_SUCCESS {
+                viClose(vi);
+                viClose(rm);
+                update_status_from_visa(send_end_status, 0);
+                return Err(err("viSetAttribute"));
+            }
+
+            if clear_on_open {
+                let clear_status = viClear(vi);
+                if clear_status < VI_SUCCESS {
+                    viClose(vi);
+                    viClose(rm);
+                    update_status_from_visa(clear_status, 0);
+                    return Err(err("viClear"));
+                }
+            }
+
+            update_status_from_visa(VI_SUCCESS, 0);
+        }
+
+        Ok(Self { rm, vi })
+    }
+
+    /// Open an arbitrary NI-VISA resource, such as a USB-TMC instrument.
+    #[cfg(target_os = "windows")]
+    pub fn open_resource(resource: &str, timeout: Option<Duration>) -> Result<Self> {
+        let timeout_ms = timeout.map(|value| {
+            u32::try_from(value.as_millis())
+                .unwrap_or(VI_TMO_INFINITE - 1)
+                .min(VI_TMO_INFINITE - 1)
+        });
+        Self::open_visa_resource(resource, timeout_ms, false)
+    }
+
     /// Open on board=0 (gpib0) with default timeout=10s.
     pub fn open(pad: i32) -> Result<Self> {
         Self::open_with(0, pad, 10)
@@ -74,39 +144,12 @@ impl Instrument {
     pub fn open_with_opts(board: i32, pad: i32, opts: OpenOptions) -> Result<Self> {
         #[cfg(target_os = "windows")]
         {
-            let mut rm: ViSession = 0;
-            let mut vi: ViSession = 0;
-
-            unsafe {
-                let s1 = viOpenDefaultRM(&mut rm);
-                if s1 < VI_SUCCESS {
-                    update_status_from_visa(s1, 0);
-                    return Err(err("viOpenDefaultRM"));
-                }
-
-                let rsrc = CString::new(format!("GPIB{}::{}::INSTR", board, pad)).unwrap();
-                let s2 = viOpen(rm, rsrc.as_ptr(), 0, 0, &mut vi);
-                if s2 < VI_SUCCESS {
-                    viClose(rm);
-                    update_status_from_visa(s2, 0);
-                    return Err(err("viOpen"));
-                }
-
-                // Set Timeout
-                let tmo_ms = secs_to_ms(opts.timeout_secs);
-                viSetAttribute(vi, VI_ATTR_TMO_VALUE, tmo_ms as u64);
-                // Enable TermChar if needed (usually defaults to LF in many setups or disabled)
-                // We typically handle EOS manually or let VISA handle EOI.
-                viSetAttribute(vi, VI_ATTR_SEND_END_EN, 1); // Assert EOI at end of write
-
-                if opts.clear_on_open {
-                    viClear(vi);
-                }
-
-                update_status_from_visa(VI_SUCCESS, 0);
-            }
-
-            Ok(Self { rm, vi })
+            let resource = format!("GPIB{}::{}::INSTR", board, pad);
+            Self::open_visa_resource(
+                &resource,
+                Some(secs_to_ms(opts.timeout_secs)),
+                opts.clear_on_open,
+            )
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -213,6 +256,11 @@ impl Instrument {
 
         let mut head = Vec::with_capacity(32);
         self.read_into(&mut head)?;
+        while head.len() < 2 && (ibsta_val() & END) == 0 {
+            if self.read_into(&mut head)? == 0 {
+                break;
+            }
+        }
         if head.len() < 2 || head[0] != b'#' {
             // Not a binary block or fragmented
             out.extend_from_slice(&head);
@@ -225,31 +273,51 @@ impl Instrument {
             return Ok(());
         }
 
-        let nd = (head[1] as char).to_digit(10).unwrap_or(0) as usize;
+        let nd = (head[1] as char).to_digit(10).ok_or_else(|| {
+            crate::error::sys_err("query_ieee_block", "invalid IEEE block length digit")
+        })? as usize;
         if nd > 0 {
             while head.len() < 2 + nd {
-                let _ = self.read_into(&mut head)?;
+                if self.read_into(&mut head)? == 0 {
+                    break;
+                }
+            }
+            if head.len() < 2 + nd {
+                return Err(crate::error::sys_err(
+                    "query_ieee_block",
+                    "incomplete IEEE block header",
+                ));
             }
             let len = std::str::from_utf8(&head[2..2 + nd])
                 .ok()
                 .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(0);
+                .ok_or_else(|| {
+                    crate::error::sys_err("query_ieee_block", "invalid IEEE block payload length")
+                })?;
             out.reserve_exact(len);
 
-            let mut copied = 0usize;
             if head.len() > 2 + nd {
                 let take = std::cmp::min(len, head.len() - (2 + nd));
                 out.extend_from_slice(&head[2 + nd..2 + nd + take]);
-                copied += take;
             }
-            while copied < len {
-                let before = out.len();
-                let _ = self.read_into(out)?;
-                let after = out.len();
-                if after == before {
+            while out.len() < len {
+                let got = self.read_into(out)?;
+                if got == 0 {
                     break;
                 }
-                copied = after;
+            }
+            out.truncate(len);
+            if out.len() != len {
+                return Err(crate::error::sys_err(
+                    "query_ieee_block",
+                    format!("expected {len} payload bytes, received {}", out.len()),
+                ));
+            }
+            while (ibsta_val() & END) == 0 {
+                let mut trailer = Vec::with_capacity(16);
+                if self.read_into(&mut trailer)? == 0 {
+                    break;
+                }
             }
             return Ok(());
         }

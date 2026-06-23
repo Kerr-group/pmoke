@@ -1,18 +1,17 @@
 use crate::{
     config::Config,
-    constants::FETCHED_FNAME,
     kerr::run_kerr_analysis,
     lockin::{run_li, time::time_builder},
     phase::run_phase_analysis,
     ui,
-    utils::csv::read_csv,
+    utils::waveform::read_all_fetched_waveforms,
 };
 use anyhow::{Result, bail};
 
 pub fn analyze(cfg: &Config) -> Result<()> {
-    let pb = ui::spinner(format!("reading {FETCHED_FNAME}"));
+    let pb = ui::spinner("reading fetched waveform data");
     let t0 = std::time::Instant::now();
-    let data = read_csv(FETCHED_FNAME)?;
+    let data = read_all_fetched_waveforms(cfg)?;
     let elapsed_read = t0.elapsed();
 
     ui::finish_read(

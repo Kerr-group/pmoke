@@ -5,11 +5,10 @@ pub mod sensor_raw_plot;
 use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
 use crate::lockin::reference::run_fit_ref;
-use crate::lockin::resolve::sensor_column_indices;
 use crate::lockin::stride::{li_stride_1d, li_stride_2d};
 use crate::lockin::time::time_builder;
 use crate::ui;
-use crate::utils::csv::read_selected_columns;
+use crate::utils::waveform::read_waveform_channels;
 use anyhow::{Context, Result, bail};
 
 pub struct SensorMeta<'a> {
@@ -22,17 +21,17 @@ pub fn run(cfg: &Config) -> Result<()> {
     let t = time_builder(cfg)?;
     let ref_fit_params = run_fit_ref(cfg, &t)?;
 
-    let (sensor_ch, col_idx) = sensor_column_indices(cfg)?;
-    let pb = ui::spinner(format!("reading sensor columns {:?}", col_idx));
+    let sensor_ch = cfg.roles.sensor_ch.clone();
+    let pb = ui::spinner(format!("reading sensor channels {:?}", sensor_ch));
     let t0 = std::time::Instant::now();
-    let s_cols = read_selected_columns(FETCHED_FNAME, &col_idx)
-        .context("failed to read sensor columns from csv")?;
+    let s_cols =
+        read_waveform_channels(cfg, &sensor_ch).context("failed to read sensor channels")?;
     let s_col_refs: Vec<&[f64]> = s_cols.iter().map(|col| col.as_slice()).collect();
     ui::finish_read(
         pb,
         format!(
-            "sensor columns {:?} ({})",
-            col_idx,
+            "sensor channels {:?} ({})",
+            sensor_ch,
             ui::fmt_duration(t0.elapsed())
         ),
     );
