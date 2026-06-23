@@ -1,0 +1,65 @@
+name: Update Cargo.lock
+
+on:
+  push:
+    paths:
+      - Cargo.toml
+      - crates/**/Cargo.toml
+  pull_request:
+    paths:
+      - Cargo.toml
+      - crates/**/Cargo.toml
+      - Cargo.lock
+      - .github/workflows/update-cargo-lock.yml
+  workflow_dispatch:
+
+jobs:
+  check-lockfile:
+    name: Check lockfile
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Refresh Cargo.lock
+        run: cargo metadata --format-version 1 --no-deps > /dev/null
+
+      - name: Check Cargo.lock
+        run: git diff --exit-code Cargo.lock
+
+  update-lockfile:
+    name: Update lockfile
+    if: github.event_name != 'pull_request' && github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Refresh Cargo.lock
+        run: cargo metadata --format-version 1 --no-deps > /dev/null
+
+      - name: Commit Cargo.lock
+        run: |
+          if git diff --quiet Cargo.lock; then
+            echo "Cargo.lock is already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "Update Cargo.lock"
+          git push
