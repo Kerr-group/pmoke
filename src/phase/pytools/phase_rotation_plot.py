@@ -9,17 +9,25 @@ warnings.filterwarnings(
 )
 
 
-def finish_plot(fname: str, save: bool, interactive: bool):
+def finish_plot(fname: str, save: bool, interactive: bool, output_dir: str):
     if interactive:
         import matplotlib.pyplot as plt
 
         plt.ioff()
         if save:
-            plt.savefig(f"{fname}.png", bbox_inches="tight")
+            import os
+
+            os.makedirs(output_dir, exist_ok=True)
+            path = os.path.join(output_dir, fname)
+            plt.savefig(f"{path}.png", bbox_inches="tight")
         plt.show(block=True)
         plt.close("all")
     elif save:
-        gs.show(fname, ft_list=["png"], show=False)
+        import os
+
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, fname)
+        gs.show(path, ft_list=["png"], show=False)
 
 
 class PhaseRotationPlotter:
@@ -34,6 +42,7 @@ class PhaseRotationPlotter:
         labels: list[str],
         save: bool,
         interactive: bool,
+        output_dir: str,
     ):
         ch_num = len(index_arr)
         mosaic = ";".join(
@@ -86,4 +95,4 @@ class PhaseRotationPlotter:
 
         gs.legend_axes(markerscale=3)
         gs.label(label)
-        finish_plot("phase_rotated", save, interactive)
+        finish_plot("phase_rotated", save, interactive, output_dir)

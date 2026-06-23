@@ -56,6 +56,7 @@ impl SensorIntegralPlotter {
                         unit_arr,
                         plot.save,
                         plot.interactive,
+                        &plot.output_dir,
                     ),
                 )
                 .context("python SensorIntegralPlotter.plot(...) failed")?;

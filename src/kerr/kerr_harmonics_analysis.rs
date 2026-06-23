@@ -58,6 +58,7 @@ impl KerrHarmonicsAnalyser {
                         input.fig_name,
                         input.plot.save && input.plot.enabled,
                         input.plot.interactive && input.plot.enabled,
+                        &input.plot.output_dir,
                         input.plot.max_points,
                     ),
                 )

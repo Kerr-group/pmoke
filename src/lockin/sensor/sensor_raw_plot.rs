@@ -55,6 +55,7 @@ impl SensorRawPlotter {
                         c_bg_obj,
                         plot.save,
                         plot.interactive,
+                        &plot.output_dir,
                     ),
                 )
                 .context("python SensorRawPlotter.plot(...) failed")?;

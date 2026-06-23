@@ -39,7 +39,17 @@ impl ReferencePlotter {
                 .context("failed to create ReferencePlotter instance")?;
 
             plotter
-                .call_method1("plot", (t_obj, y_obj, fit_obj, plot.save, plot.interactive))
+                .call_method1(
+                    "plot",
+                    (
+                        t_obj,
+                        y_obj,
+                        fit_obj,
+                        plot.save,
+                        plot.interactive,
+                        &plot.output_dir,
+                    ),
+                )
                 .context("python ReferencePlotter.plot(...) failed")?;
 
             Ok(())

@@ -11,17 +11,25 @@ warnings.filterwarnings(
 )
 
 
-def finish_plot(fname: str, save: bool, interactive: bool):
+def finish_plot(fname: str, save: bool, interactive: bool, output_dir: str):
     if interactive:
         import matplotlib.pyplot as plt
 
         plt.ioff()
         if save:
-            plt.savefig(f"{fname}.png", bbox_inches="tight")
+            import os
+
+            os.makedirs(output_dir, exist_ok=True)
+            path = os.path.join(output_dir, fname)
+            plt.savefig(f"{path}.png", bbox_inches="tight")
         plt.show(block=True)
         plt.close("all")
     elif save:
-        gs.show(fname, ft_list=["png"], show=False)
+        import os
+
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, fname)
+        gs.show(path, ft_list=["png"], show=False)
 
 
 class OT0Analyser:
@@ -38,6 +46,7 @@ class OT0Analyser:
         m_ot0_6: NDArray,
         save: bool,
         interactive: bool,
+        output_dir: str,
         max_points: int,
     ):
         ones = np.ones(len(m_ot0_2))
@@ -85,7 +94,7 @@ class OT0Analyser:
                 gs.legend(axs[0], loc="best", markerscale=5)
 
                 gs.label([["$n$", "$-\\omega t_0$ (rad)", [0, 7], ["", ""]]])
-                finish_plot("omega_t0_analysis", save, interactive)
+                finish_plot("omega_t0_analysis", save, interactive, output_dir)
             except Exception as exc:
                 plot_error = str(exc)
 

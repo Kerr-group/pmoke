@@ -46,7 +46,15 @@ impl LIPlotter {
             plotter
                 .call_method1(
                     "plot",
-                    (t_obj, y_obj, index_arr, labels, plot.save, plot.interactive),
+                    (
+                        t_obj,
+                        y_obj,
+                        index_arr,
+                        labels,
+                        plot.save,
+                        plot.interactive,
+                        &plot.output_dir,
+                    ),
                 )
                 .context("python LIPlotter.plot(...) failed")?;
 

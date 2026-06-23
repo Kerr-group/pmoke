@@ -51,6 +51,7 @@ impl OT0Analyser {
                         m_ot0_6_obj,
                         plot.save && plot.enabled,
                         plot.interactive && plot.enabled,
+                        &plot.output_dir,
                         plot.max_points,
                     ),
                 )

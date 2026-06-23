@@ -115,11 +115,12 @@ impl Default for Fetch {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Plot {
     pub enabled: bool,
     pub save: bool,
     pub interactive: bool,
+    pub output_dir: String,
     pub max_points: usize,
     pub decimation: PlotDecimation,
     pub fail_on_error: bool,
@@ -131,6 +132,7 @@ impl Default for Plot {
             enabled: true,
             save: true,
             interactive: false,
+            output_dir: "plots".to_string(),
             max_points: 100_000,
             decimation: PlotDecimation::Stride,
             fail_on_error: false,
@@ -411,6 +413,7 @@ struct PlotV2 {
     enabled: bool,
     save: bool,
     interactive: bool,
+    output_dir: String,
     max_points: usize,
     decimation: PlotDecimation,
     fail_on_error: bool,
@@ -423,6 +426,7 @@ impl Default for PlotV2 {
             enabled: default.enabled,
             save: default.save,
             interactive: default.interactive,
+            output_dir: default.output_dir,
             max_points: default.max_points,
             decimation: default.decimation,
             fail_on_error: default.fail_on_error,
@@ -1030,6 +1034,14 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
+    if cfg.plot.output_dir.trim().is_empty() {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("plot.output_dir".to_string()),
+            "plot.output_dir must not be empty",
+            None,
+        ));
+    }
     if cfg.lockin.workers == 0 {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
@@ -1576,6 +1588,7 @@ impl From<PlotV2> for Plot {
             enabled: value.enabled,
             save: value.save,
             interactive: value.interactive,
+            output_dir: value.output_dir,
             max_points: value.max_points,
             decimation: value.decimation,
             fail_on_error: value.fail_on_error,

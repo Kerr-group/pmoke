@@ -1,6 +1,7 @@
 use crate::config::{Plot, PlotDecimation};
 use crate::ui;
 use anyhow::{Context, Result};
+use std::fs;
 
 pub fn run_plot(
     plot: &Plot,
@@ -18,6 +19,10 @@ pub fn run_plot(
     if !plot.save && !plot.interactive {
         ui::skipped(format!("{progress}: save=false and interactive=false"));
         return Ok(());
+    }
+    if plot.save {
+        fs::create_dir_all(&plot.output_dir)
+            .with_context(|| format!("failed to create plot output dir: {}", plot.output_dir))?;
     }
 
     let progress_message = if plot.interactive {
