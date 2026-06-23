@@ -7,7 +7,6 @@ pub mod resolve;
 pub mod save;
 pub mod sensor;
 pub mod stride;
-pub mod time;
 
 use crate::config::Config;
 use crate::constants::{HARMONICS, LI_HEADER, LI_RESULTS_NAME};
@@ -15,7 +14,6 @@ use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
 use crate::lockin::sensor::run_sensor;
-use crate::lockin::time::time_builder;
 use crate::utils::waveform::read_all_fetched_waveforms;
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
@@ -39,19 +37,17 @@ pub fn run(cfg: &Config) -> Result<()> {
         pb,
         format!(
             "fetched data: {} rows, {} columns ({})",
-            data.len(),
-            if data.is_empty() { 0 } else { data[0].len() },
+            data.channels.len(),
+            data.channels.first().map_or(0, Vec::len),
             ui::fmt_duration(elapsed_read)
         ),
     );
 
-    if data.is_empty() {
+    if data.channels.is_empty() {
         bail!("Fetched data is empty, cannot extract columns.");
     }
 
-    let t = time_builder(cfg)?;
-
-    let _ = run_li(cfg, &t, &data)?;
+    let _ = run_li(cfg, &data.t, &data.channels)?;
 
     Ok(())
 }

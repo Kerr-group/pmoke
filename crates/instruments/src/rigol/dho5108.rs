@@ -223,17 +223,9 @@ impl DHO5108 {
                 format!("expected 10 waveform preamble fields, got {}", fields.len()),
             ));
         }
-        let parse_field = |index: usize, name: &str| -> io::Result<f64> {
-            fields[index].parse().map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid waveform preamble {name}: {error}"),
-                )
-            })
-        };
-        let x_increment = parse_field(4, "xincrement")?;
-        let x_origin = parse_field(5, "xorigin")?;
-        let x_reference = parse_field(6, "xreference")?;
+        let x_increment = self.query_f64("WAV:XINC?", "xincrement")?;
+        let x_origin = self.query_f64("WAV:XOR?", "xorigin")?;
+        let x_reference = self.query_f64("WAV:XREF?", "xreference")?;
         let y_increment = self.query_f64("WAV:YINC?", "yincrement")?;
         let y_origin = self.query_f64("WAV:YOR?", "yorigin")?;
         let y_reference = self.query_f64("WAV:YREF?", "yreference")?;

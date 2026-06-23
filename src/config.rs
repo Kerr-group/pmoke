@@ -66,7 +66,8 @@ pub struct Config {
     pub instruments: Option<Instruments>,
     pub fetch: Fetch,
     pub plot: Plot,
-    pub timebase: Timebase,
+    #[serde(skip_serializing)]
+    pub legacy_timebase: Option<Timebase>,
     pub roles: Roles,
     pub channels: Vec<Channel>,
     pub pulse: Pulse,
@@ -382,6 +383,7 @@ struct ConfigV1 {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigV2 {
+    #[allow(dead_code)]
     version: u32,
     instruments: Option<InstrumentsV2>,
     #[serde(default)]
@@ -389,6 +391,24 @@ struct ConfigV2 {
     #[serde(default)]
     plot: PlotV2,
     timebase: TimebaseV2,
+    roles: RolesV2,
+    channels: Vec<ChannelV2>,
+    pulse: PulseV2,
+    reference: ReferenceV2,
+    lockin: LockinV2,
+    phase: PhaseV2,
+    kerr: KerrV2,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigV3 {
+    version: u32,
+    instruments: Option<InstrumentsV2>,
+    #[serde(default)]
+    fetch: FetchV2,
+    #[serde(default)]
+    plot: PlotV2,
     roles: RolesV2,
     channels: Vec<ChannelV2>,
     pulse: PulseV2,
@@ -766,6 +786,15 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
                 normalized: None,
             }),
         },
+        3 => match deserialize_versioned::<ConfigV3>(s) {
+            Ok(raw) => normalize_v3(raw),
+            Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
+                version: Some(3),
+                warnings: Vec::new(),
+                diagnostics: vec![diag],
+                normalized: None,
+            }),
+        },
         other => {
             ConfigLoad::Diagnostics(ConfigDiagnostics {
                 version: Some(other),
@@ -774,7 +803,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
                 DiagnosticKind::Parse,
                 Some("version".to_string()),
                 format!("unsupported config version: {other}"),
-                Some("use version = 1 for legacy configs or version = 2 for the normalized schema"
+                Some("use version = 1 or 2 for legacy configs, or version = 3 for the normalized schema"
                     .to_string()),
             )],
                 normalized: None,
@@ -884,11 +913,11 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
     });
 
     let mut cfg = Config {
-        version: 2,
+        version: 3,
         instruments: raw.instruments.map(Into::into),
         fetch: Fetch::default(),
         plot: Plot::default(),
-        timebase: raw.timebase.into(),
+        legacy_timebase: Some(raw.timebase.into()),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
             reference_ch,
@@ -939,12 +968,73 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
 }
 
 fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
+    let legacy_timebase = raw.timebase.into();
+    let mut warnings = vec![ConfigWarning::new(
+        "timebase is deprecated; waveform time axis is read from raw metadata or CSV time column",
+    )];
+    let mut cfg = Config {
+        version: 3,
+        instruments: raw.instruments.map(Into::into),
+        fetch: raw.fetch.into(),
+        plot: raw.plot.into(),
+        legacy_timebase: Some(legacy_timebase),
+        roles: Roles {
+            sensor_ch: raw.roles.sensor_ch,
+            reference_ch: raw.roles.reference_ch,
+            signal_ch: raw.roles.signal_ch,
+        },
+        channels: raw.channels.into_iter().map(Into::into).collect(),
+        pulse: raw.pulse.into(),
+        reference: raw.reference.into(),
+        lockin: Lockin {
+            workers: raw.lockin.workers,
+            stride_samples: raw.lockin.stride_samples,
+            lpf_kind: raw.lockin.lpf_kind.unwrap_or(LockinLpfKind::FirZeroPhase),
+            lpf_half_window_cycles: raw.lockin.lpf_half_window_cycles,
+            lpf_cutoff_hz: raw.lockin.lpf_cutoff_hz,
+            lpf_cutoff_ref_ratio: raw.lockin.lpf_cutoff_ref_ratio,
+            lpf_stopband_atten_db: raw.lockin.lpf_stopband_atten_db,
+            lpf_sync_average_cycles: raw.lockin.lpf_sync_average_cycles,
+            lpf_iir_order: raw.lockin.lpf_iir_order,
+            lpf_debug_output: raw.lockin.lpf_debug_output,
+            lpf_debug_label: raw.lockin.lpf_debug_label,
+            lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
+            snr_background_window: raw.lockin.snr_background_window,
+            snr_signal_window: raw.lockin.snr_signal_window,
+        },
+        phase: Phase {
+            m_omega_t0_offset: raw.phase.m_omega_t0_offset,
+        },
+        kerr: raw.kerr.into(),
+    };
+
+    let validation = validate_common(&mut cfg);
+    if validation.errors.is_empty() {
+        warnings.extend(validation.warnings);
+        ConfigLoad::Ready {
+            config: cfg,
+            warnings,
+        }
+    } else {
+        ConfigLoad::Diagnostics(ConfigDiagnostics {
+            version: Some(2),
+            warnings: {
+                warnings.extend(validation.warnings);
+                warnings
+            },
+            diagnostics: validation.errors,
+            normalized: None,
+        })
+    }
+}
+
+fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
     let mut cfg = Config {
         version: raw.version,
         instruments: raw.instruments.map(Into::into),
         fetch: raw.fetch.into(),
         plot: raw.plot.into(),
-        timebase: raw.timebase.into(),
+        legacy_timebase: None,
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
             reference_ch: raw.roles.reference_ch,
@@ -983,7 +1073,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         }
     } else {
         ConfigLoad::Diagnostics(ConfigDiagnostics {
-            version: Some(2),
+            version: Some(3),
             warnings: validation.warnings,
             diagnostics: validation.errors,
             normalized: None,
@@ -1007,22 +1097,14 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
 
-    if cfg.version != 2 {
+    if cfg.version != 3 {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("version".to_string()),
             format!(
-                "normalized config must have version 2 (got {})",
+                "normalized config must have version 3 (got {})",
                 cfg.version
             ),
-            None,
-        ));
-    }
-    if cfg.timebase.dt <= 0.0 {
-        errors.push(ConfigDiagnostic::new(
-            DiagnosticKind::Validation,
-            Some("timebase.dt".to_string()),
-            format!("timebase.dt must be positive (got {})", cfg.timebase.dt),
             None,
         ));
     }
@@ -1138,25 +1220,6 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
                 DiagnosticKind::Validation,
                 Some("lockin".to_string()),
                 "lockin.lpf_cutoff_hz and lockin.lpf_cutoff_ref_ratio are mutually exclusive for cutoff-based LPF modes",
-                None,
-            ));
-        }
-    }
-    if uses_explicit_cutoff(cfg.lockin.lpf_kind)
-        && cfg.timebase.dt > 0.0
-        && cfg.lockin.stride_samples > 0
-    {
-        let output_rate = 1.0 / (cfg.timebase.dt * cfg.lockin.stride_samples as f64);
-        if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz
-            && cutoff_hz >= 0.45 * output_rate
-        {
-            errors.push(ConfigDiagnostic::new(
-                DiagnosticKind::Validation,
-                Some("lockin.lpf_cutoff_hz".to_string()),
-                format!(
-                    "lockin.lpf_cutoff_hz must be < 0.45 * output_rate ({})",
-                    0.45 * output_rate
-                ),
                 None,
             ));
         }
@@ -1333,13 +1396,11 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
     match target {
         ValidationTarget::Reference => {
             validate_oscilloscope_required(cfg)?;
-            validate_timebase(cfg)?;
             validate_reference_roles(cfg)?;
             validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Sensor => {
             validate_oscilloscope_required(cfg)?;
-            validate_timebase(cfg)?;
             validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
@@ -1347,7 +1408,6 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         }
         ValidationTarget::Li => {
             validate_oscilloscope_required(cfg)?;
-            validate_timebase(cfg)?;
             validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_signal_roles(cfg)?;
@@ -1368,7 +1428,6 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         }
         ValidationTarget::Analyze => {
             validate_oscilloscope_required(cfg)?;
-            validate_timebase(cfg)?;
             validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_signal_roles(cfg)?;
@@ -1376,7 +1435,6 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Process => {
-            validate_timebase(cfg)?;
             validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_signal_roles(cfg)?;
@@ -1384,7 +1442,6 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         }
         ValidationTarget::Auto => {
             validate_function_generator_required(cfg)?;
-            validate_timebase(cfg)?;
             validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_signal_roles(cfg)?;
@@ -1397,13 +1454,6 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         | ValidationTarget::Autoshot => {}
     }
 
-    Ok(())
-}
-
-fn validate_timebase(cfg: &Config) -> Result<()> {
-    if cfg.timebase.dt <= 0.0 {
-        bail!("timebase.dt must be positive");
-    }
     Ok(())
 }
 

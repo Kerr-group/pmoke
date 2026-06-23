@@ -218,6 +218,60 @@ memory_depth = 200_000_000"#,
 }
 
 #[test]
+fn v3_loads_without_timebase_and_normalized_config_omits_timebase() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert_eq!(config.version, 3);
+            assert!(config.legacy_timebase.is_none());
+            let normalized = toml::to_string_pretty(&config).unwrap();
+            assert!(!normalized.contains("[timebase]"));
+            assert!(!normalized.contains("legacy_timebase"));
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
+fn v3_rejects_timebase_section() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 3",
+        r#"version = 3
+
+[timebase]
+t0 = 0.0
+dt = 1.0"#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => {
+            assert_eq!(diag.version, Some(3));
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("timebase"))
+            );
+        }
+        other => panic!("expected diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
 fn v1_filter_length_maps_to_half_window_cycles_and_legacy_boxcar() {
     let text = r#"
 version = 1
@@ -570,6 +624,51 @@ version = 2
 [timebase]
 t0 = 0.0
 dt = 1.0
+
+[roles]
+sensor_ch = [1]
+reference_ch = 2
+signal_ch = [3]
+
+[[channels]]
+index = 1
+factor = 1.0
+label = "B"
+unit_out = "T"
+
+[[channels]]
+index = 2
+
+[[channels]]
+index = 3
+
+[pulse]
+bg_window_before = {{ start = -1.0, end = -0.5 }}
+bg_window_after = {{ start = 0.5, end = 1.0 }}
+
+[reference]
+fft_window = {{ start = 0.0, end = 1.0 }}
+stride_samples = 10
+window_samples = 10
+
+[lockin]
+{lockin}
+
+[phase]
+m_omega_t0_offset = [0,0,0,0,0,0]
+
+[kerr]
+use_sensor_ch = 1
+kerr_type = "harmonics"
+factor = 1
+"#
+    )
+}
+
+fn v3_base_lockin(lockin: &str) -> String {
+    format!(
+        r#"
+version = 3
 
 [roles]
 sensor_ch = [1]

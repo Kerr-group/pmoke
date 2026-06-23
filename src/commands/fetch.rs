@@ -1,10 +1,11 @@
 use crate::cli::FetchFormat;
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::{Config, Connection, FetchOutput};
-use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR};
+use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR, T_HEADER};
 use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::write_csv;
+use crate::utils::waveform::WaveformData;
 use anyhow::{Context, Result, anyhow, bail};
 use instruments::rigol::DhoRawWaveform;
 use serde::Serialize;
@@ -108,7 +109,7 @@ fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run_fetch_for_process(cfg: &Config) -> Result<Vec<Vec<f64>>> {
+pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
     match cfg.fetch.output {
         FetchOutput::Csv => {
             let out = Path::new(FETCHED_FNAME);
@@ -124,7 +125,7 @@ pub fn run_fetch_for_process(cfg: &Config) -> Result<Vec<Vec<f64>>> {
     }
 }
 
-fn run_fetch_to_csv_path(cfg: &Config, out: &Path) -> Result<Vec<Vec<f64>>> {
+fn run_fetch_to_csv_path(cfg: &Config, out: &Path) -> Result<WaveformData> {
     ensure_path_not_exists(out)?;
 
     let mut handler = OscilloscopeHandler::initialize(cfg)
@@ -195,7 +196,7 @@ fn fetch_raw(cfg: &Config, out: &Path) -> Result<()> {
     }
 }
 
-fn fetch_raw_collect(cfg: &Config, out: &Path) -> Result<Vec<Vec<f64>>> {
+fn fetch_raw_collect(cfg: &Config, out: &Path) -> Result<WaveformData> {
     ensure_path_not_exists(out)?;
     ensure_output_parent(out)?;
 
@@ -231,11 +232,7 @@ fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()>
     fetch_csv_and_raw_collect(cfg, csv_out, raw_out).map(|_| ())
 }
 
-fn fetch_csv_and_raw_collect(
-    cfg: &Config,
-    csv_out: &Path,
-    raw_out: &Path,
-) -> Result<Vec<Vec<f64>>> {
+fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<WaveformData> {
     ensure_output_parent(csv_out)?;
     ensure_path_not_exists(csv_out)?;
     ensure_path_not_exists(raw_out)?;
@@ -253,9 +250,12 @@ fn fetch_csv_and_raw_collect(
     match fetch_raw_into_dir_and_collect_csv(cfg, &tmp_dir, true) {
         Ok((channels, data)) => {
             let t_write_start = Instant::now();
-            let headers: Vec<String> = channels.iter().map(|ch| format!("ch{ch}")).collect();
+            let headers: Vec<String> = std::iter::once(T_HEADER.to_string())
+                .chain(channels.iter().map(|ch| format!("ch{ch}")))
+                .collect();
             let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
-            let tmp_csv = write_csv_temp(csv_out, &header_refs, &data)?;
+            let csv_columns = csv_columns_with_time(&data);
+            let tmp_csv = write_csv_temp(csv_out, &header_refs, &csv_columns)?;
             if let Err(error) = fs::rename(&tmp_dir, raw_out).with_context(|| {
                 format!(
                     "failed to rename {} to {}",
@@ -284,13 +284,16 @@ fn fetch_csv_and_raw_collect(
     }
 }
 
-fn write_fetched_csv(cfg: &Config, out: &Path, data: &[Vec<f64>]) -> Result<()> {
+fn write_fetched_csv(cfg: &Config, out: &Path, data: &WaveformData) -> Result<()> {
     let channels = build_channel_list(cfg)?;
-    let headers: Vec<String> = channels.iter().map(|ch| format!("ch{ch}")).collect();
+    let headers: Vec<String> = std::iter::once(T_HEADER.to_string())
+        .chain(channels.iter().map(|ch| format!("ch{ch}")))
+        .collect();
     let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
 
     let t_write_start = Instant::now();
-    write_csv_atomic(out, &header_refs, data)?;
+    let csv_columns = csv_columns_with_time(data);
+    write_csv_atomic(out, &header_refs, &csv_columns)?;
     let t_write_end = Instant::now();
 
     ui::saved(format!(
@@ -309,7 +312,7 @@ fn fetch_raw_into_dir_and_collect_csv(
     cfg: &Config,
     dir: &Path,
     collect_csv: bool,
-) -> Result<(Vec<u8>, Vec<Vec<f64>>)> {
+) -> Result<(Vec<u8>, WaveformData)> {
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
 
@@ -322,11 +325,12 @@ fn fetch_raw_into_dir_and_collect_csv(
     let depth = osc_cfg.memory_depth;
     let channels = build_channel_list(cfg)?;
     let mut metadata = build_raw_metadata(cfg, &channels)?;
-    let mut csv_data: Vec<Vec<f64>> = if collect_csv {
+    let mut csv_channels: Vec<Vec<f64>> = if collect_csv {
         Vec::with_capacity(channels.len())
     } else {
         Vec::new()
     };
+    let mut time_axis = None;
 
     let pb = ui::progress(
         format!(
@@ -352,8 +356,9 @@ fn fetch_raw_into_dir_and_collect_csv(
                 None,
             )
         };
+        update_metadata_time_axis(&mut time_axis, &channel_metadata, ch)?;
         if let Some(csv_channel) = csv_channel {
-            csv_data.push(csv_channel);
+            csv_channels.push(csv_channel);
         }
         metadata
             .channels
@@ -374,7 +379,20 @@ fn fetch_raw_into_dir_and_collect_csv(
     );
 
     write_raw_metadata(dir, &metadata)?;
-    Ok((channels, csv_data))
+    let t = if collect_csv {
+        time_axis
+            .ok_or_else(|| anyhow!("no waveform time axis was collected"))?
+            .build()
+    } else {
+        Vec::new()
+    };
+    Ok((
+        channels,
+        WaveformData {
+            t,
+            channels: csv_channels,
+        },
+    ))
 }
 
 fn build_raw_metadata(cfg: &Config, channels: &[u8]) -> Result<RawFetchMetadata> {
@@ -519,6 +537,103 @@ fn convert_raw_word_to_voltages(raw: &DhoRawWaveform) -> Vec<f64> {
         .collect()
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FetchTimeAxis {
+    sample_count: usize,
+    x_increment: f64,
+    x_origin: f64,
+    x_reference: f64,
+}
+
+impl FetchTimeAxis {
+    fn from_preamble(
+        preamble: &instruments::rigol::dho5108::DhoWaveformPreamble,
+        sample_count: usize,
+    ) -> Self {
+        Self {
+            sample_count,
+            x_increment: preamble.x_increment,
+            x_origin: preamble.x_origin,
+            x_reference: preamble.x_reference,
+        }
+    }
+
+    fn from_metadata(metadata: &RawChannelMetadata) -> Self {
+        Self {
+            sample_count: metadata.sample_count,
+            x_increment: metadata.x_increment,
+            x_origin: metadata.x_origin,
+            x_reference: metadata.x_reference,
+        }
+    }
+
+    fn build(self) -> Vec<f64> {
+        (0..self.sample_count)
+            .map(|i| self.x_origin + (i as f64 - self.x_reference) * self.x_increment)
+            .collect()
+    }
+}
+
+fn update_metadata_time_axis(
+    time_axis: &mut Option<FetchTimeAxis>,
+    metadata: &RawChannelMetadata,
+    ch: u8,
+) -> Result<()> {
+    let axis = FetchTimeAxis::from_metadata(metadata);
+    match time_axis {
+        Some(expected) => validate_fetch_time_axis(*expected, axis, ch),
+        None => {
+            *time_axis = Some(axis);
+            Ok(())
+        }
+    }
+}
+
+fn update_time_axis(
+    time_axis: &mut Option<FetchTimeAxis>,
+    preamble: &instruments::rigol::dho5108::DhoWaveformPreamble,
+    sample_count: usize,
+    ch: u8,
+) -> Result<()> {
+    let axis = FetchTimeAxis::from_preamble(preamble, sample_count);
+    match time_axis {
+        Some(expected) => validate_fetch_time_axis(*expected, axis, ch),
+        None => {
+            *time_axis = Some(axis);
+            Ok(())
+        }
+    }
+}
+
+fn validate_fetch_time_axis(expected: FetchTimeAxis, actual: FetchTimeAxis, ch: u8) -> Result<()> {
+    if expected.sample_count != actual.sample_count {
+        bail!(
+            "channel {ch} timebase sample_count mismatch: {} != {}",
+            actual.sample_count,
+            expected.sample_count
+        );
+    }
+    validate_close("x_increment", expected.x_increment, actual.x_increment, ch)?;
+    validate_close("x_origin", expected.x_origin, actual.x_origin, ch)?;
+    validate_close("x_reference", expected.x_reference, actual.x_reference, ch)?;
+    Ok(())
+}
+
+fn validate_close(name: &str, expected: f64, actual: f64, ch: u8) -> Result<()> {
+    let scale = expected.abs().max(actual.abs());
+    let tolerance = (scale * 1.0e-12).max(1.0e-18);
+    if (expected - actual).abs() > tolerance {
+        bail!("channel {ch} timebase mismatch: {name} {actual} != {expected}");
+    }
+    Ok(())
+}
+
+fn csv_columns_with_time(data: &WaveformData) -> Vec<&[f64]> {
+    std::iter::once(data.t.as_slice())
+        .chain(data.channels.iter().map(Vec::as_slice))
+        .collect()
+}
+
 fn write_raw_metadata(dir: &Path, metadata: &RawFetchMetadata) -> Result<()> {
     let final_path = dir.join(RAW_METADATA_FNAME);
     let tmp_path = dir.join(format!("{RAW_METADATA_FNAME}.tmp"));
@@ -563,12 +678,18 @@ fn ensure_output_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_csv_atomic(out: &Path, headers: &[&str], data: &[Vec<f64>]) -> Result<()> {
+fn write_csv_atomic<C>(out: &Path, headers: &[&str], data: &[C]) -> Result<()>
+where
+    C: AsRef<[f64]>,
+{
     let tmp_path = write_csv_temp(out, headers, data)?;
     finalize_temp_file(&tmp_path, out)
 }
 
-fn write_csv_temp(out: &Path, headers: &[&str], data: &[Vec<f64>]) -> Result<PathBuf> {
+fn write_csv_temp<C>(out: &Path, headers: &[&str], data: &[C]) -> Result<PathBuf>
+where
+    C: AsRef<[f64]>,
+{
     let tmp_path = output_temp_file(out)?;
     ensure_path_not_exists(&tmp_path)?;
 
@@ -614,14 +735,17 @@ pub fn fetch_all_channels(
     channels: &[u8],
     depth: usize,
     progress: &indicatif::ProgressBar,
-) -> Result<Vec<Vec<f64>>> {
+) -> Result<WaveformData> {
     let mut data: Vec<Vec<f64>> = Vec::with_capacity(channels.len());
+    let mut time_axis = None;
 
     for &ch in channels {
         progress.set_message(format!("fetching ch{ch}"));
-        let v = handler
-            .fetch(ch, depth)
+        let raw = handler
+            .fetch_raw_word(ch, depth)
             .with_context(|| format!("failed to fetch channel {ch}"))?;
+        update_time_axis(&mut time_axis, &raw.preamble, depth, ch)?;
+        let v = convert_raw_word_to_voltages(&raw);
 
         if v.len() != depth {
             bail!(
@@ -635,7 +759,10 @@ pub fn fetch_all_channels(
         progress.inc(1);
     }
 
-    Ok(data)
+    let t = time_axis
+        .ok_or_else(|| anyhow!("no waveform time axis was collected"))?
+        .build();
+    Ok(WaveformData { t, channels: data })
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use crate::config::{Config, Lockin, LockinLpfKind};
+use crate::config::{Lockin, LockinLpfKind};
 use crate::ui;
 use anyhow::{Result, anyhow, bail};
 use std::f64::consts::PI;
@@ -120,18 +120,6 @@ impl LockinParams {
             i_start,
             i_end,
         })
-    }
-
-    pub fn from_config(cfg: &Config, f_ref: f64) -> Result<Self> {
-        let dt = cfg.timebase.dt;
-        let length = cfg
-            .instruments
-            .as_ref()
-            .ok_or_else(|| anyhow!("Instruments config is missing"))?
-            .oscilloscope
-            .memory_depth;
-
-        Self::init(dt, length, f_ref, &cfg.lockin)
     }
 
     pub fn from_slice(t: &[f64], f_ref: f64, lockin: &Lockin) -> Result<Self> {

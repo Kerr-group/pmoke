@@ -1,10 +1,10 @@
 use crate::{
     config::Config,
     kerr::run_kerr_analysis,
-    lockin::{run_li, time::time_builder},
+    lockin::run_li,
     phase::run_phase_analysis,
     ui,
-    utils::waveform::read_all_fetched_waveforms,
+    utils::waveform::{WaveformData, read_all_fetched_waveforms},
 };
 use anyhow::{Result, bail};
 
@@ -18,25 +18,22 @@ pub fn analyze(cfg: &Config) -> Result<()> {
         pb,
         format!(
             "fetched data: {} rows, {} columns ({})",
-            data.len(),
-            if data.is_empty() { 0 } else { data[0].len() },
+            data.channels.len(),
+            data.channels.first().map_or(0, Vec::len),
             ui::fmt_duration(elapsed_read)
         ),
     );
 
-    if data.is_empty() {
+    if data.channels.is_empty() {
         bail!("Fetched data is empty, cannot extract columns.");
     }
 
-    let t = time_builder(cfg)?;
-
-    run_analyze(cfg, t, data)?;
+    run_analyze(cfg, data)?;
     Ok(())
 }
 
-pub fn run_analyze(cfg: &Config, t: Vec<f64>, data: Vec<Vec<f64>>) -> Result<()> {
-    let (t_stride, sensor_integral_stride, li_results) = run_li(cfg, &t, &data)?;
-    drop(t);
+pub fn run_analyze(cfg: &Config, data: WaveformData) -> Result<()> {
+    let (t_stride, sensor_integral_stride, li_results) = run_li(cfg, &data.t, &data.channels)?;
 
     // run phase analysis here
     let ch = cfg.phase_signal_ch();

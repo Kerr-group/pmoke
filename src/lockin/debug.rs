@@ -300,7 +300,12 @@ fn write_baseband_psd(
 
     let (samples, downsample_step) = downsample_to_limit(&samples, PSD_MAX_SAMPLES);
     let n = samples.len();
-    let dt_eff = cfg.timebase.dt * downsample_step as f64;
+    let dt = t_raw
+        .windows(2)
+        .next()
+        .map(|w| w[1] - w[0])
+        .ok_or_else(|| anyhow::anyhow!("time axis must contain at least two samples"))?;
+    let dt_eff = dt * downsample_step as f64;
     let sample_rate = 1.0 / dt_eff;
     let max_bin = PSD_BINS.min(n / 2);
 
