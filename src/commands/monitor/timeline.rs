@@ -201,7 +201,7 @@ pub(super) fn spinner_frame(frames: &'static [char], frame: usize) -> char {
 }
 
 fn timeline_spinner_symbol(frame: usize) -> char {
-    spinner_frame(&['◐', '◓', '◑', '◒'], frame)
+    spinner_frame(&['◜', '◝', '◞', '◟'], frame)
 }
 
 fn timeline_pending_symbol(frame: usize) -> char {
@@ -350,15 +350,7 @@ fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static
     } else {
         Style::default().fg(fg).bg(bg).add_modifier(modifier)
     };
-    let icon = if matches!(
-        step.state,
-        TimelineStepState::Current | TimelineStepState::Stopping
-    ) {
-        timeline_compact_badge_cell(&icon)
-    } else {
-        icon
-    };
-    Span::styled(icon, style)
+    Span::styled(timeline_compact_badge_cell(&icon), style)
 }
 
 fn timeline_compact_badge_cell(icon: &str) -> String {

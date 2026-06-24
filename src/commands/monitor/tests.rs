@@ -154,14 +154,14 @@ fn current_timeline_step_animates_with_motion_frame() {
     let second = timeline_step_spans(&step, 1);
 
     assert_ne!(first[0].content, second[0].content);
-    assert_eq!(first[0].content.as_ref(), "  ◐  ");
-    assert_eq!(second[0].content.as_ref(), "  ◓  ");
+    assert_eq!(first[0].content.as_ref(), "  ◜  ");
+    assert_eq!(second[0].content.as_ref(), "  ◝  ");
 }
 
 #[test]
 fn timeline_badges_are_centered_in_fixed_cells() {
-    assert_eq!(timeline_badge_cell("◐"), "  ◐  ");
-    assert_eq!(timeline_badge_cell("◓"), "  ◓  ");
+    assert_eq!(timeline_badge_cell("◜"), "  ◜  ");
+    assert_eq!(timeline_badge_cell("◝"), "  ◝  ");
     assert_eq!(timeline_badge_cell("✓"), "  ✓  ");
     assert_eq!(timeline_badge_cell("░"), "  ░  ");
     assert_eq!(timeline_badge_cell("▒"), "  ▒  ");
@@ -184,7 +184,7 @@ fn pending_timeline_step_animates_in_centered_cell() {
 }
 
 #[test]
-fn compact_pending_timeline_step_animates_without_wide_glyphs() {
+fn compact_pending_timeline_step_animates_in_centered_cells() {
     let steps = vec![
         TimelineStep {
             label: "Read",
@@ -196,8 +196,8 @@ fn compact_pending_timeline_step_animates_without_wide_glyphs() {
         },
     ];
 
-    let first = timeline_step_lines(&steps, 3, 2, 0);
-    let second = timeline_step_lines(&steps, 3, 2, 1);
+    let first = timeline_step_lines(&steps, 7, 2, 0);
+    let second = timeline_step_lines(&steps, 7, 2, 1);
     let first_text = first[0]
         .spans
         .iter()
@@ -209,23 +209,23 @@ fn compact_pending_timeline_step_animates_without_wide_glyphs() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert_eq!(first_text, "░─░");
-    assert_eq!(second_text, "▒─▒");
+    assert_eq!(first_text, " ░ ─ ░ ");
+    assert_eq!(second_text, " ▒ ─ ▒ ");
     assert_eq!(
         unicode_width::UnicodeWidthStr::width(first[0].spans[0].content.as_ref()),
-        1
+        3
     );
     assert_eq!(
         unicode_width::UnicodeWidthStr::width(first[0].spans[2].content.as_ref()),
-        1
+        3
     );
     assert_eq!(
         unicode_width::UnicodeWidthStr::width(second[0].spans[0].content.as_ref()),
-        1
+        3
     );
     assert_eq!(
         unicode_width::UnicodeWidthStr::width(second[0].spans[2].content.as_ref()),
-        1
+        3
     );
 }
 
@@ -242,23 +242,23 @@ fn compact_current_timeline_step_uses_centered_cell() {
         },
     ];
 
-    let lines = timeline_step_lines(&steps, 8, 2, 0);
+    let lines = timeline_step_lines(&steps, 12, 2, 0);
     let rendered = lines[0]
         .spans
         .iter()
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert_eq!(rendered, " ◐ ─░");
-    assert_eq!(lines[0].spans[0].content.as_ref(), " ◐ ");
-    assert_eq!(lines[0].spans[2].content.as_ref(), "░");
+    assert_eq!(rendered, " ◜ ─ ░ ");
+    assert_eq!(lines[0].spans[0].content.as_ref(), " ◜ ");
+    assert_eq!(lines[0].spans[2].content.as_ref(), " ░ ");
     assert_eq!(
         unicode_width::UnicodeWidthStr::width(lines[0].spans[0].content.as_ref()),
         3
     );
     assert_eq!(
         unicode_width::UnicodeWidthStr::width(lines[0].spans[2].content.as_ref()),
-        1
+        3
     );
     assert!(
         lines[0]
@@ -266,7 +266,7 @@ fn compact_current_timeline_step_uses_centered_cell() {
             .iter()
             .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
             .sum::<usize>()
-            <= 8
+            <= 12
     );
 }
 
@@ -299,7 +299,7 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
         },
     ];
 
-    let lines = timeline_step_lines(&steps, 10, 3, 0);
+    let lines = timeline_step_lines(&steps, 14, 3, 0);
     let rendered = lines
         .iter()
         .flat_map(|line| line.spans.iter())
@@ -312,11 +312,11 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
             .iter()
             .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
             .sum::<usize>()
-            <= 10
+            <= 14
     }));
     assert_eq!(rendered.chars().filter(|ch| *ch == '✓').count(), 2);
     assert_eq!(rendered.chars().filter(|ch| *ch == '░').count(), 3);
-    assert!(rendered.contains('◐'));
+    assert!(rendered.contains('◜'));
 }
 
 #[test]
