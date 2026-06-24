@@ -9,8 +9,8 @@ use clap_complete::Shell;
 /// A simple CLI tool to inspect and validate experiment configuration files.
 #[derive(Parser, Debug)]
 #[command(
-    name = "pMOKE",
-    version = "0.1.7",
+    name = "pmoke",
+    version = "0.1.8",
     author = "Soichiro Yamane",
     about = "A CLI tool to conduct pulsed MOKE",
     long_about = None

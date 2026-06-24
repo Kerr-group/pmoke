@@ -1337,7 +1337,7 @@ fn header_spans(app: &MonitorApp, width: u16) -> Vec<Span<'static>> {
     let config_width = width.saturating_sub(66) as usize;
     vec![
         Span::styled(
-            " pMOKE ",
+            " pmoke ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
@@ -2920,7 +2920,7 @@ fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     let lines = vec![
         Line::from(vec![
             Span::styled(
-                "pMOKE TUI",
+                "pmoke TUI",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
