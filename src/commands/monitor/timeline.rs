@@ -205,6 +205,10 @@ fn timeline_spinner_symbol(frame: usize) -> char {
     spinner_frame(FluxFrames::BRAILLE, frame)
 }
 
+fn timeline_pending_symbol(frame: usize) -> char {
+    spinner_frame(&['o', 'O'], frame)
+}
+
 fn timeline_pulse_color(frame: usize) -> Color {
     if frame.is_multiple_of(2) {
         Color::LightCyan
@@ -251,7 +255,7 @@ pub(super) fn timeline_step_spans(step: &TimelineStep, frame: usize) -> Vec<Span
             Modifier::BOLD,
         ),
         TimelineStepState::Pending => (
-            "○".to_string(),
+            timeline_pending_symbol(frame).to_string(),
             Color::DarkGray,
             Color::Reset,
             Modifier::empty(),
@@ -313,7 +317,7 @@ fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static
             Modifier::BOLD,
         ),
         TimelineStepState::Pending => (
-            "○".to_string(),
+            timeline_pending_symbol(frame).to_string(),
             Color::DarkGray,
             Color::Reset,
             Modifier::empty(),
