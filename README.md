@@ -161,7 +161,6 @@ model = "WF1946B"
 [instruments.oscilloscope]
 connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
 model = "DHO5108"
-memory_depth = 200_000_000
 
 [fetch]
 output = "csv_and_raw"      # "csv", "raw", or "csv_and_raw"

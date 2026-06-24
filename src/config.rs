@@ -204,7 +204,6 @@ pub struct FunctionGenerator {
 pub struct Oscilloscope {
     pub connection: Connection,
     pub model: String,
-    pub memory_depth: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -530,7 +529,6 @@ struct OscilloscopeV1 {
     connection: Connection,
     #[serde(default)]
     model: String,
-    memory_depth: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -539,7 +537,6 @@ struct OscilloscopeV2 {
     connection: Connection,
     #[serde(default)]
     model: String,
-    memory_depth: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1540,14 +1537,9 @@ fn validate_kerr_sensor(cfg: &Config) -> Result<()> {
 }
 
 fn validate_oscilloscope_required(cfg: &Config) -> Result<()> {
-    let instruments = cfg
-        .instruments
+    cfg.instruments
         .as_ref()
         .ok_or_else(|| anyhow!("instruments configuration is required for this command"))?;
-
-    if instruments.oscilloscope.memory_depth == 0 {
-        bail!("instruments.oscilloscope.memory_depth must be positive");
-    }
     Ok(())
 }
 
@@ -1720,7 +1712,6 @@ impl From<OscilloscopeV1> for Oscilloscope {
         Self {
             connection: value.connection,
             model: value.model,
-            memory_depth: value.memory_depth,
         }
     }
 }
@@ -1730,7 +1721,6 @@ impl From<OscilloscopeV2> for Oscilloscope {
         Self {
             connection: value.connection,
             model: value.model,
-            memory_depth: value.memory_depth,
         }
     }
 }

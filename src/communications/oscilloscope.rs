@@ -95,4 +95,10 @@ impl OscilloscopeHandler {
             Oscilloscope::DHO5108(dev) => Ok(dev.query_horizontal_settings()?),
         }
     }
+
+    pub fn query_memory_depth(&mut self) -> Result<usize> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.query_memory_depth()?),
+        }
+    }
 }

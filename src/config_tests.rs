@@ -199,8 +199,7 @@ lpf_half_window_cycles = 1.0
 
 [instruments.oscilloscope]
 connection = { protocol = "usbtmc", resource = "USB0::0x1AB1::0x0450::DHO5A27090041::INSTR" }
-model = "DHO5108"
-memory_depth = 200_000_000"#,
+model = "DHO5108""#,
         1,
     );
 
@@ -214,6 +213,38 @@ memory_depth = 200_000_000"#,
             ));
         }
         other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
+fn v2_rejects_configured_memory_depth() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 2",
+        r#"version = 2
+
+[instruments.oscilloscope]
+connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
+model = "DHO5108"
+memory_depth = 200_000_000"#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => {
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.message.contains("memory_depth"))
+            );
+        }
+        other => panic!("expected diagnostics, got {other:?}"),
     }
 }
 

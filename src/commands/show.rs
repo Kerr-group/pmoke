@@ -42,10 +42,8 @@ fn print_config_summary(config: &Config) {
                     .as_ref()
                     .map(|inst| {
                         format!(
-                            "{} / {:?} / {} samples",
-                            inst.oscilloscope.model,
-                            inst.oscilloscope.connection,
-                            inst.oscilloscope.memory_depth
+                            "{} / {:?}",
+                            inst.oscilloscope.model, inst.oscilloscope.connection
                         )
                     })
                     .unwrap_or_else(|| "not configured".to_string()),

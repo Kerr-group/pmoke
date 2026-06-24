@@ -208,6 +208,11 @@ impl DHO5108 {
         Ok(DhoHorizontalSettings { offset, scale })
     }
 
+    pub fn query_memory_depth(&mut self) -> io::Result<usize> {
+        let raw = self.query(":ACQuire:MDEPth?")?;
+        parse_memory_depth(&raw)
+    }
+
     fn setup_raw_word_fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {
         // Send sequential setup commands in one write and synchronize once at the end.
         self.write_lines(&[
@@ -388,6 +393,30 @@ fn consume_buffered_terminator(reader: &mut BufReader<TcpStream>) -> bool {
     }
 }
 
+fn parse_memory_depth(raw: &str) -> io::Result<usize> {
+    let value = raw.trim();
+    let points = value.parse::<f64>().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid memory depth '{value}': {error}"),
+        )
+    })?;
+    if !points.is_finite() || points <= 0.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid memory depth '{value}'"),
+        ));
+    }
+    let rounded = points.round();
+    if (points - rounded).abs() > f64::EPSILON || rounded > usize::MAX as f64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("memory depth is not a positive integer: '{value}'"),
+        ));
+    }
+    Ok(rounded as usize)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,5 +443,18 @@ mod tests {
         let error = read_binary_block_length(&mut reader).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn memory_depth_parser_accepts_scientific_notation() {
+        assert_eq!(parse_memory_depth("1.000E+6").unwrap(), 1_000_000);
+        assert_eq!(parse_memory_depth("200000000").unwrap(), 200_000_000);
+    }
+
+    #[test]
+    fn memory_depth_parser_rejects_non_integer_values() {
+        assert!(parse_memory_depth("AUTO").is_err());
+        assert!(parse_memory_depth("1.5").is_err());
+        assert!(parse_memory_depth("0").is_err());
     }
 }

@@ -133,13 +133,12 @@ fn run_fetch_to_csv_path(cfg: &Config, out: &Path) -> Result<WaveformData> {
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
 
-    let osc_cfg = &cfg
-        .instruments
-        .as_ref()
-        .ok_or_else(|| anyhow!("Instruments configuration is missing."))?
-        .oscilloscope;
-
-    let depth = osc_cfg.memory_depth;
+    let depth = handler
+        .query_memory_depth()
+        .context("failed to query oscilloscope memory depth")?;
+    if depth == 0 {
+        bail!("oscilloscope returned zero memory depth");
+    }
 
     let channels = build_channel_list(cfg)?;
     let pb = ui::progress(
@@ -318,18 +317,17 @@ fn fetch_raw_into_dir_and_collect_csv(
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
 
-    let osc_cfg = &cfg
-        .instruments
-        .as_ref()
-        .ok_or_else(|| anyhow!("Instruments configuration is missing."))?
-        .oscilloscope;
-
-    let depth = osc_cfg.memory_depth;
+    let depth = handler
+        .query_memory_depth()
+        .context("failed to query oscilloscope memory depth")?;
+    if depth == 0 {
+        bail!("oscilloscope returned zero memory depth");
+    }
     let channels = build_channel_list(cfg)?;
     let horizontal = handler
         .query_horizontal_settings()
         .context("failed to query oscilloscope horizontal settings")?;
-    let mut metadata = build_raw_metadata(cfg, &channels, horizontal)?;
+    let mut metadata = build_raw_metadata(cfg, &channels, depth, horizontal)?;
     let mut csv_channels: Vec<Vec<f64>> = if collect_csv {
         Vec::with_capacity(channels.len())
     } else {
@@ -403,6 +401,7 @@ fn fetch_raw_into_dir_and_collect_csv(
 fn build_raw_metadata(
     cfg: &Config,
     channels: &[u8],
+    memory_depth: usize,
     horizontal: DhoHorizontalSettings,
 ) -> Result<RawFetchMetadata> {
     let osc_cfg = &cfg
@@ -423,11 +422,11 @@ fn build_raw_metadata(
         oscilloscope: RawOscilloscopeMetadata {
             model: osc_cfg.model.clone(),
             connection: osc_cfg.connection.clone(),
-            memory_depth: osc_cfg.memory_depth,
+            memory_depth,
             waveform_mode: "RAW",
             waveform_format: "WORD",
             byte_order: "little-endian",
-            sample_count: osc_cfg.memory_depth,
+            sample_count: memory_depth,
             channels: channels.to_vec(),
             horizontal_offset: horizontal.offset,
             horizontal_scale: horizontal.scale,
