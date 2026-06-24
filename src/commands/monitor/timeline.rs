@@ -201,11 +201,11 @@ pub(super) fn spinner_frame(frames: &'static [char], frame: usize) -> char {
 }
 
 fn timeline_spinner_symbol(frame: usize) -> char {
-    spinner_frame(&['|', '/', '-', '\\'], frame)
+    spinner_frame(&['◐', '◓', '◑', '◒'], frame)
 }
 
 fn timeline_pending_symbol(frame: usize) -> char {
-    spinner_frame(&['o', 'O'], frame)
+    spinner_frame(&['░', '▒', '▓', '▒'], frame)
 }
 
 fn timeline_pulse_color(frame: usize) -> Color {
@@ -377,10 +377,7 @@ fn line_width(line: &Line<'_>) -> usize {
 }
 
 fn spans_width(spans: &[Span<'_>]) -> usize {
-    spans
-        .iter()
-        .map(|span| span.content.as_ref().width_cjk())
-        .sum()
+    spans.iter().map(|span| span.content.as_ref().width()).sum()
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StageProgressState {

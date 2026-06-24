@@ -154,17 +154,17 @@ fn current_timeline_step_animates_with_motion_frame() {
     let second = timeline_step_spans(&step, 1);
 
     assert_ne!(first[0].content, second[0].content);
-    assert_eq!(first[0].content.as_ref(), "  |  ");
-    assert_eq!(second[0].content.as_ref(), "  /  ");
+    assert_eq!(first[0].content.as_ref(), "  ◐  ");
+    assert_eq!(second[0].content.as_ref(), "  ◓  ");
 }
 
 #[test]
 fn timeline_badges_are_centered_in_fixed_cells() {
-    assert_eq!(timeline_badge_cell("|"), "  |  ");
-    assert_eq!(timeline_badge_cell("/"), "  /  ");
+    assert_eq!(timeline_badge_cell("◐"), "  ◐  ");
+    assert_eq!(timeline_badge_cell("◓"), "  ◓  ");
     assert_eq!(timeline_badge_cell("✓"), "  ✓  ");
-    assert_eq!(timeline_badge_cell("o"), "  o  ");
-    assert_eq!(timeline_badge_cell("O"), "  O  ");
+    assert_eq!(timeline_badge_cell("░"), "  ░  ");
+    assert_eq!(timeline_badge_cell("▒"), "  ▒  ");
     assert_eq!(timeline_badge_cell("!"), "  !  ");
 }
 
@@ -179,8 +179,8 @@ fn pending_timeline_step_animates_in_centered_cell() {
     let second = timeline_step_spans(&step, 1);
 
     assert_ne!(first[0].content, second[0].content);
-    assert_eq!(first[0].content.as_ref(), "  o  ");
-    assert_eq!(second[0].content.as_ref(), "  O  ");
+    assert_eq!(first[0].content.as_ref(), "  ░  ");
+    assert_eq!(second[0].content.as_ref(), "  ▒  ");
 }
 
 #[test]
@@ -209,14 +209,22 @@ fn compact_pending_timeline_step_animates_without_wide_glyphs() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert_eq!(first_text, "o─o");
-    assert_eq!(second_text, "O─O");
+    assert_eq!(first_text, "░─░");
+    assert_eq!(second_text, "▒─▒");
     assert_eq!(
-        unicode_width::UnicodeWidthStr::width_cjk(first[0].spans[0].content.as_ref()),
+        unicode_width::UnicodeWidthStr::width(first[0].spans[0].content.as_ref()),
         1
     );
     assert_eq!(
-        unicode_width::UnicodeWidthStr::width_cjk(first[0].spans[2].content.as_ref()),
+        unicode_width::UnicodeWidthStr::width(first[0].spans[2].content.as_ref()),
+        1
+    );
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(second[0].spans[0].content.as_ref()),
+        1
+    );
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(second[0].spans[2].content.as_ref()),
         1
     );
 }
@@ -241,14 +249,22 @@ fn compact_current_timeline_step_uses_centered_cell() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert_eq!(rendered, " | ─o");
-    assert_eq!(lines[0].spans[0].content.as_ref(), " | ");
-    assert_eq!(lines[0].spans[2].content.as_ref(), "o");
+    assert_eq!(rendered, " ◐ ─░");
+    assert_eq!(lines[0].spans[0].content.as_ref(), " ◐ ");
+    assert_eq!(lines[0].spans[2].content.as_ref(), "░");
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(lines[0].spans[0].content.as_ref()),
+        3
+    );
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(lines[0].spans[2].content.as_ref()),
+        1
+    );
     assert!(
         lines[0]
             .spans
             .iter()
-            .map(|span| unicode_width::UnicodeWidthStr::width_cjk(span.content.as_ref()))
+            .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
             .sum::<usize>()
             <= 8
     );
@@ -294,13 +310,13 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
     assert!(lines.iter().all(|line| {
         line.spans
             .iter()
-            .map(|span| unicode_width::UnicodeWidthStr::width_cjk(span.content.as_ref()))
+            .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
             .sum::<usize>()
             <= 10
     }));
     assert_eq!(rendered.chars().filter(|ch| *ch == '✓').count(), 2);
-    assert_eq!(rendered.chars().filter(|ch| *ch == 'o').count(), 3);
-    assert!(rendered.contains('|'));
+    assert_eq!(rendered.chars().filter(|ch| *ch == '░').count(), 3);
+    assert!(rendered.contains('◐'));
 }
 
 #[test]
