@@ -4,11 +4,11 @@ use ratatui::{
     prelude::{Color, Line, Modifier, Span, Style},
     widgets::Paragraph,
 };
-use tui_spinner::FluxFrames;
+use unicode_width::UnicodeWidthStr;
 
-use super::{
-    LogEntry, MonitorAction, MonitorApp, TIMELINE_BADGE_WIDTH, centered_text, strip_ansi_codes,
-};
+use super::{LogEntry, MonitorAction, MonitorApp, TIMELINE_BADGE_WIDTH, strip_ansi_codes};
+
+const TIMELINE_COMPACT_BADGE_WIDTH: usize = 3;
 
 pub(super) fn render_run_timeline(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     if area.height == 0 || area.width == 0 {
@@ -201,7 +201,11 @@ pub(super) fn spinner_frame(frames: &'static [char], frame: usize) -> char {
 }
 
 fn timeline_spinner_symbol(frame: usize) -> char {
-    spinner_frame(FluxFrames::BRAILLE, frame)
+    spinner_frame(&['◜', '◝', '◞', '◟'], frame)
+}
+
+fn timeline_pending_symbol(frame: usize) -> char {
+    spinner_frame(&['░', '▒', '▓', '▒'], frame)
 }
 
 fn timeline_pulse_color(frame: usize) -> Color {
@@ -250,7 +254,7 @@ pub(super) fn timeline_step_spans(step: &TimelineStep, frame: usize) -> Vec<Span
             Modifier::BOLD,
         ),
         TimelineStepState::Pending => (
-            "○".to_string(),
+            timeline_pending_symbol(frame).to_string(),
             Color::DarkGray,
             Color::Reset,
             Modifier::empty(),
@@ -299,7 +303,14 @@ pub(super) fn timeline_step_spans(step: &TimelineStep, frame: usize) -> Vec<Span
 }
 
 pub(super) fn timeline_badge_cell(icon: &str) -> String {
-    centered_text(icon, TIMELINE_BADGE_WIDTH)
+    let len = icon.chars().count();
+    if len >= TIMELINE_BADGE_WIDTH {
+        return icon.to_string();
+    }
+    let padding = TIMELINE_BADGE_WIDTH - len;
+    let left = padding / 2;
+    let right = padding - left;
+    format!("{}{}{}", " ".repeat(left), icon, " ".repeat(right))
 }
 
 fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static> {
@@ -312,7 +323,7 @@ fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static
             Modifier::BOLD,
         ),
         TimelineStepState::Pending => (
-            "○".to_string(),
+            timeline_pending_symbol(frame).to_string(),
             Color::DarkGray,
             Color::Reset,
             Modifier::empty(),
@@ -339,7 +350,18 @@ fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static
     } else {
         Style::default().fg(fg).bg(bg).add_modifier(modifier)
     };
-    Span::styled(icon, style)
+    Span::styled(timeline_compact_badge_cell(&icon), style)
+}
+
+fn timeline_compact_badge_cell(icon: &str) -> String {
+    let len = icon.chars().count();
+    if len >= TIMELINE_COMPACT_BADGE_WIDTH {
+        return icon.to_string();
+    }
+    let padding = TIMELINE_COMPACT_BADGE_WIDTH - len;
+    let left = padding / 2;
+    let right = padding - left;
+    format!("{}{}{}", " ".repeat(left), icon, " ".repeat(right))
 }
 
 fn line_width(line: &Line<'_>) -> usize {
@@ -347,7 +369,7 @@ fn line_width(line: &Line<'_>) -> usize {
 }
 
 fn spans_width(spans: &[Span<'_>]) -> usize {
-    spans.iter().map(|span| span.content.chars().count()).sum()
+    spans.iter().map(|span| span.content.as_ref().width()).sum()
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StageProgressState {

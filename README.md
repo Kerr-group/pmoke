@@ -66,6 +66,25 @@ cargo run -- --config config.toml show
 cargo run --no-default-features -- --config config.toml analyze
 ```
 
+For performance-sensitive runs, build or run the optimized release binary:
+
+```sh
+cargo build --release
+cargo run --release -- --config config.toml analyze
+cargo run --release --no-default-features -- --config config.toml analyze
+```
+
+For a machine-local binary, `target-cpu=native` may improve CPU-bound analysis by
+enabling instructions available on the build machine:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+RUSTFLAGS="-C target-cpu=native" cargo run --release --no-default-features -- --config config.toml analyze
+```
+
+Use this only for binaries that will run on the same class of CPU. For portable
+release artifacts, omit `target-cpu=native`.
+
 ## Commands
 
 ```text
@@ -133,7 +152,7 @@ pmoke --config config.toml auto
 ## Example `config.toml`
 
 ```toml
-version = 2
+version = 3
 
 [instruments.function_generator]
 connection = { protocol = "gpib", board = 0, address = 11 }
@@ -156,10 +175,6 @@ output_dir = "plots"
 max_points = 100_000
 decimation = "stride"
 fail_on_error = false
-
-[timebase]
-t0 = -30.0e-3
-dt = 500e-12
 
 [roles]
 sensor_ch = [1, 4]
@@ -258,9 +273,10 @@ CSV output writes converted voltage data to:
 raw.csv
 ```
 
-This is convenient for inspection and compatibility, but very large captures can
-become slow and large. For 200 Mpts data, prefer raw WORD output as the primary
-archive format.
+Current CSV output includes a `time (s)` column followed by channel voltage
+columns. This is convenient for inspection and compatibility, but very large
+captures can become slow and large. For 200 Mpts data, prefer raw WORD output as
+the primary archive format.
 
 ### Raw WORD Output
 
@@ -276,12 +292,17 @@ raw_waveform/
 ```
 
 Each `chN.u16le` file stores the little-endian DHO WORD payload exactly as
-received. The metadata stores the preamble and scaling values:
+received. The metadata stores the raw preamble for audit and separately queried
+scaling values used for reconstruction:
 
 - `x_increment`, `x_origin`, `x_reference`
 - `y_increment`, `y_origin`, `y_reference`
 - `vertical_offset`, `vertical_scale`
 - sample count and channel file names
+
+The `x_*` and `y_*` values are queried with `WAV:XINC?`, `WAV:XOR?`,
+`WAV:XREF?`, `WAV:YINC?`, `WAV:YOR?`, and `WAV:YREF?`, not parsed from rounded
+`WAV:PRE?` fields.
 
 Voltage reconstruction uses the DHO scaling formula:
 
@@ -298,12 +319,15 @@ Analysis commands read waveform input according to `[fetch].analysis_input`:
 
 ```toml
 [fetch]
-analysis_input = "csv"   # read raw.csv
+analysis_input = "csv"   # read raw.csv with a time column
 analysis_input = "raw"   # read raw_waveform/metadata.toml and chN.u16le
 analysis_input = "auto"  # prefer complete raw_waveform/, otherwise raw.csv
 ```
 
 `raw` is strict: missing metadata or channel files is an error.
+`csv` requires a time column in current `version = 3` configs. Legacy `version =
+2` configs can still use their deprecated `[timebase]` as a fallback for old
+CSV files without a time column.
 
 `auto` is useful while migrating. It uses raw binary data only when
 `raw_waveform/metadata.toml` and all required channel files are complete. If
@@ -363,7 +387,7 @@ until the window is closed.
 
 ## Config Notes
 
-`version = 2` is the normalized schema used by the current code.
+`version = 3` is the normalized schema used by the current code.
 
 Important rules:
 
@@ -373,11 +397,15 @@ Important rules:
   `label`, and `unit_out`.
 - `kerr.use_sensor_ch` must be one of `roles.sensor_ch`.
 - `phase.m_omega_t0_offset` must contain six values, one for each harmonic.
-- Unknown keys in `version = 2` are rejected.
+- `[timebase]` is no longer used. Time axis values come from raw waveform
+  metadata or the CSV `time (s)` column.
+- Unknown keys in `version = 3` are rejected.
 - Unused `[[channels]]` entries are allowed but produce warnings.
 
-`version = 1` configs are still read and normalized where migration is
-unambiguous. Use `pmoke show` to inspect the normalized result.
+`version = 1` and `version = 2` configs are still read and normalized where
+migration is unambiguous. `version = 2` `[timebase]` is treated as deprecated
+legacy fallback data for old CSV files. Use `pmoke show` to inspect the
+normalized result.
 
 ## Lock-in LPF
 
@@ -404,7 +432,7 @@ lpf_cutoff_ref_ratio = 2e-2
 The cutoff must fit within the output sampling rate:
 
 ```text
-output_rate = 1 / (timebase.dt * lockin.stride_samples)
+output_rate = 1 / (x_increment * lockin.stride_samples)
 cutoff_hz < 0.45 * output_rate
 ```
 

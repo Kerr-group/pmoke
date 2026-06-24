@@ -59,6 +59,16 @@ fn wide_actions_layout_keeps_output_visible() {
 }
 
 #[test]
+fn actions_panel_width_fits_command_rows_without_fixed_padding() {
+    let area = Rect::new(0, 0, 120, 28);
+    let (commands, _, output) = actions_full_layout(area);
+
+    assert!(commands.width < 36);
+    assert_eq!(commands.width, actions_panel_width(area.width));
+    assert!(output.width >= 40);
+}
+
+#[test]
 fn output_table_width_fits_inside_live_output_text_area() {
     let mut app = test_app();
     app.active_tab = 0;
@@ -144,15 +154,120 @@ fn current_timeline_step_animates_with_motion_frame() {
     let second = timeline_step_spans(&step, 1);
 
     assert_ne!(first[0].content, second[0].content);
-    assert!(first[0].content.contains("⣾"));
-    assert!(second[0].content.contains("⣷"));
+    assert_eq!(first[0].content.as_ref(), "  ◜  ");
+    assert_eq!(second[0].content.as_ref(), "  ◝  ");
 }
 
 #[test]
 fn timeline_badges_are_centered_in_fixed_cells() {
-    assert_eq!(timeline_badge_cell("⣾"), "  ⣾  ");
+    assert_eq!(timeline_badge_cell("◜"), "  ◜  ");
+    assert_eq!(timeline_badge_cell("◝"), "  ◝  ");
     assert_eq!(timeline_badge_cell("✓"), "  ✓  ");
+    assert_eq!(timeline_badge_cell("░"), "  ░  ");
+    assert_eq!(timeline_badge_cell("▒"), "  ▒  ");
     assert_eq!(timeline_badge_cell("!"), "  !  ");
+}
+
+#[test]
+fn pending_timeline_step_animates_in_centered_cell() {
+    let step = TimelineStep {
+        label: "Read",
+        state: TimelineStepState::Pending,
+    };
+
+    let first = timeline_step_spans(&step, 0);
+    let second = timeline_step_spans(&step, 1);
+
+    assert_ne!(first[0].content, second[0].content);
+    assert_eq!(first[0].content.as_ref(), "  ░  ");
+    assert_eq!(second[0].content.as_ref(), "  ▒  ");
+}
+
+#[test]
+fn compact_pending_timeline_step_animates_in_centered_cells() {
+    let steps = vec![
+        TimelineStep {
+            label: "Read",
+            state: TimelineStepState::Pending,
+        },
+        TimelineStep {
+            label: "Reference",
+            state: TimelineStepState::Pending,
+        },
+    ];
+
+    let first = timeline_step_lines(&steps, 7, 2, 0);
+    let second = timeline_step_lines(&steps, 7, 2, 1);
+    let first_text = first[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    let second_text = second[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(first_text, " ░ ─ ░ ");
+    assert_eq!(second_text, " ▒ ─ ▒ ");
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(first[0].spans[0].content.as_ref()),
+        3
+    );
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(first[0].spans[2].content.as_ref()),
+        3
+    );
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(second[0].spans[0].content.as_ref()),
+        3
+    );
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(second[0].spans[2].content.as_ref()),
+        3
+    );
+}
+
+#[test]
+fn compact_current_timeline_step_uses_centered_cell() {
+    let steps = vec![
+        TimelineStep {
+            label: "Read",
+            state: TimelineStepState::Current,
+        },
+        TimelineStep {
+            label: "Reference",
+            state: TimelineStepState::Pending,
+        },
+    ];
+
+    let lines = timeline_step_lines(&steps, 12, 2, 0);
+    let rendered = lines[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(rendered, " ◜ ─ ░ ");
+    assert_eq!(lines[0].spans[0].content.as_ref(), " ◜ ");
+    assert_eq!(lines[0].spans[2].content.as_ref(), " ░ ");
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(lines[0].spans[0].content.as_ref()),
+        3
+    );
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(lines[0].spans[2].content.as_ref()),
+        3
+    );
+    assert!(
+        lines[0]
+            .spans
+            .iter()
+            .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
+            .sum::<usize>()
+            <= 12
+    );
 }
 
 #[test]
@@ -184,7 +299,7 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
         },
     ];
 
-    let lines = timeline_step_lines(&steps, 10, 3, 0);
+    let lines = timeline_step_lines(&steps, 14, 3, 0);
     let rendered = lines
         .iter()
         .flat_map(|line| line.spans.iter())
@@ -195,13 +310,13 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
     assert!(lines.iter().all(|line| {
         line.spans
             .iter()
-            .map(|span| span.content.chars().count())
+            .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
             .sum::<usize>()
-            <= 10
+            <= 14
     }));
     assert_eq!(rendered.chars().filter(|ch| *ch == '✓').count(), 2);
-    assert_eq!(rendered.chars().filter(|ch| *ch == '○').count(), 3);
-    assert!(rendered.contains('⣾'));
+    assert_eq!(rendered.chars().filter(|ch| *ch == '░').count(), 3);
+    assert!(rendered.contains('◜'));
 }
 
 #[test]
@@ -317,6 +432,12 @@ fn event_feed_badges_are_centered_in_fixed_cells() {
     assert_eq!(event_badge_cell(LogKind::Success), "  OK  ");
     assert_eq!(event_badge_cell(LogKind::System), " SYS  ");
     assert_eq!(event_badge_cell(LogKind::Save), " SAVE ");
+}
+
+#[test]
+fn display_padding_uses_cjk_width() {
+    assert_eq!(pad_display_width("abc", 5), "abc  ");
+    assert_eq!(pad_display_width("○○", 5), "○○ ");
 }
 
 #[test]
@@ -475,6 +596,21 @@ fn visual_output_line_count_does_not_overcount_exact_width() {
 
     assert_eq!(visual_output_line_count(&entries, 26), 1);
     assert_eq!(visual_output_line_count(&entries, 25), 2);
+}
+
+#[test]
+fn visual_output_line_count_uses_cjk_display_width() {
+    let entries = vec![LogEntry {
+        stream: OutputStream::Stdout,
+        text: "○○○○○○○".to_string(),
+    }];
+
+    assert_eq!(visual_output_line_count(&entries, 27), 1);
+    assert_eq!(visual_output_line_count(&entries, 26), 2);
+    assert_eq!(
+        visual_output_line_count(&entries, 26),
+        visual_output_lines(&entries, 26, None, None).len()
+    );
 }
 
 #[test]

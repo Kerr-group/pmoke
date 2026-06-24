@@ -6,7 +6,6 @@ use crate::config::Config;
 use crate::constants::FETCHED_FNAME;
 use crate::lockin::reference::run_fit_ref;
 use crate::lockin::stride::{li_stride_1d, li_stride_2d};
-use crate::lockin::time::time_builder;
 use crate::utils::waveform::read_waveform_channels;
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
@@ -18,15 +17,14 @@ pub struct SensorMeta<'a> {
 }
 
 pub fn run(cfg: &Config) -> Result<()> {
-    let t = time_builder(cfg)?;
-    let ref_fit_params = run_fit_ref(cfg, &t)?;
+    let ref_fit_params = run_fit_ref(cfg)?;
 
     let sensor_ch = cfg.roles.sensor_ch.clone();
     let pb = ui::spinner(format!("reading sensor channels {:?}", sensor_ch));
     let t0 = std::time::Instant::now();
-    let s_cols =
+    let waveform =
         read_waveform_channels(cfg, &sensor_ch).context("failed to read sensor channels")?;
-    let s_col_refs: Vec<&[f64]> = s_cols.iter().map(|col| col.as_slice()).collect();
+    let s_col_refs: Vec<&[f64]> = waveform.channels.iter().map(|col| col.as_slice()).collect();
     ui::finish_read(
         pb,
         format!(
@@ -36,7 +34,13 @@ pub fn run(cfg: &Config) -> Result<()> {
         ),
     );
 
-    let _ = run_sensor(cfg, &t, &s_col_refs, &sensor_ch, ref_fit_params.f_ref)?;
+    let _ = run_sensor(
+        cfg,
+        &waveform.t,
+        &s_col_refs,
+        &sensor_ch,
+        ref_fit_params.f_ref,
+    )?;
     Ok(())
 }
 
@@ -78,14 +82,14 @@ pub fn run_sensor(
         ),
     );
 
-    let t_stride = li_stride_1d(cfg, t, f_ref)?;
+    let t_stride = li_stride_1d(cfg, t, t, f_ref)?;
 
     plot::run_plot(
         &cfg.plot,
         "plotting sensor raw data",
         "sensor raw plot completed",
         || {
-            let s_stride = li_stride_2d(cfg, s_cols, f_ref)?;
+            let s_stride = li_stride_2d(cfg, t, s_cols, f_ref)?;
             sensor_raw_plot::SensorRawPlotter {}
                 .plot(&cfg.plot, &t_stride, s_stride, sensor_ch, &c_bg_arr)
                 .context("failed to plot sensor data")
@@ -95,7 +99,11 @@ pub fn run_sensor(
     let pb = ui::progress("integrating sensor pulses", s_cols.len() as u64);
     let start = std::time::Instant::now();
 
-    let dt = cfg.timebase.dt;
+    let dt = t
+        .windows(2)
+        .next()
+        .map(|w| w[1] - w[0])
+        .ok_or_else(|| anyhow::anyhow!("time axis must contain at least two samples"))?;
     let s_integral = s_cols
         .iter()
         .zip(c_bg_arr.iter())
@@ -117,7 +125,7 @@ pub fn run_sensor(
         ),
     );
 
-    let s_integral_stride = li_stride_2d(cfg, &s_integral, f_ref)?;
+    let s_integral_stride = li_stride_2d(cfg, t, &s_integral, f_ref)?;
 
     let labels: Vec<&str> = sensor_meta.iter().map(|m| m.label).collect();
     let units: Vec<&str> = sensor_meta.iter().map(|m| m.unit).collect();

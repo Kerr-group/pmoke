@@ -35,6 +35,7 @@ use std::{
 };
 use tachyonfx::{CellFilter, Duration as FxDuration, EffectManager, Interpolation, Motion, fx};
 use tui_spinner::FluxFrames;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 mod actions;
 mod clipboard;
@@ -48,8 +49,10 @@ use clipboard::base64_encode;
 use clipboard::{ClipboardMethod, copy_text_to_clipboard};
 use formatting::{
     bordered_inner, centered_rect, centered_text, contains, fit_path, fit_text, format_age,
-    format_duration, format_live_duration, percent_width, strip_ansi_codes,
+    format_duration, format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
 };
+#[cfg(test)]
+use layout::actions_panel_width;
 use layout::{
     UiLayout, actions_full_layout, active_panel_layout, command_palette_layout,
     latest_event_feed_effect_area, output_inner_layout, output_visible_rows,
@@ -1507,7 +1510,7 @@ fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
                 Span::raw(" "),
                 Span::styled(icon, icon_style),
                 Span::raw("  "),
-                Span::styled(action.label(), selected_style),
+                Span::styled(action.command_name(), selected_style),
                 Span::raw(" "),
                 Span::styled(badge.trim(), badge_style),
             ]))
@@ -1534,7 +1537,7 @@ fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp, area: Rec
     frame.render_widget(
         Paragraph::new(action.description())
             .style(Style::default().fg(Color::Gray))
-            .block(accent_panel(format!(" DETAIL {} ", action.label())))
+            .block(accent_panel(format!(" DETAIL {} ", action.command_name())))
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -2083,7 +2086,7 @@ fn metric_output_lines(
     key: &str,
     value: &str,
 ) -> Vec<VisualOutputLine> {
-    let key_width = key.chars().count().clamp(8, 18);
+    let key_width = key.width_cjk().clamp(8, 18);
     let value_width = context.width.saturating_sub(key_width + 10).max(12);
     wrap_log_text(value, value_width)
         .into_iter()
@@ -2106,7 +2109,7 @@ fn metric_output_lines(
                 vec![
                     Span::styled(format!("{marker}  │ "), rail),
                     Span::styled(
-                        format!("{key:key_width$}"),
+                        pad_display_width(key, key_width),
                         selected_output_style(
                             Style::default()
                                 .fg(Color::LightCyan)
@@ -2265,7 +2268,7 @@ fn output_display_line_count(display: &OutputDisplay, width: usize) -> usize {
     match display {
         OutputDisplay::Section(_) => 1,
         OutputDisplay::Metric { key, value } => {
-            let key_width = key.chars().count().clamp(8, 18);
+            let key_width = key.width_cjk().clamp(8, 18);
             let value_width = width.saturating_sub(key_width + 10).max(12);
             wrap_line_count(value, value_width)
         }
@@ -2291,15 +2294,16 @@ fn wrap_log_text(text: &str, width: usize) -> Vec<String> {
 
     let mut lines = Vec::new();
     let mut current = String::new();
-    let mut current_len = 0;
+    let mut current_width = 0;
     for ch in text.chars() {
-        if current_len >= width {
+        let ch_width = ch.width_cjk().unwrap_or(0);
+        if current_width + ch_width > width && !current.is_empty() {
             lines.push(current);
             current = String::new();
-            current_len = 0;
+            current_width = 0;
         }
         current.push(ch);
-        current_len += 1;
+        current_width += ch_width;
     }
     lines.push(current);
     lines
@@ -2307,10 +2311,9 @@ fn wrap_log_text(text: &str, width: usize) -> Vec<String> {
 
 fn wrap_line_count(text: &str, width: usize) -> usize {
     if width == 0 {
-        return text.chars().count().max(1);
+        return text.width_cjk().max(1);
     }
-    let len = text.chars().count();
-    len.max(1).div_ceil(width)
+    wrap_log_text(text, width).len()
 }
 
 fn run_status_color(app: &MonitorApp) -> Color {

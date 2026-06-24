@@ -5,26 +5,26 @@ use std::f64::consts::PI;
 
 use crate::config::Config;
 use crate::lockin::reference::ref_analysis::{RefFitParams, ReferenceFFT, ReferenceFitter};
-use crate::lockin::time::time_builder;
 use crate::utils::waveform::read_waveform_channels;
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
 
 pub fn run(cfg: &Config) -> Result<()> {
-    let t = time_builder(cfg)?;
-    let _ = run_fit_ref(cfg, &t)?;
+    let _ = run_fit_ref(cfg)?;
     Ok(())
 }
 
-pub fn run_fit_ref(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
+pub fn run_fit_ref(cfg: &Config) -> Result<RefFitParams> {
     let ref_ch = extract_single_reference_ch(cfg)?;
 
     let pb = ui::spinner(format!("reading reference channel {ref_ch}"));
     let t0 = std::time::Instant::now();
-    let ref_data = read_waveform_channels(cfg, &[ref_ch])
-        .context("failed to read reference channel")?
-        .pop()
-        .ok_or_else(|| anyhow::anyhow!("read_waveform_channels returned no data for ch{ref_ch}"))?;
+    let waveform =
+        read_waveform_channels(cfg, &[ref_ch]).context("failed to read reference channel")?;
+    let ref_data =
+        waveform.channels.into_iter().next().ok_or_else(|| {
+            anyhow::anyhow!("read_waveform_channels returned no data for ch{ref_ch}")
+        })?;
     let elapsed_read = t0.elapsed();
     ui::finish_read(
         pb,
@@ -34,7 +34,8 @@ pub fn run_fit_ref(cfg: &Config, t: &[f64]) -> Result<RefFitParams> {
         ),
     );
 
-    let results = run_fit_ref_core(cfg, t, &ref_data).context("failed to fit reference signal")?;
+    let results =
+        run_fit_ref_core(cfg, &waveform.t, &ref_data).context("failed to fit reference signal")?;
 
     Ok(results)
 }

@@ -29,12 +29,18 @@ clap_complete = "4.6.5"
 dirs = "6.0.0"
 csv = "1.4.0"
 rayon = "1.12.0"
-meval = "0.2.0"
+fasteval = "0.2.4"
 num-complex = "0.4.6"
 tachyonfx = "0.25.0"
 tui-spinner = "0.2.3"
+unicode-width = "0.2.2"
 
 [features]
 default = ["hw"]
 
 hw = ["dep:gpib-rs", "dep:instruments"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
