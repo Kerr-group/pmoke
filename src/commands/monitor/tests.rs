@@ -222,6 +222,39 @@ fn compact_pending_timeline_step_animates_without_wide_glyphs() {
 }
 
 #[test]
+fn compact_current_timeline_step_uses_centered_cell() {
+    let steps = vec![
+        TimelineStep {
+            label: "Read",
+            state: TimelineStepState::Current,
+        },
+        TimelineStep {
+            label: "Reference",
+            state: TimelineStepState::Pending,
+        },
+    ];
+
+    let lines = timeline_step_lines(&steps, 8, 2, 0);
+    let rendered = lines[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(rendered, " | ─o");
+    assert_eq!(lines[0].spans[0].content.as_ref(), " | ");
+    assert_eq!(lines[0].spans[2].content.as_ref(), "o");
+    assert!(
+        lines[0]
+            .spans
+            .iter()
+            .map(|span| unicode_width::UnicodeWidthStr::width_cjk(span.content.as_ref()))
+            .sum::<usize>()
+            <= 8
+    );
+}
+
+#[test]
 fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
     let steps = vec![
         TimelineStep {

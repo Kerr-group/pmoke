@@ -8,6 +8,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{LogEntry, MonitorAction, MonitorApp, TIMELINE_BADGE_WIDTH, strip_ansi_codes};
 
+const TIMELINE_COMPACT_BADGE_WIDTH: usize = 3;
+
 pub(super) fn render_run_timeline(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
@@ -348,7 +350,26 @@ fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static
     } else {
         Style::default().fg(fg).bg(bg).add_modifier(modifier)
     };
+    let icon = if matches!(
+        step.state,
+        TimelineStepState::Current | TimelineStepState::Stopping
+    ) {
+        timeline_compact_badge_cell(&icon)
+    } else {
+        icon
+    };
     Span::styled(icon, style)
+}
+
+fn timeline_compact_badge_cell(icon: &str) -> String {
+    let len = icon.chars().count();
+    if len >= TIMELINE_COMPACT_BADGE_WIDTH {
+        return icon.to_string();
+    }
+    let padding = TIMELINE_COMPACT_BADGE_WIDTH - len;
+    let left = padding / 2;
+    let right = padding - left;
+    format!("{}{}{}", " ".repeat(left), icon, " ".repeat(right))
 }
 
 fn line_width(line: &Line<'_>) -> usize {
