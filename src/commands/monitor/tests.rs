@@ -162,6 +162,7 @@ fn current_timeline_step_animates_with_motion_frame() {
 fn timeline_badges_are_centered_in_fixed_cells() {
     assert_eq!(timeline_badge_cell("⣾"), "  ⣾  ");
     assert_eq!(timeline_badge_cell("✓"), "  ✓  ");
+    assert_eq!(timeline_badge_cell("○"), " ○  ");
     assert_eq!(timeline_badge_cell("!"), "  !  ");
 }
 
@@ -205,7 +206,7 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
     assert!(lines.iter().all(|line| {
         line.spans
             .iter()
-            .map(|span| span.content.chars().count())
+            .map(|span| unicode_width::UnicodeWidthStr::width_cjk(span.content.as_ref()))
             .sum::<usize>()
             <= 10
     }));
@@ -327,6 +328,12 @@ fn event_feed_badges_are_centered_in_fixed_cells() {
     assert_eq!(event_badge_cell(LogKind::Success), "  OK  ");
     assert_eq!(event_badge_cell(LogKind::System), " SYS  ");
     assert_eq!(event_badge_cell(LogKind::Save), " SAVE ");
+}
+
+#[test]
+fn display_padding_uses_cjk_width() {
+    assert_eq!(pad_display_width("abc", 5), "abc  ");
+    assert_eq!(pad_display_width("○○", 5), "○○ ");
 }
 
 #[test]
@@ -485,6 +492,21 @@ fn visual_output_line_count_does_not_overcount_exact_width() {
 
     assert_eq!(visual_output_line_count(&entries, 26), 1);
     assert_eq!(visual_output_line_count(&entries, 25), 2);
+}
+
+#[test]
+fn visual_output_line_count_uses_cjk_display_width() {
+    let entries = vec![LogEntry {
+        stream: OutputStream::Stdout,
+        text: "○○○○○○○".to_string(),
+    }];
+
+    assert_eq!(visual_output_line_count(&entries, 27), 1);
+    assert_eq!(visual_output_line_count(&entries, 26), 2);
+    assert_eq!(
+        visual_output_line_count(&entries, 26),
+        visual_output_lines(&entries, 26, None, None).len()
+    );
 }
 
 #[test]

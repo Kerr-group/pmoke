@@ -1102,6 +1102,7 @@ dependencies = [
  "tachyonfx",
  "toml",
  "tui-spinner",
+ "unicode-width",
 ]
 
 [[package]]

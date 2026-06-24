@@ -5,6 +5,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 use tui_spinner::FluxFrames;
+use unicode_width::UnicodeWidthStr;
 
 use super::{
     LogEntry, MonitorAction, MonitorApp, TIMELINE_BADGE_WIDTH, centered_text, strip_ansi_codes,
@@ -347,7 +348,10 @@ fn line_width(line: &Line<'_>) -> usize {
 }
 
 fn spans_width(spans: &[Span<'_>]) -> usize {
-    spans.iter().map(|span| span.content.chars().count()).sum()
+    spans
+        .iter()
+        .map(|span| span.content.as_ref().width_cjk())
+        .sum()
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StageProgressState {

@@ -33,6 +33,7 @@ fasteval = "0.2.4"
 num-complex = "0.4.6"
 tachyonfx = "0.25.0"
 tui-spinner = "0.2.3"
+unicode-width = "0.2.2"
 
 [features]
 default = ["hw"]

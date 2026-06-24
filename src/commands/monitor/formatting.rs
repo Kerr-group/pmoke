@@ -1,8 +1,9 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use std::time::Duration;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub(super) fn centered_text(text: &str, width: usize) -> String {
-    let len = text.chars().count();
+    let len = text.width_cjk();
     if len >= width {
         return text.to_string();
     }
@@ -10,6 +11,14 @@ pub(super) fn centered_text(text: &str, width: usize) -> String {
     let left = padding / 2;
     let right = padding - left;
     format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
+}
+
+pub(super) fn pad_display_width(text: &str, width: usize) -> String {
+    let len = text.width_cjk();
+    if len >= width {
+        return text.to_string();
+    }
+    format!("{}{}", text, " ".repeat(width - len))
 }
 
 pub(super) fn strip_ansi_codes(text: &str) -> String {
@@ -67,21 +76,21 @@ pub(super) fn fit_text(text: &str, width: usize) -> String {
         return String::new();
     }
 
-    let len = text.chars().count();
+    let len = text.width_cjk();
     if len <= width {
         return text.to_string();
     }
     if width <= 3 {
-        return text.chars().take(width).collect();
+        return take_display_width(text, width);
     }
 
-    let mut fitted = text.chars().take(width - 3).collect::<String>();
+    let mut fitted = take_display_width(text, width - 3);
     fitted.push_str("...");
     fitted
 }
 
 pub(super) fn fit_path(path: &str, width: usize) -> String {
-    if path.chars().count() <= width {
+    if path.width_cjk() <= width {
         return path.to_string();
     }
     if width <= 3 {
@@ -89,15 +98,36 @@ pub(super) fn fit_path(path: &str, width: usize) -> String {
     }
 
     let tail_width = width - 3;
-    let tail = path
-        .chars()
-        .rev()
-        .take(tail_width)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect::<String>();
+    let tail = take_display_width_from_end(path, tail_width);
     format!("...{tail}")
+}
+
+fn take_display_width(text: &str, width: usize) -> String {
+    let mut taken = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let ch_width = ch.width_cjk().unwrap_or(0);
+        if used + ch_width > width {
+            break;
+        }
+        taken.push(ch);
+        used += ch_width;
+    }
+    taken
+}
+
+fn take_display_width_from_end(text: &str, width: usize) -> String {
+    let mut chars = Vec::new();
+    let mut used = 0usize;
+    for ch in text.chars().rev() {
+        let ch_width = ch.width_cjk().unwrap_or(0);
+        if used + ch_width > width {
+            break;
+        }
+        chars.push(ch);
+        used += ch_width;
+    }
+    chars.into_iter().rev().collect()
 }
 
 pub(super) fn percent_width(total: usize, percent: usize) -> usize {
