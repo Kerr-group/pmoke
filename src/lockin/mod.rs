@@ -36,7 +36,7 @@ pub fn run(cfg: &Config) -> Result<()> {
     ui::finish_read(
         pb,
         format!(
-            "fetched data: {} rows, {} columns ({})",
+            "fetched data: {} channels, {} samples ({})",
             data.channels.len(),
             data.channels.first().map_or(0, Vec::len),
             ui::fmt_duration(elapsed_read)
@@ -44,7 +44,7 @@ pub fn run(cfg: &Config) -> Result<()> {
     );
 
     if data.channels.is_empty() {
-        bail!("Fetched data is empty, cannot extract columns.");
+        bail!("Fetched data is empty, cannot extract channels.");
     }
 
     let _ = run_li(cfg, &data.t, &data.channels)?;
@@ -63,7 +63,7 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOut
 
     if max_needed_idx >= data.len() {
         bail!(
-            "Configuration error: required channel index {} is out of bounds. Fetched data only has {} columns.",
+            "Configuration error: required channel index {} is out of bounds. Fetched data only has {} channels.",
             max_needed_idx,
             data.len()
         );
