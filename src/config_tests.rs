@@ -272,6 +272,87 @@ dt = 1.0"#,
 }
 
 #[test]
+fn expression_values_accept_pi_variable_and_function() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "m_omega_t0_offset = [0,0,0,0,0,0]",
+        r#"m_omega_t0_offset = ["pi", "pi()/2", "-pi", "2*pi", 0, 1]"#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert_eq!(config.phase.m_omega_t0_offset.len(), 6);
+            assert!((config.phase.m_omega_t0_offset[0] - std::f64::consts::PI).abs() < 1e-12);
+            assert!((config.phase.m_omega_t0_offset[1] - std::f64::consts::PI / 2.0).abs() < 1e-12);
+            assert!((config.phase.m_omega_t0_offset[2] + std::f64::consts::PI).abs() < 1e-12);
+            assert!((config.phase.m_omega_t0_offset[3] - 2.0 * std::f64::consts::PI).abs() < 1e-12);
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
+fn expression_values_reject_print_call() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "m_omega_t0_offset = [0,0,0,0,0,0]",
+        r#"m_omega_t0_offset = ["print(1)", 0, 0, 0, 0, 0]"#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => {
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.message.contains("print() is not allowed"))
+            );
+        }
+        other => panic!("expected diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
+fn expression_values_reject_non_finite_results() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "m_omega_t0_offset = [0,0,0,0,0,0]",
+        r#"m_omega_t0_offset = ["NaN", 0, 0, 0, 0, 0]"#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => {
+            assert!(
+                diag.diagnostics
+                    .iter()
+                    .any(|issue| issue.path.as_deref() == Some("phase.m_omega_t0_offset[0]"))
+            );
+        }
+        other => panic!("expected diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
 fn v1_filter_length_maps_to_half_window_cycles_and_legacy_boxcar() {
     let text = r#"
 version = 1

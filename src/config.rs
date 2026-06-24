@@ -2,20 +2,61 @@ use crate::constants::{
     FETCHED_FNAME, LI_RESULTS_NAME, LI_ROTATED_NAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR,
 };
 use anyhow::{Result, anyhow, bail};
+use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
-use std::str::FromStr;
 use std::{collections::BTreeSet, fs, path::Path};
 
 fn eval_f64_expr(s: &str) -> Result<f64> {
-    let expr =
-        meval::Expr::from_str(s.trim()).map_err(|e| anyhow!("invalid expression '{s}': {e}"))?;
+    if contains_print_call(s) {
+        bail!("invalid expression '{s}': print() is not allowed in config values");
+    }
 
-    let mut ctx = meval::Context::new();
-    ctx.var("pi", std::f64::consts::PI);
+    let mut slab = fasteval::Slab::new();
+    let parser = fasteval::Parser::new();
+    let expr = parser
+        .parse(s.trim(), &mut slab.ps)
+        .map_err(|e| anyhow!("invalid expression '{s}': {e}"))?;
 
-    expr.eval_with_context(ctx)
+    let mut namespace = BTreeMap::from([("pi".to_string(), std::f64::consts::PI)]);
+    expr.from(&slab.ps)
+        .eval(&slab, &mut namespace)
         .map_err(|e| anyhow!("failed to evaluate '{s}': {e}"))
+}
+
+fn contains_print_call(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if is_expr_ident_start(bytes[i]) {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && is_expr_ident_continue(bytes[i]) {
+                i += 1;
+            }
+            if &s[start..i] == "print" {
+                let mut j = i;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if matches!(bytes.get(j), Some(b'(' | b'[')) {
+                    return true;
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+fn is_expr_ident_start(b: u8) -> bool {
+    b.is_ascii_alphabetic() || b == b'_'
+}
+
+fn is_expr_ident_continue(b: u8) -> bool {
+    is_expr_ident_start(b) || b.is_ascii_digit()
 }
 
 fn de_vec_f64_or_expr<'de, D>(de: D) -> std::result::Result<Vec<f64>, D::Error>
@@ -1244,6 +1285,16 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             ),
             None,
         ));
+    }
+    for (idx, value) in cfg.phase.m_omega_t0_offset.iter().enumerate() {
+        if !value.is_finite() {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("phase.m_omega_t0_offset[{idx}]")),
+                format!("phase.m_omega_t0_offset[{idx}] must be finite (got {value})"),
+                None,
+            ));
+        }
     }
 
     let mut seen = BTreeSet::new();
