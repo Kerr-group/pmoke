@@ -154,13 +154,14 @@ fn current_timeline_step_animates_with_motion_frame() {
     let second = timeline_step_spans(&step, 1);
 
     assert_ne!(first[0].content, second[0].content);
-    assert!(first[0].content.contains("⣾"));
-    assert!(second[0].content.contains("⣷"));
+    assert_eq!(first[0].content.as_ref(), "  |  ");
+    assert_eq!(second[0].content.as_ref(), "  /  ");
 }
 
 #[test]
 fn timeline_badges_are_centered_in_fixed_cells() {
-    assert_eq!(timeline_badge_cell("⣾"), "  ⣾  ");
+    assert_eq!(timeline_badge_cell("|"), "  |  ");
+    assert_eq!(timeline_badge_cell("/"), "  /  ");
     assert_eq!(timeline_badge_cell("✓"), "  ✓  ");
     assert_eq!(timeline_badge_cell("o"), "  o  ");
     assert_eq!(timeline_badge_cell("O"), "  O  ");
@@ -266,7 +267,7 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
     }));
     assert_eq!(rendered.chars().filter(|ch| *ch == '✓').count(), 2);
     assert_eq!(rendered.chars().filter(|ch| *ch == 'o').count(), 3);
-    assert!(rendered.contains('⣾'));
+    assert!(rendered.contains('|'));
 }
 
 #[test]

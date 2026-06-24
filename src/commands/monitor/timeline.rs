@@ -4,12 +4,9 @@ use ratatui::{
     prelude::{Color, Line, Modifier, Span, Style},
     widgets::Paragraph,
 };
-use tui_spinner::FluxFrames;
 use unicode_width::UnicodeWidthStr;
 
-use super::{
-    LogEntry, MonitorAction, MonitorApp, TIMELINE_BADGE_WIDTH, centered_text, strip_ansi_codes,
-};
+use super::{LogEntry, MonitorAction, MonitorApp, TIMELINE_BADGE_WIDTH, strip_ansi_codes};
 
 pub(super) fn render_run_timeline(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     if area.height == 0 || area.width == 0 {
@@ -202,7 +199,7 @@ pub(super) fn spinner_frame(frames: &'static [char], frame: usize) -> char {
 }
 
 fn timeline_spinner_symbol(frame: usize) -> char {
-    spinner_frame(FluxFrames::BRAILLE, frame)
+    spinner_frame(&['|', '/', '-', '\\'], frame)
 }
 
 fn timeline_pending_symbol(frame: usize) -> char {
@@ -304,7 +301,14 @@ pub(super) fn timeline_step_spans(step: &TimelineStep, frame: usize) -> Vec<Span
 }
 
 pub(super) fn timeline_badge_cell(icon: &str) -> String {
-    centered_text(icon, TIMELINE_BADGE_WIDTH)
+    let len = icon.chars().count();
+    if len >= TIMELINE_BADGE_WIDTH {
+        return icon.to_string();
+    }
+    let padding = TIMELINE_BADGE_WIDTH - len;
+    let left = padding / 2;
+    let right = padding - left;
+    format!("{}{}{}", " ".repeat(left), icon, " ".repeat(right))
 }
 
 fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static> {
