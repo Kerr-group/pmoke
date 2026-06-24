@@ -12,6 +12,12 @@ pub struct DHO5108 {
     transport: DhoTransport,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DhoHorizontalSettings {
+    pub offset: f64,
+    pub scale: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct DhoWaveformPreamble {
     pub raw: String,
@@ -194,6 +200,12 @@ impl DHO5108 {
 
     pub fn identify(&mut self) -> io::Result<String> {
         self.query("*IDN?")
+    }
+
+    pub fn query_horizontal_settings(&mut self) -> io::Result<DhoHorizontalSettings> {
+        let offset = self.query_f64(":TIMebase:MAIN:OFFSet?", "horizontal offset")?;
+        let scale = self.query_f64(":TIMebase:MAIN:SCALe?", "horizontal scale")?;
+        Ok(DhoHorizontalSettings { offset, scale })
     }
 
     fn setup_raw_word_fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {

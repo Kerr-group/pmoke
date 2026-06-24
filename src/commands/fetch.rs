@@ -7,7 +7,7 @@ use crate::utils::channels::build_channel_list;
 use crate::utils::csv::write_csv;
 use crate::utils::waveform::WaveformData;
 use anyhow::{Context, Result, anyhow, bail};
-use instruments::rigol::DhoRawWaveform;
+use instruments::rigol::{DhoHorizontalSettings, DhoRawWaveform};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -36,6 +36,8 @@ struct RawOscilloscopeMetadata {
     byte_order: &'static str,
     sample_count: usize,
     channels: Vec<u8>,
+    horizontal_offset: f64,
+    horizontal_scale: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -324,7 +326,10 @@ fn fetch_raw_into_dir_and_collect_csv(
 
     let depth = osc_cfg.memory_depth;
     let channels = build_channel_list(cfg)?;
-    let mut metadata = build_raw_metadata(cfg, &channels)?;
+    let horizontal = handler
+        .query_horizontal_settings()
+        .context("failed to query oscilloscope horizontal settings")?;
+    let mut metadata = build_raw_metadata(cfg, &channels, horizontal)?;
     let mut csv_channels: Vec<Vec<f64>> = if collect_csv {
         Vec::with_capacity(channels.len())
     } else {
@@ -395,7 +400,11 @@ fn fetch_raw_into_dir_and_collect_csv(
     ))
 }
 
-fn build_raw_metadata(cfg: &Config, channels: &[u8]) -> Result<RawFetchMetadata> {
+fn build_raw_metadata(
+    cfg: &Config,
+    channels: &[u8],
+    horizontal: DhoHorizontalSettings,
+) -> Result<RawFetchMetadata> {
     let osc_cfg = &cfg
         .instruments
         .as_ref()
@@ -420,6 +429,8 @@ fn build_raw_metadata(cfg: &Config, channels: &[u8]) -> Result<RawFetchMetadata>
             byte_order: "little-endian",
             sample_count: osc_cfg.memory_depth,
             channels: channels.to_vec(),
+            horizontal_offset: horizontal.offset,
+            horizontal_scale: horizontal.scale,
         },
         channels: BTreeMap::new(),
     })
@@ -813,6 +824,36 @@ mod tests {
         assert!(!dir.join("ch1.u16le.tmp").exists());
 
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn raw_metadata_serializes_horizontal_settings() {
+        let metadata = RawFetchMetadata {
+            version: 1,
+            created_at_unix_seconds: 0,
+            config_version: 3,
+            oscilloscope: RawOscilloscopeMetadata {
+                model: "DHO5108".to_string(),
+                connection: Connection::Tcpip {
+                    ip: "192.168.10.100".to_string(),
+                    port: 55255,
+                },
+                memory_depth: 200_000_000,
+                waveform_mode: "RAW",
+                waveform_format: "WORD",
+                byte_order: "little-endian",
+                sample_count: 200_000_000,
+                channels: vec![1, 2, 3, 4],
+                horizontal_offset: -0.03,
+                horizontal_scale: 0.005,
+            },
+            channels: BTreeMap::new(),
+        };
+
+        let encoded = toml::to_string_pretty(&metadata).unwrap();
+
+        assert!(encoded.contains("horizontal_offset = -0.03"));
+        assert!(encoded.contains("horizontal_scale = 0.005"));
     }
 
     #[test]

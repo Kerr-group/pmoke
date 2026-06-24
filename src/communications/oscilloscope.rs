@@ -1,7 +1,7 @@
 use crate::communications::validator::validate_oscilloscope;
 use crate::config::{Config, Connection};
 use anyhow::{Result, anyhow};
-use instruments::rigol::{DHO5108, DhoRawWaveform, DhoRawWaveformWritten};
+use instruments::rigol::{DHO5108, DhoHorizontalSettings, DhoRawWaveform, DhoRawWaveformWritten};
 use std::io::Write;
 
 pub enum Oscilloscope {
@@ -87,6 +87,12 @@ impl OscilloscopeHandler {
             _ => Err(anyhow!(
                 "raw WORD fetch is not supported on this oscilloscope"
             )),
+        }
+    }
+
+    pub fn query_horizontal_settings(&mut self) -> Result<DhoHorizontalSettings> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.query_horizontal_settings()?),
         }
     }
 }
