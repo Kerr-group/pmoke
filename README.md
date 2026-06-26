@@ -161,7 +161,6 @@ model = "WF1946B"
 [instruments.oscilloscope]
 connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
 model = "DHO5108"
-memory_depth = 200_000_000
 
 [fetch]
 output = "csv_and_raw"      # "csv", "raw", or "csv_and_raw"
@@ -298,11 +297,13 @@ scaling values used for reconstruction:
 - `x_increment`, `x_origin`, `x_reference`
 - `y_increment`, `y_origin`, `y_reference`
 - `vertical_offset`, `vertical_scale`
+- `horizontal_offset`, `horizontal_scale`
 - sample count and channel file names
 
 The `x_*` and `y_*` values are queried with `WAV:XINC?`, `WAV:XOR?`,
 `WAV:XREF?`, `WAV:YINC?`, `WAV:YOR?`, and `WAV:YREF?`, not parsed from rounded
-`WAV:PRE?` fields.
+`WAV:PRE?` fields. The horizontal display settings are queried separately with
+`:TIMebase:MAIN:OFFSet?` and `:TIMebase:MAIN:SCALe?`.
 
 Voltage reconstruction uses the DHO scaling formula:
 

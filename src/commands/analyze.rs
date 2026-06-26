@@ -17,7 +17,7 @@ pub fn analyze(cfg: &Config) -> Result<()> {
     ui::finish_read(
         pb,
         format!(
-            "fetched data: {} rows, {} columns ({})",
+            "fetched data: {} channels, {} samples ({})",
             data.channels.len(),
             data.channels.first().map_or(0, Vec::len),
             ui::fmt_duration(elapsed_read)
@@ -25,7 +25,7 @@ pub fn analyze(cfg: &Config) -> Result<()> {
     );
 
     if data.channels.is_empty() {
-        bail!("Fetched data is empty, cannot extract columns.");
+        bail!("Fetched data is empty, cannot extract channels.");
     }
 
     run_analyze(cfg, data)?;

@@ -386,7 +386,7 @@ fn analyze_timeline_marks_done_current_and_pending_steps() {
     let output = vec![
         LogEntry {
             stream: OutputStream::Stdout,
-            text: "[ READ  ] fetched data: 4 rows".to_string(),
+            text: "[ READ  ] fetched data: 4 channels".to_string(),
         },
         LogEntry {
             stream: OutputStream::Stdout,
