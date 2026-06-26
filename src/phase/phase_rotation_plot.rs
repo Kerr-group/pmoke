@@ -1,11 +1,13 @@
 use crate::config::Plot;
 use crate::plot::{decimate_1d, decimate_3d};
+use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use std::ffi::CString;
+use std::sync::OnceLock;
 
 const PHASE_ROTATION_PLOT_PY: &str = include_str!("pytools/phase_rotation_plot.py");
+static PHASE_ROTATION_PLOT_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 
 #[allow(dead_code)]
 pub struct PhaseRotationPlotter {}
@@ -20,24 +22,18 @@ impl PhaseRotationPlotter {
         labels: &[String],
     ) -> Result<()> {
         Python::attach(|py| {
-            let code = CString::new(PHASE_ROTATION_PLOT_PY)
-                .expect("phase_rotation_plot.py contains interior NUL");
-            let filename = CString::new("phase_rotation_plot.py").unwrap();
-            let modulename = CString::new("phase_rotation_plot").unwrap();
-
-            let plot_mod = PyModule::from_code(
+            let plot_mod = python::cached_module(
                 py,
-                code.as_c_str(),
-                filename.as_c_str(),
-                modulename.as_c_str(),
+                &PHASE_ROTATION_PLOT_MODULE,
+                PHASE_ROTATION_PLOT_PY,
+                "phase_rotation_plot.py",
+                "phase_rotation_plot",
             )
             .context("failed to load phase_rotation_plot.py")?;
-
-            let np = py.import("numpy").context("failed to import numpy")?;
             let t_plot = decimate_1d(plot, t);
             let y_plot = decimate_3d(plot, y);
-            let t_obj = np.call_method1("array", (t_plot,))?;
-            let y_obj = np.call_method1("array", (y_plot,))?;
+            let t_obj = python::f64_array1(py, &t_plot);
+            let y_obj = python::f64_array3(py, &y_plot)?;
 
             let plotter = plot_mod
                 .getattr("PhaseRotationPlotter")?

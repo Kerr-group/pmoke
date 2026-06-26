@@ -192,7 +192,7 @@ fn fit_background(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>
             || (ti >= &bg_window_after.start && ti <= &bg_window_after.end)
     };
 
-    let t_fit = t.iter().cloned().filter(is_in_bg).collect::<Vec<f64>>();
+    let t_fit = t.iter().copied().filter(is_in_bg).collect::<Vec<f64>>();
 
     if t_fit.is_empty() {
         bail!("No data points found in background windows. Cannot fit background.");
@@ -203,10 +203,8 @@ fn fit_background(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>
         .map(|col| {
             let s_fit = col
                 .iter()
-                .cloned()
                 .zip(t.iter())
-                .filter(|&(_yi, ti)| is_in_bg(ti)) // 同じ条件でフィルタ
-                .map(|(yi, _ti)| yi)
+                .filter_map(|(&yi, ti)| is_in_bg(ti).then_some(yi))
                 .collect::<Vec<f64>>();
 
             pulse_calculator::PulseBgFitter {}.fit(&t_fit, &s_fit)

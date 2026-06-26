@@ -34,8 +34,8 @@ class PreciseFFT:
         """Zero-pad the windowed signal to increase resolution."""
         self.y_pad = np.pad(self.y_win, (0, self.N * (self.pad_factor - 1)), "constant")
         self.N_pad = len(self.y_pad)
-        self.freq = np.fft.fftfreq(self.N_pad, self.dt)
-        self.Y = np.fft.fft(self.y_pad)
+        self.freq = np.fft.rfftfreq(self.N_pad, self.dt)
+        self.Y = np.fft.rfft(self.y_pad)
 
     def quad_interp_complex(self, fft_arr, idx):
         """Complex quadratic interpolation around a given bin."""
@@ -105,13 +105,10 @@ class PreciseFFT:
         - omega [rad/s]
         - amp  amplitude corrected by window sum
         """
-        freq_hz = np.fft.rfftfreq(self.N_pad, self.dt)
-        Y_pos = np.fft.rfft(self.y_pad)
-
         win_sum = self.window.sum()
-        amp = 2 * np.abs(Y_pos) / win_sum
+        amp = 2 * np.abs(self.Y) / win_sum
 
-        omega = freq_hz * 2 * np.pi
+        omega = self.freq * 2 * np.pi
         return omega, amp
 
 

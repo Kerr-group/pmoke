@@ -1,44 +1,38 @@
+use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use std::ffi::CString;
+use std::sync::OnceLock;
 
 const PULSE_BG_FIT_PY: &str = include_str!("pytools/pulse_bg_fit.py");
+static PULSE_BG_FIT_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 
 pub struct PulseBgFitter {}
 
 impl PulseBgFitter {
     pub fn fit(&self, t: &[f64], y: &[f64]) -> Result<f64> {
         Python::attach(|py| {
-            let code =
-                CString::new(PULSE_BG_FIT_PY).expect("pulse_bg_fit.py contains interior NUL");
-            let filename = CString::new("pulse_bg_fit.py").unwrap();
-            let modulename = CString::new("pulse_bg_fit").unwrap();
-
-            let fitter_mod = PyModule::from_code(
+            let fitter_mod = python::cached_module(
                 py,
-                code.as_c_str(),
-                filename.as_c_str(),
-                modulename.as_c_str(),
+                &PULSE_BG_FIT_MODULE,
+                PULSE_BG_FIT_PY,
+                "pulse_bg_fit.py",
+                "pulse_bg_fit",
             )
             .context("failed to load pulse_bg_fit.py")?;
+            let t_obj = python::f64_array1(py, t);
+            let y_obj = python::f64_array1(py, y);
 
-            let np = py.import("numpy").context("failed to import numpy")?;
-            let t_obj = np.call_method1("array", (t,))?;
-            let y_obj = np.call_method1("array", (y,))?;
-
-            let plotter = fitter_mod
+            let fitter = fitter_mod
                 .getattr("PulseBgFit")?
                 .call0()
                 .context("failed to create PulseBgFit instance")?;
 
-            let res = plotter
+            let res = fitter
                 .call_method1("fit", (t_obj, y_obj))
                 .context("python PulseBgFit.fit(...) failed")?;
 
-            let c: f64 = res.get_item("c")?.extract()?;
-
-            Ok(c)
+            res.get_item("c")?.extract().map_err(Into::into)
         })
     }
 }
