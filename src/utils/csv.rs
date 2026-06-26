@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+const CSV_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+
 pub fn read_csv<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<f64>>> {
     let mut rdr = ReaderBuilder::new()
         .has_headers(true)
@@ -76,7 +78,9 @@ where
     }
 
     let file = File::create(path.as_ref()).context("failed to create csv file")?;
-    let mut w = BufWriter::new(file);
+    // Large waveform CSVs contain hundreds of millions of rows. Keep the
+    // formatting unchanged while avoiding frequent small writes to the OS.
+    let mut w = BufWriter::with_capacity(CSV_WRITE_BUFFER_BYTES, file);
 
     if !headers.is_empty() {
         if headers.len() != ncols {
