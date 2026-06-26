@@ -55,13 +55,7 @@ pub fn run_sensor(
         bail!("No sensor data columns were read from {}", FETCHED_FNAME);
     }
 
-    if t.len() != s_cols[0].len() {
-        bail!(
-            "time length ({}) and sensor length ({}) differ",
-            t.len(),
-            s_cols[0].len()
-        );
-    }
+    validate_sensor_lengths(t, s_cols)?;
 
     let sensor_meta = extract_sensor_metadata(cfg)?;
 
@@ -183,6 +177,20 @@ pub fn extract_sensor_metadata<'a>(cfg: &'a Config) -> Result<Vec<SensorMeta<'a>
         .collect::<Result<Vec<_>>>()
 }
 
+fn validate_sensor_lengths(t: &[f64], s_cols: &[&[f64]]) -> Result<()> {
+    for (column_index, column) in s_cols.iter().enumerate() {
+        if t.len() != column.len() {
+            bail!(
+                "time length ({}) and sensor column {} length ({}) differ",
+                t.len(),
+                column_index + 1,
+                column.len()
+            );
+        }
+    }
+    Ok(())
+}
+
 fn calculate_background_averages(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>> {
     let bg_window_before = &cfg.pulse.bg_window_before;
     let bg_window_after = &cfg.pulse.bg_window_after;
@@ -207,4 +215,20 @@ fn calculate_background_averages(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> 
             pulse_calculator::PulseBgAverage {}.calculate(values)
         })
         .collect::<Result<Vec<_>>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_sensor_lengths;
+
+    #[test]
+    fn sensor_length_validation_checks_every_channel() {
+        let time = [0.0, 1.0, 2.0];
+        let first = [1.0, 2.0, 3.0];
+        let second = [4.0, 5.0];
+
+        let error = validate_sensor_lengths(&time, &[&first, &second]).unwrap_err();
+
+        assert!(error.to_string().contains("sensor column 2"));
+    }
 }
