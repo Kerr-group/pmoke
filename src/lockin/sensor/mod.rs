@@ -65,9 +65,9 @@ pub fn run_sensor(
 
     let sensor_meta = extract_sensor_metadata(cfg)?;
 
-    let pb = ui::spinner("fitting sensor backgrounds");
+    let pb = ui::spinner("averaging sensor backgrounds");
     let t0 = std::time::Instant::now();
-    let c_bg_arr = match fit_background(cfg, t, s_cols) {
+    let c_bg_arr = match calculate_background_averages(cfg, t, s_cols) {
         Ok(c_bg_arr) => c_bg_arr,
         Err(err) => {
             pb.finish_and_clear();
@@ -77,7 +77,7 @@ pub fn run_sensor(
     ui::finish_success(
         pb,
         format!(
-            "sensor backgrounds fitted ({})",
+            "sensor backgrounds averaged ({})",
             ui::fmt_duration(t0.elapsed())
         ),
     );
@@ -183,7 +183,7 @@ pub fn extract_sensor_metadata<'a>(cfg: &'a Config) -> Result<Vec<SensorMeta<'a>
         .collect::<Result<Vec<_>>>()
 }
 
-fn fit_background(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>> {
+fn calculate_background_averages(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>> {
     let bg_window_before = &cfg.pulse.bg_window_before;
     let bg_window_after = &cfg.pulse.bg_window_after;
 
@@ -193,7 +193,7 @@ fn fit_background(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>
     };
 
     if !t.iter().any(is_in_bg) {
-        bail!("No data points found in background windows. Cannot fit background.");
+        bail!("No data points found in background windows. Cannot calculate background average.");
     }
 
     s_cols
