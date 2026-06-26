@@ -1,39 +1,40 @@
-use crate::python;
-use anyhow::{Context, Result};
-use pyo3::prelude::*;
-use pyo3::types::PyModule;
-use std::sync::OnceLock;
+use anyhow::{Result, bail};
 
-const PULSE_BG_FIT_PY: &str = include_str!("pytools/pulse_bg_fit.py");
-static PULSE_BG_FIT_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
+pub struct PulseBgAverage {}
 
-pub struct PulseBgFitter {}
+impl PulseBgAverage {
+    pub fn calculate<I>(&self, values: I) -> Result<f64>
+    where
+        I: IntoIterator<Item = f64>,
+    {
+        let mut sum = 0.0;
+        let mut compensation = 0.0;
+        let mut count = 0usize;
 
-impl PulseBgFitter {
-    pub fn fit(&self, t: &[f64], y: &[f64]) -> Result<f64> {
-        Python::attach(|py| {
-            let fitter_mod = python::cached_module(
-                py,
-                &PULSE_BG_FIT_MODULE,
-                PULSE_BG_FIT_PY,
-                "pulse_bg_fit.py",
-                "pulse_bg_fit",
-            )
-            .context("failed to load pulse_bg_fit.py")?;
-            let t_obj = python::f64_array1(py, t);
-            let y_obj = python::f64_array1(py, y);
+        for value in values {
+            if !value.is_finite() {
+                bail!("background window contains a non-finite value");
+            }
 
-            let fitter = fitter_mod
-                .getattr("PulseBgFit")?
-                .call0()
-                .context("failed to create PulseBgFit instance")?;
+            let next = sum + value;
+            if sum.abs() >= value.abs() {
+                compensation += (sum - next) + value;
+            } else {
+                compensation += (value - next) + sum;
+            }
+            sum = next;
+            count += 1;
+        }
 
-            let res = fitter
-                .call_method1("fit", (t_obj, y_obj))
-                .context("python PulseBgFit.fit(...) failed")?;
+        if count == 0 {
+            bail!("cannot calculate a background average from an empty window");
+        }
 
-            res.get_item("c")?.extract().map_err(Into::into)
-        })
+        let average = (sum + compensation) / count as f64;
+        if !average.is_finite() {
+            bail!("background average is not finite");
+        }
+        Ok(average)
     }
 }
 
@@ -76,5 +77,29 @@ impl PulseIntegralCalculator {
         }
 
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PulseBgAverage;
+
+    #[test]
+    fn background_average_is_the_constant_least_squares_solution() {
+        let average = PulseBgAverage {}.calculate([1.0, 2.0, 6.0, 11.0]).unwrap();
+        assert_eq!(average, 5.0);
+    }
+
+    #[test]
+    fn background_average_preserves_small_terms_during_cancellation() {
+        let average = PulseBgAverage {}.calculate([1.0e16, 1.0, -1.0e16]).unwrap();
+        assert_eq!(average, 1.0 / 3.0);
+    }
+
+    #[test]
+    fn background_average_rejects_empty_and_non_finite_inputs() {
+        assert!(PulseBgAverage {}.calculate([]).is_err());
+        assert!(PulseBgAverage {}.calculate([1.0, f64::NAN]).is_err());
+        assert!(PulseBgAverage {}.calculate([f64::INFINITY]).is_err());
     }
 }
