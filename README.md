@@ -163,8 +163,8 @@ connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
 model = "DHO5108"
 
 [fetch]
-output = "csv_and_raw"      # "csv", "raw", or "csv_and_raw"
-analysis_input = "auto"    # "csv", "raw", or "auto"
+output = "raw"             # "csv", "raw", or "csv_and_raw"
+analysis_input = "raw"     # "csv", "raw", or "auto"
 
 [plot]
 enabled = true
@@ -252,6 +252,18 @@ output = "raw"              # writes raw_waveform/
 output = "csv_and_raw"      # writes both
 ```
 
+For large DHO5000 captures, use raw WORD as the normal path:
+
+```toml
+[fetch]
+output = "raw"
+analysis_input = "raw" # or "auto" while migrating existing directories
+```
+
+This avoids making `raw.csv` part of the hot path. The raw WORD files preserve
+the oscilloscope payload bytes, and `metadata.toml` stores the scaling needed to
+reconstruct both voltage and time values later.
+
 Command-line overrides:
 
 ```sh
@@ -275,7 +287,8 @@ raw.csv
 Current CSV output includes a `time (s)` column followed by channel voltage
 columns. This is convenient for inspection and compatibility, but very large
 captures can become slow and large. For 200 Mpts data, prefer raw WORD output as
-the primary archive format.
+the primary archive and analysis format. Generate CSV only when it is needed for
+inspection or external tools.
 
 ### Raw WORD Output
 
@@ -294,6 +307,13 @@ Each `chN.u16le` file stores the little-endian DHO WORD payload exactly as
 received. The metadata stores the raw preamble for audit and separately queried
 scaling values used for reconstruction:
 
+RAW memory transfer stops oscilloscope acquisition before reading so every
+selected channel comes from the same stable acquisition memory.
+
+Clipped or over-limit captures are still saved when the WORD samples saturate
+at a constant code; constant sample values are not treated as a fetch error.
+
+- raw metadata schema `version` (currently `1`; unknown versions are rejected)
 - `x_increment`, `x_origin`, `x_reference`
 - `y_increment`, `y_origin`, `y_reference`
 - `vertical_offset`, `vertical_scale`
@@ -332,7 +352,9 @@ CSV files without a time column.
 
 `auto` is useful while migrating. It uses raw binary data only when
 `raw_waveform/metadata.toml` and all required channel files are complete. If
-`raw_waveform/` is absent, it falls back to `raw.csv`.
+`raw_waveform/` is absent, it falls back to `raw.csv`. If `raw_waveform/`
+exists but is incomplete, `auto` reports an error instead of silently falling
+back to CSV.
 
 ## Generated Files
 

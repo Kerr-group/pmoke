@@ -5,10 +5,12 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 const CSV_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+const CSV_READ_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn read_csv<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<f64>>> {
     let mut rdr = ReaderBuilder::new()
         .has_headers(true)
+        .buffer_capacity(CSV_READ_BUFFER_BYTES)
         .from_path(&path)
         .with_context(|| format!("failed to open csv: {}", path.as_ref().display()))?;
 
@@ -33,6 +35,7 @@ pub fn read_csv<P: AsRef<Path>>(path: P) -> Result<Vec<Vec<f64>>> {
 pub fn read_selected_columns<P: AsRef<Path>>(path: P, cols: &[usize]) -> Result<Vec<Vec<f64>>> {
     let mut rdr = ReaderBuilder::new()
         .has_headers(true)
+        .buffer_capacity(CSV_READ_BUFFER_BYTES)
         .from_path(&path)
         .with_context(|| format!("failed to open csv: {}", path.as_ref().display()))?;
 
