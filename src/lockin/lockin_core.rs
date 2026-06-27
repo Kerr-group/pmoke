@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::f64::consts::PI;
 
 const MAX_SYNC_AVERAGE_SAMPLES: usize = 1_000_000;
+const PHASE_RESYNC_INTERVAL: usize = 4096;
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
@@ -306,7 +307,7 @@ impl<'a> LockinProcessor<'a> {
         let harmonic = harmonic as f64;
         let step_phase = -harmonic * self.params.omega * self.params.dt;
         let step = Complex64::from_polar(1.0, step_phase);
-        let anchor = start - (start % 4096);
+        let anchor = start - (start % PHASE_RESYNC_INTERVAL);
         let anchor_phase = -harmonic * (self.params.omega * self.t[anchor] - self.omega_tref);
         let mut osc = Complex64::from_polar(1.0, anchor_phase);
         for _ in anchor..start {
@@ -316,7 +317,7 @@ impl<'a> LockinProcessor<'a> {
         let mut mixed = Vec::with_capacity(end - start);
         for (idx, &sample) in self.data[start..end].iter().enumerate() {
             let raw_idx = start + idx;
-            if idx > 0 && raw_idx.is_multiple_of(4096) {
+            if idx > 0 && raw_idx.is_multiple_of(PHASE_RESYNC_INTERVAL) {
                 let phase = -harmonic * (self.params.omega * self.t[raw_idx] - self.omega_tref);
                 osc = Complex64::from_polar(1.0, phase);
             }
@@ -338,8 +339,42 @@ impl<'a> LockinProcessor<'a> {
         let mut re = Vec::with_capacity(self.data.len());
         let mut im = Vec::with_capacity(self.data.len());
         for (idx, &sample) in self.data.iter().enumerate() {
-            if idx > 0 && idx % 4096 == 0 {
+            if idx > 0 && idx.is_multiple_of(PHASE_RESYNC_INTERVAL) {
                 let phase = -phase0 + (idx as f64) * step_phase;
+                osc = Complex64::from_polar(1.0, phase);
+            }
+
+            re.push(sample * osc.re);
+            im.push(sample * osc.im);
+            osc *= step;
+        }
+
+        (re, im)
+    }
+
+    fn compute_real_imag_mixed_signal_range(
+        &self,
+        harmonic: usize,
+        start: usize,
+        end: usize,
+    ) -> (Vec<f64>, Vec<f64>) {
+        let harmonic = harmonic as f64;
+        let phase0 = harmonic * (self.params.omega * self.t[0] - self.omega_tref);
+        let step_phase = -harmonic * self.params.omega * self.params.dt;
+        let step = Complex64::from_polar(1.0, step_phase);
+        let anchor = start - (start % PHASE_RESYNC_INTERVAL);
+        let anchor_phase = -phase0 + (anchor as f64) * step_phase;
+        let mut osc = Complex64::from_polar(1.0, anchor_phase);
+        for _ in anchor..start {
+            osc *= step;
+        }
+
+        let mut re = Vec::with_capacity(end - start);
+        let mut im = Vec::with_capacity(end - start);
+        for (idx, &sample) in self.data[start..end].iter().enumerate() {
+            let raw_idx = start + idx;
+            if idx > 0 && raw_idx.is_multiple_of(PHASE_RESYNC_INTERVAL) {
+                let phase = -phase0 + (raw_idx as f64) * step_phase;
                 osc = Complex64::from_polar(1.0, phase);
             }
 
@@ -388,7 +423,7 @@ impl<'a> LockinProcessor<'a> {
                 start += 1;
             }
             while end < desired_end {
-                if end > 0 && end.is_multiple_of(4096) {
+                if end > 0 && end.is_multiple_of(PHASE_RESYNC_INTERVAL) {
                     let phase = -harmonic * (self.params.omega * self.t[end] - self.omega_tref);
                     osc = Complex64::from_polar(1.0, phase);
                 }
@@ -457,12 +492,14 @@ impl<'a> LockinProcessor<'a> {
     }
 
     fn compute_legacy_lockin_pair(&self, harmonic: usize) -> HarmonicLockinResult {
-        let (mixed_re, mixed_im) = self.compute_real_imag_mixed_signal(harmonic);
+        let (i_start, i_end) = (self.params.i_start, self.params.i_end);
+        let raw_start = i_start * self.params.stride - self.params.n_half - 1;
+        let raw_end = i_end * self.params.stride + self.params.n_half + 2;
+        let (mixed_re, mixed_im) =
+            self.compute_real_imag_mixed_signal_range(harmonic, raw_start, raw_end);
         let prefix_re = prefix_sum(&mixed_re);
         let prefix_im = prefix_sum(&mixed_im);
 
-        let i_start = self.params.i_start;
-        let i_end = self.params.i_end;
         let m = if i_end >= i_start {
             i_end - i_start + 1
         } else {
@@ -474,8 +511,8 @@ impl<'a> LockinProcessor<'a> {
         for k in 0..m {
             let i_idx = i_start + k;
             let i_base = i_idx * self.params.stride;
-            let neg_idx0 = i_base - self.params.n_half;
-            let pos_idx0 = i_base + self.params.n_half;
+            let neg_idx0 = i_base - self.params.n_half - raw_start;
+            let pos_idx0 = i_base + self.params.n_half - raw_start;
             let integ_re =
                 trapezoid_integral_from_prefix(&mixed_re, &prefix_re, neg_idx0, pos_idx0)
                     * self.params.dt;
@@ -483,8 +520,8 @@ impl<'a> LockinProcessor<'a> {
                 trapezoid_integral_from_prefix(&mixed_im, &prefix_im, neg_idx0, pos_idx0)
                     * self.params.dt;
 
-            let neg_idx1 = i_base - self.params.n_half - 1;
-            let pos_idx1 = i_base + self.params.n_half + 1;
+            let neg_idx1 = i_base - self.params.n_half - 1 - raw_start;
+            let pos_idx1 = i_base + self.params.n_half + 1 - raw_start;
             let edge_dt = self.params.t_half - (self.params.n_half as f64) * self.params.dt;
 
             let edge_neg_re = legacy_edge_integral(

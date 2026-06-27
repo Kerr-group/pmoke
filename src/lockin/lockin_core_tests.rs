@@ -314,6 +314,153 @@ fn legacy_boxcar_prefix_path_matches_direct_integration() {
     assert!(max_y_err < 1.0e-13, "max_y_err={max_y_err}");
 }
 
+#[test]
+fn legacy_boxcar_range_path_matches_full_prefix_path_across_phase_resync() {
+    let lockin = Lockin {
+        workers: 1,
+        stride_samples: 17,
+        lpf_kind: LockinLpfKind::BoxcarLegacy,
+        lpf_half_window_cycles: 3.5,
+        lpf_cutoff_hz: None,
+        lpf_cutoff_ref_ratio: None,
+        lpf_stopband_atten_db: 60.0,
+        lpf_sync_average_cycles: 1.0,
+        lpf_iir_order: 2,
+        lpf_debug_output: false,
+        lpf_debug_label: None,
+        lpf_debug_overwrite: false,
+        snr_background_window: None,
+        snr_signal_window: None,
+    };
+    let dt = 1.0e-5;
+    let f_ref = 1_000.0;
+    let mut t = (0..9_000).map(|idx| idx as f64 * dt).collect::<Vec<_>>();
+    let data = t
+        .iter()
+        .enumerate()
+        .map(|(idx, &ti)| {
+            0.19 * (2.0 * PI * 1_000.0 * ti + 0.13).sin()
+                + 0.03 * (2.0 * PI * 2_700.0 * ti + 0.31).cos()
+                + 0.000_001 * idx as f64
+        })
+        .collect::<Vec<_>>();
+    t[PHASE_RESYNC_INTERVAL] += 0.37 * dt;
+    t[2 * PHASE_RESYNC_INTERVAL] += 0.23 * dt;
+
+    let processor = LockinProcessor::new(&t, &data, f_ref, 0.41, &lockin).unwrap();
+    let raw_start =
+        processor.params.i_start * processor.params.stride - processor.params.n_half - 1;
+    let raw_end = processor.params.i_end * processor.params.stride + processor.params.n_half + 2;
+    let (mixed_re, mixed_im) =
+        processor.compute_real_imag_mixed_signal_range(5, raw_start, raw_end);
+    assert_eq!(mixed_re.len(), raw_end - raw_start);
+    assert_eq!(mixed_im.len(), raw_end - raw_start);
+    assert!(mixed_re.len() < processor.data.len());
+    assert_legacy_range_matches_full_prefix(&processor, 5);
+}
+
+#[test]
+fn legacy_boxcar_range_path_matches_full_prefix_path_from_nonzero_anchor() {
+    let lockin = Lockin {
+        workers: 1,
+        stride_samples: 5_000,
+        lpf_kind: LockinLpfKind::BoxcarLegacy,
+        lpf_half_window_cycles: 3.5,
+        lpf_cutoff_hz: None,
+        lpf_cutoff_ref_ratio: None,
+        lpf_stopband_atten_db: 60.0,
+        lpf_sync_average_cycles: 1.0,
+        lpf_iir_order: 2,
+        lpf_debug_output: false,
+        lpf_debug_label: None,
+        lpf_debug_overwrite: false,
+        snr_background_window: None,
+        snr_signal_window: None,
+    };
+    let dt = 1.0e-5;
+    let f_ref = 1_000.0;
+    let t = (0..60_000).map(|idx| idx as f64 * dt).collect::<Vec<_>>();
+    let data = t
+        .iter()
+        .enumerate()
+        .map(|(idx, &ti)| {
+            0.19 * (2.0 * PI * 1_000.0 * ti + 0.13).sin()
+                + 0.03 * (2.0 * PI * 2_700.0 * ti + 0.31).cos()
+                + 0.000_001 * idx as f64
+        })
+        .collect::<Vec<_>>();
+
+    let processor = LockinProcessor::new(&t, &data, f_ref, 0.41, &lockin).unwrap();
+    let raw_start =
+        processor.params.i_start * processor.params.stride - processor.params.n_half - 1;
+    assert!(raw_start >= PHASE_RESYNC_INTERVAL);
+    assert_ne!(raw_start % PHASE_RESYNC_INTERVAL, 0);
+
+    assert_legacy_range_matches_full_prefix(&processor, 5);
+}
+
+#[test]
+fn legacy_boxcar_range_path_matches_full_prefix_path_at_nonzero_anchor() {
+    let lockin = Lockin {
+        workers: 1,
+        stride_samples: 2_224,
+        lpf_kind: LockinLpfKind::BoxcarLegacy,
+        lpf_half_window_cycles: 3.515,
+        lpf_cutoff_hz: None,
+        lpf_cutoff_ref_ratio: None,
+        lpf_stopband_atten_db: 60.0,
+        lpf_sync_average_cycles: 1.0,
+        lpf_iir_order: 2,
+        lpf_debug_output: false,
+        lpf_debug_label: None,
+        lpf_debug_overwrite: false,
+        snr_background_window: None,
+        snr_signal_window: None,
+    };
+    let dt = 1.0e-5;
+    let f_ref = 1_000.0;
+    let t = (0..30_000).map(|idx| idx as f64 * dt).collect::<Vec<_>>();
+    let data = t
+        .iter()
+        .enumerate()
+        .map(|(idx, &ti)| {
+            0.17 * (2.0 * PI * 1_000.0 * ti + 0.27).sin()
+                + 0.04 * (2.0 * PI * 3_100.0 * ti + 0.19).cos()
+                + 0.000_002 * idx as f64
+        })
+        .collect::<Vec<_>>();
+
+    let processor = LockinProcessor::new(&t, &data, f_ref, 0.37, &lockin).unwrap();
+    let raw_start =
+        processor.params.i_start * processor.params.stride - processor.params.n_half - 1;
+    assert_eq!(raw_start, PHASE_RESYNC_INTERVAL);
+
+    assert_legacy_range_matches_full_prefix(&processor, 6);
+}
+
+fn assert_legacy_range_matches_full_prefix(processor: &LockinProcessor<'_>, harmonic: usize) {
+    let actual = processor.compute_harmonic_detailed(harmonic, false);
+    let (expected_x, expected_y) = full_prefix_legacy_lockin_pair(processor, harmonic);
+
+    assert_eq!(actual.li_x.len(), expected_x.len());
+    assert_eq!(actual.li_y.len(), expected_y.len());
+    let max_x_err = actual
+        .li_x
+        .iter()
+        .zip(expected_x.iter())
+        .map(|(actual, expected)| (actual - expected).abs())
+        .fold(0.0, f64::max);
+    let max_y_err = actual
+        .li_y
+        .iter()
+        .zip(expected_y.iter())
+        .map(|(actual, expected)| (actual - expected).abs())
+        .fold(0.0, f64::max);
+
+    assert!(max_x_err < 1.0e-13, "max_x_err={max_x_err}");
+    assert!(max_y_err < 1.0e-13, "max_y_err={max_y_err}");
+}
+
 fn direct_legacy_lockin(
     processor: &LockinProcessor<'_>,
     harmonic: usize,
@@ -372,6 +519,65 @@ fn direct_legacy_lockin(
     }
 
     out
+}
+
+fn full_prefix_legacy_lockin_pair(
+    processor: &LockinProcessor<'_>,
+    harmonic: usize,
+) -> (Vec<f64>, Vec<f64>) {
+    let (mixed_re, mixed_im) = processor.compute_real_imag_mixed_signal(harmonic);
+    let prefix_re = prefix_sum(&mixed_re);
+    let prefix_im = prefix_sum(&mixed_im);
+    let i_start = processor.params.i_start;
+    let i_end = processor.params.i_end;
+    let mut li_x = Vec::with_capacity(i_end - i_start + 1);
+    let mut li_y = Vec::with_capacity(i_end - i_start + 1);
+
+    for i_idx in i_start..=i_end {
+        let i_base = i_idx * processor.params.stride;
+        let neg_idx0 = i_base - processor.params.n_half;
+        let pos_idx0 = i_base + processor.params.n_half;
+        let integ_re = trapezoid_integral_from_prefix(&mixed_re, &prefix_re, neg_idx0, pos_idx0)
+            * processor.params.dt;
+        let integ_im = trapezoid_integral_from_prefix(&mixed_im, &prefix_im, neg_idx0, pos_idx0)
+            * processor.params.dt;
+
+        let neg_idx1 = i_base - processor.params.n_half - 1;
+        let pos_idx1 = i_base + processor.params.n_half + 1;
+        let edge_dt =
+            processor.params.t_half - (processor.params.n_half as f64) * processor.params.dt;
+
+        let edge_neg_re = legacy_edge_integral(
+            mixed_re[neg_idx0],
+            mixed_re[neg_idx1],
+            edge_dt,
+            processor.params.dt,
+        );
+        let edge_pos_re = legacy_edge_integral(
+            mixed_re[pos_idx0],
+            mixed_re[pos_idx1],
+            edge_dt,
+            processor.params.dt,
+        );
+        let edge_neg_im = legacy_edge_integral(
+            mixed_im[neg_idx0],
+            mixed_im[neg_idx1],
+            edge_dt,
+            processor.params.dt,
+        );
+        let edge_pos_im = legacy_edge_integral(
+            mixed_im[pos_idx0],
+            mixed_im[pos_idx1],
+            edge_dt,
+            processor.params.dt,
+        );
+
+        let scale = 1.0 / (2.0 * processor.params.t_half);
+        li_x.push(-(integ_im + edge_neg_im + edge_pos_im) * scale);
+        li_y.push((integ_re + edge_neg_re + edge_pos_re) * scale);
+    }
+
+    (li_x, li_y)
 }
 
 #[test]
