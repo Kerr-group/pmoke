@@ -148,12 +148,23 @@ impl DHO5108 {
     }
 
     pub fn query_binary(&mut self, cmd: &str) -> io::Result<Vec<u8>> {
+        self.query_binary_with_expected_length(cmd, None)
+    }
+
+    fn query_binary_with_expected_length(
+        &mut self,
+        cmd: &str,
+        expected_length: Option<usize>,
+    ) -> io::Result<Vec<u8>> {
         #[cfg(target_os = "windows")]
         if let DhoTransport::Visa(instrument) = &mut self.transport {
             let mut data = Vec::new();
             instrument
                 .query_ieee_block(cmd, &mut data)
                 .map_err(|error| io::Error::other(error.to_string()))?;
+            if let Some(expected_length) = expected_length {
+                validate_binary_block_length(data.len(), expected_length)?;
+            }
             return Ok(data);
         }
 
@@ -161,6 +172,9 @@ impl DHO5108 {
 
         let reader = self.tcp_reader_mut();
         let length = read_binary_block_length(reader)?;
+        if let Some(expected_length) = expected_length {
+            validate_binary_block_length(length, expected_length)?;
+        }
 
         let mut data = vec![0u8; length];
         reader.read_exact(&mut data)?;
@@ -170,20 +184,29 @@ impl DHO5108 {
     }
 
     pub fn query_binary_into<W: Write>(&mut self, cmd: &str, writer: &mut W) -> io::Result<usize> {
+        self.query_binary_into_with_expected_length(cmd, writer, None)
+    }
+
+    fn query_binary_into_with_expected_length<W: Write>(
+        &mut self,
+        cmd: &str,
+        writer: &mut W,
+        expected_length: Option<usize>,
+    ) -> io::Result<usize> {
         #[cfg(target_os = "windows")]
         if let DhoTransport::Visa(instrument) = &mut self.transport {
-            let mut data = Vec::new();
-            instrument
-                .query_ieee_block(cmd, &mut data)
-                .map_err(|error| io::Error::other(error.to_string()))?;
-            writer.write_all(&data)?;
-            return Ok(data.len());
+            return instrument
+                .query_ieee_block_into(cmd, writer, expected_length)
+                .map_err(|error| io::Error::other(error.to_string()));
         }
 
         self.write_line(cmd)?;
 
         let reader = self.tcp_reader_mut();
         let length = read_binary_block_length(reader)?;
+        if let Some(expected_length) = expected_length {
+            validate_binary_block_length(length, expected_length)?;
+        }
         let copied = {
             let mut limited = reader.by_ref().take(length as u64);
             io::copy(&mut limited, writer)?
@@ -215,16 +238,8 @@ impl DHO5108 {
 
     fn setup_raw_word_fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {
         // Send sequential setup commands in one write and synchronize once at the end.
-        self.write_lines(&[
-            format!("WAV:SOUR CHAN{ch}"),
-            "WAV:MODE RAW".to_string(),
-            "WAV:FORM WORD".to_string(),
-            "WAV:STAR 1".to_string(),
-            format!("WAV:POIN {memory_depth}"),
-            format!("WAV:STOP {memory_depth}"),
-            "*OPC?".to_string(),
-        ])?;
-        let _ = self.read_line()?; // "1"
+        self.write_lines(&raw_word_setup_commands(ch, memory_depth))?;
+        validate_opc_response(&self.read_line()?)?;
         Ok(())
     }
 
@@ -265,26 +280,15 @@ impl DHO5108 {
     }
 
     fn query_f64(&mut self, cmd: &str, name: &str) -> io::Result<f64> {
-        self.query(cmd)?.parse().map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid waveform {name}: {error}"),
-            )
-        })
+        parse_finite_f64(&self.query(cmd)?, name)
     }
 
     pub fn fetch_raw_word(&mut self, ch: u8, memory_depth: usize) -> io::Result<DhoRawWaveform> {
         self.setup_raw_word_fetch(ch, memory_depth)?;
         let preamble = self.query_waveform_preamble(ch)?;
 
-        let data = self.query_binary("WAV:DATA?")?;
-
-        if data.len() % 2 != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "odd length binary",
-            ));
-        }
+        let expected_length = expected_raw_word_bytes(memory_depth)?;
+        let data = self.query_binary_with_expected_length("WAV:DATA?", Some(expected_length))?;
 
         Ok(DhoRawWaveform { preamble, data })
     }
@@ -298,14 +302,12 @@ impl DHO5108 {
         self.setup_raw_word_fetch(ch, memory_depth)?;
         let preamble = self.query_waveform_preamble(ch)?;
 
-        let byte_count = self.query_binary_into("WAV:DATA?", writer)?;
-
-        if byte_count % 2 != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "odd length binary",
-            ));
-        }
+        let expected_length = expected_raw_word_bytes(memory_depth)?;
+        let byte_count = self.query_binary_into_with_expected_length(
+            "WAV:DATA?",
+            writer,
+            Some(expected_length),
+        )?;
 
         Ok(DhoRawWaveformWritten {
             preamble,
@@ -333,6 +335,29 @@ impl DHO5108 {
         self.write_line("TRIG:SWE SING")?;
         Ok(())
     }
+}
+
+fn raw_word_setup_commands(ch: u8, memory_depth: usize) -> Vec<String> {
+    vec![
+        ":STOP".to_string(),
+        format!("WAV:SOUR CHAN{ch}"),
+        "WAV:MODE RAW".to_string(),
+        "WAV:FORM WORD".to_string(),
+        "WAV:STAR 1".to_string(),
+        format!("WAV:POIN {memory_depth}"),
+        format!("WAV:STOP {memory_depth}"),
+        "*OPC?".to_string(),
+    ]
+}
+
+fn validate_opc_response(response: &str) -> io::Result<()> {
+    if matches!(response.trim().parse::<u8>(), Ok(1)) {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("invalid *OPC? response: {response:?}"),
+    ))
 }
 
 fn read_binary_block_length<R: BufRead>(reader: &mut R) -> io::Result<usize> {
@@ -414,7 +439,49 @@ fn parse_memory_depth(raw: &str) -> io::Result<usize> {
             format!("memory depth is not a positive integer: '{value}'"),
         ));
     }
-    Ok(rounded as usize)
+    let memory_depth = rounded as usize;
+    expected_raw_word_bytes(memory_depth).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("memory depth is too large for WORD data: '{value}'"),
+        )
+    })?;
+    Ok(memory_depth)
+}
+
+fn expected_raw_word_bytes(memory_depth: usize) -> io::Result<usize> {
+    memory_depth.checked_mul(2).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "raw WORD byte count overflows usize",
+        )
+    })
+}
+
+fn validate_binary_block_length(actual: usize, expected: usize) -> io::Result<()> {
+    if actual != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("binary block length is {actual} bytes, expected {expected} bytes"),
+        ));
+    }
+    Ok(())
+}
+
+fn parse_finite_f64(raw: &str, name: &str) -> io::Result<f64> {
+    let value = raw.trim().parse::<f64>().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid waveform {name}: {error}"),
+        )
+    })?;
+    if !value.is_finite() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid waveform {name}: value is not finite"),
+        ));
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -456,5 +523,45 @@ mod tests {
         assert!(parse_memory_depth("AUTO").is_err());
         assert!(parse_memory_depth("1.5").is_err());
         assert!(parse_memory_depth("0").is_err());
+        assert!(parse_memory_depth(&usize::MAX.to_string()).is_err());
+    }
+
+    #[test]
+    fn waveform_number_parser_rejects_non_finite_values() {
+        assert_eq!(
+            parse_finite_f64(" 2.693333e-05 ", "yincrement").unwrap(),
+            2.693333e-05
+        );
+        assert!(parse_finite_f64("NaN", "yincrement").is_err());
+        assert!(parse_finite_f64("inf", "yincrement").is_err());
+    }
+
+    #[test]
+    fn raw_word_size_validation_requires_exact_payload() {
+        assert_eq!(expected_raw_word_bytes(2).unwrap(), 4);
+        validate_binary_block_length(4, 4).unwrap();
+        assert!(validate_binary_block_length(3, 4).is_err());
+        assert!(validate_binary_block_length(5, 4).is_err());
+        assert!(expected_raw_word_bytes(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn raw_word_setup_stops_acquisition_before_selecting_raw_data() {
+        let commands = raw_word_setup_commands(3, 200_000_000);
+
+        assert_eq!(commands[0], ":STOP");
+        assert_eq!(commands[1], "WAV:SOUR CHAN3");
+        assert_eq!(commands[2], "WAV:MODE RAW");
+        assert_eq!(commands[3], "WAV:FORM WORD");
+        assert_eq!(commands.last().unwrap(), "*OPC?");
+    }
+
+    #[test]
+    fn opc_response_must_report_completion() {
+        validate_opc_response("1").unwrap();
+        validate_opc_response(" 1 ").unwrap();
+        assert!(validate_opc_response("").is_err());
+        assert!(validate_opc_response("0").is_err());
+        assert!(validate_opc_response("ready").is_err());
     }
 }
