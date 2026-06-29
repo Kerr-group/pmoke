@@ -82,7 +82,7 @@ impl PulseIntegralCalculator {
 
 #[cfg(test)]
 mod tests {
-    use super::PulseBgAverage;
+    use super::{PulseBgAverage, PulseIntegralCalculator};
 
     #[test]
     fn background_average_is_the_constant_least_squares_solution() {
@@ -101,5 +101,12 @@ mod tests {
         assert!(PulseBgAverage {}.calculate([]).is_err());
         assert!(PulseBgAverage {}.calculate([1.0, f64::NAN]).is_err());
         assert!(PulseBgAverage {}.calculate([f64::INFINITY]).is_err());
+    }
+
+    #[test]
+    fn pulse_integral_preserves_sign_after_factor_application() {
+        let integral = PulseIntegralCalculator::new(1.0).integrate(&[1.0, 1.0, 1.0], 0.0, -2.0);
+
+        assert_eq!(integral, vec![0.0, -2.0, -4.0]);
     }
 }
