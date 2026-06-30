@@ -55,7 +55,7 @@ use formatting::{
 use layout::actions_panel_width;
 use layout::{
     UiLayout, actions_full_layout, active_panel_layout, command_palette_layout,
-    latest_event_feed_effect_area, output_inner_layout, output_visible_rows,
+    config_panel_layout, latest_event_feed_effect_area, output_inner_layout, output_visible_rows,
 };
 #[cfg(test)]
 use timeline::{
@@ -66,6 +66,7 @@ use timeline::{render_run_timeline, spinner_frame, timeline_motion_frame};
 
 const TUI_IDLE_TICK: Duration = Duration::from_millis(150);
 const TUI_ANIMATION_TICK: Duration = Duration::from_millis(16);
+const TAB_TITLES: [&str; 4] = [" ACTIONS ", " CONFIG ", " MESSAGES ", " FILES "];
 const OUTPUT_PREFIX_WIDTH: u16 = 12;
 const EVENT_BADGE_WIDTH: usize = 6;
 const TIMELINE_BADGE_WIDTH: usize = 5;
@@ -93,6 +94,10 @@ struct MonitorApp {
     run_output_scroll: usize,
     output_selected: Option<usize>,
     output_selection_anchor: Option<usize>,
+    output_mouse_drag_active: bool,
+    config_scroll: usize,
+    messages_scroll: usize,
+    files_scroll: usize,
     copy_status: Option<String>,
     show_help: bool,
     effects: EffectManager<MonitorEffect>,
@@ -115,6 +120,10 @@ impl MonitorApp {
             run_output_scroll: 0,
             output_selected: None,
             output_selection_anchor: None,
+            output_mouse_drag_active: false,
+            config_scroll: 0,
+            messages_scroll: 0,
+            files_scroll: 0,
             copy_status: None,
             show_help: false,
             effects: EffectManager::default(),
@@ -125,6 +134,9 @@ impl MonitorApp {
     fn refresh(&mut self) {
         self.load = config::load_from_path(&self.config_path);
         self.last_refresh = SystemTime::now();
+        self.config_scroll = 0;
+        self.messages_scroll = 0;
+        self.files_scroll = 0;
     }
 
     fn status(&self) -> (&'static str, Color) {
@@ -605,6 +617,7 @@ enum FocusPane {
     Commands,
     Status,
     Output,
+    Config,
     Messages,
     Files,
 }
@@ -761,6 +774,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
                     if matches!(mouse.kind, MouseEventKind::Down(_)) {
                         app.show_help = false;
                     }
+                    if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
+                        app.output_mouse_drag_active = false;
+                    }
                 }
                 Event::Mouse(mouse) => handle_mouse(app, terminal.size()?.into(), mouse)?,
                 _ => {}
@@ -803,15 +819,24 @@ fn select_last_action(app: &mut MonitorApp) {
 }
 
 fn select_previous_tab(app: &mut MonitorApp) {
-    app.active_tab = app.active_tab.saturating_sub(1);
+    let previous = app.active_tab.saturating_sub(1);
+    if previous != app.active_tab {
+        activate_tab(app, previous);
+    }
 }
 
 fn select_next_tab(app: &mut MonitorApp) {
-    app.active_tab = (app.active_tab + 1).min(3);
+    let next = (app.active_tab + 1).min(TAB_TITLES.len() - 1);
+    if next != app.active_tab {
+        activate_tab(app, next);
+    }
 }
 
 fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<()> {
     let layout = UiLayout::new(area, app.active_tab);
+    if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
+        app.output_mouse_drag_active = false;
+    }
     match mouse.kind {
         MouseEventKind::ScrollUp => {
             if contains(layout.run_output, mouse.column, mouse.row) {
@@ -819,9 +844,8 @@ fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<(
                 clamp_output_scroll(app, area);
             } else if contains(layout.command_palette, mouse.column, mouse.row) {
                 select_previous_action(app);
-            } else {
-                app.scroll_output_up(3);
-                clamp_output_scroll(app, area);
+            } else if contains(layout.active_panel, mouse.column, mouse.row) {
+                scroll_active_panel_up(app, layout.active_panel, 3);
             }
         }
         MouseEventKind::ScrollDown => {
@@ -830,31 +854,32 @@ fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<(
                 clamp_output_scroll(app, area);
             } else if contains(layout.command_palette, mouse.column, mouse.row) {
                 select_next_action(app);
-            } else {
-                app.scroll_output_down(3);
-                clamp_output_scroll(app, area);
+            } else if contains(layout.active_panel, mouse.column, mouse.row) {
+                scroll_active_panel_down(app, layout.active_panel, 3);
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
             if contains(layout.tabs, mouse.column, mouse.row) {
                 select_tab_at(app, layout.tabs, mouse.column);
             } else if contains(layout.command_palette, mouse.column, mouse.row) {
-                select_action_at(app, layout.command_palette, mouse.row);
+                select_action_at(app, layout.command_palette, mouse.column, mouse.row);
+            } else if contains(layout.run_status, mouse.column, mouse.row) {
+                app.focus_status();
             } else if contains(layout.run_output, mouse.column, mouse.row) {
-                app.active_tab = 0;
-                select_output_at(
+                app.output_mouse_drag_active = select_output_at(
                     app,
                     layout.run_output,
+                    mouse.column,
                     mouse.row,
                     mouse.modifiers.contains(KeyModifiers::SHIFT),
                 );
             }
         }
-        MouseEventKind::Drag(MouseButton::Left) => {
-            if contains(layout.run_output, mouse.column, mouse.row) {
-                app.active_tab = 0;
-                select_output_at(app, layout.run_output, mouse.row, true);
-            }
+        MouseEventKind::Drag(MouseButton::Left)
+            if app.output_mouse_drag_active
+                && contains(layout.run_output, mouse.column, mouse.row) =>
+        {
+            select_output_at(app, layout.run_output, mouse.column, mouse.row, true);
         }
         MouseEventKind::Down(MouseButton::Right) | MouseEventKind::Down(MouseButton::Middle)
             if contains(layout.run_output, mouse.column, mouse.row) =>
@@ -866,11 +891,78 @@ fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<(
     Ok(())
 }
 
-fn select_action_at(app: &mut MonitorApp, area: Rect, row: u16) {
+fn scroll_active_panel_up(app: &mut MonitorApp, area: Rect, lines: usize) {
+    match app.active_tab {
+        1 => app.config_scroll = app.config_scroll.saturating_sub(lines),
+        2 => app.messages_scroll = app.messages_scroll.saturating_sub(lines),
+        3 => app.files_scroll = app.files_scroll.saturating_sub(lines),
+        _ => {}
+    }
+    clamp_active_panel_scroll(app, area);
+}
+
+fn scroll_active_panel_down(app: &mut MonitorApp, area: Rect, lines: usize) {
+    match app.active_tab {
+        1 => app.config_scroll = app.config_scroll.saturating_add(lines),
+        2 => app.messages_scroll = app.messages_scroll.saturating_add(lines),
+        3 => app.files_scroll = app.files_scroll.saturating_add(lines),
+        _ => {}
+    }
+    clamp_active_panel_scroll(app, area);
+}
+
+fn clamp_active_panel_scroll(app: &mut MonitorApp, area: Rect) {
+    match app.active_tab {
+        1 => app.config_scroll = app.config_scroll.min(config_scroll_max(app, area)),
+        2 => app.messages_scroll = app.messages_scroll.min(messages_scroll_max(app, area)),
+        3 => app.files_scroll = app.files_scroll.min(files_scroll_max(app, area)),
+        _ => {}
+    }
+}
+
+fn config_scroll_max(app: &MonitorApp, area: Rect) -> usize {
+    let total = app
+        .ready_config()
+        .map(|(config, _)| config.channels.len())
+        .unwrap_or(0);
+    let (_, channels_area) = config_panel_layout(area);
+    total.saturating_sub(table_visible_rows(channels_area))
+}
+
+fn messages_scroll_max(app: &MonitorApp, area: Rect) -> usize {
+    let inner_width = area.width.saturating_sub(2);
+    let visible_rows = area.height.saturating_sub(2) as usize;
+    message_visual_lines(app, inner_width)
+        .len()
+        .saturating_sub(visible_rows)
+}
+
+fn files_scroll_max(app: &MonitorApp, area: Rect) -> usize {
+    let total = artifact_rows(app.ready_config().map(|(config, _)| config)).len();
+    total.saturating_sub(table_visible_rows(area))
+}
+
+fn table_visible_rows(area: Rect) -> usize {
+    area.height.saturating_sub(3).max(1) as usize
+}
+
+fn visible_range_title(label: &str, start: usize, end: usize, total: usize) -> String {
+    if total == 0 {
+        format!(" {label} 0/0 ")
+    } else {
+        format!(" {label} {}-{end}/{total} ", start + 1)
+    }
+}
+
+fn select_action_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
+    let inner = bordered_inner(area);
+    if !contains(inner, column, row) {
+        return;
+    }
     let selected = app.selected_action;
     let visible_rows = area.height.saturating_sub(2).max(1) as usize;
     let start = selected.saturating_sub(visible_rows / 2);
-    let row_index = row.saturating_sub(area.y + 1) as usize;
+    let row_index = row.saturating_sub(inner.y) as usize;
     let actions_len = app.actions().len();
     if row_index < visible_rows && start + row_index < actions_len {
         app.focus_commands();
@@ -879,36 +971,21 @@ fn select_action_at(app: &mut MonitorApp, area: Rect, row: u16) {
     }
 }
 
-fn select_output_at(app: &mut MonitorApp, area: Rect, row: u16, extend: bool) {
+fn select_output_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16, extend: bool) -> bool {
     app.focus_output();
     if app.run_output.is_empty() {
-        return;
+        return false;
     }
 
-    let inner = bordered_inner(area);
-    let sections = output_inner_layout(inner);
-    let log_area = sections.log;
-    if log_area.height <= 1 || row <= log_area.y {
-        return;
-    }
-
-    let log_content = Rect {
-        x: log_area.x,
-        y: log_area.y.saturating_add(1),
-        width: log_area.width,
-        height: log_area.height.saturating_sub(1),
+    let Some(log_content) = output_selectable_area(area) else {
+        return false;
     };
-    if !contains(log_content, log_content.x, row) {
-        return;
+    if !contains(log_content, column, row) {
+        return false;
     }
 
     let visible_rows = log_content.height.max(1) as usize;
-    let visual_lines = visual_output_lines(
-        &app.run_output,
-        log_content.width.saturating_sub(1),
-        None,
-        None,
-    );
+    let visual_lines = visual_output_lines(&app.run_output, log_content.width, None, None);
     let max_scroll = visual_lines.len().saturating_sub(visible_rows);
     let scroll = app.run_output_scroll.min(max_scroll);
     let end = visual_lines.len().saturating_sub(scroll);
@@ -916,7 +993,24 @@ fn select_output_at(app: &mut MonitorApp, area: Rect, row: u16, extend: bool) {
     let row_index = row.saturating_sub(log_content.y) as usize;
     if let Some(line) = visual_lines.get(start + row_index) {
         app.set_output_selection(line.entry_index, extend);
+        true
+    } else {
+        false
     }
+}
+
+fn output_selectable_area(area: Rect) -> Option<Rect> {
+    let sections = output_inner_layout(bordered_inner(area));
+    let log_area = sections.log;
+    if log_area.height <= 1 || log_area.width <= 1 {
+        return None;
+    }
+    Some(Rect {
+        x: log_area.x,
+        y: log_area.y.saturating_add(1),
+        width: log_area.width.saturating_sub(1),
+        height: log_area.height.saturating_sub(1),
+    })
 }
 
 fn ensure_selected_output_visible(app: &mut MonitorApp, area: Rect) {
@@ -1054,14 +1148,42 @@ fn output_selection_status(selected_visual_range: Option<(usize, usize)>) -> Str
 }
 
 fn select_tab_at(app: &mut MonitorApp, area: Rect, column: u16) {
-    let inner_x = area.x + 1;
-    let inner_width = area.width.saturating_sub(2);
-    if inner_width == 0 || column < inner_x {
-        return;
+    if let Some(tab) = tab_index_at(area, column) {
+        activate_tab(app, tab);
     }
-    let tab_width = (inner_width / 4).max(1);
-    let idx = ((column - inner_x) / tab_width).min(3);
-    app.active_tab = idx as usize;
+}
+
+fn tab_index_at(area: Rect, column: u16) -> Option<usize> {
+    let mut tab_x = area.x;
+    for (index, title) in TAB_TITLES.iter().enumerate() {
+        // Ratatui's Tabs adds one cell of padding on each side of every title.
+        let title_width = u16::try_from(title.width()).unwrap_or(u16::MAX);
+        let tab_end = tab_x
+            .saturating_add(title_width.saturating_add(2))
+            .min(area.right());
+        if (tab_x..tab_end).contains(&column) {
+            return Some(index);
+        }
+        if tab_end == area.right() {
+            break;
+        }
+        // The one-cell divider between tabs is deliberately not clickable.
+        tab_x = tab_end.saturating_add(1);
+    }
+    None
+}
+
+fn activate_tab(app: &mut MonitorApp, tab: usize) {
+    match tab {
+        0 => app.focus_actions(),
+        1 => {
+            app.active_tab = 1;
+            app.focus = FocusPane::Config;
+        }
+        2 => app.focus_messages(),
+        3 => app.focus_files(),
+        _ => {}
+    }
 }
 
 fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
@@ -1388,7 +1510,7 @@ fn render_body(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rect, effect_d
 }
 
 fn render_tabs(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    let tabs = Tabs::new(vec![" ACTIONS ", " CONFIG ", " MESSAGES ", " FILES "])
+    let tabs = Tabs::new(TAB_TITLES)
         .select(app.active_tab)
         .style(Style::default().fg(Color::DarkGray))
         .highlight_style(
@@ -2717,10 +2839,7 @@ fn render_config(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         return;
     };
 
-    let inner = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(6)])
-        .split(area);
+    let (overview_area, channels_area) = config_panel_layout(area);
 
     let summary = vec![
         vec!["Version".to_string(), cfg.version.to_string()],
@@ -2744,12 +2863,12 @@ fn render_config(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         ],
     ];
     frame.render_widget(
-        two_col_table(summary, " OVERVIEW ", inner[0].width),
-        inner[0],
+        two_col_table(summary, " OVERVIEW ", overview_area.width),
+        overview_area,
     );
 
-    let visible_rows = inner[1].height.saturating_sub(3).max(1) as usize;
-    let inner_width = inner[1].width.saturating_sub(6) as usize;
+    let visible_rows = table_visible_rows(channels_area);
+    let inner_width = channels_area.width.saturating_sub(6) as usize;
     let channel_width = 8;
     let role_width = 16;
     let unit_width = 10;
@@ -2758,10 +2877,12 @@ fn render_config(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         .saturating_sub(channel_width + role_width + unit_width + factor_width)
         .max(8);
     let total = cfg.channels.len();
-    let shown = total.min(visible_rows);
+    let start = app.config_scroll.min(total.saturating_sub(visible_rows));
+    let end = (start + visible_rows).min(total);
     let rows = cfg
         .channels
         .iter()
+        .skip(start)
         .take(visible_rows)
         .map(|channel| {
             Row::new(vec![
@@ -2802,11 +2923,13 @@ fn render_config(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
     )
-    .block(accent_panel(format!(" CHANNELS {shown}/{total} ")));
-    frame.render_widget(table, inner[1]);
+    .block(accent_panel(visible_range_title(
+        "CHANNELS", start, end, total,
+    )));
+    frame.render_widget(table, channels_area);
 }
 
-fn render_messages(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+fn message_lines(app: &MonitorApp) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if let Some((_, warnings)) = app.ready_config() {
         if warnings.is_empty() {
@@ -2857,27 +2980,84 @@ fn render_messages(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         }
     }
 
+    lines
+}
+
+fn message_visual_lines(app: &MonitorApp, width: u16) -> Vec<Line<'static>> {
+    wrap_styled_lines(message_lines(app), width.max(1))
+}
+
+fn wrap_styled_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    let mut wrapped = Vec::new();
+    for line in lines {
+        let line_style = line.style;
+        let alignment = line.alignment;
+        let mut current_spans = Vec::new();
+        let mut current_width = 0u16;
+
+        for span in line.spans {
+            let mut chunk = String::new();
+            for ch in span.content.chars() {
+                let ch_width =
+                    u16::try_from(UnicodeWidthChar::width(ch).unwrap_or(0)).unwrap_or(u16::MAX);
+                if current_width > 0 && current_width.saturating_add(ch_width) > width {
+                    if !chunk.is_empty() {
+                        current_spans.push(Span::styled(std::mem::take(&mut chunk), span.style));
+                    }
+                    wrapped.push(Line {
+                        style: line_style,
+                        alignment,
+                        spans: std::mem::take(&mut current_spans),
+                    });
+                    current_width = 0;
+                }
+                chunk.push(ch);
+                current_width = current_width.saturating_add(ch_width);
+            }
+            if !chunk.is_empty() {
+                current_spans.push(Span::styled(chunk, span.style));
+            }
+        }
+
+        wrapped.push(Line {
+            style: line_style,
+            alignment,
+            spans: current_spans,
+        });
+    }
+    wrapped
+}
+
+fn render_messages(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    let lines = message_visual_lines(app, area.width.saturating_sub(2));
+    let max_scroll = lines
+        .len()
+        .saturating_sub(area.height.saturating_sub(2) as usize);
+    let scroll = app.messages_scroll.min(max_scroll);
+
     let paragraph = Paragraph::new(lines)
         .block(accent_panel(" MESSAGES ").border_style(focus_border_style(
             app,
             FocusPane::Messages,
             Color::DarkGray,
         )))
-        .wrap(Wrap { trim: false });
+        .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0));
     frame.render_widget(paragraph, area);
 }
 
 fn render_files(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     let artifacts = artifact_rows(app.ready_config().map(|(cfg, _)| cfg));
-    let visible_rows = area.height.saturating_sub(3).max(1) as usize;
+    let visible_rows = table_visible_rows(area);
     let inner_width = area.width.saturating_sub(6) as usize;
     let name_width = percent_width(inner_width, 28);
     let path_width = percent_width(inner_width, 42);
     let modified_width = percent_width(inner_width, 30);
     let total = artifacts.len();
-    let shown = total.min(visible_rows);
+    let start = app.files_scroll.min(total.saturating_sub(visible_rows));
+    let end = (start + visible_rows).min(total);
     let rows = artifacts
         .into_iter()
+        .skip(start)
         .take(visible_rows)
         .map(|artifact| {
             Row::new(vec![
@@ -2905,11 +3085,8 @@ fn render_files(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         ),
     )
     .block(
-        accent_panel(format!(" FILES {shown}/{total} ")).border_style(focus_border_style(
-            app,
-            FocusPane::Files,
-            Color::DarkGray,
-        )),
+        accent_panel(visible_range_title("FILES", start, end, total))
+            .border_style(focus_border_style(app, FocusPane::Files, Color::DarkGray)),
     );
     frame.render_widget(table, area);
 }
@@ -2994,11 +3171,11 @@ fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("Mouse wheel", Style::default().fg(Color::Cyan)),
-            Span::raw(" scroll output or command list"),
+            Span::raw(" scroll the panel under the pointer"),
         ]),
         Line::from(vec![
             Span::styled("Click / drag", Style::default().fg(Color::Cyan)),
-            Span::raw(" select command or output range"),
+            Span::raw(" focus a panel or select a range"),
         ]),
         Line::from(vec![
             Span::styled("r", Style::default().fg(Color::Cyan)),
