@@ -821,6 +821,70 @@ fn header_omits_pipeline_counter() {
 }
 
 #[test]
+fn context_bar_shows_current_directory_on_every_tab() {
+    let mut app = test_app();
+    app.current_dir = "/workspace/pmoke".to_string();
+
+    for tab in 0..TAB_TITLES.len() {
+        app.active_tab = tab;
+        let rendered = context_bar_spans(&app, 120)
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains("◆ cwd /workspace/pmoke"), "tab {tab}");
+        assert!(rendered.contains("config config.toml"), "tab {tab}");
+    }
+}
+
+#[test]
+fn narrow_context_bar_prioritizes_current_directory_and_fits_width() {
+    let mut app = test_app();
+    app.current_dir = "/very/long/workspace/path/to/pmoke".to_string();
+    let width = 24;
+
+    let spans = context_bar_spans(&app, width);
+    let rendered = spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(rendered.contains("cwd"));
+    assert!(rendered.ends_with("pmoke"));
+    assert!(rendered.cell_width() <= width);
+    assert!(!rendered.contains("config"));
+
+    app.current_dir = "/workspace/ﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ/pmoke".to_string();
+    for checked_width in 0..160 {
+        let rendered_width = context_bar_spans(&app, checked_width)
+            .iter()
+            .map(|span| span.content.cell_width())
+            .sum::<u16>();
+        assert_eq!(rendered_width, checked_width, "width {checked_width}");
+    }
+}
+
+#[test]
+fn context_bar_only_adds_config_when_cwd_keeps_useful_space() {
+    let mut app = test_app();
+    app.current_dir = "/very/long/workspace/path/to/pmoke".to_string();
+
+    let narrow = context_bar_spans(&app, (CONTEXT_DETAILS_MIN_WIDTH - 1) as u16)
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    let wide = context_bar_spans(&app, CONTEXT_DETAILS_MIN_WIDTH as u16)
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(!narrow.contains("config"));
+    assert!(narrow.contains("path/to/pmoke"));
+    assert!(wide.contains("config"));
+    assert!(wide.contains("path/to/pmoke"));
+}
+
+#[test]
 fn output_header_omits_badge_legend_when_narrow() {
     let narrow_text = output_header_spans(24)
         .iter()

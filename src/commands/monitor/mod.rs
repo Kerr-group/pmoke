@@ -17,7 +17,7 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
-    buffer::Buffer,
+    buffer::{Buffer, CellWidth},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::{Color, Line, Modifier, Span, Style},
     symbols,
@@ -26,7 +26,7 @@ use ratatui::{
     },
 };
 use std::{
-    fs,
+    env, fs,
     io::{self, Read, Stdout},
     process::{Child, Command as ProcessCommand, ExitStatus, Stdio},
     sync::mpsc::{self, Receiver, Sender, TryRecvError},
@@ -67,6 +67,7 @@ use timeline::{render_run_timeline, spinner_frame, timeline_motion_frame};
 const TUI_IDLE_TICK: Duration = Duration::from_millis(150);
 const TUI_ANIMATION_TICK: Duration = Duration::from_millis(16);
 const TAB_TITLES: [&str; 4] = [" ACTIONS ", " CONFIG ", " MESSAGES ", " FILES "];
+const CONTEXT_DETAILS_MIN_WIDTH: usize = 60;
 const OUTPUT_PREFIX_WIDTH: u16 = 12;
 const EVENT_BADGE_WIDTH: usize = 6;
 const TIMELINE_BADGE_WIDTH: usize = 5;
@@ -82,6 +83,7 @@ pub fn monitor(config_path: &str, load: ConfigLoad) -> Result<()> {
 
 struct MonitorApp {
     config_path: String,
+    current_dir: String,
     load: ConfigLoad,
     started_at: Instant,
     last_refresh: SystemTime,
@@ -106,8 +108,12 @@ struct MonitorApp {
 
 impl MonitorApp {
     fn new(config_path: String, load: ConfigLoad) -> Self {
+        let current_dir = env::current_dir()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| ".".to_string());
         Self {
             config_path,
+            current_dir,
             load,
             started_at: Instant::now(),
             last_refresh: SystemTime::now(),
@@ -1447,17 +1453,15 @@ fn render_header(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         Paragraph::new(Line::from(header_spans(app, area.width))).alignment(Alignment::Left);
     frame.render_widget(header, chunks[0]);
 
-    let rule = "━".repeat(area.width as usize);
     frame.render_widget(
-        Paragraph::new(Line::styled(rule, Style::default().fg(Color::DarkGray))),
+        Paragraph::new(Line::from(context_bar_spans(app, area.width))),
         chunks[1],
     );
 }
 
 fn header_spans(app: &MonitorApp, width: u16) -> Vec<Span<'static>> {
     let (status, color) = app.status();
-    let run = run_label(app);
-    let config_width = width.saturating_sub(66) as usize;
+    let run = fit_text(&run_label(app), width.saturating_sub(33) as usize);
     vec![
         Span::styled(
             " pmoke ",
@@ -1481,13 +1485,118 @@ fn header_spans(app: &MonitorApp, width: u16) -> Vec<Span<'static>> {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            fit_text(&app.config_path, config_width),
-            Style::default().fg(Color::Gray),
-        ),
-        Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
         Span::styled(app.elapsed(), Style::default().fg(Color::DarkGray)),
     ]
+}
+
+fn context_bar_spans(app: &MonitorApp, width: u16) -> Vec<Span<'static>> {
+    let width = width as usize;
+    if width == 0 {
+        return Vec::new();
+    }
+
+    let mut spans = if width < CONTEXT_DETAILS_MIN_WIDTH {
+        let full_prefix = "◆ cwd ";
+        let icon_prefix = "◆ ";
+        let prefix = if width >= full_prefix.cell_width() as usize {
+            full_prefix
+        } else if width >= icon_prefix.cell_width() as usize {
+            icon_prefix
+        } else {
+            ""
+        };
+        vec![
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(Color::LightCyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                fit_context_path(
+                    &app.current_dir,
+                    width.saturating_sub(prefix.cell_width() as usize),
+                ),
+                Style::default().fg(Color::White),
+            ),
+        ]
+    } else {
+        let fixed_width = [" └─ ", "◆", " cwd ", "  │  ", "config "]
+            .iter()
+            .map(|part| part.cell_width() as usize)
+            .sum::<usize>();
+        let available = width.saturating_sub(fixed_width);
+        let config_budget = (app.config_path.cell_width() as usize).min(available / 3);
+        let cwd_width =
+            (app.current_dir.cell_width() as usize).min(available.saturating_sub(config_budget));
+        let config_width =
+            (app.config_path.cell_width() as usize).min(available.saturating_sub(cwd_width));
+        vec![
+            Span::styled(" └─ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "◆",
+                Style::default()
+                    .fg(Color::LightCyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" cwd ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                fit_context_path(&app.current_dir, cwd_width),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("config ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                fit_context_path(&app.config_path, config_width),
+                Style::default().fg(Color::Gray),
+            ),
+        ]
+    };
+
+    let used = spans
+        .iter()
+        .map(|span| span.content.cell_width() as usize)
+        .sum::<usize>();
+    let remaining = width.saturating_sub(used);
+    if remaining > 0 {
+        let rule = "─";
+        let rule_width = (rule.cell_width() as usize).max(1);
+        let rule_area = remaining.saturating_sub(1);
+        let filler = format!(
+            " {}{}",
+            rule.repeat(rule_area / rule_width),
+            " ".repeat(rule_area % rule_width)
+        );
+        spans.push(Span::styled(filler, Style::default().fg(Color::DarkGray)));
+    }
+    spans
+}
+
+fn fit_context_path(path: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if path.cell_width() as usize <= width {
+        return path.to_string();
+    }
+
+    let prefix = if width > 3 { "..." } else { "" };
+    let tail_width = width.saturating_sub(prefix.len());
+    let mut tail = Vec::new();
+    let mut used = 0usize;
+    for ch in path.chars().rev() {
+        let mut encoded = [0; 4];
+        let ch_width = ch.encode_utf8(&mut encoded).cell_width() as usize;
+        if used.saturating_add(ch_width) > tail_width {
+            break;
+        }
+        tail.push(ch);
+        used += ch_width;
+    }
+    tail.reverse();
+    format!("{prefix}{}", tail.into_iter().collect::<String>())
 }
 
 fn render_body(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rect, effect_delta: FxDuration) {
