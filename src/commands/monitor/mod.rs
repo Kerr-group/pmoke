@@ -955,6 +955,9 @@ fn visible_range_title(label: &str, start: usize, end: usize, total: usize) -> S
 }
 
 fn select_action_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
+    // The panel border/title is part of the focus target, but only an inner row
+    // is allowed to change the selected command.
+    app.focus_commands();
     let inner = bordered_inner(area);
     if !contains(inner, column, row) {
         return;
@@ -965,9 +968,7 @@ fn select_action_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
     let row_index = row.saturating_sub(inner.y) as usize;
     let actions_len = app.actions().len();
     if row_index < visible_rows && start + row_index < actions_len {
-        app.focus_commands();
         app.selected_action = start + row_index;
-        app.active_tab = 0;
     }
 }
 

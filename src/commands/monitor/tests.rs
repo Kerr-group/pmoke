@@ -1311,18 +1311,18 @@ fn mouse_wheel_scrolls_overflowing_config_and_files_tables() {
 }
 
 #[test]
-fn command_panel_borders_do_not_select_actions() {
+fn command_panel_border_click_focuses_commands_without_changing_selection() {
     let mut app = test_app();
     app.selected_action = 2;
-    app.focus_output();
     let area = Rect::new(0, 0, 120, 28);
-    let commands = UiLayout::new(area, app.active_tab).command_palette;
+    let commands = UiLayout::new(area, 0).command_palette;
 
     for (column, row) in [
         (commands.x + 2, commands.y),
         (commands.x, commands.y + 2),
         (commands.right() - 1, commands.y + 2),
     ] {
+        app.focus_output();
         handle_mouse(
             &mut app,
             area,
@@ -1335,8 +1335,32 @@ fn command_panel_borders_do_not_select_actions() {
         )
         .unwrap();
         assert_eq!(app.selected_action, 2);
-        assert_eq!(app.focus, FocusPane::Output);
+        assert_eq!(app.focus, FocusPane::Commands);
     }
+}
+
+#[test]
+fn command_panel_content_click_focuses_and_selects_the_clicked_action() {
+    let mut app = test_app();
+    app.selected_action = 2;
+    app.focus_output();
+    let area = Rect::new(0, 0, 120, 28);
+    let commands = UiLayout::new(area, app.active_tab).command_palette;
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: commands.x + 1,
+            row: commands.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(app.focus, FocusPane::Commands);
+    assert_eq!(app.selected_action, 0);
 }
 
 #[test]
