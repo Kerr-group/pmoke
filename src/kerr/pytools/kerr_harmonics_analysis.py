@@ -40,8 +40,9 @@ class KerrHarmonicsAnalyser:
         return 6 * np.sqrt(20 * a4 / (15 * a2 + 24 * a4 + 9 * a6))
 
     @staticmethod
-    def get_kerr(x0: float, a2: NDArray, a3: NDArray, a4: NDArray) -> NDArray:
-        return (a3 / (a2 + a4)) * (3.0 / x0)
+    def get_kerr(x0: NDArray, a2: NDArray, a3: NDArray, a4: NDArray) -> NDArray:
+        denominator = (a2 + a4) * x0 / 6
+        return 0.5 * np.arctan(a3 / denominator)
 
     def analyse(
         self,
@@ -65,9 +66,8 @@ class KerrHarmonicsAnalyser:
         li6_in, li6_out = ys[10], ys[11]
 
         x0 = self.get_modulation_depth(li2_in, li4_in, li6_in)
-        mean_x0 = float(np.nanmean(x0))
 
-        kerr = self.get_kerr(mean_x0, li2_in, li3_in, li4_in)
+        kerr = self.get_kerr(x0, li2_in, li3_in, li4_in)
         kerr = kerr * factor
 
         plot_error = None
