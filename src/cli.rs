@@ -10,7 +10,7 @@ use clap_complete::Shell;
 #[derive(Parser, Debug)]
 #[command(
     name = "pmoke",
-    version = "0.1.9",
+    version = "0.1.10",
     author = "Soichiro Yamane",
     about = "A CLI tool to conduct pulsed MOKE experiments and analyze the data.",
     long_about = None
