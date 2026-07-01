@@ -1,3 +1,5 @@
+from typing import Union
+
 import gsplot as gs
 import numpy as np
 from numpy.typing import NDArray
@@ -37,12 +39,25 @@ class KerrHarmonicsAnalyser:
 
     @staticmethod
     def get_modulation_depth(a2: NDArray, a4: NDArray, a6: NDArray) -> NDArray:
-        return 6 * np.sqrt(20 * a4 / (15 * a2 + 24 * a4 + 9 * a6))
+        denominator = 15 * a2 + 24 * a4 + 9 * a6
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return 6 * np.sqrt(np.divide(20 * a4, denominator))
 
     @staticmethod
-    def get_kerr(x0: NDArray, a2: NDArray, a3: NDArray, a4: NDArray) -> NDArray:
+    def get_representative_modulation_depth(x0: NDArray) -> float:
+        valid_x0 = x0[np.isfinite(x0) & (x0 > 0)]
+        if valid_x0.size == 0:
+            raise ValueError("cannot determine a finite positive modulation depth")
+        return float(np.median(valid_x0))
+
+    @staticmethod
+    def get_kerr(
+        x0: Union[float, NDArray], a2: NDArray, a3: NDArray, a4: NDArray
+    ) -> NDArray:
         denominator = (a2 + a4) * x0 / 6
-        return 0.5 * np.arctan(a3 / denominator)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.divide(a3, denominator)
+        return 0.5 * np.arctan(ratio)
 
     def analyse(
         self,
@@ -65,7 +80,8 @@ class KerrHarmonicsAnalyser:
         li5_in, li5_out = ys[8], ys[9]
         li6_in, li6_out = ys[10], ys[11]
 
-        x0 = self.get_modulation_depth(li2_in, li4_in, li6_in)
+        x0_series = self.get_modulation_depth(li2_in, li4_in, li6_in)
+        x0 = self.get_representative_modulation_depth(x0_series)
 
         kerr = self.get_kerr(x0, li2_in, li3_in, li4_in)
         kerr = kerr * factor
