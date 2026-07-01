@@ -1,4 +1,8 @@
 use super::*;
+use crate::config::{
+    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Kerr, KerrType, Lockin, LockinLpfKind, Phase,
+    Plot, Pulse, Reference, Roles, Window,
+};
 
 fn test_app() -> MonitorApp {
     MonitorApp::new(
@@ -9,6 +13,73 @@ fn test_app() -> MonitorApp {
             diagnostics: Vec::new(),
             normalized: None,
         }),
+    )
+}
+
+fn ready_test_app(channel_count: u8) -> MonitorApp {
+    let signal_ch = (1..=channel_count.min(6)).collect::<Vec<_>>();
+    let window = Window {
+        start: 0.0,
+        end: 1.0,
+    };
+    MonitorApp::new(
+        "config.toml".to_string(),
+        ConfigLoad::Ready {
+            config: Config {
+                version: 3,
+                instruments: None,
+                fetch: Fetch::default(),
+                plot: Plot::default(),
+                legacy_timebase: None,
+                roles: Roles {
+                    sensor_ch: vec![1],
+                    reference_ch: 1,
+                    signal_ch,
+                },
+                channels: (1..=channel_count)
+                    .map(|index| Channel {
+                        index,
+                        factor: None,
+                        label: Some(format!("channel {index}")),
+                        unit_out: None,
+                    })
+                    .collect(),
+                pulse: Pulse {
+                    bg_window_before: window,
+                    bg_window_after: window,
+                },
+                reference: Reference {
+                    fft_window: window,
+                    stride_samples: 1,
+                    window_samples: 1,
+                },
+                lockin: Lockin {
+                    workers: 1,
+                    stride_samples: 1,
+                    lpf_kind: LockinLpfKind::FirZeroPhase,
+                    lpf_half_window_cycles: 1.0,
+                    lpf_cutoff_hz: Some(1.0),
+                    lpf_cutoff_ref_ratio: None,
+                    lpf_stopband_atten_db: 60.0,
+                    lpf_sync_average_cycles: 1.0,
+                    lpf_iir_order: 2,
+                    lpf_debug_output: false,
+                    lpf_debug_label: None,
+                    lpf_debug_overwrite: false,
+                    snr_background_window: None,
+                    snr_signal_window: None,
+                },
+                phase: Phase {
+                    m_omega_t0_offset: Vec::new(),
+                },
+                kerr: Kerr {
+                    use_sensor_ch: 1,
+                    kerr_type: KerrType::Standard,
+                    factor: 1.0,
+                },
+            },
+            warnings: Vec::new(),
+        },
     )
 }
 
@@ -750,6 +821,70 @@ fn header_omits_pipeline_counter() {
 }
 
 #[test]
+fn context_bar_shows_current_directory_on_every_tab() {
+    let mut app = test_app();
+    app.current_dir = "/workspace/pmoke".to_string();
+
+    for tab in 0..TAB_TITLES.len() {
+        app.active_tab = tab;
+        let rendered = context_bar_spans(&app, 120)
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains("◆ cwd /workspace/pmoke"), "tab {tab}");
+        assert!(rendered.contains("config config.toml"), "tab {tab}");
+    }
+}
+
+#[test]
+fn narrow_context_bar_prioritizes_current_directory_and_fits_width() {
+    let mut app = test_app();
+    app.current_dir = "/very/long/workspace/path/to/pmoke".to_string();
+    let width = 24;
+
+    let spans = context_bar_spans(&app, width);
+    let rendered = spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(rendered.contains("cwd"));
+    assert!(rendered.ends_with("pmoke"));
+    assert!(rendered.cell_width() <= width);
+    assert!(!rendered.contains("config"));
+
+    app.current_dir = "/workspace/ﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ/pmoke".to_string();
+    for checked_width in 0..160 {
+        let rendered_width = context_bar_spans(&app, checked_width)
+            .iter()
+            .map(|span| span.content.cell_width())
+            .sum::<u16>();
+        assert_eq!(rendered_width, checked_width, "width {checked_width}");
+    }
+}
+
+#[test]
+fn context_bar_only_adds_config_when_cwd_keeps_useful_space() {
+    let mut app = test_app();
+    app.current_dir = "/very/long/workspace/path/to/pmoke".to_string();
+
+    let narrow = context_bar_spans(&app, (CONTEXT_DETAILS_MIN_WIDTH - 1) as u16)
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    let wide = context_bar_spans(&app, CONTEXT_DETAILS_MIN_WIDTH as u16)
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(!narrow.contains("config"));
+    assert!(narrow.contains("path/to/pmoke"));
+    assert!(wide.contains("config"));
+    assert!(wide.contains("path/to/pmoke"));
+}
+
+#[test]
 fn output_header_omits_badge_legend_when_narrow() {
     let narrow_text = output_header_spans(24)
         .iter()
@@ -1028,4 +1163,436 @@ fn direct_focus_commands_select_expected_panes() {
     app.focus_actions();
     assert_eq!(app.active_tab, 0);
     assert_eq!(app.focus, FocusPane::Commands);
+}
+
+#[test]
+fn clicking_actions_tab_moves_focus_from_output_to_commands() {
+    let mut app = test_app();
+    app.push_output(OutputStream::Stdout, "one");
+    app.focus_output();
+    let area = Rect::new(0, 0, 120, 28);
+    let tabs = UiLayout::new(area, app.active_tab).tabs;
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: tabs.x + 4,
+            row: tabs.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(app.active_tab, 0);
+    assert_eq!(app.focus, FocusPane::Commands);
+}
+
+#[test]
+fn mouse_tab_hit_testing_matches_rendered_tab_widths() {
+    let area = Rect::new(3, 5, 120, 1);
+    let cases = [
+        (4, 0, FocusPane::Commands),
+        (16, 1, FocusPane::Config),
+        (27, 2, FocusPane::Messages),
+        (40, 3, FocusPane::Files),
+    ];
+
+    for (column, expected_tab, expected_focus) in cases {
+        let mut app = test_app();
+        app.focus_output();
+
+        select_tab_at(&mut app, area, column);
+
+        assert_eq!(app.active_tab, expected_tab, "column {column}");
+        assert_eq!(app.focus, expected_focus, "column {column}");
+    }
+
+    let mut app = test_app();
+    app.focus_output();
+    select_tab_at(&mut app, area, 80);
+    assert_eq!(app.active_tab, 0);
+    assert_eq!(app.focus, FocusPane::Output);
+}
+
+#[test]
+fn keyboard_tab_navigation_updates_focus_with_active_tab() {
+    let mut app = test_app();
+    app.focus_output();
+
+    select_previous_tab(&mut app);
+    assert_eq!(app.active_tab, 0);
+    assert_eq!(app.focus, FocusPane::Output);
+
+    select_next_tab(&mut app);
+    assert_eq!(app.active_tab, 1);
+    assert_eq!(app.focus, FocusPane::Config);
+
+    select_next_tab(&mut app);
+    assert_eq!(app.active_tab, 2);
+    assert_eq!(app.focus, FocusPane::Messages);
+
+    select_previous_tab(&mut app);
+    assert_eq!(app.active_tab, 1);
+    assert_eq!(app.focus, FocusPane::Config);
+}
+
+#[test]
+fn mouse_wheel_scrolls_visible_messages_without_moving_hidden_output() {
+    let mut app = test_app();
+    let ConfigLoad::Diagnostics(diagnostics) = &mut app.load else {
+        panic!("test app should contain diagnostics");
+    };
+    diagnostics.diagnostics = (0..20)
+        .map(|index| ConfigDiagnostic {
+            kind: DiagnosticKind::Validation,
+            path: Some(format!("item.{index}")),
+            message: format!("diagnostic message {index}"),
+            suggestion: None,
+        })
+        .collect();
+    app.push_output(
+        OutputStream::Stdout,
+        &(0..30)
+            .map(|index| format!("output {index}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    app.run_output_scroll = 10;
+    app.focus_messages();
+    let area = Rect::new(0, 0, 80, 14);
+    let panel = UiLayout::new(area, app.active_tab).active_panel;
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: panel.x + 1,
+            row: panel.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+
+    assert!(app.messages_scroll > 0);
+    assert_eq!(app.run_output_scroll, 10);
+}
+
+#[test]
+fn message_wrapping_preserves_text_styles_and_display_width() {
+    let warning_style = Style::default().fg(Color::Yellow);
+    let lines = vec![Line::from(vec![
+        Span::styled("WARN ", warning_style),
+        Span::raw("日本語abcdef"),
+    ])];
+
+    let wrapped = wrap_styled_lines(lines, 8);
+
+    assert!(wrapped.len() > 1);
+    assert!(wrapped.iter().all(|line| line.width() <= 8));
+    assert_eq!(
+        wrapped
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>(),
+        "WARN 日本語abcdef"
+    );
+    assert_eq!(wrapped[0].spans[0].style, warning_style);
+}
+
+#[test]
+fn mouse_wheel_on_non_actions_tabs_never_scrolls_hidden_output() {
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &(0..30)
+            .map(|index| format!("output {index}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    let area = Rect::new(0, 0, 80, 14);
+
+    for tab in [1, 3] {
+        activate_tab(&mut app, tab);
+        app.run_output_scroll = 10;
+        let panel = UiLayout::new(area, app.active_tab).active_panel;
+
+        handle_mouse(
+            &mut app,
+            area,
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: panel.x + 1,
+                row: panel.y + 1,
+                modifiers: KeyModifiers::NONE,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(app.run_output_scroll, 10, "tab {tab}");
+    }
+}
+
+#[test]
+fn mouse_wheel_scrolls_overflowing_config_and_files_tables() {
+    let mut app = ready_test_app(20);
+    let area = Rect::new(0, 0, 80, 14);
+
+    activate_tab(&mut app, 1);
+    let config_panel = UiLayout::new(area, app.active_tab).active_panel;
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: config_panel.x + 1,
+            row: config_panel.bottom() - 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    assert!(app.config_scroll > 0);
+    assert!(app.config_scroll <= config_scroll_max(&app, config_panel));
+
+    activate_tab(&mut app, 3);
+    let files_panel = UiLayout::new(area, app.active_tab).active_panel;
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: files_panel.x + 1,
+            row: files_panel.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    assert!(app.files_scroll > 0);
+    assert!(app.files_scroll <= files_scroll_max(&app, files_panel));
+}
+
+#[test]
+fn command_panel_border_click_focuses_commands_without_changing_selection() {
+    let mut app = test_app();
+    app.selected_action = 2;
+    let area = Rect::new(0, 0, 120, 28);
+    let commands = UiLayout::new(area, 0).command_palette;
+
+    for (column, row) in [
+        (commands.x + 2, commands.y),
+        (commands.x, commands.y + 2),
+        (commands.right() - 1, commands.y + 2),
+    ] {
+        app.focus_output();
+        handle_mouse(
+            &mut app,
+            area,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+        )
+        .unwrap();
+        assert_eq!(app.selected_action, 2);
+        assert_eq!(app.focus, FocusPane::Commands);
+    }
+}
+
+#[test]
+fn command_panel_content_click_focuses_and_selects_the_clicked_action() {
+    let mut app = test_app();
+    app.selected_action = 2;
+    app.focus_output();
+    let area = Rect::new(0, 0, 120, 28);
+    let commands = UiLayout::new(area, app.active_tab).command_palette;
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: commands.x + 1,
+            row: commands.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(app.focus, FocusPane::Commands);
+    assert_eq!(app.selected_action, 0);
+}
+
+#[test]
+fn clicking_status_panel_focuses_status() {
+    let mut app = test_app();
+    app.focus_output();
+    let area = Rect::new(0, 0, 120, 28);
+    let status = UiLayout::new(area, app.active_tab).run_status;
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: status.x + 1,
+            row: status.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(app.active_tab, 0);
+    assert_eq!(app.focus, FocusPane::Status);
+}
+
+#[test]
+fn output_scrollbar_click_focuses_without_selecting_a_line() {
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &(0..30)
+            .map(|index| format!("output {index}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    app.output_selected = Some(0);
+    app.focus_commands();
+    let area = Rect::new(0, 0, 120, 28);
+    let output = UiLayout::new(area, app.active_tab).run_output;
+    let selectable = output_selectable_area(output).expect("output log should be selectable");
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: selectable.right(),
+            row: selectable.y + 2,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(app.focus, FocusPane::Output);
+    assert_eq!(app.output_selected, Some(0));
+    assert!(!app.output_mouse_drag_active);
+}
+
+#[test]
+fn output_drag_only_extends_a_drag_started_on_an_output_line() {
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &(0..30)
+            .map(|index| format!("output {index}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    app.output_selected = Some(0);
+    let area = Rect::new(0, 0, 120, 28);
+    let layout = UiLayout::new(area, app.active_tab);
+    let selectable =
+        output_selectable_area(layout.run_output).expect("output log should be selectable");
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: layout.run_status.x + 1,
+            row: layout.run_status.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: selectable.x,
+            row: selectable.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(app.focus, FocusPane::Status);
+    assert_eq!(app.output_selected, Some(0));
+    assert_eq!(app.output_selection_anchor, None);
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: selectable.x,
+            row: selectable.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    let drag_start = app.output_selected;
+    assert!(app.output_mouse_drag_active);
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: selectable.x,
+            row: selectable.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+
+    assert_ne!(app.output_selected, drag_start);
+    assert_eq!(app.output_selection_anchor, drag_start);
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: selectable.x,
+            row: selectable.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    assert!(!app.output_mouse_drag_active);
+
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: selectable.x,
+            row: selectable.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    let selected_before_tab_switch = app.output_selected;
+    activate_tab(&mut app, 2);
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: selectable.x,
+            row: selectable.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    assert_eq!(app.active_tab, 2);
+    assert_eq!(app.focus, FocusPane::Messages);
+    assert_eq!(app.output_selected, selected_before_tab_switch);
 }

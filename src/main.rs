@@ -8,6 +8,7 @@ mod kerr;
 mod lockin;
 mod phase;
 mod plot;
+mod python;
 mod ui;
 mod utils;
 

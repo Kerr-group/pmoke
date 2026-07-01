@@ -1,10 +1,12 @@
+use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use std::ffi::CString;
+use std::sync::OnceLock;
 
 #[allow(dead_code)]
 const REF_ANALYSIS_PY: &str = include_str!("pytools/ref_analysis.py");
+static REF_ANALYSIS_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 
 #[allow(dead_code)]
 pub struct RefFitParams {
@@ -19,22 +21,16 @@ pub struct ReferenceFFT {}
 impl ReferenceFFT {
     pub fn fft(&self, t: &[f64], y: &[f64]) -> Result<RefFitParams> {
         Python::attach(|py| {
-            let code =
-                CString::new(REF_ANALYSIS_PY).expect("ref_analysis.py contains interior NUL");
-            let filename = CString::new("ref_analysis.py").unwrap();
-            let modulename = CString::new("ref_analysis").unwrap();
-
-            let fit_mod = PyModule::from_code(
+            let fit_mod = python::cached_module(
                 py,
-                code.as_c_str(),
-                filename.as_c_str(),
-                modulename.as_c_str(),
+                &REF_ANALYSIS_MODULE,
+                REF_ANALYSIS_PY,
+                "ref_analysis.py",
+                "ref_analysis",
             )
             .context("failed to load ref_analysis.py")?;
-
-            let np = py.import("numpy").context("failed to import numpy")?;
-            let t_obj = np.call_method1("array", (t,))?;
-            let y_obj = np.call_method1("array", (y,))?;
+            let t_obj = python::f64_array1(py, t);
+            let y_obj = python::f64_array1(py, y);
 
             let fitter = fit_mod
                 .getattr("ReferenceFFT")?
@@ -64,22 +60,16 @@ pub struct ReferenceFitter {}
 impl ReferenceFitter {
     pub fn fit(&self, t: &[f64], y: &[f64], params: RefFitParams) -> Result<RefFitParams> {
         Python::attach(|py| {
-            let code =
-                CString::new(REF_ANALYSIS_PY).expect("ref_analysis.py contains interior NUL");
-            let filename = CString::new("ref_analysis.py").unwrap();
-            let modulename = CString::new("ref_analysis").unwrap();
-
-            let fit_mod = PyModule::from_code(
+            let fit_mod = python::cached_module(
                 py,
-                code.as_c_str(),
-                filename.as_c_str(),
-                modulename.as_c_str(),
+                &REF_ANALYSIS_MODULE,
+                REF_ANALYSIS_PY,
+                "ref_analysis.py",
+                "ref_analysis",
             )
             .context("failed to load ref_analysis.py")?;
-
-            let np = py.import("numpy").context("failed to import numpy")?;
-            let t_obj = np.call_method1("array", (t,))?;
-            let y_obj = np.call_method1("array", (y,))?;
+            let t_obj = python::f64_array1(py, t);
+            let y_obj = python::f64_array1(py, y);
 
             let fitter = fit_mod
                 .getattr("ReferenceFitter")?
@@ -103,5 +93,39 @@ impl ReferenceFitter {
                 omega_tref,
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ReferenceFFT;
+    use std::f64::consts::PI;
+
+    #[test]
+    fn reference_fft_recovers_a_bin_centered_sine() {
+        let sample_rate = 100.0e6;
+        let sample_count = 4_096usize;
+        let frequency = 50.0 * sample_rate / sample_count as f64;
+        let amplitude = 1.75;
+        let t: Vec<f64> = (0..sample_count)
+            .map(|index| index as f64 / sample_rate)
+            .collect();
+        let y: Vec<f64> = t
+            .iter()
+            .map(|&time| amplitude * (2.0 * PI * frequency * time).sin())
+            .collect();
+
+        let result = ReferenceFFT {}.fft(&t, &y).unwrap();
+        assert!((result.f_ref - frequency).abs() < 1.0e-6);
+        assert!(
+            (result.a_ref - amplitude).abs() < 1.0e-7,
+            "expected amplitude {amplitude}, got {}",
+            result.a_ref
+        );
+        assert!(
+            result.omega_tref.abs() < 2.0e-6,
+            "expected zero phase, got {}",
+            result.omega_tref
+        );
     }
 }

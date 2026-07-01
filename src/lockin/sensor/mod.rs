@@ -16,6 +16,12 @@ pub struct SensorMeta<'a> {
     pub unit: &'a str,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SensorIntegralMaximum {
+    value: f64,
+    time: f64,
+}
+
 pub fn run(cfg: &Config) -> Result<()> {
     let ref_fit_params = run_fit_ref(cfg)?;
 
@@ -55,19 +61,14 @@ pub fn run_sensor(
         bail!("No sensor data columns were read from {}", FETCHED_FNAME);
     }
 
-    if t.len() != s_cols[0].len() {
-        bail!(
-            "time length ({}) and sensor length ({}) differ",
-            t.len(),
-            s_cols[0].len()
-        );
-    }
+    validate_sensor_lengths(t, s_cols)?;
 
     let sensor_meta = extract_sensor_metadata(cfg)?;
+    validate_sensor_channel_alignment(&cfg.roles.sensor_ch, s_cols, sensor_ch, &sensor_meta)?;
 
-    let pb = ui::spinner("fitting sensor backgrounds");
+    let pb = ui::spinner("averaging sensor backgrounds");
     let t0 = std::time::Instant::now();
-    let c_bg_arr = match fit_background(cfg, t, s_cols) {
+    let c_bg_arr = match calculate_background_averages(cfg, t, s_cols) {
         Ok(c_bg_arr) => c_bg_arr,
         Err(err) => {
             pb.finish_and_clear();
@@ -77,7 +78,7 @@ pub fn run_sensor(
     ui::finish_success(
         pb,
         format!(
-            "sensor backgrounds fitted ({})",
+            "sensor backgrounds averaged ({})",
             ui::fmt_duration(t0.elapsed())
         ),
     );
@@ -125,6 +126,30 @@ pub fn run_sensor(
         ),
     );
 
+    let maxima = sensor_ch
+        .iter()
+        .copied()
+        .zip(s_integral.iter())
+        .map(|(ch, integral)| maximum_absolute_integral(t, integral, ch))
+        .collect::<Result<Vec<_>>>()?;
+    ui::settings_table(
+        "Sensor integral maxima",
+        sensor_ch
+            .iter()
+            .zip(sensor_meta.iter())
+            .zip(maxima.iter())
+            .map(|((&ch, meta), maximum)| {
+                (
+                    format!("ch{ch} {}", meta.label),
+                    format!(
+                        "max_abs={:.6e} {}, time={:.6e} s",
+                        maximum.value, meta.unit, maximum.time
+                    ),
+                )
+            })
+            .collect(),
+    );
+
     let s_integral_stride = li_stride_2d(cfg, t, &s_integral, f_ref)?;
 
     let labels: Vec<&str> = sensor_meta.iter().map(|m| m.label).collect();
@@ -149,6 +174,67 @@ pub fn run_sensor(
     )?;
 
     Ok((t_stride, s_integral_stride))
+}
+
+fn validate_sensor_channel_alignment(
+    configured_sensor_ch: &[u8],
+    s_cols: &[&[f64]],
+    sensor_ch: &[u8],
+    sensor_meta: &[SensorMeta<'_>],
+) -> Result<()> {
+    if sensor_ch != configured_sensor_ch {
+        bail!(
+            "sensor channel order {:?} does not match configured sensor channels {:?}",
+            sensor_ch,
+            configured_sensor_ch
+        );
+    }
+    if s_cols.len() != sensor_ch.len() || sensor_meta.len() != sensor_ch.len() {
+        bail!(
+            "sensor channel count mismatch: data={}, channels={}, metadata={}",
+            s_cols.len(),
+            sensor_ch.len(),
+            sensor_meta.len()
+        );
+    }
+    Ok(())
+}
+
+fn maximum_absolute_integral(
+    t: &[f64],
+    integral: &[f64],
+    sensor_ch: u8,
+) -> Result<SensorIntegralMaximum> {
+    if integral.is_empty() {
+        bail!("sensor ch{sensor_ch} integral is empty");
+    }
+    if t.len() != integral.len() {
+        bail!(
+            "time length ({}) and sensor ch{sensor_ch} integral length ({}) differ",
+            t.len(),
+            integral.len()
+        );
+    }
+
+    let mut maximum = None;
+    for (index, (&time, &value)) in t.iter().zip(integral.iter()).enumerate() {
+        if !time.is_finite() {
+            bail!("sensor ch{sensor_ch} time at index {index} is not finite");
+        }
+        if !value.is_finite() {
+            bail!("sensor ch{sensor_ch} integral at index {index} is not finite");
+        }
+
+        let candidate = SensorIntegralMaximum {
+            value: value.abs(),
+            time,
+        };
+        if maximum.is_none_or(|current: SensorIntegralMaximum| candidate.value > current.value) {
+            maximum = Some(candidate);
+        }
+    }
+
+    maximum.ok_or_else(|| anyhow::anyhow!("sensor ch{sensor_ch} integral is empty"))
 }
 
 pub fn extract_sensor_metadata<'a>(cfg: &'a Config) -> Result<Vec<SensorMeta<'a>>> {
@@ -183,7 +269,21 @@ pub fn extract_sensor_metadata<'a>(cfg: &'a Config) -> Result<Vec<SensorMeta<'a>
         .collect::<Result<Vec<_>>>()
 }
 
-fn fit_background(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>> {
+fn validate_sensor_lengths(t: &[f64], s_cols: &[&[f64]]) -> Result<()> {
+    for (column_index, column) in s_cols.iter().enumerate() {
+        if t.len() != column.len() {
+            bail!(
+                "time length ({}) and sensor column {} length ({}) differ",
+                t.len(),
+                column_index + 1,
+                column.len()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn calculate_background_averages(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>> {
     let bg_window_before = &cfg.pulse.bg_window_before;
     let bg_window_after = &cfg.pulse.bg_window_after;
 
@@ -192,24 +292,87 @@ fn fit_background(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>
             || (ti >= &bg_window_after.start && ti <= &bg_window_after.end)
     };
 
-    let t_fit = t.iter().cloned().filter(is_in_bg).collect::<Vec<f64>>();
-
-    if t_fit.is_empty() {
-        bail!("No data points found in background windows. Cannot fit background.");
+    if !t.iter().any(is_in_bg) {
+        bail!("No data points found in background windows. Cannot calculate background average.");
     }
 
     s_cols
         .iter()
         .map(|col| {
-            let s_fit = col
+            let values = col
                 .iter()
-                .cloned()
                 .zip(t.iter())
-                .filter(|&(_yi, ti)| is_in_bg(ti)) // 同じ条件でフィルタ
-                .map(|(yi, _ti)| yi)
-                .collect::<Vec<f64>>();
+                .filter_map(|(&yi, ti)| is_in_bg(ti).then_some(yi));
 
-            pulse_calculator::PulseBgFitter {}.fit(&t_fit, &s_fit)
+            pulse_calculator::PulseBgAverage {}.calculate(values)
         })
         .collect::<Result<Vec<_>>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        SensorMeta, maximum_absolute_integral, validate_sensor_channel_alignment,
+        validate_sensor_lengths,
+    };
+
+    #[test]
+    fn sensor_length_validation_checks_every_channel() {
+        let time = [0.0, 1.0, 2.0];
+        let first = [1.0, 2.0, 3.0];
+        let second = [4.0, 5.0];
+
+        let error = validate_sensor_lengths(&time, &[&first, &second]).unwrap_err();
+
+        assert!(error.to_string().contains("sensor column 2"));
+    }
+
+    #[test]
+    fn sensor_channel_alignment_checks_order_and_count() {
+        let data = [0.0, 1.0];
+        let columns = [&data[..]];
+        let metadata = [SensorMeta {
+            factor: 1.0,
+            label: "sensor",
+            unit: "V s",
+        }];
+
+        validate_sensor_channel_alignment(&[2], &columns, &[2], &metadata).unwrap();
+
+        let order_error =
+            validate_sensor_channel_alignment(&[1], &columns, &[2], &metadata).unwrap_err();
+        assert!(order_error.to_string().contains("order"));
+
+        let count_error =
+            validate_sensor_channel_alignment(&[2], &[], &[2], &metadata).unwrap_err();
+        assert!(count_error.to_string().contains("count mismatch"));
+    }
+
+    #[test]
+    fn maximum_absolute_integral_uses_full_signed_integral_series() {
+        let maximum =
+            maximum_absolute_integral(&[0.0, 0.1, 0.2, 0.3], &[0.0, -3.0, 2.0, 1.0], 2).unwrap();
+
+        assert_eq!(maximum.value, 3.0);
+        assert_eq!(maximum.time, 0.1);
+    }
+
+    #[test]
+    fn maximum_absolute_integral_keeps_first_equal_maximum() {
+        let maximum = maximum_absolute_integral(&[0.0, 1.0, 2.0], &[-2.0, 2.0, 1.0], 1).unwrap();
+
+        assert_eq!(maximum.value, 2.0);
+        assert_eq!(maximum.time, 0.0);
+    }
+
+    #[test]
+    fn maximum_absolute_integral_accepts_zero_and_rejects_invalid_inputs() {
+        let zero = maximum_absolute_integral(&[0.0, 1.0], &[-0.0, 0.0], 1).unwrap();
+        assert_eq!(zero.value, 0.0);
+
+        assert!(maximum_absolute_integral(&[], &[], 1).is_err());
+        assert!(maximum_absolute_integral(&[0.0], &[0.0, 1.0], 1).is_err());
+        assert!(maximum_absolute_integral(&[f64::NAN], &[0.0], 1).is_err());
+        assert!(maximum_absolute_integral(&[0.0], &[f64::INFINITY], 1).is_err());
+    }
 }

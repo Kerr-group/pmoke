@@ -1,5 +1,8 @@
 //! Instrument handle and high-throughput helpers.
 
+use std::io::Write;
+
+#[cfg(not(target_os = "windows"))]
 use std::cmp::min;
 
 #[cfg(not(target_os = "windows"))]
@@ -10,6 +13,7 @@ use crate::ffi::{ibclr, ibdev, ibonl, ibrd, ibtmo, ibwrt};
 use crate::tmo::secs_to_tmo_code;
 
 use crate::error::{Result, check_ok, err, ibsta_val};
+#[cfg(not(target_os = "windows"))]
 use libc::{c_long, c_void};
 
 #[cfg(target_os = "windows")]
@@ -196,7 +200,12 @@ impl Instrument {
     /// Read into caller buffer to reduce allocations; returns bytes added.
     pub fn read_into(&self, out: &mut Vec<u8>) -> Result<usize> {
         let mut buf = [0u8; 65536];
+        let n = self.read_chunk(&mut buf)?;
+        out.extend_from_slice(&buf[..n]);
+        Ok(n)
+    }
 
+    fn read_chunk(&self, buf: &mut [u8]) -> Result<usize> {
         #[cfg(target_os = "windows")]
         {
             let mut ret: u32 = 0;
@@ -209,7 +218,6 @@ impl Instrument {
                 eprintln!("(warn) read timeout status");
             }
             check_ok("viRead")?;
-            out.extend_from_slice(&buf[..n]);
             Ok(n)
         }
 
@@ -227,7 +235,6 @@ impl Instrument {
                 eprintln!("(warn) read timeout ibsta=0x{:04x}", ibsta_val());
             }
             check_ok("ibrd")?;
-            out.extend_from_slice(&buf[..n]);
             Ok(n)
         }
     }
@@ -262,7 +269,6 @@ impl Instrument {
             }
         }
         if head.len() < 2 || head[0] != b'#' {
-            // Not a binary block or fragmented
             out.extend_from_slice(&head);
             while (ibsta_val() & END) == 0 {
                 let _ = self.read_into(out)?;
@@ -322,7 +328,6 @@ impl Instrument {
             return Ok(());
         }
 
-        // nd == 0 (read until END)
         out.extend_from_slice(&head[2..]);
         while (ibsta_val() & END) == 0 {
             let got = self.read_into(out)?;
@@ -331,6 +336,130 @@ impl Instrument {
             }
         }
         Ok(())
+    }
+
+    /// Query an IEEE 488.2 binary block and stream its payload into `out`.
+    pub fn query_ieee_block_into<W: Write>(
+        &self,
+        cmd: &str,
+        out: &mut W,
+        expected_length: Option<usize>,
+    ) -> Result<usize> {
+        self.write_line_fast(cmd)?;
+
+        let mut head = Vec::with_capacity(32);
+        self.read_into(&mut head)?;
+        while head.len() < 2 && (ibsta_val() & END) == 0 {
+            if self.read_into(&mut head)? == 0 {
+                break;
+            }
+        }
+        if head.len() < 2 || head[0] != b'#' {
+            if expected_length.is_some() {
+                return Err(crate::error::sys_err(
+                    "query_ieee_block_into",
+                    "expected an IEEE binary block response",
+                ));
+            }
+            write_ieee_payload(out, &head)?;
+            let mut written = head.len();
+            let mut chunk = [0_u8; 65_536];
+            while (ibsta_val() & END) == 0 {
+                let got = self.read_chunk(&mut chunk)?;
+                if got == 0 {
+                    break;
+                }
+                write_ieee_payload(out, &chunk[..got])?;
+                written = written.checked_add(got).ok_or_else(|| {
+                    crate::error::sys_err("query_ieee_block_into", "payload length overflow")
+                })?;
+            }
+            return Ok(written);
+        }
+
+        let nd = (head[1] as char).to_digit(10).ok_or_else(|| {
+            crate::error::sys_err("query_ieee_block", "invalid IEEE block length digit")
+        })? as usize;
+        if nd > 0 {
+            while head.len() < 2 + nd {
+                if self.read_into(&mut head)? == 0 {
+                    break;
+                }
+            }
+            if head.len() < 2 + nd {
+                return Err(crate::error::sys_err(
+                    "query_ieee_block",
+                    "incomplete IEEE block header",
+                ));
+            }
+            let len = std::str::from_utf8(&head[2..2 + nd])
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .ok_or_else(|| {
+                    crate::error::sys_err("query_ieee_block", "invalid IEEE block payload length")
+                })?;
+            if let Some(expected_length) = expected_length
+                && len != expected_length
+            {
+                return Err(crate::error::sys_err(
+                    "query_ieee_block_into",
+                    format!("binary block length is {len} bytes, expected {expected_length} bytes"),
+                ));
+            }
+
+            let mut written = 0usize;
+            if head.len() > 2 + nd {
+                let take = std::cmp::min(len, head.len() - (2 + nd));
+                write_ieee_payload(out, &head[2 + nd..2 + nd + take])?;
+                written = take;
+            }
+            let mut chunk = [0_u8; 65_536];
+            while written < len {
+                let got = self.read_chunk(&mut chunk)?;
+                if got == 0 {
+                    break;
+                }
+                let take = (len - written).min(got);
+                write_ieee_payload(out, &chunk[..take])?;
+                written += take;
+            }
+            if written != len {
+                return Err(crate::error::sys_err(
+                    "query_ieee_block_into",
+                    format!("expected {len} payload bytes, received {written}"),
+                ));
+            }
+            while (ibsta_val() & END) == 0 {
+                if self.read_chunk(&mut chunk)? == 0 {
+                    break;
+                }
+            }
+            return Ok(written);
+        }
+
+        // nd == 0 (read until END)
+        write_ieee_payload(out, &head[2..])?;
+        let mut written = head.len() - 2;
+        let mut chunk = [0_u8; 65_536];
+        while (ibsta_val() & END) == 0 {
+            let got = self.read_chunk(&mut chunk)?;
+            if got == 0 {
+                break;
+            }
+            write_ieee_payload(out, &chunk[..got])?;
+            written = written.checked_add(got).ok_or_else(|| {
+                crate::error::sys_err("query_ieee_block_into", "payload length overflow")
+            })?;
+        }
+        if let Some(expected_length) = expected_length
+            && written != expected_length
+        {
+            return Err(crate::error::sys_err(
+                "query_ieee_block_into",
+                format!("binary block length is {written} bytes, expected {expected_length} bytes"),
+            ));
+        }
+        Ok(written)
     }
 
     // --- Simple, allocation-friendly APIs ---
@@ -515,6 +644,15 @@ impl Instrument {
             check_ok("ibclr")
         }
     }
+}
+
+fn write_ieee_payload<W: Write>(out: &mut W, bytes: &[u8]) -> Result<()> {
+    out.write_all(bytes).map_err(|error| {
+        crate::error::sys_err(
+            "query_ieee_block_into",
+            format!("failed to write payload: {error}"),
+        )
+    })
 }
 
 impl Drop for Instrument {

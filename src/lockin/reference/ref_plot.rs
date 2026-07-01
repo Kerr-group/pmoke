@@ -1,11 +1,13 @@
 use crate::config::Plot;
 use crate::plot::decimate_1d;
+use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use std::ffi::CString;
+use std::sync::OnceLock;
 
 const REF_PLOT_PY: &str = include_str!("pytools/ref_plot.py");
+static REF_PLOT_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 
 #[allow(dead_code)]
 pub struct ReferencePlotter {}
@@ -13,25 +15,15 @@ pub struct ReferencePlotter {}
 impl ReferencePlotter {
     pub fn plot(&self, plot: &Plot, t: &[f64], y: &[f64], fit: &[f64]) -> Result<()> {
         Python::attach(|py| {
-            let code = CString::new(REF_PLOT_PY).expect("ref_plot.py contains interior NUL");
-            let filename = CString::new("ref_plot.py").unwrap();
-            let modulename = CString::new("ref_plot").unwrap();
-
-            let plot_mod = PyModule::from_code(
-                py,
-                code.as_c_str(),
-                filename.as_c_str(),
-                modulename.as_c_str(),
-            )
-            .context("failed to load ref_plot.py")?;
-
-            let np = py.import("numpy").context("failed to import numpy")?;
+            let plot_mod =
+                python::cached_module(py, &REF_PLOT_MODULE, REF_PLOT_PY, "ref_plot.py", "ref_plot")
+                    .context("failed to load ref_plot.py")?;
             let t_plot = decimate_1d(plot, t);
             let y_plot = decimate_1d(plot, y);
             let fit_plot = decimate_1d(plot, fit);
-            let t_obj = np.call_method1("array", (t_plot,))?;
-            let y_obj = np.call_method1("array", (y_plot,))?;
-            let fit_obj = np.call_method1("array", (fit_plot,))?;
+            let t_obj = python::f64_array1(py, &t_plot);
+            let y_obj = python::f64_array1(py, &y_plot);
+            let fit_obj = python::f64_array1(py, &fit_plot);
 
             let plotter = plot_mod
                 .getattr("ReferencePlotter")?

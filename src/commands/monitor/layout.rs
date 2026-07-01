@@ -8,7 +8,9 @@ const ACTIONS_VERTICAL_WIDTH: u16 = 86;
 
 pub(super) struct UiLayout {
     pub(super) tabs: Rect,
+    pub(super) active_panel: Rect,
     pub(super) command_palette: Rect,
+    pub(super) run_status: Rect,
     pub(super) run_output: Rect,
 }
 
@@ -24,14 +26,18 @@ impl UiLayout {
             .split(area);
         let body = outer[1];
         let (tabs, active_panel) = active_panel_layout(body);
-        let (command_palette, run_output) = if active_tab == 0 {
-            actions_layout(active_panel)
+        let (command_palette, run_status, run_output) = if active_tab == 0 {
+            let (command_area, run_status, run_output) = actions_full_layout(active_panel);
+            let (command_palette, _) = command_palette_layout(command_area);
+            (command_palette, run_status, run_output)
         } else {
-            (Rect::default(), Rect::default())
+            (Rect::default(), Rect::default(), Rect::default())
         };
         Self {
             tabs,
+            active_panel,
             command_palette,
+            run_status,
             run_output,
         }
     }
@@ -43,12 +49,6 @@ pub(super) fn active_panel_layout(area: Rect) -> (Rect, Rect) {
         .constraints([Constraint::Length(1), Constraint::Min(8)])
         .split(area);
     (body[0], body[1])
-}
-
-pub(super) fn actions_layout(area: Rect) -> (Rect, Rect) {
-    let (command_area, _, run_output) = actions_full_layout(area);
-    let (command_palette, _) = command_palette_layout(command_area);
-    (command_palette, run_output)
 }
 
 pub(super) fn actions_full_layout(area: Rect) -> (Rect, Rect, Rect) {
@@ -116,6 +116,14 @@ pub(super) fn command_palette_layout(area: Rect) -> (Rect, Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(4), Constraint::Length(description_height)])
+        .split(area);
+    (chunks[0], chunks[1])
+}
+
+pub(super) fn config_panel_layout(area: Rect) -> (Rect, Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(7), Constraint::Min(6)])
         .split(area);
     (chunks[0], chunks[1])
 }

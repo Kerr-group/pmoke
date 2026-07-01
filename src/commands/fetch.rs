@@ -1,15 +1,19 @@
 use crate::cli::FetchFormat;
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::{Config, Connection, FetchOutput};
-use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR, T_HEADER};
+use crate::constants::{
+    FETCHED_FNAME, RAW_METADATA_FNAME, RAW_METADATA_VERSION, RAW_WAVEFORM_DIR, T_HEADER,
+};
 use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::write_csv;
-use crate::utils::waveform::WaveformData;
+use crate::utils::raw_csv::{RawCsvChannel, write_raw_csv};
+use crate::utils::waveform::{WaveformData, read_raw_waveform_channels_from_dir};
 use anyhow::{Context, Result, anyhow, bail};
 use instruments::rigol::{DhoHorizontalSettings, DhoRawWaveform};
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -159,7 +163,7 @@ fn run_fetch_to_csv_path(cfg: &Config, out: &Path) -> Result<WaveformData> {
             depth,
             channels.len(),
             ui::fmt_duration(fetch_elapsed),
-            (depth * channels.len()) as f64 / fetch_elapsed.as_secs_f64()
+            (depth as f64) * (channels.len() as f64) / fetch_elapsed.as_secs_f64()
         ),
     );
     Ok(data)
@@ -179,12 +183,11 @@ fn fetch_raw(cfg: &Config, out: &Path) -> Result<()> {
     })?;
 
     match fetch_raw_into_dir(cfg, &tmp_dir) {
-        Ok(()) => {
-            fs::rename(&tmp_dir, out).with_context(|| {
+        Ok(_) => {
+            finalize_temp_dir(&tmp_dir, out).with_context(|| {
                 format!(
-                    "failed to rename {} to {}",
-                    tmp_dir.display(),
-                    out.display()
+                    "raw waveform staging directory was preserved at {}",
+                    tmp_dir.display()
                 )
             })?;
             ui::saved(out.display().to_string());
@@ -210,16 +213,21 @@ fn fetch_raw_collect(cfg: &Config, out: &Path) -> Result<WaveformData> {
         )
     })?;
 
-    match fetch_raw_into_dir_and_collect_csv(cfg, &tmp_dir, true) {
-        Ok((_, data)) => {
-            fs::rename(&tmp_dir, out).with_context(|| {
+    match fetch_raw_into_dir(cfg, &tmp_dir) {
+        Ok((channels, _)) => {
+            finalize_temp_dir(&tmp_dir, out).with_context(|| {
                 format!(
-                    "failed to rename {} to {}",
-                    tmp_dir.display(),
-                    out.display()
+                    "raw waveform staging directory was preserved at {}",
+                    tmp_dir.display()
                 )
             })?;
             ui::saved(out.display().to_string());
+            let data = read_raw_waveform_channels_from_dir(out, &channels).with_context(|| {
+                format!(
+                    "failed to read collected raw waveform data from saved raw output: {}",
+                    out.display()
+                )
+            })?;
             Ok(data)
         }
         Err(error) => Err(error.context(format!(
@@ -230,7 +238,39 @@ fn fetch_raw_collect(cfg: &Config, out: &Path) -> Result<WaveformData> {
 }
 
 fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()> {
-    fetch_csv_and_raw_collect(cfg, csv_out, raw_out).map(|_| ())
+    ensure_output_parent(csv_out)?;
+    ensure_path_not_exists(csv_out)?;
+    ensure_path_not_exists(raw_out)?;
+    ensure_output_parent(raw_out)?;
+
+    let tmp_dir = raw_temp_dir(raw_out)?;
+    ensure_path_not_exists(&tmp_dir)?;
+    fs::create_dir(&tmp_dir).with_context(|| {
+        format!(
+            "failed to create temp output directory: {}",
+            tmp_dir.display()
+        )
+    })?;
+
+    match fetch_raw_into_dir(cfg, &tmp_dir) {
+        Ok((channels, metadata)) => {
+            let t_write_start = Instant::now();
+            write_raw_csv_and_finalize_outputs(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            let t_write_end = Instant::now();
+
+            ui::saved(format!(
+                "{} and {} ({})",
+                csv_out.display(),
+                raw_out.display(),
+                ui::fmt_duration(t_write_end - t_write_start)
+            ));
+            Ok(())
+        }
+        Err(error) => Err(error.context(format!(
+            "raw waveform output was left incomplete in {}",
+            tmp_dir.display()
+        ))),
+    }
 }
 
 fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<WaveformData> {
@@ -248,26 +288,10 @@ fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Re
         )
     })?;
 
-    match fetch_raw_into_dir_and_collect_csv(cfg, &tmp_dir, true) {
-        Ok((channels, data)) => {
+    match fetch_raw_into_dir(cfg, &tmp_dir) {
+        Ok((channels, metadata)) => {
             let t_write_start = Instant::now();
-            let headers: Vec<String> = std::iter::once(T_HEADER.to_string())
-                .chain(channels.iter().map(|ch| format!("ch{ch}")))
-                .collect();
-            let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
-            let csv_columns = csv_columns_with_time(&data);
-            let tmp_csv = write_csv_temp(csv_out, &header_refs, &csv_columns)?;
-            if let Err(error) = fs::rename(&tmp_dir, raw_out).with_context(|| {
-                format!(
-                    "failed to rename {} to {}",
-                    tmp_dir.display(),
-                    raw_out.display()
-                )
-            }) {
-                let _ = fs::remove_file(&tmp_csv);
-                return Err(error);
-            }
-            finalize_temp_file(&tmp_csv, csv_out)?;
+            write_raw_csv_and_finalize_outputs(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
             let t_write_end = Instant::now();
 
             ui::saved(format!(
@@ -276,6 +300,13 @@ fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Re
                 raw_out.display(),
                 ui::fmt_duration(t_write_end - t_write_start)
             ));
+            let data =
+                read_raw_waveform_channels_from_dir(raw_out, &channels).with_context(|| {
+                    format!(
+                        "failed to read collected raw waveform data from saved raw output: {}",
+                        raw_out.display()
+                    )
+                })?;
             Ok(data)
         }
         Err(error) => Err(error.context(format!(
@@ -283,6 +314,49 @@ fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Re
             tmp_dir.display()
         ))),
     }
+}
+
+fn write_raw_csv_and_finalize_outputs(
+    csv_out: &Path,
+    raw_out: &Path,
+    tmp_dir: &Path,
+    channels: &[u8],
+    metadata: &RawFetchMetadata,
+) -> Result<()> {
+    let headers: Vec<String> = std::iter::once(T_HEADER.to_string())
+        .chain(channels.iter().map(|ch| format!("ch{ch}")))
+        .collect();
+    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let tmp_csv = write_raw_csv_temp(csv_out, &header_refs, tmp_dir, channels, metadata)
+        .with_context(|| {
+            format!(
+                "raw waveform staging directory was preserved at {}",
+                tmp_dir.display()
+            )
+        })?;
+
+    if let Err(error) = finalize_temp_dir(tmp_dir, raw_out) {
+        let _ = fs::remove_file(&tmp_csv);
+        return Err(error.context(format!(
+            "raw waveform staging directory was preserved at {}",
+            tmp_dir.display()
+        )));
+    }
+    if let Err(error) = finalize_temp_file(&tmp_csv, csv_out) {
+        let _ = fs::remove_file(&tmp_csv);
+        return match finalize_temp_dir(raw_out, tmp_dir) {
+            Ok(()) => Err(error.context(format!(
+                "failed to finalize csv output; raw waveform staging directory was restored at {}",
+                tmp_dir.display()
+            ))),
+            Err(rollback_error) => Err(error.context(format!(
+                "failed to finalize csv output and failed to restore raw waveform staging directory from {} to {}: {rollback_error}",
+                raw_out.display(),
+                tmp_dir.display()
+            ))),
+        };
+    }
+    Ok(())
 }
 
 fn write_fetched_csv(cfg: &Config, out: &Path, data: &WaveformData) -> Result<()> {
@@ -305,15 +379,7 @@ fn write_fetched_csv(cfg: &Config, out: &Path, data: &WaveformData) -> Result<()
     Ok(())
 }
 
-fn fetch_raw_into_dir(cfg: &Config, dir: &Path) -> Result<()> {
-    fetch_raw_into_dir_and_collect_csv(cfg, dir, false).map(|_| ())
-}
-
-fn fetch_raw_into_dir_and_collect_csv(
-    cfg: &Config,
-    dir: &Path,
-    collect_csv: bool,
-) -> Result<(Vec<u8>, WaveformData)> {
+fn fetch_raw_into_dir(cfg: &Config, dir: &Path) -> Result<(Vec<u8>, RawFetchMetadata)> {
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
 
@@ -328,11 +394,6 @@ fn fetch_raw_into_dir_and_collect_csv(
         .query_horizontal_settings()
         .context("failed to query oscilloscope horizontal settings")?;
     let mut metadata = build_raw_metadata(cfg, &channels, depth, horizontal)?;
-    let mut csv_channels: Vec<Vec<f64>> = if collect_csv {
-        Vec::with_capacity(channels.len())
-    } else {
-        Vec::new()
-    };
     let mut time_axis = None;
 
     let pb = ui::progress(
@@ -346,23 +407,14 @@ fn fetch_raw_into_dir_and_collect_csv(
     let t_fetch_start = Instant::now();
     for &ch in &channels {
         pb.set_message(format!("fetching ch{ch} raw WORD"));
-        let (channel_metadata, csv_channel) = if collect_csv {
-            let raw = handler
-                .fetch_raw_word(ch, depth)
-                .with_context(|| format!("failed to fetch channel {ch} raw WORD"))?;
-            let csv_channel = convert_raw_word_to_voltages(&raw);
-            let channel_metadata = write_raw_channel(dir, ch, depth, raw)?;
-            (channel_metadata, Some(csv_channel))
-        } else {
-            (
-                write_raw_channel_streamed(&mut handler, dir, ch, depth)?,
-                None,
-            )
-        };
+        let channel_metadata = write_raw_channel_streamed(&mut handler, dir, ch, depth)?;
+        validate_fetch_voltage_range(
+            channel_metadata.y_increment,
+            channel_metadata.y_origin,
+            channel_metadata.y_reference,
+            ch,
+        )?;
         update_metadata_time_axis(&mut time_axis, &channel_metadata, ch)?;
-        if let Some(csv_channel) = csv_channel {
-            csv_channels.push(csv_channel);
-        }
         metadata
             .channels
             .insert(format!("ch{ch}"), channel_metadata);
@@ -377,25 +429,12 @@ fn fetch_raw_into_dir_and_collect_csv(
             depth,
             channels.len(),
             ui::fmt_duration(t_fetch_end - t_fetch_start),
-            (depth * channels.len()) as f64 / (t_fetch_end - t_fetch_start).as_secs_f64()
+            (depth as f64) * (channels.len() as f64) / (t_fetch_end - t_fetch_start).as_secs_f64()
         ),
     );
 
     write_raw_metadata(dir, &metadata)?;
-    let t = if collect_csv {
-        time_axis
-            .ok_or_else(|| anyhow!("no waveform time axis was collected"))?
-            .build()
-    } else {
-        Vec::new()
-    };
-    Ok((
-        channels,
-        WaveformData {
-            t,
-            channels: csv_channels,
-        },
-    ))
+    Ok((channels, metadata))
 }
 
 fn build_raw_metadata(
@@ -416,7 +455,7 @@ fn build_raw_metadata(
         .as_secs();
 
     Ok(RawFetchMetadata {
-        version: 1,
+        version: RAW_METADATA_VERSION,
         created_at_unix_seconds,
         config_version: cfg.version,
         oscilloscope: RawOscilloscopeMetadata {
@@ -435,16 +474,15 @@ fn build_raw_metadata(
     })
 }
 
+#[cfg(test)]
 fn write_raw_channel(
     dir: &Path,
     ch: u8,
     expected_depth: usize,
     raw: DhoRawWaveform,
 ) -> Result<RawChannelMetadata> {
-    let sample_count = raw.data.len() / 2;
-    if sample_count != expected_depth {
-        bail!("channel {ch} returned {sample_count} raw WORD samples, expected {expected_depth}");
-    }
+    validate_raw_word_byte_count(ch, raw.data.len(), expected_depth)?;
+    let sample_count = expected_depth;
 
     let fname = format!("ch{ch}.u16le");
     let final_path = dir.join(&fname);
@@ -505,10 +543,8 @@ fn write_raw_channel_streamed(
         .with_context(|| format!("failed to flush raw channel file: {}", tmp_path.display()))?;
     drop(writer);
 
-    let sample_count = written.byte_count / 2;
-    if sample_count != expected_depth {
-        bail!("channel {ch} returned {sample_count} raw WORD samples, expected {expected_depth}");
-    }
+    validate_raw_word_byte_count(ch, written.byte_count, expected_depth)?;
+    let sample_count = expected_depth;
 
     fs::rename(&tmp_path, &final_path).with_context(|| {
         format!(
@@ -531,6 +567,18 @@ fn write_raw_channel_streamed(
         vertical_offset: written.preamble.vertical_offset,
         vertical_scale: written.preamble.vertical_scale,
     })
+}
+
+fn validate_raw_word_byte_count(ch: u8, byte_count: usize, expected_depth: usize) -> Result<()> {
+    let expected_bytes = expected_depth
+        .checked_mul(2)
+        .ok_or_else(|| anyhow!("channel {ch} expected raw WORD byte count overflows"))?;
+    if byte_count != expected_bytes {
+        bail!(
+            "channel {ch} returned {byte_count} raw WORD bytes, expected {expected_bytes} bytes ({expected_depth} samples)"
+        );
+    }
+    Ok(())
 }
 
 fn convert_raw_word_to_voltages(raw: &DhoRawWaveform) -> Vec<f64> {
@@ -578,9 +626,45 @@ impl FetchTimeAxis {
     }
 
     fn build(self) -> Vec<f64> {
-        (0..self.sample_count)
-            .map(|i| self.x_origin + (i as f64 - self.x_reference) * self.x_increment)
-            .collect()
+        (0..self.sample_count).map(|i| self.value_at(i)).collect()
+    }
+
+    fn value_at(self, index: usize) -> f64 {
+        self.x_origin + (index as f64 - self.x_reference) * self.x_increment
+    }
+
+    fn validate(self, ch: u8) -> Result<()> {
+        if self.sample_count == 0 {
+            bail!("channel {ch} sample_count must be positive");
+        }
+        if !self.x_increment.is_finite()
+            || !self.x_origin.is_finite()
+            || !self.x_reference.is_finite()
+        {
+            bail!("channel {ch} timebase values must be finite");
+        }
+        if self.x_increment <= 0.0 {
+            bail!(
+                "channel {ch} x_increment must be positive: {}",
+                self.x_increment
+            );
+        }
+        for index in [0, self.sample_count - 1] {
+            let value = self.value_at(index);
+            if !value.is_finite() {
+                bail!("channel {ch} timebase produces non-finite time at sample {index}: {value}");
+            }
+        }
+        if self.sample_count > 1 {
+            for (left, right) in [(0, 1), (self.sample_count - 2, self.sample_count - 1)] {
+                if self.value_at(right) <= self.value_at(left) {
+                    bail!(
+                        "channel {ch} timebase does not advance between samples {left} and {right}"
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -590,6 +674,7 @@ fn update_metadata_time_axis(
     ch: u8,
 ) -> Result<()> {
     let axis = FetchTimeAxis::from_metadata(metadata);
+    axis.validate(ch)?;
     match time_axis {
         Some(expected) => validate_fetch_time_axis(*expected, axis, ch),
         None => {
@@ -606,6 +691,7 @@ fn update_time_axis(
     ch: u8,
 ) -> Result<()> {
     let axis = FetchTimeAxis::from_preamble(preamble, sample_count);
+    axis.validate(ch)?;
     match time_axis {
         Some(expected) => validate_fetch_time_axis(*expected, axis, ch),
         None => {
@@ -630,6 +716,9 @@ fn validate_fetch_time_axis(expected: FetchTimeAxis, actual: FetchTimeAxis, ch: 
 }
 
 fn validate_close(name: &str, expected: f64, actual: f64, ch: u8) -> Result<()> {
+    if !expected.is_finite() || !actual.is_finite() {
+        bail!("channel {ch} timebase mismatch: {name} must be finite");
+    }
     let scale = expected.abs().max(actual.abs());
     let tolerance = (scale * 1.0e-12).max(1.0e-18);
     if (expected - actual).abs() > tolerance {
@@ -638,10 +727,80 @@ fn validate_close(name: &str, expected: f64, actual: f64, ch: u8) -> Result<()> 
     Ok(())
 }
 
+fn validate_fetch_voltage_range(
+    y_increment: f64,
+    y_origin: f64,
+    y_reference: f64,
+    ch: u8,
+) -> Result<()> {
+    if !y_increment.is_finite() || !y_origin.is_finite() || !y_reference.is_finite() {
+        bail!("channel {ch} voltage scaling values must be finite");
+    }
+    if y_increment <= 0.0 {
+        bail!("channel {ch} y_increment must be positive: {y_increment}");
+    }
+    let voltage_at = |word: u16| (word as f64 - y_origin - y_reference) * y_increment;
+    for word in [u16::MIN, u16::MAX] {
+        let voltage = voltage_at(word);
+        if !voltage.is_finite() {
+            bail!(
+                "channel {ch} voltage scaling produces non-finite voltage at WORD value {word}: {voltage}"
+            );
+        }
+    }
+    for (left, right) in [(u16::MIN, 1), (u16::MAX - 1, u16::MAX)] {
+        if voltage_at(right) <= voltage_at(left) {
+            bail!(
+                "channel {ch} voltage scaling does not distinguish adjacent WORD values {left} and {right}"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn csv_columns_with_time(data: &WaveformData) -> Vec<&[f64]> {
     std::iter::once(data.t.as_slice())
         .chain(data.channels.iter().map(Vec::as_slice))
         .collect()
+}
+
+fn write_raw_csv_temp(
+    out: &Path,
+    headers: &[&str],
+    raw_dir: &Path,
+    channels: &[u8],
+    metadata: &RawFetchMetadata,
+) -> Result<PathBuf> {
+    let tmp_path = output_temp_file(out)?;
+    ensure_path_not_exists(&tmp_path)?;
+    let raw_csv_channels = channels
+        .iter()
+        .map(|&ch| {
+            let key = format!("ch{ch}");
+            let channel = metadata
+                .channels
+                .get(&key)
+                .ok_or_else(|| anyhow!("raw channel missing in metadata: {key}"))?;
+            Ok(RawCsvChannel {
+                file: &channel.file,
+                sample_count: channel.sample_count,
+                x_increment: channel.x_increment,
+                x_origin: channel.x_origin,
+                x_reference: channel.x_reference,
+                y_increment: channel.y_increment,
+                y_origin: channel.y_origin,
+                y_reference: channel.y_reference,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    match write_raw_csv(&tmp_path, headers, raw_dir, &raw_csv_channels) {
+        Ok(()) => Ok(tmp_path),
+        Err(error) => {
+            let _ = fs::remove_file(&tmp_path);
+            Err(error.context(format!("failed to write csv output: {}", out.display())))
+        }
+    }
 }
 
 fn write_raw_metadata(dir: &Path, metadata: &RawFetchMetadata) -> Result<()> {
@@ -671,10 +830,13 @@ fn write_raw_metadata(dir: &Path, metadata: &RawFetchMetadata) -> Result<()> {
 }
 
 fn ensure_path_not_exists(path: &Path) -> Result<()> {
-    if path.exists() {
-        bail!("output already exists: {}", path.display());
+    match fs::symlink_metadata(path) {
+        Ok(_) => bail!("output already exists: {}", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to inspect output path: {}", path.display()))
+        }
     }
-    Ok(())
 }
 
 fn ensure_output_parent(path: &Path) -> Result<()> {
@@ -693,7 +855,13 @@ where
     C: AsRef<[f64]>,
 {
     let tmp_path = write_csv_temp(out, headers, data)?;
-    finalize_temp_file(&tmp_path, out)
+    match finalize_temp_file(&tmp_path, out) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&tmp_path);
+            Err(error)
+        }
+    }
 }
 
 fn write_csv_temp<C>(out: &Path, headers: &[&str], data: &[C]) -> Result<PathBuf>
@@ -713,6 +881,7 @@ where
 }
 
 fn finalize_temp_file(tmp_path: &Path, out: &Path) -> Result<()> {
+    ensure_path_not_exists(out)?;
     fs::rename(tmp_path, out).with_context(|| {
         format!(
             "failed to rename {} to {}",
@@ -722,22 +891,37 @@ fn finalize_temp_file(tmp_path: &Path, out: &Path) -> Result<()> {
     })
 }
 
+fn finalize_temp_dir(tmp_dir: &Path, out: &Path) -> Result<()> {
+    ensure_path_not_exists(out)?;
+    fs::rename(tmp_dir, out).with_context(|| {
+        format!(
+            "failed to rename {} to {}",
+            tmp_dir.display(),
+            out.display()
+        )
+    })
+}
+
 fn output_temp_file(out: &Path) -> Result<PathBuf> {
     let file_name = out
         .file_name()
-        .ok_or_else(|| anyhow!("output path must name a file"))?
-        .to_string_lossy();
+        .ok_or_else(|| anyhow!("output path must name a file"))?;
     let parent = out.parent().unwrap_or_else(|| Path::new(""));
-    Ok(parent.join(format!(".{file_name}.tmp")))
+    let mut temp_name = OsString::from(".");
+    temp_name.push(file_name);
+    temp_name.push(".tmp");
+    Ok(parent.join(temp_name))
 }
 
 fn raw_temp_dir(out: &Path) -> Result<PathBuf> {
     let file_name = out
         .file_name()
-        .ok_or_else(|| anyhow!("raw output path must name a directory"))?
-        .to_string_lossy();
+        .ok_or_else(|| anyhow!("raw output path must name a directory"))?;
     let parent = out.parent().unwrap_or_else(|| Path::new(""));
-    Ok(parent.join(format!(".{file_name}.tmp")))
+    let mut temp_name = OsString::from(".");
+    temp_name.push(file_name);
+    temp_name.push(".tmp");
+    Ok(parent.join(temp_name))
 }
 
 pub fn fetch_all_channels(
@@ -754,6 +938,12 @@ pub fn fetch_all_channels(
         let raw = handler
             .fetch_raw_word(ch, depth)
             .with_context(|| format!("failed to fetch channel {ch}"))?;
+        validate_fetch_voltage_range(
+            raw.preamble.y_increment,
+            raw.preamble.y_origin,
+            raw.preamble.y_reference,
+            ch,
+        )?;
         update_time_axis(&mut time_axis, &raw.preamble, depth, ch)?;
         let v = convert_raw_word_to_voltages(&raw);
 
@@ -779,7 +969,10 @@ pub fn fetch_all_channels(
 mod tests {
     use super::*;
     use instruments::rigol::dho5108::DhoWaveformPreamble;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn raw_temp_dir_uses_hidden_sibling_directory() {
@@ -793,12 +986,30 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn write_raw_channel_preserves_original_word_bytes() {
+    fn temp_paths_preserve_non_utf8_file_name_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let output = PathBuf::from(OsString::from_vec(vec![b'd', b'a', b't', b'a', 0xff]));
+        let expected = b".data\xff.tmp";
+
+        assert_eq!(
+            output_temp_file(&output).unwrap().as_os_str().as_bytes(),
+            expected
+        );
+        assert_eq!(
+            raw_temp_dir(&output).unwrap().as_os_str().as_bytes(),
+            expected
+        );
+    }
+
+    #[test]
+    fn write_raw_channel_preserves_saturated_constant_word_bytes() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
 
-        let raw_bytes = vec![0x34, 0x12, 0x78, 0x56];
+        let raw_bytes = vec![0xff, 0xff, 0xff, 0xff];
         let raw = DhoRawWaveform {
             preamble: DhoWaveformPreamble {
                 raw: "0,0,0,0,5e-10,-0.03,0,0.001,0,32768".to_string(),
@@ -826,9 +1037,85 @@ mod tests {
     }
 
     #[test]
+    fn raw_word_byte_count_requires_exact_word_payload() {
+        validate_raw_word_byte_count(2, 4, 2).unwrap();
+
+        let odd = validate_raw_word_byte_count(2, 5, 2).unwrap_err();
+        assert!(odd.to_string().contains("returned 5 raw WORD bytes"));
+
+        let short = validate_raw_word_byte_count(2, 2, 2).unwrap_err();
+        assert!(short.to_string().contains("expected 4 bytes"));
+    }
+
+    #[test]
+    fn fetch_scaling_rejects_invalid_time_and_degenerate_voltage_mapping() {
+        let zero_samples = FetchTimeAxis {
+            sample_count: 0,
+            x_increment: 0.5,
+            x_origin: 0.0,
+            x_reference: 0.0,
+        }
+        .validate(1)
+        .unwrap_err();
+        assert!(
+            zero_samples
+                .to_string()
+                .contains("sample_count must be positive")
+        );
+
+        let zero_increment = FetchTimeAxis {
+            sample_count: 1,
+            x_increment: 0.0,
+            x_origin: 0.0,
+            x_reference: 0.0,
+        }
+        .validate(1)
+        .unwrap_err();
+        assert!(
+            zero_increment
+                .to_string()
+                .contains("x_increment must be positive")
+        );
+
+        let time_overflow = FetchTimeAxis {
+            sample_count: 2,
+            x_increment: f64::MAX,
+            x_origin: f64::MAX,
+            x_reference: 0.0,
+        }
+        .validate(1)
+        .unwrap_err();
+        assert!(time_overflow.to_string().contains("non-finite time"));
+
+        let rounded_to_zero = FetchTimeAxis {
+            sample_count: 2,
+            x_increment: 1.0,
+            x_origin: f64::MAX,
+            x_reference: 0.0,
+        }
+        .validate(1)
+        .unwrap_err();
+        assert!(rounded_to_zero.to_string().contains("does not advance"));
+
+        let voltage_overflow = validate_fetch_voltage_range(f64::MAX, 0.0, 0.0, 1).unwrap_err();
+        assert!(voltage_overflow.to_string().contains("non-finite voltage"));
+
+        let zero_increment = validate_fetch_voltage_range(0.0, 0.0, 0.0, 1).unwrap_err();
+        assert!(
+            zero_increment
+                .to_string()
+                .contains("y_increment must be positive")
+        );
+
+        let rounded_voltage =
+            validate_fetch_voltage_range(1.0, f64::MAX / 4.0, 0.0, 1).unwrap_err();
+        assert!(rounded_voltage.to_string().contains("does not distinguish"));
+    }
+
+    #[test]
     fn raw_metadata_serializes_horizontal_settings() {
-        let metadata = RawFetchMetadata {
-            version: 1,
+        let mut metadata = RawFetchMetadata {
+            version: RAW_METADATA_VERSION,
             created_at_unix_seconds: 0,
             config_version: 3,
             oscilloscope: RawOscilloscopeMetadata {
@@ -848,11 +1135,234 @@ mod tests {
             },
             channels: BTreeMap::new(),
         };
+        metadata.channels.insert(
+            "ch1".to_string(),
+            RawChannelMetadata {
+                file: "ch1.u16le".to_string(),
+                sample_count: 200_000_000,
+                preamble_raw: "1,2,200000000,1,5.0E-10,-3.0E-02,0,0.000027,9600,32768".to_string(),
+                x_increment: 5.0e-10,
+                x_origin: -0.03,
+                x_reference: 0.125,
+                y_increment: 2.693_333e-5,
+                y_origin: 9_600.0,
+                y_reference: 32_768.0,
+                vertical_offset: 0.258_56,
+                vertical_scale: 0.202,
+            },
+        );
 
         let encoded = toml::to_string_pretty(&metadata).unwrap();
+        let decoded: toml::Value = toml::from_str(&encoded).unwrap();
 
         assert!(encoded.contains("horizontal_offset = -0.03"));
         assert!(encoded.contains("horizontal_scale = 0.005"));
+        for (path, expected) in [
+            (
+                &["oscilloscope", "horizontal_offset"][..],
+                metadata.oscilloscope.horizontal_offset,
+            ),
+            (
+                &["oscilloscope", "horizontal_scale"][..],
+                metadata.oscilloscope.horizontal_scale,
+            ),
+            (
+                &["channels", "ch1", "x_increment"][..],
+                metadata.channels["ch1"].x_increment,
+            ),
+            (
+                &["channels", "ch1", "x_origin"][..],
+                metadata.channels["ch1"].x_origin,
+            ),
+            (
+                &["channels", "ch1", "x_reference"][..],
+                metadata.channels["ch1"].x_reference,
+            ),
+            (
+                &["channels", "ch1", "y_increment"][..],
+                metadata.channels["ch1"].y_increment,
+            ),
+            (
+                &["channels", "ch1", "y_origin"][..],
+                metadata.channels["ch1"].y_origin,
+            ),
+            (
+                &["channels", "ch1", "y_reference"][..],
+                metadata.channels["ch1"].y_reference,
+            ),
+            (
+                &["channels", "ch1", "vertical_offset"][..],
+                metadata.channels["ch1"].vertical_offset,
+            ),
+            (
+                &["channels", "ch1", "vertical_scale"][..],
+                metadata.channels["ch1"].vertical_scale,
+            ),
+        ] {
+            let actual = path
+                .iter()
+                .fold(&decoded, |value, key| &value[*key])
+                .as_float()
+                .unwrap();
+            assert_eq!(actual.to_bits(), expected.to_bits(), "path={path:?}");
+        }
+        assert_eq!(
+            decoded["channels"]["ch1"]["preamble_raw"].as_str(),
+            Some(metadata.channels["ch1"].preamble_raw.as_str())
+        );
+    }
+
+    #[test]
+    fn csv_and_raw_outputs_stay_staged_on_csv_stream_error() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let staging_dir = dir.join(".raw_waveform.tmp");
+        fs::create_dir(&staging_dir).unwrap();
+
+        let metadata = single_channel_raw_metadata("missing.u16le", 1);
+        let csv_out = dir.join("actual.csv");
+        let raw_out = dir.join("raw_waveform");
+        let tmp_csv = output_temp_file(&csv_out).unwrap();
+        let error =
+            write_raw_csv_and_finalize_outputs(&csv_out, &raw_out, &staging_dir, &[1], &metadata)
+                .unwrap_err();
+
+        let error = format!("{error:#}");
+        assert!(error.contains("failed to write csv output"));
+        assert!(error.contains("staging directory was preserved"));
+        assert!(staging_dir.exists());
+        assert!(!raw_out.exists());
+        assert!(!csv_out.exists());
+        assert!(!tmp_csv.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn csv_and_raw_outputs_are_finalized_after_streaming_succeeds() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let staging_dir = dir.join(".raw_waveform.tmp");
+        fs::create_dir(&staging_dir).unwrap();
+        fs::write(staging_dir.join("ch1.u16le"), [2_u8, 0, 4, 0]).unwrap();
+        fs::write(staging_dir.join(RAW_METADATA_FNAME), "version = 1\n").unwrap();
+
+        let csv_out = dir.join("actual.csv");
+        let raw_out = dir.join("raw_waveform");
+        let metadata = single_channel_raw_metadata("ch1.u16le", 2);
+        write_raw_csv_and_finalize_outputs(&csv_out, &raw_out, &staging_dir, &[1], &metadata)
+            .unwrap();
+
+        assert!(!staging_dir.exists());
+        assert_eq!(fs::read(raw_out.join("ch1.u16le")).unwrap(), [2, 0, 4, 0]);
+        assert_eq!(
+            fs::read_to_string(raw_out.join(RAW_METADATA_FNAME)).unwrap(),
+            "version = 1\n"
+        );
+        assert_eq!(
+            fs::read_to_string(csv_out).unwrap(),
+            "time (s),ch1\n0,2\n0.5,4\n"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn csv_finalize_error_restores_raw_staging_directory() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let staging_dir = dir.join(".raw_waveform.tmp");
+        fs::create_dir(&staging_dir).unwrap();
+        fs::write(staging_dir.join("ch1.u16le"), [2_u8, 0, 4, 0]).unwrap();
+
+        let csv_out = dir.join("actual.csv");
+        fs::create_dir(&csv_out).unwrap();
+        let raw_out = dir.join("raw_waveform");
+        let tmp_csv = output_temp_file(&csv_out).unwrap();
+        let metadata = single_channel_raw_metadata("ch1.u16le", 2);
+
+        let error =
+            write_raw_csv_and_finalize_outputs(&csv_out, &raw_out, &staging_dir, &[1], &metadata)
+                .unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("staging directory was restored"),
+            "{error:#}"
+        );
+        assert!(staging_dir.is_dir());
+        assert_eq!(
+            fs::read(staging_dir.join("ch1.u16le")).unwrap(),
+            [2, 0, 4, 0]
+        );
+        assert!(!raw_out.exists());
+        assert!(csv_out.is_dir());
+        assert!(!tmp_csv.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn late_raw_output_collision_preserves_staging_and_existing_output() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let staging_dir = dir.join(".raw_waveform.tmp");
+        fs::create_dir(&staging_dir).unwrap();
+        fs::write(staging_dir.join("ch1.u16le"), [2_u8, 0, 4, 0]).unwrap();
+
+        let csv_out = dir.join("actual.csv");
+        let raw_out = dir.join("raw_waveform");
+        fs::create_dir(&raw_out).unwrap();
+        let metadata = single_channel_raw_metadata("ch1.u16le", 2);
+
+        let error =
+            write_raw_csv_and_finalize_outputs(&csv_out, &raw_out, &staging_dir, &[1], &metadata)
+                .unwrap_err();
+
+        let error = format!("{error:#}");
+        assert!(error.contains("output already exists"));
+        assert!(error.contains("staging directory was preserved"));
+        assert!(staging_dir.is_dir());
+        assert_eq!(
+            fs::read(staging_dir.join("ch1.u16le")).unwrap(),
+            [2, 0, 4, 0]
+        );
+        assert!(raw_out.is_dir());
+        assert!(!csv_out.exists());
+        assert!(!output_temp_file(&csv_out).unwrap().exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn raw_finalize_error_preserves_staging_and_removes_temporary_csv() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let staging_dir = dir.join(".raw_waveform.tmp");
+        fs::create_dir(&staging_dir).unwrap();
+        fs::write(staging_dir.join("ch1.u16le"), [2_u8, 0, 4, 0]).unwrap();
+
+        let csv_out = dir.join("actual.csv");
+        let raw_out = dir.join("raw_waveform");
+        fs::create_dir(&raw_out).unwrap();
+        fs::write(raw_out.join("existing.txt"), "do not replace").unwrap();
+        let tmp_csv = output_temp_file(&csv_out).unwrap();
+        let metadata = single_channel_raw_metadata("ch1.u16le", 2);
+
+        let error =
+            write_raw_csv_and_finalize_outputs(&csv_out, &raw_out, &staging_dir, &[1], &metadata)
+                .unwrap_err();
+
+        let error = format!("{error:#}");
+        assert!(error.contains("output already exists"), "{error}");
+        assert!(error.contains("staging directory was preserved"), "{error}");
+        assert!(staging_dir.is_dir());
+        assert_eq!(
+            fs::read(staging_dir.join("ch1.u16le")).unwrap(),
+            [2, 0, 4, 0]
+        );
+        assert_eq!(
+            fs::read_to_string(raw_out.join("existing.txt")).unwrap(),
+            "do not replace"
+        );
+        assert!(!csv_out.exists());
+        assert!(!tmp_csv.exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -866,15 +1376,91 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn csv_late_output_collision_preserves_existing_file_and_removes_temp() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let output = dir.join("actual.csv");
+        fs::write(&output, "existing\n").unwrap();
+        let tmp = output_temp_file(&output).unwrap();
+
+        let error = write_csv_atomic(&output, &["value"], &[&[1.0, 2.0]]).unwrap_err();
+
+        assert!(error.to_string().contains("output already exists"));
+        assert_eq!(fs::read_to_string(output).unwrap(), "existing\n");
+        assert!(!tmp.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_path_not_exists_rejects_dangling_symbolic_link() {
+        use std::os::unix::fs::symlink;
+
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let target = dir.join("missing-target.csv");
+        let output = dir.join("output.csv");
+        symlink(&target, &output).unwrap();
+
+        let error = ensure_path_not_exists(&output).unwrap_err();
+
+        assert!(error.to_string().contains("output already exists"));
+        assert!(!target.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn single_channel_raw_metadata(file: &str, sample_count: usize) -> RawFetchMetadata {
+        let channels = BTreeMap::from([(
+            "ch1".to_string(),
+            RawChannelMetadata {
+                file: file.to_string(),
+                sample_count,
+                preamble_raw: "preamble ch1".to_string(),
+                x_increment: 0.5,
+                x_origin: 0.0,
+                x_reference: 0.0,
+                y_increment: 1.0,
+                y_origin: 0.0,
+                y_reference: 0.0,
+                vertical_offset: 0.0,
+                vertical_scale: 0.1,
+            },
+        )]);
+        RawFetchMetadata {
+            version: RAW_METADATA_VERSION,
+            created_at_unix_seconds: 0,
+            config_version: 3,
+            oscilloscope: RawOscilloscopeMetadata {
+                model: "DHO5108".to_string(),
+                connection: Connection::Tcpip {
+                    ip: "192.168.10.100".to_string(),
+                    port: 55255,
+                },
+                memory_depth: sample_count,
+                waveform_mode: "RAW",
+                waveform_format: "WORD",
+                byte_order: "little-endian",
+                sample_count,
+                channels: vec![1],
+                horizontal_offset: 0.0,
+                horizontal_scale: 1.0,
+            },
+            channels,
+        }
+    }
+
     fn unique_test_dir() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let sequence = TEST_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "pmoke_raw_fetch_test_{}_{}",
+            "pmoke_raw_fetch_test_{}_{}_{}",
             std::process::id(),
-            nanos
+            nanos,
+            sequence
         ))
     }
 }

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      PYO3_PYTHON: python
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy lmfit
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            curl \
+            pkg-config
+
+      - name: Install linux-gpib userspace library
+        run: |
+          curl -fL --retry 3 -o /tmp/linux-gpib.tar.gz \
+            "https://sourceforge.net/projects/linux-gpib/files/linux-gpib%20for%203.x.x%20and%202.6.x%20kernels/4.3.6/linux-gpib-4.3.6.tar.gz/download"
+          tar -xzf /tmp/linux-gpib.tar.gz -C /tmp
+          tar -xzf /tmp/linux-gpib-4.3.6/linux-gpib-user-4.3.6.tar.gz -C /tmp
+          cd /tmp/linux-gpib-user-4.3.6
+          ./configure --sysconfdir=/etc --disable-all-bindings --disable-documentation
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check
+        run: cargo check --locked --workspace --all-targets --all-features
+
+      - name: Test
+        run: cargo test --locked --workspace --all-targets --all-features
+
+      - name: Lint
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings

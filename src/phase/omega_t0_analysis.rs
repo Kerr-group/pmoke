@@ -1,11 +1,13 @@
 use crate::config::Plot;
+use crate::python;
 use anyhow::{Context, Result, bail};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use std::ffi::CString;
+use std::sync::OnceLock;
 
 #[allow(dead_code)]
 const OT0_ANALYSIS_PY: &str = include_str!("pytools/omega_t0_analysis.py");
+static OT0_ANALYSIS_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 
 #[allow(dead_code)]
 pub struct OT0Analyser {}
@@ -13,26 +15,20 @@ pub struct OT0Analyser {}
 impl OT0Analyser {
     pub fn analyse(&self, plot: &Plot, m_omega_t0: [&[f64]; 6]) -> Result<f64> {
         Python::attach(|py| {
-            let code =
-                CString::new(OT0_ANALYSIS_PY).expect("omega_t0_analysis.py contains interior NUL");
-            let filename = CString::new("omega_t0_analysis.py").unwrap();
-            let modulename = CString::new("omega_t0_analysis").unwrap();
-
-            let analysis_mod = PyModule::from_code(
+            let analysis_mod = python::cached_module(
                 py,
-                code.as_c_str(),
-                filename.as_c_str(),
-                modulename.as_c_str(),
+                &OT0_ANALYSIS_MODULE,
+                OT0_ANALYSIS_PY,
+                "omega_t0_analysis.py",
+                "omega_t0_analysis",
             )
             .context("failed to load omega_t0_analysis.py")?;
-
-            let np = py.import("numpy").context("failed to import numpy")?;
-            let m_ot0_1_obj = np.call_method1("array", (m_omega_t0[0],))?;
-            let m_ot0_2_obj = np.call_method1("array", (m_omega_t0[1],))?;
-            let m_ot0_3_obj = np.call_method1("array", (m_omega_t0[2],))?;
-            let m_ot0_4_obj = np.call_method1("array", (m_omega_t0[3],))?;
-            let m_ot0_5_obj = np.call_method1("array", (m_omega_t0[4],))?;
-            let m_ot0_6_obj = np.call_method1("array", (m_omega_t0[5],))?;
+            let m_ot0_1_obj = python::f64_array1(py, m_omega_t0[0]);
+            let m_ot0_2_obj = python::f64_array1(py, m_omega_t0[1]);
+            let m_ot0_3_obj = python::f64_array1(py, m_omega_t0[2]);
+            let m_ot0_4_obj = python::f64_array1(py, m_omega_t0[3]);
+            let m_ot0_5_obj = python::f64_array1(py, m_omega_t0[4]);
+            let m_ot0_6_obj = python::f64_array1(py, m_omega_t0[5]);
 
             let analyser = analysis_mod
                 .getattr("OT0Analyser")?

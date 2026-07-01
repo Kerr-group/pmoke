@@ -1,45 +1,40 @@
-use anyhow::{Context, Result};
-use pyo3::prelude::*;
-use pyo3::types::PyModule;
-use std::ffi::CString;
+use anyhow::{Result, bail};
 
-const PULSE_BG_FIT_PY: &str = include_str!("pytools/pulse_bg_fit.py");
+pub struct PulseBgAverage {}
 
-pub struct PulseBgFitter {}
+impl PulseBgAverage {
+    pub fn calculate<I>(&self, values: I) -> Result<f64>
+    where
+        I: IntoIterator<Item = f64>,
+    {
+        let mut sum = 0.0;
+        let mut compensation = 0.0;
+        let mut count = 0usize;
 
-impl PulseBgFitter {
-    pub fn fit(&self, t: &[f64], y: &[f64]) -> Result<f64> {
-        Python::attach(|py| {
-            let code =
-                CString::new(PULSE_BG_FIT_PY).expect("pulse_bg_fit.py contains interior NUL");
-            let filename = CString::new("pulse_bg_fit.py").unwrap();
-            let modulename = CString::new("pulse_bg_fit").unwrap();
+        for value in values {
+            if !value.is_finite() {
+                bail!("background window contains a non-finite value");
+            }
 
-            let fitter_mod = PyModule::from_code(
-                py,
-                code.as_c_str(),
-                filename.as_c_str(),
-                modulename.as_c_str(),
-            )
-            .context("failed to load pulse_bg_fit.py")?;
+            let next = sum + value;
+            if sum.abs() >= value.abs() {
+                compensation += (sum - next) + value;
+            } else {
+                compensation += (value - next) + sum;
+            }
+            sum = next;
+            count += 1;
+        }
 
-            let np = py.import("numpy").context("failed to import numpy")?;
-            let t_obj = np.call_method1("array", (t,))?;
-            let y_obj = np.call_method1("array", (y,))?;
+        if count == 0 {
+            bail!("cannot calculate a background average from an empty window");
+        }
 
-            let plotter = fitter_mod
-                .getattr("PulseBgFit")?
-                .call0()
-                .context("failed to create PulseBgFit instance")?;
-
-            let res = plotter
-                .call_method1("fit", (t_obj, y_obj))
-                .context("python PulseBgFit.fit(...) failed")?;
-
-            let c: f64 = res.get_item("c")?.extract()?;
-
-            Ok(c)
-        })
+        let average = (sum + compensation) / count as f64;
+        if !average.is_finite() {
+            bail!("background average is not finite");
+        }
+        Ok(average)
     }
 }
 
@@ -82,5 +77,36 @@ impl PulseIntegralCalculator {
         }
 
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PulseBgAverage, PulseIntegralCalculator};
+
+    #[test]
+    fn background_average_is_the_constant_least_squares_solution() {
+        let average = PulseBgAverage {}.calculate([1.0, 2.0, 6.0, 11.0]).unwrap();
+        assert_eq!(average, 5.0);
+    }
+
+    #[test]
+    fn background_average_preserves_small_terms_during_cancellation() {
+        let average = PulseBgAverage {}.calculate([1.0e16, 1.0, -1.0e16]).unwrap();
+        assert_eq!(average, 1.0 / 3.0);
+    }
+
+    #[test]
+    fn background_average_rejects_empty_and_non_finite_inputs() {
+        assert!(PulseBgAverage {}.calculate([]).is_err());
+        assert!(PulseBgAverage {}.calculate([1.0, f64::NAN]).is_err());
+        assert!(PulseBgAverage {}.calculate([f64::INFINITY]).is_err());
+    }
+
+    #[test]
+    fn pulse_integral_preserves_sign_after_factor_application() {
+        let integral = PulseIntegralCalculator::new(1.0).integrate(&[1.0, 1.0, 1.0], 0.0, -2.0);
+
+        assert_eq!(integral, vec![0.0, -2.0, -4.0]);
     }
 }
