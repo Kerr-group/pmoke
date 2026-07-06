@@ -51,6 +51,9 @@ pub enum Command {
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
     },
+    /// Save an oscilloscope screenshot and copy it over TCP/IP
+    #[cfg(feature = "hw")]
+    Image,
     /// Perform auto measurement (set single mode, trigger, fetch)
     #[cfg(feature = "hw")]
     Automeasure,

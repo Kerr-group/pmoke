@@ -1,8 +1,13 @@
 use crate::communications::validator::validate_oscilloscope;
 use crate::config::{Config, Connection};
 use anyhow::{Result, anyhow};
-use instruments::rigol::{DHO5108, DhoHorizontalSettings, DhoRawWaveform, DhoRawWaveformWritten};
+use instruments::rigol::{
+    DHO5108, DhoHorizontalSettings, DhoImageFormat, DhoRawWaveform, DhoRawWaveformWritten,
+};
 use std::io::Write;
+use std::time::Duration;
+
+const OSCILLOSCOPE_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub enum Oscilloscope {
     DHO5108(DHO5108),
@@ -23,11 +28,11 @@ impl OscilloscopeHandler {
 
         let osc = match (model, connection) {
             ("DHO5108", Connection::Tcpip { ip, port }) => {
-                let dho = DHO5108::open(ip, *port, None)?;
+                let dho = DHO5108::open(ip, *port, Some(OSCILLOSCOPE_IO_TIMEOUT))?;
                 Oscilloscope::DHO5108(dho)
             }
             ("DHO5108", Connection::Usbtmc { resource }) => {
-                let dho = DHO5108::open_usbtmc(resource, None)?;
+                let dho = DHO5108::open_usbtmc(resource, Some(OSCILLOSCOPE_IO_TIMEOUT))?;
                 Oscilloscope::DHO5108(dho)
             }
             (other, _) => return Err(anyhow!("Unknown oscilloscope model: {other}")),
@@ -99,6 +104,28 @@ impl OscilloscopeHandler {
     pub fn query_memory_depth(&mut self) -> Result<usize> {
         match &mut self.inner {
             Oscilloscope::DHO5108(dev) => Ok(dev.query_memory_depth()?),
+        }
+    }
+
+    pub fn stop(&mut self) -> Result<()> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.stop()?),
+        }
+    }
+
+    pub fn save_image_with<T, F>(
+        &mut self,
+        path: &str,
+        format: DhoImageFormat,
+        after_save: F,
+    ) -> Result<T>
+    where
+        F: FnOnce() -> std::io::Result<T>,
+    {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => {
+                Ok(dev.save_image_with(path, format, OSCILLOSCOPE_IO_TIMEOUT, after_save)?)
+            }
         }
     }
 }

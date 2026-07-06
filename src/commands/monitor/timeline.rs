@@ -620,6 +620,11 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
             markers: &["fetched data", "fetched raw WORD"],
         }],
         #[cfg(feature = "hw")]
+        MonitorAction::Image => vec![StageSpec {
+            label: "Image",
+            markers: &["oscilloscope screenshot"],
+        }],
+        #[cfg(feature = "hw")]
         MonitorAction::Automeasure => vec![
             StageSpec {
                 label: "Single",

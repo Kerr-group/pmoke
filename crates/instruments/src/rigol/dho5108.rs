@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 enum DhoTransport {
     Tcp(BufReader<TcpStream>),
@@ -41,6 +42,32 @@ pub struct DhoRawWaveform {
 pub struct DhoRawWaveformWritten {
     pub preamble: DhoWaveformPreamble,
     pub byte_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DhoImageFormat {
+    Png,
+    Bmp,
+    Jpg,
+}
+
+impl DhoImageFormat {
+    fn scpi(self) -> &'static str {
+        match self {
+            Self::Png => "PNG",
+            Self::Bmp => "BMP",
+            Self::Jpg => "JPG",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DhoImageSettings {
+    format: String,
+    color: String,
+    invert: bool,
+    header: bool,
+    overwrite: bool,
 }
 
 #[allow(dead_code)]
@@ -236,6 +263,110 @@ impl DHO5108 {
         parse_memory_depth(&raw)
     }
 
+    pub fn stop(&mut self) -> io::Result<()> {
+        self.write_line(":STOP")
+    }
+
+    pub fn save_image_with<T, F>(
+        &mut self,
+        path: &str,
+        format: DhoImageFormat,
+        timeout: Duration,
+        after_save: F,
+    ) -> io::Result<T>
+    where
+        F: FnOnce() -> io::Result<T>,
+    {
+        let previous = self.query_image_settings()?;
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "image timeout overflow"))?;
+
+        let primary = self
+            .save_image_inner(path, format, deadline)
+            .and_then(|()| after_save());
+        let restore = self.restore_image_settings(&previous);
+
+        match (primary, restore) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(primary), Ok(())) => Err(primary),
+            (Ok(_), Err(restore)) => Err(io::Error::other(format!(
+                "image was saved, but oscilloscope image settings could not be restored: {restore}"
+            ))),
+            (Err(primary), Err(restore)) => Err(io::Error::other(format!(
+                "{primary}; additionally failed to restore oscilloscope image settings: {restore}"
+            ))),
+        }
+    }
+
+    fn query_image_settings(&mut self) -> io::Result<DhoImageSettings> {
+        Ok(DhoImageSettings {
+            format: parse_image_format_response(&self.query(":SAVE:IMAGe:FORMat?")?)?,
+            color: parse_image_color_response(&self.query(":SAVE:IMAGe:COLor?")?)?,
+            invert: parse_scpi_bool(&self.query(":SAVE:IMAGe:INVert?")?, "image invert")?,
+            header: parse_scpi_bool(&self.query(":SAVE:IMAGe:HEADer?")?, "image header")?,
+            overwrite: parse_scpi_bool(&self.query(":SAVE:OVERlap?")?, "save overwrite")?,
+        })
+    }
+
+    fn save_image_inner(
+        &mut self,
+        path: &str,
+        format: DhoImageFormat,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        self.write_lines(&[
+            "*CLS".to_string(),
+            format!(":SAVE:IMAGe:FORMat {}", format.scpi()),
+            ":SAVE:IMAGe:COLor COLor".to_string(),
+            ":SAVE:IMAGe:INVert OFF".to_string(),
+            ":SAVE:IMAGe:HEADer ON".to_string(),
+            ":SAVE:OVERlap ON".to_string(),
+            format!(":SAVE:IMAGe {path}"),
+        ])?;
+
+        validate_opc_response(&self.query("*OPC?")?)?;
+        loop {
+            ensure_before_deadline(deadline, "image save")?;
+            match self.query(":SAVE:STATus?")?.trim() {
+                "1" => break,
+                "0" => thread::sleep(Duration::from_millis(100)),
+                response => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid :SAVE:STATus? response: {response:?}"),
+                    ));
+                }
+            }
+        }
+
+        let error = self.query(":SYSTem:ERRor:NEXT?")?;
+        validate_system_error_response(&error)
+    }
+
+    fn restore_image_settings(&mut self, settings: &DhoImageSettings) -> io::Result<()> {
+        self.write_lines(&[
+            format!(":SAVE:IMAGe:FORMat {}", settings.format),
+            format!(":SAVE:IMAGe:COLor {}", settings.color),
+            format!(
+                ":SAVE:IMAGe:INVert {}",
+                if settings.invert { "ON" } else { "OFF" }
+            ),
+            format!(
+                ":SAVE:IMAGe:HEADer {}",
+                if settings.header { "ON" } else { "OFF" }
+            ),
+            format!(
+                ":SAVE:OVERlap {}",
+                if settings.overwrite { "ON" } else { "OFF" }
+            ),
+            "*OPC?".to_string(),
+        ])?;
+        validate_opc_response(&self.read_line()?)?;
+        let error = self.query(":SYSTem:ERRor:NEXT?")?;
+        validate_system_error_response(&error)
+    }
+
     fn setup_raw_word_fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {
         // Send sequential setup commands in one write and synchronize once at the end.
         self.write_lines(&raw_word_setup_commands(ch, memory_depth))?;
@@ -358,6 +489,72 @@ fn validate_opc_response(response: &str) -> io::Result<()> {
         io::ErrorKind::InvalidData,
         format!("invalid *OPC? response: {response:?}"),
     ))
+}
+
+fn parse_image_format_response(response: &str) -> io::Result<String> {
+    match response.trim().to_ascii_uppercase().as_str() {
+        "PNG" => Ok("PNG".to_string()),
+        "BMP" => Ok("BMP".to_string()),
+        "JPG" | "JPEG" => Ok("JPG".to_string()),
+        value => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid image format response: {value:?}"),
+        )),
+    }
+}
+
+fn parse_image_color_response(response: &str) -> io::Result<String> {
+    match response.trim().to_ascii_uppercase().as_str() {
+        "COL" | "COLOR" => Ok("COLor".to_string()),
+        "GRAY" => Ok("GRAY".to_string()),
+        value => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid image color response: {value:?}"),
+        )),
+    }
+}
+
+fn parse_scpi_bool(response: &str, name: &str) -> io::Result<bool> {
+    match response.trim().to_ascii_uppercase().as_str() {
+        "1" | "ON" => Ok(true),
+        "0" | "OFF" => Ok(false),
+        value => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid {name} response: {value:?}"),
+        )),
+    }
+}
+
+fn validate_system_error_response(response: &str) -> io::Result<()> {
+    let code = response
+        .split_once(',')
+        .map_or(response, |(code, _)| code)
+        .trim()
+        .parse::<i32>()
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid system error response {response:?}: {error}"),
+            )
+        })?;
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "oscilloscope reported an image save error: {response}"
+        )))
+    }
+}
+
+fn ensure_before_deadline(deadline: Instant, operation: &str) -> io::Result<()> {
+    if Instant::now() < deadline {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("{operation} timed out"),
+        ))
+    }
 }
 
 fn read_binary_block_length<R: BufRead>(reader: &mut R) -> io::Result<usize> {
@@ -488,6 +685,9 @@ fn parse_finite_f64(raw: &str, name: &str) -> io::Result<f64> {
 mod tests {
     use super::*;
     use std::io::{BufReader, Cursor, Read};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     fn binary_block_length_skips_leftover_line_terminators() {
@@ -563,5 +763,121 @@ mod tests {
         assert!(validate_opc_response("").is_err());
         assert!(validate_opc_response("0").is_err());
         assert!(validate_opc_response("ready").is_err());
+    }
+
+    #[test]
+    fn image_response_parsers_accept_documented_values() {
+        assert_eq!(parse_image_format_response("PNG\n").unwrap(), "PNG");
+        assert_eq!(parse_image_format_response("JPEG").unwrap(), "JPG");
+        assert_eq!(parse_image_color_response("COL").unwrap(), "COLor");
+        assert_eq!(parse_image_color_response("GRAY").unwrap(), "GRAY");
+        assert!(parse_scpi_bool("ON", "test").unwrap());
+        assert!(!parse_scpi_bool("0", "test").unwrap());
+        validate_system_error_response("0,\"No error\"").unwrap();
+        assert!(validate_system_error_response("-113,\"Undefined header\"").is_err());
+    }
+
+    #[test]
+    fn save_image_applies_settings_and_restores_previous_values() {
+        let expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
+        let (port, server) = spawn_scpi_server(expected);
+        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
+        let callback_called = Arc::new(AtomicBool::new(false));
+        let callback_flag = Arc::clone(&callback_called);
+
+        let value = dho
+            .save_image_with(
+                "C:/screenshot.png",
+                DhoImageFormat::Png,
+                Duration::from_secs(2),
+                move || {
+                    callback_flag.store(true, Ordering::SeqCst);
+                    Ok(42)
+                },
+            )
+            .unwrap();
+
+        assert_eq!(value, 42);
+        assert!(callback_called.load(Ordering::SeqCst));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn save_image_restores_settings_after_scope_error() {
+        let expected = image_save_exchange("-113,\"Undefined header\"", "0,\"No error\"");
+        let (port, server) = spawn_scpi_server(expected);
+        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
+        let callback_called = Arc::new(AtomicBool::new(false));
+        let callback_flag = Arc::clone(&callback_called);
+
+        let error = dho
+            .save_image_with(
+                "C:/screenshot.png",
+                DhoImageFormat::Png,
+                Duration::from_secs(2),
+                move || {
+                    callback_flag.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("Undefined header"));
+        assert!(!callback_called.load(Ordering::SeqCst));
+        server.join().unwrap();
+    }
+
+    fn image_save_exchange(
+        save_error: &'static str,
+        restore_error: &'static str,
+    ) -> Vec<(&'static str, Option<&'static str>)> {
+        vec![
+            (":SAVE:IMAGe:FORMat?", Some("BMP")),
+            (":SAVE:IMAGe:COLor?", Some("GRAY")),
+            (":SAVE:IMAGe:INVert?", Some("1")),
+            (":SAVE:IMAGe:HEADer?", Some("0")),
+            (":SAVE:OVERlap?", Some("0")),
+            ("*CLS", None),
+            (":SAVE:IMAGe:FORMat PNG", None),
+            (":SAVE:IMAGe:COLor COLor", None),
+            (":SAVE:IMAGe:INVert OFF", None),
+            (":SAVE:IMAGe:HEADer ON", None),
+            (":SAVE:OVERlap ON", None),
+            (":SAVE:IMAGe C:/screenshot.png", None),
+            ("*OPC?", Some("1")),
+            (":SAVE:STATus?", Some("1")),
+            (":SYSTem:ERRor:NEXT?", Some(save_error)),
+            (":SAVE:IMAGe:FORMat BMP", None),
+            (":SAVE:IMAGe:COLor GRAY", None),
+            (":SAVE:IMAGe:INVert ON", None),
+            (":SAVE:IMAGe:HEADer OFF", None),
+            (":SAVE:OVERlap OFF", None),
+            ("*OPC?", Some("1")),
+            (":SYSTem:ERRor:NEXT?", Some(restore_error)),
+        ]
+    }
+
+    fn spawn_scpi_server(
+        expected: Vec<(&'static str, Option<&'static str>)>,
+    ) -> (u16, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = BufReader::new(stream);
+            for (command, response) in expected {
+                let mut actual = String::new();
+                reader.read_line(&mut actual).unwrap();
+                assert_eq!(actual.trim_end(), command);
+                if let Some(response) = response {
+                    writeln!(reader.get_mut(), "{response}").unwrap();
+                    reader.get_mut().flush().unwrap();
+                }
+            }
+        });
+        (port, handle)
     }
 }

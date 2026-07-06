@@ -8,6 +8,8 @@ pub mod autoshot;
 pub mod completions;
 #[cfg(feature = "hw")]
 pub mod fetch;
+#[cfg(feature = "hw")]
+pub mod image;
 pub mod kerr;
 pub mod li;
 pub mod monitor;

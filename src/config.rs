@@ -329,6 +329,7 @@ pub enum ValidationTarget {
     Trigger,
     Autoshot,
     Fetch,
+    Image,
     Automeasure,
     Reference,
     Sensor,
@@ -1535,6 +1536,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
     match target {
         ValidationTarget::Single
         | ValidationTarget::Fetch
+        | ValidationTarget::Image
         | ValidationTarget::Process
         | ValidationTarget::Auto => {
             validate_oscilloscope_required(cfg)?;
@@ -1549,6 +1551,19 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         | ValidationTarget::Phase
         | ValidationTarget::Kerr
         | ValidationTarget::Analyze => {}
+    }
+
+    let needs_image = matches!(target, ValidationTarget::Image)
+        || (cfg.image.enabled
+            && matches!(
+                target,
+                ValidationTarget::Fetch
+                    | ValidationTarget::Automeasure
+                    | ValidationTarget::Process
+                    | ValidationTarget::Auto
+            ));
+    if needs_image {
+        validate_image_target(cfg)?;
     }
 
     match target {
@@ -1607,11 +1622,29 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         }
         ValidationTarget::Automeasure
         | ValidationTarget::Fetch
+        | ValidationTarget::Image
         | ValidationTarget::Single
         | ValidationTarget::Trigger
         | ValidationTarget::Autoshot => {}
     }
 
+    Ok(())
+}
+
+fn validate_image_target(cfg: &Config) -> Result<()> {
+    let oscilloscope = &cfg
+        .instruments
+        .as_ref()
+        .ok_or_else(|| anyhow!("instruments.oscilloscope is required"))?
+        .oscilloscope;
+    if matches!(oscilloscope.connection, Connection::Tcpip { .. })
+        && cfg.image.scope_path != "C:/screenshot.png"
+    {
+        bail!(
+            "TCP screenshot transfer currently supports only C:/screenshot.png; got {}",
+            cfg.image.scope_path
+        );
+    }
     Ok(())
 }
 
