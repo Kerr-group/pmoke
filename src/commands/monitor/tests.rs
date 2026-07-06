@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{
-    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Kerr, KerrType, Lockin, LockinLpfKind, Phase,
-    Plot, Pulse, Reference, Roles, Window,
+    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Image, Kerr, KerrType, Lockin, LockinLpfKind,
+    Phase, Plot, Pulse, Reference, Roles, Window,
 };
 
 fn test_app() -> MonitorApp {
@@ -29,7 +29,9 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                 version: 3,
                 instruments: None,
                 fetch: Fetch::default(),
+                image: Image::default(),
                 plot: Plot::default(),
+                source_path: "config.toml".into(),
                 legacy_timebase: None,
                 roles: Roles {
                     sensor_ch: vec![1],

@@ -6,7 +6,11 @@ use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn eval_f64_expr(s: &str) -> Result<f64> {
     if contains_print_call(s) {
@@ -106,7 +110,10 @@ pub struct Config {
     pub version: u32,
     pub instruments: Option<Instruments>,
     pub fetch: Fetch,
+    pub image: Image,
     pub plot: Plot,
+    #[serde(skip_serializing)]
+    pub source_path: PathBuf,
     #[serde(skip_serializing)]
     pub legacy_timebase: Option<Timebase>,
     pub roles: Roles,
@@ -116,6 +123,21 @@ pub struct Config {
     pub lockin: Lockin,
     pub phase: Phase,
     pub kerr: Kerr,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Image {
+    pub enabled: bool,
+    pub scope_path: String,
+}
+
+impl Default for Image {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            scope_path: "C:/screenshot.png".to_string(),
+        }
+    }
 }
 
 impl Config {
@@ -410,6 +432,8 @@ struct ConfigV1 {
     #[allow(dead_code)]
     version: u32,
     instruments: Option<InstrumentsV1>,
+    #[serde(default)]
+    image: ImageV3,
     timebase: TimebaseV1,
     roles: RolesV1,
     channels: Vec<ChannelV1>,
@@ -428,6 +452,8 @@ struct ConfigV2 {
     instruments: Option<InstrumentsV2>,
     #[serde(default)]
     fetch: FetchV2,
+    #[serde(default)]
+    image: ImageV3,
     #[serde(default)]
     plot: PlotV2,
     timebase: TimebaseV2,
@@ -448,6 +474,8 @@ struct ConfigV3 {
     #[serde(default)]
     fetch: FetchV2,
     #[serde(default)]
+    image: ImageV3,
+    #[serde(default)]
     plot: PlotV2,
     roles: RolesV2,
     channels: Vec<ChannelV2>,
@@ -465,6 +493,23 @@ struct FetchV2 {
     output: FetchOutput,
     #[serde(default)]
     analysis_input: FetchAnalysisInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ImageV3 {
+    enabled: bool,
+    scope_path: String,
+}
+
+impl Default for ImageV3 {
+    fn default() -> Self {
+        let default = Image::default();
+        Self {
+            enabled: default.enabled,
+            scope_path: default.scope_path,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -754,7 +799,11 @@ pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
         }
     };
 
-    load_from_str(&text)
+    let mut load = load_from_str(&text);
+    if let ConfigLoad::Ready { config, .. } = &mut load {
+        config.source_path = path.to_path_buf();
+    }
+    load
 }
 
 pub fn load_from_str(s: &str) -> ConfigLoad {
@@ -954,7 +1003,9 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
         version: 3,
         instruments: raw.instruments.map(Into::into),
         fetch: Fetch::default(),
+        image: raw.image.into(),
         plot: Plot::default(),
+        source_path: PathBuf::from("config.toml"),
         legacy_timebase: Some(raw.timebase.into()),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -1014,7 +1065,9 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         version: 3,
         instruments: raw.instruments.map(Into::into),
         fetch: raw.fetch.into(),
+        image: raw.image.into(),
         plot: raw.plot.into(),
+        source_path: PathBuf::from("config.toml"),
         legacy_timebase: Some(legacy_timebase),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -1071,7 +1124,9 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
         version: raw.version,
         instruments: raw.instruments.map(Into::into),
         fetch: raw.fetch.into(),
+        image: raw.image.into(),
         plot: raw.plot.into(),
+        source_path: PathBuf::from("config.toml"),
         legacy_timebase: None,
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -1144,6 +1199,14 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
                 cfg.version
             ),
             None,
+        ));
+    }
+    if let Err(message) = validate_image_scope_path(&cfg.image.scope_path) {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("image.scope_path".to_string()),
+            message,
+            Some("use an ASCII path such as C:/screenshot.png".to_string()),
         ));
     }
     if cfg.plot.max_points == 0 {
@@ -1411,6 +1474,53 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     ValidationSummary { warnings, errors }
 }
 
+pub fn validate_image_scope_path(path: &str) -> std::result::Result<(), String> {
+    if !path.is_ascii() {
+        return Err("image.scope_path must contain only ASCII characters".to_string());
+    }
+    if path.contains(['\r', '\n', '"', '\'', ';', '\\']) {
+        return Err("image.scope_path contains an unsupported character".to_string());
+    }
+    let Some((drive, relative)) = path.split_once(":/") else {
+        return Err("image.scope_path must start with C:/, D:/, or E:/".to_string());
+    };
+    if !matches!(drive, "C" | "D" | "E") || relative.is_empty() {
+        return Err("image.scope_path must start with C:/, D:/, or E:/".to_string());
+    }
+    let components = relative.split('/').collect::<Vec<_>>();
+    if components
+        .iter()
+        .any(|part| part.is_empty() || *part == "." || *part == "..")
+    {
+        return Err("image.scope_path must not contain empty, '.' or '..' components".to_string());
+    }
+    if components.iter().any(|part| {
+        !part
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    }) {
+        return Err(
+            "image.scope_path components may contain only letters, digits, '.', '_' and '-'"
+                .to_string(),
+        );
+    }
+    let filename = components.last().expect("relative path is non-empty");
+    if filename.len() > 16 {
+        return Err(
+            "image.scope_path filename, including its extension, must be at most 16 characters"
+                .to_string(),
+        );
+    }
+    let extension = filename.rsplit_once('.').map(|(_, extension)| extension);
+    if !matches!(
+        extension.map(str::to_ascii_lowercase).as_deref(),
+        Some("png" | "bmp" | "jpg")
+    ) {
+        return Err("image.scope_path extension must be .png, .bmp, or .jpg".to_string());
+    }
+    Ok(())
+}
+
 fn is_safe_debug_label(label: &str) -> bool {
     !label.is_empty()
         && label.len() <= 64
@@ -1671,6 +1781,15 @@ impl From<FetchV2> for Fetch {
         Self {
             output: value.output,
             analysis_input: value.analysis_input,
+        }
+    }
+}
+
+impl From<ImageV3> for Image {
+    fn from(value: ImageV3) -> Self {
+        Self {
+            enabled: value.enabled,
+            scope_path: value.scope_path,
         }
     }
 }
