@@ -64,6 +64,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Test Kerr harmonics calculation
+        run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s src/kerr/pytools -p "test_*.py"
+
       - name: Check
         run: cargo check --locked --workspace --all-targets --all-features
 
