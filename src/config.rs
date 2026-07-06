@@ -1637,13 +1637,17 @@ fn validate_image_target(cfg: &Config) -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow!("instruments.oscilloscope is required"))?
         .oscilloscope;
-    if matches!(oscilloscope.connection, Connection::Tcpip { .. })
-        && cfg.image.scope_path != "C:/screenshot.png"
-    {
-        bail!(
-            "TCP screenshot transfer currently supports only C:/screenshot.png; got {}",
-            cfg.image.scope_path
-        );
+    match &oscilloscope.connection {
+        Connection::Tcpip { .. } if cfg.image.scope_path != "C:/screenshot.png" => {
+            bail!(
+                "TCP screenshot transfer currently supports only C:/screenshot.png; got {}",
+                cfg.image.scope_path
+            );
+        }
+        Connection::Gpib { .. } => {
+            bail!("DHO5108 image saving does not support GPIB");
+        }
+        Connection::Tcpip { .. } | Connection::Usbtmc { .. } => {}
     }
     Ok(())
 }

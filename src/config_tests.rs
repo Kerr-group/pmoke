@@ -140,6 +140,13 @@ fn image_target_enforces_tcp_transfer_path_but_accepts_usbtmc_storage() {
             ValidationTarget::Image,
             true,
         ),
+        (
+            r#"{ protocol = "gpib", board = 0, address = 1 }"#,
+            true,
+            "C:/screenshot.png",
+            ValidationTarget::Image,
+            false,
+        ),
     ] {
         let text = v3_base_lockin(
             r#"
