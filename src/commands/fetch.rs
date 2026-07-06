@@ -1,4 +1,5 @@
 use crate::cli::FetchFormat;
+use crate::commands::image::{capture_image, prepare_image, report_saved_image};
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::{Config, Connection, FetchOutput};
 use crate::constants::{
@@ -108,6 +109,25 @@ impl From<FetchFormat> for FetchOutput {
     }
 }
 
+fn initialize_fetch_handler(cfg: &Config) -> Result<OscilloscopeHandler> {
+    let image_plan = cfg.image.enabled.then(|| prepare_image(cfg)).transpose()?;
+    let mut handler = OscilloscopeHandler::initialize(cfg)
+        .context("failed to initialize oscilloscope handler")?;
+
+    if let Some(plan) = image_plan {
+        let saved = capture_image(&mut handler, &plan, true)?;
+        report_saved_image(&plan, saved.as_deref());
+    }
+
+    Ok(handler)
+}
+
+fn initialize_staged_fetch_handler(cfg: &Config, tmp_dir: &Path) -> Result<OscilloscopeHandler> {
+    initialize_fetch_handler(cfg).inspect_err(|_| {
+        let _ = fs::remove_dir(tmp_dir);
+    })
+}
+
 fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
     ensure_output_parent(out)?;
     let data = run_fetch_to_csv_path(cfg, out)?;
@@ -134,8 +154,7 @@ pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
 fn run_fetch_to_csv_path(cfg: &Config, out: &Path) -> Result<WaveformData> {
     ensure_path_not_exists(out)?;
 
-    let mut handler = OscilloscopeHandler::initialize(cfg)
-        .context("failed to initialize oscilloscope handler")?;
+    let mut handler = initialize_fetch_handler(cfg)?;
 
     let depth = handler
         .query_memory_depth()
@@ -182,7 +201,9 @@ fn fetch_raw(cfg: &Config, out: &Path) -> Result<()> {
         )
     })?;
 
-    match fetch_raw_into_dir(cfg, &tmp_dir) {
+    let mut handler = initialize_staged_fetch_handler(cfg, &tmp_dir)?;
+
+    match fetch_raw_into_dir(cfg, &tmp_dir, &mut handler) {
         Ok(_) => {
             finalize_temp_dir(&tmp_dir, out).with_context(|| {
                 format!(
@@ -213,7 +234,9 @@ fn fetch_raw_collect(cfg: &Config, out: &Path) -> Result<WaveformData> {
         )
     })?;
 
-    match fetch_raw_into_dir(cfg, &tmp_dir) {
+    let mut handler = initialize_staged_fetch_handler(cfg, &tmp_dir)?;
+
+    match fetch_raw_into_dir(cfg, &tmp_dir, &mut handler) {
         Ok((channels, _)) => {
             finalize_temp_dir(&tmp_dir, out).with_context(|| {
                 format!(
@@ -252,7 +275,9 @@ fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()>
         )
     })?;
 
-    match fetch_raw_into_dir(cfg, &tmp_dir) {
+    let mut handler = initialize_staged_fetch_handler(cfg, &tmp_dir)?;
+
+    match fetch_raw_into_dir(cfg, &tmp_dir, &mut handler) {
         Ok((channels, metadata)) => {
             let t_write_start = Instant::now();
             write_raw_csv_and_finalize_outputs(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
@@ -288,7 +313,9 @@ fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Re
         )
     })?;
 
-    match fetch_raw_into_dir(cfg, &tmp_dir) {
+    let mut handler = initialize_staged_fetch_handler(cfg, &tmp_dir)?;
+
+    match fetch_raw_into_dir(cfg, &tmp_dir, &mut handler) {
         Ok((channels, metadata)) => {
             let t_write_start = Instant::now();
             write_raw_csv_and_finalize_outputs(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
@@ -379,10 +406,11 @@ fn write_fetched_csv(cfg: &Config, out: &Path, data: &WaveformData) -> Result<()
     Ok(())
 }
 
-fn fetch_raw_into_dir(cfg: &Config, dir: &Path) -> Result<(Vec<u8>, RawFetchMetadata)> {
-    let mut handler = OscilloscopeHandler::initialize(cfg)
-        .context("failed to initialize oscilloscope handler")?;
-
+fn fetch_raw_into_dir(
+    cfg: &Config,
+    dir: &Path,
+    handler: &mut OscilloscopeHandler,
+) -> Result<(Vec<u8>, RawFetchMetadata)> {
     let depth = handler
         .query_memory_depth()
         .context("failed to query oscilloscope memory depth")?;
@@ -407,7 +435,7 @@ fn fetch_raw_into_dir(cfg: &Config, dir: &Path) -> Result<(Vec<u8>, RawFetchMeta
     let t_fetch_start = Instant::now();
     for &ch in &channels {
         pb.set_message(format!("fetching ch{ch} raw WORD"));
-        let channel_metadata = write_raw_channel_streamed(&mut handler, dir, ch, depth)?;
+        let channel_metadata = write_raw_channel_streamed(handler, dir, ch, depth)?;
         validate_fetch_voltage_range(
             channel_metadata.y_increment,
             channel_metadata.y_origin,

@@ -121,13 +121,27 @@ pub(crate) fn capture_image(
     }
 
     let transfer = plan.transfer.as_ref();
-    let saved = handler
-        .save_image_with(&plan.scope_path, plan.format.dho(), || match transfer {
-            Some(transfer) => download_ftp(transfer, plan.format).map(Some),
-            None => Ok(None),
-        })
-        .context("failed to save oscilloscope screenshot")?;
-    Ok(saved)
+    let mut save_completed = false;
+    let mut local_path = None;
+    let result = handler.save_image_with(&plan.scope_path, plan.format.dho(), || {
+        save_completed = true;
+        local_path = match transfer {
+            Some(transfer) => Some(download_ftp(transfer, plan.format)?),
+            None => None,
+        };
+        Ok(local_path.clone())
+    });
+
+    match result {
+        Ok(saved) => Ok(saved),
+        Err(error) => {
+            if save_completed {
+                report_saved_image(plan, local_path.as_deref());
+                ui::warn("screenshot was saved, but finalization failed");
+            }
+            Err(error).context("failed to save oscilloscope screenshot")
+        }
+    }
 }
 
 pub(crate) fn report_saved_image(plan: &ImagePlan, local_path: Option<&Path>) {
