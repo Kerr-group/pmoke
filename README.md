@@ -13,7 +13,7 @@ including large-memory WORD waveform transfer and raw binary preservation.
 - Single TOML config for instruments, channel roles, timing, filtering, plotting,
   and Kerr conversion.
 - Hardware commands for oscilloscope single mode, function-generator trigger,
-  data fetch, and automated measurement.
+  screenshot capture, data fetch, and automated measurement.
 - CSV output for compatibility and raw WORD output for large DHO5000 captures.
 - Analysis can read either `raw.csv` or preserved raw binary waveform files.
 - Reference fitting, sensor background/integral processing, numerical lock-in,
@@ -100,6 +100,7 @@ Commands:
   trigger      Send trigger signal from the function generator
   autoshot     Run single + trigger
   fetch        Fetch oscilloscope data
+  image        Save an oscilloscope screenshot
   automeasure  Run single + trigger + fetch
   reference    Analyze the reference signal
   sensor       Analyze the sensor signal
@@ -165,6 +166,9 @@ model = "DHO5108"
 [fetch]
 output = "raw"             # "csv", "raw", or "csv_and_raw"
 analysis_input = "raw"     # "csv", "raw", or "auto"
+
+[image]
+enabled = true
 
 [plot]
 enabled = true
@@ -240,6 +244,59 @@ connection = { protocol = "usbtmc", resource = "USB0::0x1AB1::0x0450::DHO5A27090
 
 USB-TMC uses a VISA resource string. On Windows, confirm the exact resource name
 with NI MAX or a VISA resource listing tool before putting it in the config.
+
+## Oscilloscope Screenshots
+
+The minimal screenshot configuration is:
+
+```toml
+[image]
+enabled = true
+```
+
+When enabled, `fetch`, `automeasure`, `process`, and `auto` save one screenshot
+before waveform transfer. The fetch path first sends `:STOP`, saves the image,
+waits for completion, and only then starts waveform queries. If image saving or
+transfer fails, waveform fetching does not start. The standalone command is
+available regardless of `enabled`:
+
+```sh
+pmoke --config config.toml image
+```
+
+The default oscilloscope path is `C:/screenshot.png`. pmoke temporarily selects
+PNG, color, non-inverted output with a header and enables oscilloscope-side
+overwrite. It restores the previous image settings afterward. `*CLS` is used to
+clear SCPI status and errors; pmoke does not send the waveform-clearing
+`:CLEar` command.
+
+For a TCP/IP oscilloscope connection, pmoke then downloads
+`/screenshot.png` over anonymous passive FTP in binary mode to:
+
+```text
+<config.toml directory>/images/screenshot.png
+```
+
+The oscilloscope FTP server must be enabled and reachable on port 21. No FTP
+username or password setting is required. A temporary file is validated for
+size and image signature before being published. pmoke refuses to overwrite an
+existing PC-side screenshot or temporary file; move or rename the existing file
+before the next capture.
+
+TCP transfer intentionally requires the default `C:/screenshot.png` path so the
+SCPI save path and FTP path cannot diverge. With USB-TMC, the image remains on
+the oscilloscope or attached storage and no PC copy is attempted. USB-TMC may
+override the destination when needed:
+
+```toml
+[image]
+enabled = true
+scope_path = "D:/shot.jpg"
+```
+
+Valid destinations begin with `C:/`, `D:/`, or `E:/`; valid formats are PNG,
+BMP, and JPG. Keep the full filename, including the extension, at 16 ASCII
+characters or fewer as required by the DHO5000 save interface.
 
 ## Fetch Output
 
@@ -363,6 +420,8 @@ Typical analysis output:
 ```text
 raw.csv
 raw_waveform/
+images/
+  screenshot.png
 lockin_results_ch3.csv
 lockin_rotated_ch3.csv
 kerr_results.csv

@@ -96,7 +96,11 @@ pub(crate) fn prepare_image(cfg: &Config) -> Result<ImagePlan> {
                     cfg.image.scope_path
                 );
             }
-            Some(prepare_ftp_transfer(cfg, ip)?)
+            Some(prepare_ftp_transfer(
+                &cfg.source_path,
+                &cfg.image.scope_path,
+                ip,
+            )?)
         }
         Connection::Usbtmc { .. } => None,
         Connection::Gpib { .. } => bail!("DHO5108 image saving does not support GPIB"),
@@ -151,19 +155,18 @@ pub(crate) fn report_saved_image(plan: &ImagePlan, local_path: Option<&Path>) {
     }
 }
 
-fn prepare_ftp_transfer(cfg: &Config, ip: &str) -> Result<FtpTransfer> {
+fn prepare_ftp_transfer(config_path: &Path, scope_path: &str, ip: &str) -> Result<FtpTransfer> {
     let ip = ip
         .parse::<IpAddr>()
         .with_context(|| format!("invalid oscilloscope TCP/IP address: {ip}"))?;
-    let config_parent = cfg
-        .source_path
+    let config_parent = config_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     let output_dir = config_parent.join(IMAGE_DIR);
     ensure_image_directory(&output_dir)?;
 
-    let filename = Path::new(&cfg.image.scope_path)
+    let filename = Path::new(scope_path)
         .file_name()
         .ok_or_else(|| anyhow!("image.scope_path has no filename"))?;
     let final_path = output_dir.join(filename);
@@ -319,6 +322,26 @@ mod tests {
         let file = dir.join("images");
         fs::write(&file, b"not a directory").unwrap();
         assert!(ensure_image_directory(&file).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ftp_transfer_uses_config_sibling_directory_and_refuses_existing_outputs() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let config_path = dir.join("config.toml");
+
+        let transfer = prepare_ftp_transfer(&config_path, DEFAULT_SCOPE_PATH, "127.0.0.1").unwrap();
+        assert_eq!(transfer.final_path, dir.join("images/screenshot.png"));
+        assert_eq!(transfer.temp_path, dir.join("images/.screenshot.png.tmp"));
+        assert!(dir.join("images").is_dir());
+
+        fs::write(&transfer.final_path, b"existing").unwrap();
+        assert!(prepare_ftp_transfer(&config_path, DEFAULT_SCOPE_PATH, "127.0.0.1").is_err());
+        fs::remove_file(&transfer.final_path).unwrap();
+        fs::write(&transfer.temp_path, b"partial").unwrap();
+        assert!(prepare_ftp_transfer(&config_path, DEFAULT_SCOPE_PATH, "127.0.0.1").is_err());
+
         fs::remove_dir_all(dir).unwrap();
     }
 

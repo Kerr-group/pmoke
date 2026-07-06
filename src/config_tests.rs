@@ -1,6 +1,6 @@
 use super::{
     ConfigLoad, Connection, FetchAnalysisInput, FetchOutput, LockinLpfKind, PlotDecimation,
-    load_from_path, load_from_str,
+    ValidationTarget, load_from_path, load_from_str, validate_for_target,
 };
 use std::fs;
 
@@ -106,6 +106,72 @@ lpf_half_window_cycles = 1.0
             ),
             other => panic!("expected diagnostics for {path:?}, got {other:?}"),
         }
+    }
+}
+
+#[test]
+fn image_target_enforces_tcp_transfer_path_but_accepts_usbtmc_storage() {
+    for (connection, enabled, path, target, should_pass) in [
+        (
+            r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
+            true,
+            "C:/screenshot.png",
+            ValidationTarget::Fetch,
+            true,
+        ),
+        (
+            r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
+            true,
+            "D:/shot.jpg",
+            ValidationTarget::Fetch,
+            false,
+        ),
+        (
+            r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
+            false,
+            "D:/shot.jpg",
+            ValidationTarget::Fetch,
+            true,
+        ),
+        (
+            r#"{ protocol = "usbtmc", resource = "USB0::DHO::INSTR" }"#,
+            true,
+            "D:/shot.jpg",
+            ValidationTarget::Image,
+            true,
+        ),
+    ] {
+        let text = v3_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+        )
+        .replacen(
+            "version = 3",
+            &format!(
+                r#"version = 3
+
+[instruments.oscilloscope]
+connection = {connection}
+model = "DHO5108"
+
+[image]
+enabled = {enabled}
+scope_path = {path:?}"#
+            ),
+            1,
+        );
+        let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+            panic!("expected ready config for {connection}");
+        };
+
+        assert_eq!(
+            validate_for_target(&config, target).is_ok(),
+            should_pass,
+            "unexpected validation result for {connection}, enabled={enabled}, path={path}, target={target:?}"
+        );
     }
 }
 
