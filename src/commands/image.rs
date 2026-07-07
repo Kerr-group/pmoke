@@ -128,6 +128,12 @@ pub(crate) fn capture_image(
     }
 
     let transfer = plan.transfer.as_ref();
+    if let Some(transfer) = transfer
+        && remove_scope_file_if_present(transfer)
+            .context("failed to remove previous oscilloscope Local Disk screenshot")?
+    {
+        ui::info("removed previous oscilloscope Local Disk screenshot before overwrite");
+    }
     let mut save_completed = false;
     let mut local_path = None;
     let result = handler.save_image_with(&plan.scope_path, plan.format.dho(), || {
@@ -341,6 +347,30 @@ fn upload_ftp(transfer: &FtpTransfer, image: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+fn remove_scope_file_if_present(transfer: &FtpTransfer) -> io::Result<bool> {
+    remove_scope_file_if_present_with_timeout(transfer, SCOPE_FILE_TIMEOUT)
+}
+
+fn remove_scope_file_if_present_with_timeout(
+    transfer: &FtpTransfer,
+    timeout: Duration,
+) -> io::Result<bool> {
+    let mut ftp = connect_authenticated_ftp(transfer.address)?;
+    let entries = ftp
+        .nlst(None)
+        .map_err(|error| ftp_io_error("NLST", error))?;
+    let Some(remote_path) = find_remote_file(&entries, transfer.remote_path) else {
+        let _ = ftp.quit();
+        return Ok(false);
+    };
+
+    ftp.rm(remote_path)
+        .map_err(|error| ftp_io_error(&format!("DELE {remote_path}"), error))?;
+    wait_for_remote_file_absent(&mut ftp, transfer.remote_path, timeout)?;
+    let _ = ftp.quit();
+    Ok(true)
+}
+
 fn publish_temp_file(temp_path: &Path, final_path: &Path) -> io::Result<()> {
     publish_temp_file_with(temp_path, final_path, |path| fs::remove_file(path))
 }
@@ -382,10 +412,7 @@ fn wait_for_remote_file(
         let entries = ftp
             .nlst(None)
             .map_err(|error| ftp_io_error("NLST", error))?;
-        if let Some(path) = entries
-            .iter()
-            .find(|entry| remote_basename(entry).eq_ignore_ascii_case(expected_name))
-        {
+        if let Some(path) = find_remote_file(&entries, expected_name) {
             return Ok(path.trim().to_string());
         }
         last_entries = entries;
@@ -395,6 +422,41 @@ fn wait_for_remote_file(
         }
         std::thread::sleep(Duration::from_millis(100).min(deadline - now));
     }
+}
+
+fn wait_for_remote_file_absent(
+    ftp: &mut FtpStream,
+    expected_name: &str,
+    timeout: Duration,
+) -> io::Result<()> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file timeout overflow"))?;
+    loop {
+        let entries = ftp
+            .nlst(None)
+            .map_err(|error| ftp_io_error("NLST", error))?;
+        if find_remote_file(&entries, expected_name).is_none() {
+            return Ok(());
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "oscilloscope Local Disk file {expected_name:?} remained visible after deletion"
+                ),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100).min(deadline - now));
+    }
+}
+
+fn find_remote_file<'a>(entries: &'a [String], expected_name: &str) -> Option<&'a str> {
+    entries
+        .iter()
+        .find(|entry| remote_basename(entry).eq_ignore_ascii_case(expected_name))
+        .map(String::as_str)
 }
 
 fn remote_file_not_found_error(expected_name: &str, entries: &[String]) -> io::Error {
@@ -699,6 +761,42 @@ mod tests {
     }
 
     #[test]
+    fn scope_overwrite_removes_existing_file_and_verifies_absence() {
+        let (address, server) = spawn_ftp_delete_server(true, true);
+        let transfer = test_ftp_transfer(address);
+
+        assert!(
+            remove_scope_file_if_present_with_timeout(&transfer, Duration::from_secs(1)).unwrap()
+        );
+
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn scope_overwrite_does_nothing_when_file_is_already_absent() {
+        let (address, server) = spawn_ftp_delete_server(false, true);
+        let transfer = test_ftp_transfer(address);
+
+        assert!(
+            !remove_scope_file_if_present_with_timeout(&transfer, Duration::from_secs(1)).unwrap()
+        );
+
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn scope_overwrite_fails_if_deleted_file_remains_visible() {
+        let (address, server) = spawn_ftp_delete_server(true, false);
+        let transfer = test_ftp_transfer(address);
+
+        let error = remove_scope_file_if_present_with_timeout(&transfer, Duration::from_millis(25))
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        server.join().unwrap();
+    }
+
+    #[test]
     fn fallback_detection_only_accepts_scope_file_missing_error() {
         let scope_missing = anyhow::Error::new(remote_file_not_found_error(
             DEFAULT_FTP_PATH,
@@ -958,6 +1056,81 @@ mod tests {
             }
         });
         (address, handle)
+    }
+
+    fn spawn_ftp_delete_server(
+        initially_present: bool,
+        deletion_effective: bool,
+    ) -> (SocketAddr, std::thread::JoinHandle<()>) {
+        let control_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = control_listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = control_listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut control = BufReader::new(stream);
+            write_ftp_response(&mut control, "220 DHO FTP ready");
+            let mut data_listener = None;
+            let mut present = initially_present;
+
+            loop {
+                let mut command = String::new();
+                if control.read_line(&mut command).unwrap() == 0 {
+                    break;
+                }
+                match command.trim_end() {
+                    "USER anonymous" => write_ftp_response(&mut control, "331 Password required"),
+                    "PASS anonymous@" => write_ftp_response(&mut control, "230 Logged in"),
+                    "TYPE I" => write_ftp_response(&mut control, "200 Binary mode"),
+                    "PASV" => {
+                        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                        let port = listener.local_addr().unwrap().port();
+                        write_ftp_response(
+                            &mut control,
+                            &format!(
+                                "227 Entering Passive Mode (127,0,0,1,{},{})",
+                                port / 256,
+                                port % 256
+                            ),
+                        );
+                        data_listener = Some(listener);
+                    }
+                    "NLST" => {
+                        write_ftp_response(&mut control, "150 Opening data connection");
+                        let (mut data, _) = data_listener.take().unwrap().accept().unwrap();
+                        writeln!(data, "existing.png\r").unwrap();
+                        if present {
+                            writeln!(data, "screenshot.png\r").unwrap();
+                        }
+                        data.flush().unwrap();
+                        drop(data);
+                        write_ftp_response(&mut control, "226 Transfer complete");
+                    }
+                    "DELE screenshot.png" => {
+                        if deletion_effective {
+                            present = false;
+                        }
+                        write_ftp_response(&mut control, "250 File deleted");
+                    }
+                    "QUIT" => {
+                        write_ftp_response(&mut control, "221 Goodbye");
+                        break;
+                    }
+                    other => panic!("unexpected FTP command: {other:?}"),
+                }
+            }
+        });
+        (address, handle)
+    }
+
+    fn test_ftp_transfer(address: SocketAddr) -> FtpTransfer {
+        FtpTransfer {
+            address,
+            remote_path: DEFAULT_FTP_PATH,
+            temp_path: PathBuf::from("unused.tmp"),
+            final_path: PathBuf::from("unused.png"),
+        }
     }
 
     fn write_ftp_response(reader: &mut BufReader<TcpStream>, response: &str) {

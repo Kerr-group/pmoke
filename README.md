@@ -283,6 +283,11 @@ size and image signature before being published. pmoke refuses to overwrite an
 existing PC-side screenshot or temporary file; move or rename the existing file
 before the next capture.
 
+For a TCP/IP capture, pmoke removes an existing Local Disk `screenshot.png` over
+FTP and verifies its removal before issuing `:SAVE:IMAGe`. This prevents a stale
+file from satisfying post-save verification when the oscilloscope reports save
+completion without actually overwriting the file.
+
 A DHO5000 may report `:SAVE:STATus?` completion without publishing a newly
 created file in Local Disk. If the file is still absent after a short FTP
 visibility grace period, pmoke reads the current screen with the documented
