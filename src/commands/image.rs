@@ -395,6 +395,14 @@ mod tests {
     }
 
     #[test]
+    fn remote_basename_accepts_ftp_and_windows_style_paths() {
+        assert_eq!(remote_basename("screenshot.png"), "screenshot.png");
+        assert_eq!(remote_basename("/screenshot.png"), "screenshot.png");
+        assert_eq!(remote_basename("C:/screenshot.png"), "screenshot.png");
+        assert_eq!(remote_basename(r"C:\screenshot.png"), "screenshot.png");
+    }
+
+    #[test]
     fn image_directory_rejects_files_and_symbolic_links() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
@@ -460,6 +468,26 @@ mod tests {
     fn ftp_download_succeeds_when_server_does_not_support_size() {
         let image = b"\x89PNG\r\n\x1a\npayload".to_vec();
         let (address, server) = spawn_ftp_server_with_size_support(image.clone(), false);
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let transfer = FtpTransfer {
+            address,
+            remote_path: DEFAULT_FTP_PATH,
+            temp_path: dir.join(".screenshot.png.tmp"),
+            final_path: dir.join("screenshot.png"),
+        };
+
+        let path = download_ftp(&transfer, ImageFormat::Png).unwrap();
+
+        assert_eq!(fs::read(path).unwrap(), image);
+        server.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ftp_download_waits_until_scope_file_appears() {
+        let image = b"\x89PNG\r\n\x1a\npayload".to_vec();
+        let (address, server) = spawn_ftp_server_with_options(image.clone(), true, 1);
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
         let transfer = FtpTransfer {
@@ -545,6 +573,14 @@ mod tests {
         image: Vec<u8>,
         size_supported: bool,
     ) -> (SocketAddr, std::thread::JoinHandle<()>) {
+        spawn_ftp_server_with_options(image, size_supported, 0)
+    }
+
+    fn spawn_ftp_server_with_options(
+        image: Vec<u8>,
+        size_supported: bool,
+        missing_nlst_responses: usize,
+    ) -> (SocketAddr, std::thread::JoinHandle<()>) {
         let control_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let address = control_listener.local_addr().unwrap();
         let handle = std::thread::spawn(move || {
@@ -556,6 +592,7 @@ mod tests {
             writeln!(control.get_mut(), "220 DHO FTP ready").unwrap();
             control.get_mut().flush().unwrap();
             let mut data_listener = None;
+            let mut nlst_count = 0;
 
             loop {
                 let mut command = String::new();
@@ -589,7 +626,10 @@ mod tests {
                         write_ftp_response(&mut control, "150 Opening data connection");
                         let (mut data, _) = data_listener.take().unwrap().accept().unwrap();
                         writeln!(data, "existing.png\r").unwrap();
-                        writeln!(data, "screenshot.png\r").unwrap();
+                        if nlst_count >= missing_nlst_responses {
+                            writeln!(data, "screenshot.png\r").unwrap();
+                        }
+                        nlst_count += 1;
                         data.flush().unwrap();
                         drop(data);
                         write_ftp_response(&mut control, "226 Transfer complete");
