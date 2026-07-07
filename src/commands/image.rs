@@ -16,6 +16,7 @@ const DEFAULT_SCOPE_PATH: &str = "C:/screenshot.png";
 const DEFAULT_FTP_PATH: &str = "screenshot.png";
 const FTP_PORT: u16 = 21;
 const FTP_TIMEOUT: Duration = Duration::from_secs(30);
+const SCOPE_FILE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ImageFormat {
@@ -236,13 +237,17 @@ fn download_ftp_inner(
         .map_err(|error| ftp_io_error("login", error))?;
     ftp.transfer_type(FileType::Binary)
         .map_err(|error| ftp_io_error("TYPE I", error))?;
-    let expected_size = query_ftp_size(&mut ftp, transfer.remote_path)?;
+    let remote_path = wait_for_remote_file(&mut ftp, transfer.remote_path, SCOPE_FILE_TIMEOUT)?;
+    ui::saved(format!(
+        "verified oscilloscope Local Disk file: {remote_path}"
+    ));
+    let expected_size = query_ftp_size(&mut ftp, &remote_path)?;
 
     let copied = ftp
-        .retr(transfer.remote_path, |reader| {
+        .retr(&remote_path, |reader| {
             io::copy(reader, &mut output).map_err(FtpError::ConnectionError)
         })
-        .map_err(|error| ftp_io_error("RETR screenshot.png", error))?;
+        .map_err(|error| ftp_io_error(&format!("RETR {remote_path}"), error))?;
     if copied == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -268,6 +273,45 @@ fn download_ftp_inner(
     Ok(transfer.final_path.clone())
 }
 
+fn wait_for_remote_file(
+    ftp: &mut FtpStream,
+    expected_name: &str,
+    timeout: Duration,
+) -> io::Result<String> {
+    let deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file timeout overflow"))?;
+    loop {
+        let entries = ftp
+            .nlst(None)
+            .map_err(|error| ftp_io_error("NLST", error))?;
+        if let Some(path) = entries
+            .iter()
+            .find(|entry| remote_basename(entry).eq_ignore_ascii_case(expected_name))
+        {
+            return Ok(path.trim().to_string());
+        }
+        if std::time::Instant::now() >= deadline {
+            let listing = if entries.is_empty() {
+                "<empty>".to_string()
+            } else {
+                entries.join(", ")
+            };
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "oscilloscope Local Disk file {expected_name:?} was not found; FTP root contains: {listing}"
+                ),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn remote_basename(path: &str) -> &str {
+    path.trim().rsplit(['/', '\\']).next().unwrap_or_default()
+}
+
 fn query_ftp_size(ftp: &mut FtpStream, remote_path: &str) -> io::Result<Option<usize>> {
     match ftp.size(remote_path) {
         Ok(0) => Err(io::Error::new(
@@ -281,7 +325,7 @@ fn query_ftp_size(ftp: &mut FtpStream, remote_path: &str) -> io::Result<Option<u
             ui::warn("oscilloscope FTP SIZE is unavailable; validating the downloaded image");
             Ok(None)
         }
-        Err(error) => Err(ftp_io_error("SIZE screenshot.png", error)),
+        Err(error) => Err(ftp_io_error(&format!("SIZE {remote_path}"), error)),
     }
 }
 
@@ -538,6 +582,15 @@ mod tests {
                             ),
                         );
                         data_listener = Some(listener);
+                    }
+                    "NLST" => {
+                        write_ftp_response(&mut control, "150 Opening data connection");
+                        let (mut data, _) = data_listener.take().unwrap().accept().unwrap();
+                        writeln!(data, "existing.png\r").unwrap();
+                        writeln!(data, "screenshot.png\r").unwrap();
+                        data.flush().unwrap();
+                        drop(data);
+                        write_ftp_response(&mut control, "226 Transfer complete");
                     }
                     "RETR screenshot.png" => {
                         write_ftp_response(&mut control, "150 Opening data connection");
