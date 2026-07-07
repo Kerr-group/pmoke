@@ -13,7 +13,7 @@ use suppaftp::{FtpError, FtpStream};
 
 const IMAGE_DIR: &str = "images";
 const DEFAULT_SCOPE_PATH: &str = "C:/screenshot.png";
-const DEFAULT_FTP_PATH: &str = "/screenshot.png";
+const DEFAULT_FTP_PATH: &str = "screenshot.png";
 const FTP_PORT: u16 = 21;
 const FTP_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -232,22 +232,26 @@ fn download_ftp_inner(
             .map_err(FtpError::ConnectionError)?;
         Ok(stream)
     });
-    ftp.login("anonymous", "anonymous@").map_err(ftp_io_error)?;
-    ftp.transfer_type(FileType::Binary).map_err(ftp_io_error)?;
-    let expected_size = ftp.size(transfer.remote_path).map_err(ftp_io_error)?;
-    if expected_size == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "oscilloscope FTP screenshot is empty",
-        ));
-    }
+    ftp.login("anonymous", "anonymous@")
+        .map_err(|error| ftp_io_error("login", error))?;
+    ftp.transfer_type(FileType::Binary)
+        .map_err(|error| ftp_io_error("TYPE I", error))?;
+    let expected_size = query_ftp_size(&mut ftp, transfer.remote_path)?;
 
     let copied = ftp
         .retr(transfer.remote_path, |reader| {
             io::copy(reader, &mut output).map_err(FtpError::ConnectionError)
         })
-        .map_err(ftp_io_error)?;
-    if copied != expected_size as u64 {
+        .map_err(|error| ftp_io_error("RETR screenshot.png", error))?;
+    if copied == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "oscilloscope FTP screenshot is empty",
+        ));
+    }
+    if let Some(expected_size) = expected_size
+        && copied != expected_size as u64
+    {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             format!("FTP screenshot size is {copied} bytes, expected {expected_size} bytes"),
@@ -264,11 +268,28 @@ fn download_ftp_inner(
     Ok(transfer.final_path.clone())
 }
 
+fn query_ftp_size(ftp: &mut FtpStream, remote_path: &str) -> io::Result<Option<usize>> {
+    match ftp.size(remote_path) {
+        Ok(0) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "oscilloscope FTP screenshot is empty",
+        )),
+        Ok(size) => Ok(Some(size)),
+        Err(FtpError::UnexpectedResponse(response))
+            if matches!(response.status.code(), 500 | 501 | 502 | 504 | 550) =>
+        {
+            ui::warn("oscilloscope FTP SIZE is unavailable; validating the downloaded image");
+            Ok(None)
+        }
+        Err(error) => Err(ftp_io_error("SIZE screenshot.png", error)),
+    }
+}
+
 fn connect_ftp(address: SocketAddr, timeout: Duration) -> io::Result<FtpStream> {
     let stream = TcpStream::connect_timeout(&address, timeout)?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
-    FtpStream::connect_with_stream(stream).map_err(ftp_io_error)
+    FtpStream::connect_with_stream(stream).map_err(|error| ftp_io_error("welcome", error))
 }
 
 fn validate_image_file(path: &Path, format: ImageFormat) -> io::Result<()> {
@@ -287,10 +308,13 @@ fn validate_image_file(path: &Path, format: ImageFormat) -> io::Result<()> {
     Ok(())
 }
 
-fn ftp_io_error(error: FtpError) -> io::Error {
+fn ftp_io_error(operation: &str, error: FtpError) -> io::Error {
     match error {
-        FtpError::ConnectionError(error) => error,
-        error => io::Error::other(format!("oscilloscope FTP error: {error}")),
+        FtpError::ConnectionError(error) => io::Error::new(
+            error.kind(),
+            format!("oscilloscope FTP {operation} failed: {error}"),
+        ),
+        error => io::Error::other(format!("oscilloscope FTP {operation} failed: {error}")),
     }
 }
 
@@ -387,6 +411,26 @@ mod tests {
     }
 
     #[test]
+    fn ftp_download_succeeds_when_server_does_not_support_size() {
+        let image = b"\x89PNG\r\n\x1a\npayload".to_vec();
+        let (address, server) = spawn_ftp_server_with_size_support(image.clone(), false);
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let transfer = FtpTransfer {
+            address,
+            remote_path: DEFAULT_FTP_PATH,
+            temp_path: dir.join(".screenshot.png.tmp"),
+            final_path: dir.join("screenshot.png"),
+        };
+
+        let path = download_ftp(&transfer, ImageFormat::Png).unwrap();
+
+        assert_eq!(fs::read(path).unwrap(), image);
+        server.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn ftp_download_removes_temporary_file_after_signature_error() {
         let (address, server) = spawn_ftp_server(b"not a png".to_vec());
         let dir = unique_test_dir();
@@ -448,6 +492,13 @@ mod tests {
     }
 
     fn spawn_ftp_server(image: Vec<u8>) -> (SocketAddr, std::thread::JoinHandle<()>) {
+        spawn_ftp_server_with_size_support(image, true)
+    }
+
+    fn spawn_ftp_server_with_size_support(
+        image: Vec<u8>,
+        size_supported: bool,
+    ) -> (SocketAddr, std::thread::JoinHandle<()>) {
         let control_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let address = control_listener.local_addr().unwrap();
         let handle = std::thread::spawn(move || {
@@ -468,8 +519,12 @@ mod tests {
                     "USER anonymous" => write_ftp_response(&mut control, "331 Password required"),
                     "PASS anonymous@" => write_ftp_response(&mut control, "230 Logged in"),
                     "TYPE I" => write_ftp_response(&mut control, "200 Binary mode"),
-                    "SIZE /screenshot.png" => {
-                        write_ftp_response(&mut control, &format!("213 {}", image.len()));
+                    "SIZE screenshot.png" => {
+                        if size_supported {
+                            write_ftp_response(&mut control, &format!("213 {}", image.len()));
+                        } else {
+                            write_ftp_response(&mut control, "550 Error");
+                        }
                     }
                     "PASV" => {
                         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -484,7 +539,7 @@ mod tests {
                         );
                         data_listener = Some(listener);
                     }
-                    "RETR /screenshot.png" => {
+                    "RETR screenshot.png" => {
                         write_ftp_response(&mut control, "150 Opening data connection");
                         let (mut data, _) = data_listener.take().unwrap().accept().unwrap();
                         data.write_all(&image).unwrap();

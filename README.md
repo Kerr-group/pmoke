@@ -270,8 +270,8 @@ overwrite. It restores the previous image settings afterward. `*CLS` is used to
 clear SCPI status and errors; pmoke does not send the waveform-clearing
 `:CLEar` command.
 
-For a TCP/IP oscilloscope connection, pmoke then downloads
-`/screenshot.png` over anonymous passive FTP in binary mode to:
+For a TCP/IP oscilloscope connection, pmoke then downloads `screenshot.png`
+from the FTP login directory over anonymous passive FTP in binary mode to:
 
 ```text
 <config.toml directory>/images/screenshot.png
