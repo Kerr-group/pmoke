@@ -827,6 +827,25 @@ mod tests {
         server.join().unwrap();
     }
 
+    #[test]
+    fn save_image_restores_settings_after_transfer_error() {
+        let expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
+        let (port, server) = spawn_scpi_server(expected);
+        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
+
+        let error = dho
+            .save_image_with(
+                "C:/screenshot.png",
+                DhoImageFormat::Png,
+                Duration::from_secs(2),
+                || Err::<(), _>(io::Error::other("FTP transfer failed")),
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("FTP transfer failed"));
+        server.join().unwrap();
+    }
+
     fn image_save_exchange(
         save_error: &'static str,
         restore_error: &'static str,

@@ -205,34 +205,33 @@ fn ensure_path_absent(path: &Path, description: &str) -> Result<()> {
 }
 
 fn download_ftp(transfer: &FtpTransfer, format: ImageFormat) -> io::Result<PathBuf> {
-    let result = download_ftp_inner(transfer, format);
+    let output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&transfer.temp_path)?;
+    let result = download_ftp_inner(transfer, format, output);
     if result.is_err() {
         let _ = fs::remove_file(&transfer.temp_path);
     }
     result
 }
 
-fn download_ftp_inner(transfer: &FtpTransfer, format: ImageFormat) -> io::Result<PathBuf> {
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&transfer.temp_path)?;
-
-    let mut ftp = FtpStream::connect_timeout(transfer.address, FTP_TIMEOUT)
-        .map_err(ftp_io_error)?
-        .passive_stream_builder(|address| {
-            let stream = TcpStream::connect_timeout(&address, FTP_TIMEOUT)
-                .map_err(FtpError::ConnectionError)?;
-            stream
-                .set_read_timeout(Some(FTP_TIMEOUT))
-                .map_err(FtpError::ConnectionError)?;
-            stream
-                .set_write_timeout(Some(FTP_TIMEOUT))
-                .map_err(FtpError::ConnectionError)?;
-            Ok(stream)
-        });
-    ftp.get_ref().set_read_timeout(Some(FTP_TIMEOUT))?;
-    ftp.get_ref().set_write_timeout(Some(FTP_TIMEOUT))?;
+fn download_ftp_inner(
+    transfer: &FtpTransfer,
+    format: ImageFormat,
+    mut output: File,
+) -> io::Result<PathBuf> {
+    let mut ftp = connect_ftp(transfer.address, FTP_TIMEOUT)?.passive_stream_builder(|address| {
+        let stream =
+            TcpStream::connect_timeout(&address, FTP_TIMEOUT).map_err(FtpError::ConnectionError)?;
+        stream
+            .set_read_timeout(Some(FTP_TIMEOUT))
+            .map_err(FtpError::ConnectionError)?;
+        stream
+            .set_write_timeout(Some(FTP_TIMEOUT))
+            .map_err(FtpError::ConnectionError)?;
+        Ok(stream)
+    });
     ftp.login("anonymous", "anonymous@").map_err(ftp_io_error)?;
     ftp.transfer_type(FileType::Binary).map_err(ftp_io_error)?;
     let expected_size = ftp.size(transfer.remote_path).map_err(ftp_io_error)?;
@@ -265,6 +264,13 @@ fn download_ftp_inner(transfer: &FtpTransfer, format: ImageFormat) -> io::Result
     Ok(transfer.final_path.clone())
 }
 
+fn connect_ftp(address: SocketAddr, timeout: Duration) -> io::Result<FtpStream> {
+    let stream = TcpStream::connect_timeout(&address, timeout)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    FtpStream::connect_with_stream(stream).map_err(ftp_io_error)
+}
+
 fn validate_image_file(path: &Path, format: ImageFormat) -> io::Result<()> {
     let mut file = File::open(path)?;
     let mut header = [0_u8; 8];
@@ -282,7 +288,10 @@ fn validate_image_file(path: &Path, format: ImageFormat) -> io::Result<()> {
 }
 
 fn ftp_io_error(error: FtpError) -> io::Error {
-    io::Error::other(format!("oscilloscope FTP error: {error}"))
+    match error {
+        FtpError::ConnectionError(error) => error,
+        error => io::Error::other(format!("oscilloscope FTP error: {error}")),
+    }
 }
 
 #[cfg(test)]
@@ -395,6 +404,46 @@ mod tests {
         assert!(!transfer.temp_path.exists());
         assert!(!transfer.final_path.exists());
         server.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ftp_connect_times_out_while_waiting_for_welcome_response() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_millis(250));
+        });
+
+        let error = match connect_ftp(address, Duration::from_millis(25)) {
+            Ok(_) => panic!("FTP welcome response unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn ftp_download_does_not_remove_temporary_file_owned_by_another_writer() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let temp_path = dir.join(".screenshot.png.tmp");
+        fs::write(&temp_path, b"other writer").unwrap();
+        let transfer = FtpTransfer {
+            address: "127.0.0.1:1".parse().unwrap(),
+            remote_path: DEFAULT_FTP_PATH,
+            temp_path: temp_path.clone(),
+            final_path: dir.join("screenshot.png"),
+        };
+
+        assert!(download_ftp(&transfer, ImageFormat::Png).is_err());
+        assert_eq!(fs::read(&temp_path).unwrap(), b"other writer");
+
         fs::remove_dir_all(dir).unwrap();
     }
 
