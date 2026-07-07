@@ -293,7 +293,9 @@ created file in Local Disk. If the file is still absent after a short FTP
 visibility grace period, pmoke reads the current screen with the documented
 `:DISPlay:DATA?` binary query, uploads it as `screenshot.png` to Local Disk,
 verifies it, and then copies it to the PC. This fallback is used only when the
-normal `:SAVE:IMAGe` path completed but the expected file is absent.
+normal `:SAVE:IMAGe` path completed but the expected file is absent. A successful
+fallback is reported as information rather than a warning; only fallback failure
+causes the command to fail.
 
 Screenshot operations do not wait indefinitely. SCPI image saving and FTP
 transfer each have a 30-second deadline. Normal FTP file visibility gets a

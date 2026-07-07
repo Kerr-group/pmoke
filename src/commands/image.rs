@@ -148,9 +148,7 @@ pub(crate) fn capture_image(
     match result {
         Ok(saved) => Ok(saved),
         Err(error) if save_completed && transfer.is_some() && is_scope_file_missing(&error) => {
-            ui::warn(
-                "oscilloscope did not publish the saved image; recreating it from display data",
-            );
+            ui::info("normal image save did not publish a file; using display-data transfer");
             let transfer = transfer.expect("guarded by transfer.is_some()");
             recover_missing_scope_image(handler, plan.format, transfer)
                 .map(Some)
