@@ -128,4 +128,10 @@ impl OscilloscopeHandler {
             }
         }
     }
+
+    pub fn capture_display_image(&mut self, format: DhoImageFormat) -> Result<Vec<u8>> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.capture_display_image(format)?),
+        }
+    }
 }

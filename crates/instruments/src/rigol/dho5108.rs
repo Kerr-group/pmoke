@@ -267,6 +267,10 @@ impl DHO5108 {
         self.write_line(":STOP")
     }
 
+    pub fn capture_display_image(&mut self, format: DhoImageFormat) -> io::Result<Vec<u8>> {
+        self.query_binary(&format!(":DISPlay:DATA? {}", format.scpi()))
+    }
+
     pub fn save_image_with<T, F>(
         &mut self,
         path: &str,
@@ -277,10 +281,10 @@ impl DHO5108 {
     where
         F: FnOnce() -> io::Result<T>,
     {
-        let previous = self.query_image_settings()?;
         let deadline = Instant::now()
             .checked_add(timeout)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "image timeout overflow"))?;
+        let previous = self.query_image_settings(deadline)?;
 
         let primary = self
             .save_image_inner(path, format, deadline)
@@ -299,13 +303,30 @@ impl DHO5108 {
         }
     }
 
-    fn query_image_settings(&mut self) -> io::Result<DhoImageSettings> {
+    fn query_image_settings(&mut self, deadline: Instant) -> io::Result<DhoImageSettings> {
         Ok(DhoImageSettings {
-            format: parse_image_format_response(&self.query(":SAVE:IMAGe:FORMat?")?)?,
-            color: parse_image_color_response(&self.query(":SAVE:IMAGe:COLor?")?)?,
-            invert: parse_scpi_bool(&self.query(":SAVE:IMAGe:INVert?")?, "image invert")?,
-            header: parse_scpi_bool(&self.query(":SAVE:IMAGe:HEADer?")?, "image header")?,
-            overwrite: parse_scpi_bool(&self.query(":SAVE:OVERlap?")?, "save overwrite")?,
+            format: parse_image_format_response(&self.query_with_deadline(
+                ":SAVE:IMAGe:FORMat?",
+                deadline,
+                "image save",
+            )?)?,
+            color: parse_image_color_response(&self.query_with_deadline(
+                ":SAVE:IMAGe:COLor?",
+                deadline,
+                "image save",
+            )?)?,
+            invert: parse_scpi_bool(
+                &self.query_with_deadline(":SAVE:IMAGe:INVert?", deadline, "image save")?,
+                "image invert",
+            )?,
+            header: parse_scpi_bool(
+                &self.query_with_deadline(":SAVE:IMAGe:HEADer?", deadline, "image save")?,
+                "image header",
+            )?,
+            overwrite: parse_scpi_bool(
+                &self.query_with_deadline(":SAVE:OVERlap?", deadline, "image save")?,
+                "save overwrite",
+            )?,
         })
     }
 
@@ -323,19 +344,14 @@ impl DHO5108 {
             ":SAVE:IMAGe:HEADer ON".to_string(),
             ":SAVE:OVERlap ON".to_string(),
         ])?;
-        validate_opc_response(&self.query("*OPC?")?)?;
-        ensure_before_deadline(deadline, "image save")?;
-        let error = self.query(":SYSTem:ERRor:NEXT?")?;
+        validate_opc_response(&self.query_with_deadline("*OPC?", deadline, "image save")?)?;
+        let error = self.query_with_deadline(":SYSTem:ERRor:NEXT?", deadline, "image save")?;
         validate_system_error_response(&error)?;
-        ensure_before_deadline(deadline, "image save")?;
 
         self.write_line(&format!(":SAVE:IMAGe {path}"))?;
-        validate_opc_response(&self.query("*OPC?")?)?;
-        ensure_before_deadline(deadline, "image save")?;
+        validate_opc_response(&self.query_with_deadline("*OPC?", deadline, "image save")?)?;
         loop {
-            ensure_before_deadline(deadline, "image save")?;
-            let status = self.query(":SAVE:STATus?")?;
-            ensure_before_deadline(deadline, "image save")?;
+            let status = self.query_with_deadline(":SAVE:STATus?", deadline, "image save")?;
             match status.trim() {
                 "1" => break,
                 "0" => thread::sleep(Duration::from_millis(100)),
@@ -348,9 +364,20 @@ impl DHO5108 {
             }
         }
 
-        let error = self.query(":SYSTem:ERRor:NEXT?")?;
-        ensure_before_deadline(deadline, "image save")?;
+        let error = self.query_with_deadline(":SYSTem:ERRor:NEXT?", deadline, "image save")?;
         validate_system_error_response(&error)
+    }
+
+    fn query_with_deadline(
+        &mut self,
+        command: &str,
+        deadline: Instant,
+        operation: &str,
+    ) -> io::Result<String> {
+        ensure_before_deadline(deadline, operation)?;
+        let response = self.query(command)?;
+        ensure_before_deadline(deadline, operation)?;
+        Ok(response)
     }
 
     fn restore_image_settings(&mut self, settings: &DhoImageSettings) -> io::Result<()> {
@@ -787,6 +814,38 @@ mod tests {
     }
 
     #[test]
+    fn display_image_uses_documented_binary_query() {
+        let image = b"\x89PNG\r\n\x1a\npayload".to_vec();
+        let expected_image = image.clone();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut command = String::new();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command.trim_end(), ":DISPlay:DATA? PNG");
+            write!(
+                reader.get_mut(),
+                "#{}{}",
+                expected_image.len().to_string().len(),
+                expected_image.len()
+            )
+            .unwrap();
+            reader.get_mut().write_all(&expected_image).unwrap();
+            reader.get_mut().write_all(b"\n").unwrap();
+            reader.get_mut().flush().unwrap();
+        });
+        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
+
+        assert_eq!(
+            dho.capture_display_image(DhoImageFormat::Png).unwrap(),
+            image
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
     fn save_image_applies_settings_and_restores_previous_values() {
         let expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
         let (port, server) = spawn_scpi_server(expected);
@@ -814,6 +873,41 @@ mod tests {
     #[test]
     fn save_image_restores_settings_after_scope_error() {
         let expected = image_save_exchange("-113,\"Undefined header\"", "0,\"No error\"");
+        let (port, server) = spawn_scpi_server(expected);
+        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
+        let callback_called = Arc::new(AtomicBool::new(false));
+        let callback_flag = Arc::clone(&callback_called);
+
+        let error = dho
+            .save_image_with(
+                "C:/screenshot.png",
+                DhoImageFormat::Png,
+                Duration::from_secs(2),
+                move || {
+                    callback_flag.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("Undefined header"));
+        assert!(!callback_called.load(Ordering::SeqCst));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn save_image_does_not_start_save_after_configuration_error() {
+        let mut expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
+        let config_error_index = expected
+            .iter()
+            .position(|(command, _)| *command == ":SYSTem:ERRor:NEXT?")
+            .expect("image exchange must check configuration errors");
+        expected[config_error_index].1 = Some("-113,\"Undefined header\"");
+        let restore_index = expected
+            .iter()
+            .position(|(command, _)| *command == ":SAVE:IMAGe:FORMat BMP")
+            .expect("image exchange must restore previous settings");
+        expected.drain(config_error_index + 1..restore_index);
         let (port, server) = spawn_scpi_server(expected);
         let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
         let callback_called = Arc::new(AtomicBool::new(false));
@@ -880,6 +974,30 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_millis(500));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn save_image_deadline_covers_initial_settings_queries() {
+        let (port, server) = spawn_scpi_server(Vec::new());
+        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
+        let callback_called = Arc::new(AtomicBool::new(false));
+        let callback_flag = Arc::clone(&callback_called);
+
+        let error = dho
+            .save_image_with(
+                "C:/screenshot.png",
+                DhoImageFormat::Png,
+                Duration::ZERO,
+                move || {
+                    callback_flag.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(!callback_called.load(Ordering::SeqCst));
         server.join().unwrap();
     }
 

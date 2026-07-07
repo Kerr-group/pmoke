@@ -283,6 +283,19 @@ size and image signature before being published. pmoke refuses to overwrite an
 existing PC-side screenshot or temporary file; move or rename the existing file
 before the next capture.
 
+A DHO5000 may report `:SAVE:STATus?` completion without publishing a newly
+created file in Local Disk. If the file is still absent after a short FTP
+visibility grace period, pmoke reads the current screen with the documented
+`:DISPlay:DATA?` binary query, uploads it as `screenshot.png` to Local Disk,
+verifies it, and then copies it to the PC. This fallback is used only when the
+normal `:SAVE:IMAGe` path completed but the expected file is absent.
+
+Screenshot operations do not wait indefinitely. SCPI image saving and FTP
+transfer each have a 30-second deadline. Normal FTP file visibility gets a
+2-second grace period before the fallback above; individual FTP network
+operations fail after 5 seconds without progress. A timeout is reported as an
+error and prevents waveform fetching from starting.
+
 TCP transfer intentionally requires the default `C:/screenshot.png` path so the
 SCPI save path and FTP path cannot diverge. With USB-TMC, the image remains on
 the oscilloscope or attached storage and no PC copy is attempted. USB-TMC may
@@ -293,6 +306,8 @@ override the destination when needed:
 enabled = true
 scope_path = "D:/shot.jpg"
 ```
+
+GPIB screenshot capture is not supported.
 
 Valid destinations begin with `C:/`, `D:/`, or `E:/`; valid formats are PNG,
 BMP, and JPG. Keep the full filename, including the extension, at 16 ASCII

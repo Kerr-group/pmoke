@@ -8,6 +8,7 @@ use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use std::{error, fmt};
 use suppaftp::types::FileType;
 use suppaftp::{FtpError, FtpStream};
 
@@ -17,7 +18,7 @@ const DEFAULT_FTP_PATH: &str = "screenshot.png";
 const FTP_PORT: u16 = 21;
 const FTP_IO_TIMEOUT: Duration = Duration::from_secs(5);
 const FTP_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30);
-const SCOPE_FILE_TIMEOUT: Duration = Duration::from_secs(30);
+const SCOPE_FILE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ImageFormat {
@@ -140,6 +141,15 @@ pub(crate) fn capture_image(
 
     match result {
         Ok(saved) => Ok(saved),
+        Err(error) if save_completed && transfer.is_some() && is_scope_file_missing(&error) => {
+            ui::warn(
+                "oscilloscope did not publish the saved image; recreating it from display data",
+            );
+            let transfer = transfer.expect("guarded by transfer.is_some()");
+            recover_missing_scope_image(handler, plan.format, transfer)
+                .map(Some)
+                .with_context(|| format!("fallback after normal image save failed: {error}"))
+        }
         Err(error) => {
             if save_completed {
                 if let Some(path) = local_path.as_deref() {
@@ -150,6 +160,31 @@ pub(crate) fn capture_image(
             Err(error).context("failed to save oscilloscope screenshot")
         }
     }
+}
+
+fn recover_missing_scope_image(
+    handler: &mut OscilloscopeHandler,
+    format: ImageFormat,
+    transfer: &FtpTransfer,
+) -> Result<PathBuf> {
+    let image = handler
+        .capture_display_image(format.dho())
+        .context("failed to read oscilloscope display image for fallback")?;
+    validate_image_bytes(&image, format)
+        .context("oscilloscope display image fallback returned invalid data")?;
+    upload_ftp(transfer, &image)
+        .context("failed to recreate screenshot in oscilloscope Local Disk")?;
+    download_ftp(transfer, format).context("failed to copy recreated screenshot from oscilloscope")
+}
+
+fn is_scope_file_missing(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .and_then(io::Error::get_ref)
+            .and_then(|source| source.downcast_ref::<ScopeFileMissing>())
+            .is_some()
+    })
 }
 
 pub(crate) fn report_saved_image(plan: &ImagePlan, local_path: Option<&Path>) {
@@ -225,22 +260,7 @@ fn download_ftp_inner(
     format: ImageFormat,
     mut output: File,
 ) -> io::Result<PathBuf> {
-    let mut ftp =
-        connect_ftp(transfer.address, FTP_IO_TIMEOUT)?.passive_stream_builder(|address| {
-            let stream = TcpStream::connect_timeout(&address, FTP_IO_TIMEOUT)
-                .map_err(FtpError::ConnectionError)?;
-            stream
-                .set_read_timeout(Some(FTP_IO_TIMEOUT))
-                .map_err(FtpError::ConnectionError)?;
-            stream
-                .set_write_timeout(Some(FTP_IO_TIMEOUT))
-                .map_err(FtpError::ConnectionError)?;
-            Ok(stream)
-        });
-    ftp.login("anonymous", "anonymous@")
-        .map_err(|error| ftp_io_error("login", error))?;
-    ftp.transfer_type(FileType::Binary)
-        .map_err(|error| ftp_io_error("TYPE I", error))?;
+    let mut ftp = connect_authenticated_ftp(transfer.address)?;
     let remote_path = wait_for_remote_file(&mut ftp, transfer.remote_path, SCOPE_FILE_TIMEOUT)?;
     ui::saved(format!(
         "verified oscilloscope Local Disk file: {remote_path}"
@@ -276,9 +296,73 @@ fn download_ftp_inner(
     let _ = ftp.quit();
 
     validate_image_file(&transfer.temp_path, format)?;
-    fs::hard_link(&transfer.temp_path, &transfer.final_path)?;
-    fs::remove_file(&transfer.temp_path)?;
+    publish_temp_file(&transfer.temp_path, &transfer.final_path)?;
     Ok(transfer.final_path.clone())
+}
+
+fn upload_ftp(transfer: &FtpTransfer, image: &[u8]) -> io::Result<()> {
+    let mut ftp = connect_authenticated_ftp(transfer.address)?;
+    let deadline = Instant::now()
+        .checked_add(FTP_TRANSFER_TIMEOUT)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "FTP timeout overflow"))?;
+    let mut source = io::Cursor::new(image);
+    let mut output = ftp
+        .put_with_stream(transfer.remote_path)
+        .map_err(|error| ftp_io_error(&format!("STOR {}", transfer.remote_path), error))?;
+    let copied = copy_with_deadline(&mut source, &mut output, deadline)?;
+    ftp.finalize_put_stream(output)
+        .map_err(|error| ftp_io_error(&format!("STOR {}", transfer.remote_path), error))?;
+    if copied != image.len() as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            format!(
+                "FTP screenshot upload wrote {copied} bytes, expected {} bytes",
+                image.len()
+            ),
+        ));
+    }
+
+    let remote_path = wait_for_remote_file(&mut ftp, transfer.remote_path, SCOPE_FILE_TIMEOUT)?;
+    if let Some(size) = query_ftp_size(&mut ftp, &remote_path)?
+        && size != image.len()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "uploaded screenshot is {size} bytes, expected {} bytes",
+                image.len()
+            ),
+        ));
+    }
+    let _ = ftp.quit();
+    ui::saved(format!(
+        "recreated oscilloscope Local Disk file: {remote_path}"
+    ));
+    Ok(())
+}
+
+fn publish_temp_file(temp_path: &Path, final_path: &Path) -> io::Result<()> {
+    publish_temp_file_with(temp_path, final_path, |path| fs::remove_file(path))
+}
+
+fn publish_temp_file_with<F>(temp_path: &Path, final_path: &Path, remove_temp: F) -> io::Result<()>
+where
+    F: FnOnce(&Path) -> io::Result<()>,
+{
+    fs::hard_link(temp_path, final_path)?;
+    if let Err(cleanup_error) = remove_temp(temp_path) {
+        return match fs::remove_file(final_path) {
+            Ok(()) => Err(cleanup_error),
+            Err(rollback_error) => Err(io::Error::new(
+                cleanup_error.kind(),
+                format!(
+                    "failed to remove screenshot temporary file: {cleanup_error}; additionally failed to roll back {}: {rollback_error}",
+                    final_path.display()
+                ),
+            )),
+        };
+    }
+    Ok(())
 }
 
 fn wait_for_remote_file(
@@ -321,11 +405,22 @@ fn remote_file_not_found_error(expected_name: &str, entries: &[String]) -> io::E
     };
     io::Error::new(
         io::ErrorKind::NotFound,
-        format!(
+        ScopeFileMissing(format!(
             "oscilloscope Local Disk file {expected_name:?} was not found; FTP root contains: {listing}"
-        ),
+        )),
     )
 }
+
+#[derive(Debug)]
+struct ScopeFileMissing(String);
+
+impl fmt::Display for ScopeFileMissing {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl error::Error for ScopeFileMissing {}
 
 fn remote_basename(path: &str) -> &str {
     path.trim().rsplit(['/', '\\']).next().unwrap_or_default()
@@ -353,6 +448,25 @@ fn connect_ftp(address: SocketAddr, timeout: Duration) -> io::Result<FtpStream> 
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
     FtpStream::connect_with_stream(stream).map_err(|error| ftp_io_error("welcome", error))
+}
+
+fn connect_authenticated_ftp(address: SocketAddr) -> io::Result<FtpStream> {
+    let mut ftp = connect_ftp(address, FTP_IO_TIMEOUT)?.passive_stream_builder(|address| {
+        let stream = TcpStream::connect_timeout(&address, FTP_IO_TIMEOUT)
+            .map_err(FtpError::ConnectionError)?;
+        stream
+            .set_read_timeout(Some(FTP_IO_TIMEOUT))
+            .map_err(FtpError::ConnectionError)?;
+        stream
+            .set_write_timeout(Some(FTP_IO_TIMEOUT))
+            .map_err(FtpError::ConnectionError)?;
+        Ok(stream)
+    });
+    ftp.login("anonymous", "anonymous@")
+        .map_err(|error| ftp_io_error("login", error))?;
+    ftp.transfer_type(FileType::Binary)
+        .map_err(|error| ftp_io_error("TYPE I", error))?;
+    Ok(ftp)
 }
 
 fn copy_with_deadline<R: Read + ?Sized, W: Write>(
@@ -384,13 +498,15 @@ fn validate_image_file(path: &Path, format: ImageFormat) -> io::Result<()> {
     let mut file = File::open(path)?;
     let mut header = [0_u8; 8];
     let read = file.read(&mut header)?;
-    if !format.validate_signature(&header[..read]) {
+    validate_image_bytes(&header[..read], format)
+        .map_err(|error| io::Error::new(error.kind(), format!("{}: {}", error, path.display())))
+}
+
+fn validate_image_bytes(bytes: &[u8], format: ImageFormat) -> io::Result<()> {
+    if !format.validate_signature(bytes) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!(
-                "FTP screenshot has an invalid image signature: {}",
-                path.display()
-            ),
+            "screenshot has an invalid image signature",
         ));
     }
     Ok(())
@@ -564,6 +680,41 @@ mod tests {
     }
 
     #[test]
+    fn ftp_upload_recreates_missing_scope_file() {
+        let image = b"\x89PNG\r\n\x1a\npayload".to_vec();
+        let (address, server) = spawn_ftp_upload_server(image.clone());
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let transfer = FtpTransfer {
+            address,
+            remote_path: DEFAULT_FTP_PATH,
+            temp_path: dir.join(".screenshot.png.tmp"),
+            final_path: dir.join("screenshot.png"),
+        };
+
+        upload_ftp(&transfer, &image).unwrap();
+
+        server.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn fallback_detection_only_accepts_scope_file_missing_error() {
+        let scope_missing = anyhow::Error::new(remote_file_not_found_error(
+            DEFAULT_FTP_PATH,
+            &["existing.png".to_string()],
+        ))
+        .context("FTP verification failed");
+        let local_missing = anyhow::Error::new(io::Error::new(
+            io::ErrorKind::NotFound,
+            "PC output directory missing",
+        ));
+
+        assert!(is_scope_file_missing(&scope_missing));
+        assert!(!is_scope_file_missing(&local_missing));
+    }
+
+    #[test]
     fn ftp_copy_rejects_an_expired_transfer_deadline() {
         let mut reader = io::Cursor::new(b"payload");
         let mut output = Vec::new();
@@ -572,6 +723,28 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn screenshot_publish_rolls_back_final_file_when_temp_cleanup_fails() {
+        let dir = unique_test_dir();
+        fs::create_dir(&dir).unwrap();
+        let temp_path = dir.join(".screenshot.png.tmp");
+        let final_path = dir.join("screenshot.png");
+        fs::write(&temp_path, b"complete image").unwrap();
+
+        let error = publish_temp_file_with(&temp_path, &final_path, |_| {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected cleanup failure",
+            ))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(temp_path.exists());
+        assert!(!final_path.exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -711,6 +884,70 @@ mod tests {
                         data.flush().unwrap();
                         drop(data);
                         write_ftp_response(&mut control, "226 Transfer complete");
+                    }
+                    "QUIT" => {
+                        write_ftp_response(&mut control, "221 Goodbye");
+                        break;
+                    }
+                    other => panic!("unexpected FTP command: {other:?}"),
+                }
+            }
+        });
+        (address, handle)
+    }
+
+    fn spawn_ftp_upload_server(
+        expected_image: Vec<u8>,
+    ) -> (SocketAddr, std::thread::JoinHandle<()>) {
+        let control_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = control_listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = control_listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut control = BufReader::new(stream);
+            write_ftp_response(&mut control, "220 DHO FTP ready");
+            let mut data_listener = None;
+            let mut uploaded = Vec::new();
+
+            loop {
+                let mut command = String::new();
+                control.read_line(&mut command).unwrap();
+                match command.trim_end() {
+                    "USER anonymous" => write_ftp_response(&mut control, "331 Password required"),
+                    "PASS anonymous@" => write_ftp_response(&mut control, "230 Logged in"),
+                    "TYPE I" => write_ftp_response(&mut control, "200 Binary mode"),
+                    "PASV" => {
+                        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                        let port = listener.local_addr().unwrap().port();
+                        write_ftp_response(
+                            &mut control,
+                            &format!(
+                                "227 Entering Passive Mode (127,0,0,1,{},{})",
+                                port / 256,
+                                port % 256
+                            ),
+                        );
+                        data_listener = Some(listener);
+                    }
+                    "STOR screenshot.png" => {
+                        write_ftp_response(&mut control, "150 Opening data connection");
+                        let (mut data, _) = data_listener.take().unwrap().accept().unwrap();
+                        data.read_to_end(&mut uploaded).unwrap();
+                        assert_eq!(uploaded, expected_image);
+                        write_ftp_response(&mut control, "226 Transfer complete");
+                    }
+                    "NLST" => {
+                        write_ftp_response(&mut control, "150 Opening data connection");
+                        let (mut data, _) = data_listener.take().unwrap().accept().unwrap();
+                        writeln!(data, "screenshot.png\r").unwrap();
+                        data.flush().unwrap();
+                        drop(data);
+                        write_ftp_response(&mut control, "226 Transfer complete");
+                    }
+                    "SIZE screenshot.png" => {
+                        write_ftp_response(&mut control, &format!("213 {}", expected_image.len()))
                     }
                     "QUIT" => {
                         write_ftp_response(&mut control, "221 Goodbye");
