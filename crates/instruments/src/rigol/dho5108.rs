@@ -322,13 +322,21 @@ impl DHO5108 {
             ":SAVE:IMAGe:INVert OFF".to_string(),
             ":SAVE:IMAGe:HEADer ON".to_string(),
             ":SAVE:OVERlap ON".to_string(),
-            format!(":SAVE:IMAGe {path}"),
         ])?;
-
         validate_opc_response(&self.query("*OPC?")?)?;
+        ensure_before_deadline(deadline, "image save")?;
+        let error = self.query(":SYSTem:ERRor:NEXT?")?;
+        validate_system_error_response(&error)?;
+        ensure_before_deadline(deadline, "image save")?;
+
+        self.write_line(&format!(":SAVE:IMAGe {path}"))?;
+        validate_opc_response(&self.query("*OPC?")?)?;
+        ensure_before_deadline(deadline, "image save")?;
         loop {
             ensure_before_deadline(deadline, "image save")?;
-            match self.query(":SAVE:STATus?")?.trim() {
+            let status = self.query(":SAVE:STATus?")?;
+            ensure_before_deadline(deadline, "image save")?;
+            match status.trim() {
                 "1" => break,
                 "0" => thread::sleep(Duration::from_millis(100)),
                 response => {
@@ -341,6 +349,7 @@ impl DHO5108 {
         }
 
         let error = self.query(":SYSTem:ERRor:NEXT?")?;
+        ensure_before_deadline(deadline, "image save")?;
         validate_system_error_response(&error)
     }
 
@@ -846,6 +855,34 @@ mod tests {
         server.join().unwrap();
     }
 
+    #[test]
+    fn save_image_times_out_when_scope_remains_busy() {
+        let mut expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
+        let status_index = expected
+            .iter()
+            .position(|(command, _)| *command == ":SAVE:STATus?")
+            .expect("image exchange must query save status");
+        expected[status_index].1 = Some("0");
+        let skipped_error_query = expected.remove(status_index + 1);
+        assert_eq!(skipped_error_query.0, ":SYSTem:ERRor:NEXT?");
+        let (port, server) = spawn_scpi_server(expected);
+        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
+        let started = Instant::now();
+
+        let error = dho
+            .save_image_with(
+                "C:/screenshot.png",
+                DhoImageFormat::Png,
+                Duration::from_millis(25),
+                || Ok(()),
+            )
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        server.join().unwrap();
+    }
+
     fn image_save_exchange(
         save_error: &'static str,
         restore_error: &'static str,
@@ -862,6 +899,8 @@ mod tests {
             (":SAVE:IMAGe:INVert OFF", None),
             (":SAVE:IMAGe:HEADer ON", None),
             (":SAVE:OVERlap ON", None),
+            ("*OPC?", Some("1")),
+            (":SYSTem:ERRor:NEXT?", Some("0,\"No error\"")),
             (":SAVE:IMAGe C:/screenshot.png", None),
             ("*OPC?", Some("1")),
             (":SAVE:STATus?", Some("1")),

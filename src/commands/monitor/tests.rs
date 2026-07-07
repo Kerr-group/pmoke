@@ -479,6 +479,17 @@ fn analyze_timeline_marks_done_current_and_pending_steps() {
     assert_eq!(timeline.steps[3].state, TimelineStepState::Pending);
 }
 
+#[cfg(feature = "hw")]
+#[test]
+fn failed_image_timeline_marks_stage_failed_instead_of_pending() {
+    let timeline = timeline_for_action(MonitorAction::Image, &[], StageProgressState::Failed)
+        .expect("image has a timeline stage");
+
+    assert_eq!(timeline.done, 0);
+    assert_eq!(timeline.total, 1);
+    assert_eq!(timeline.steps[0].state, TimelineStepState::Failed);
+}
+
 #[test]
 fn visual_output_lines_strip_ansi_and_add_badges() {
     let entries = vec![LogEntry {

@@ -7,7 +7,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use suppaftp::types::FileType;
 use suppaftp::{FtpError, FtpStream};
 
@@ -15,8 +15,9 @@ const IMAGE_DIR: &str = "images";
 const DEFAULT_SCOPE_PATH: &str = "C:/screenshot.png";
 const DEFAULT_FTP_PATH: &str = "screenshot.png";
 const FTP_PORT: u16 = 21;
-const FTP_TIMEOUT: Duration = Duration::from_secs(30);
-const SCOPE_FILE_TIMEOUT: Duration = Duration::from_secs(5);
+const FTP_IO_TIMEOUT: Duration = Duration::from_secs(5);
+const FTP_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30);
+const SCOPE_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ImageFormat {
@@ -224,17 +225,18 @@ fn download_ftp_inner(
     format: ImageFormat,
     mut output: File,
 ) -> io::Result<PathBuf> {
-    let mut ftp = connect_ftp(transfer.address, FTP_TIMEOUT)?.passive_stream_builder(|address| {
-        let stream =
-            TcpStream::connect_timeout(&address, FTP_TIMEOUT).map_err(FtpError::ConnectionError)?;
-        stream
-            .set_read_timeout(Some(FTP_TIMEOUT))
-            .map_err(FtpError::ConnectionError)?;
-        stream
-            .set_write_timeout(Some(FTP_TIMEOUT))
-            .map_err(FtpError::ConnectionError)?;
-        Ok(stream)
-    });
+    let mut ftp =
+        connect_ftp(transfer.address, FTP_IO_TIMEOUT)?.passive_stream_builder(|address| {
+            let stream = TcpStream::connect_timeout(&address, FTP_IO_TIMEOUT)
+                .map_err(FtpError::ConnectionError)?;
+            stream
+                .set_read_timeout(Some(FTP_IO_TIMEOUT))
+                .map_err(FtpError::ConnectionError)?;
+            stream
+                .set_write_timeout(Some(FTP_IO_TIMEOUT))
+                .map_err(FtpError::ConnectionError)?;
+            Ok(stream)
+        });
     ftp.login("anonymous", "anonymous@")
         .map_err(|error| ftp_io_error("login", error))?;
     ftp.transfer_type(FileType::Binary)
@@ -245,9 +247,13 @@ fn download_ftp_inner(
     ));
     let expected_size = query_ftp_size(&mut ftp, &remote_path)?;
 
+    let transfer_deadline = Instant::now()
+        .checked_add(FTP_TRANSFER_TIMEOUT)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "FTP timeout overflow"))?;
     let copied = ftp
         .retr(&remote_path, |reader| {
-            io::copy(reader, &mut output).map_err(FtpError::ConnectionError)
+            copy_with_deadline(reader, &mut output, transfer_deadline)
+                .map_err(FtpError::ConnectionError)
         })
         .map_err(|error| ftp_io_error(&format!("RETR {remote_path}"), error))?;
     if copied == 0 {
@@ -283,7 +289,12 @@ fn wait_for_remote_file(
     let deadline = std::time::Instant::now()
         .checked_add(timeout)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file timeout overflow"))?;
+    let mut last_entries = Vec::new();
     loop {
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(remote_file_not_found_error(expected_name, &last_entries));
+        }
         let entries = ftp
             .nlst(None)
             .map_err(|error| ftp_io_error("NLST", error))?;
@@ -293,21 +304,27 @@ fn wait_for_remote_file(
         {
             return Ok(path.trim().to_string());
         }
-        if std::time::Instant::now() >= deadline {
-            let listing = if entries.is_empty() {
-                "<empty>".to_string()
-            } else {
-                entries.join(", ")
-            };
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "oscilloscope Local Disk file {expected_name:?} was not found; FTP root contains: {listing}"
-                ),
-            ));
+        last_entries = entries;
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(remote_file_not_found_error(expected_name, &last_entries));
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(100).min(deadline - now));
     }
+}
+
+fn remote_file_not_found_error(expected_name: &str, entries: &[String]) -> io::Error {
+    let listing = if entries.is_empty() {
+        "<empty>".to_string()
+    } else {
+        entries.join(", ")
+    };
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "oscilloscope Local Disk file {expected_name:?} was not found; FTP root contains: {listing}"
+        ),
+    )
 }
 
 fn remote_basename(path: &str) -> &str {
@@ -336,6 +353,31 @@ fn connect_ftp(address: SocketAddr, timeout: Duration) -> io::Result<FtpStream> 
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
     FtpStream::connect_with_stream(stream).map_err(|error| ftp_io_error("welcome", error))
+}
+
+fn copy_with_deadline<R: Read + ?Sized, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    deadline: Instant,
+) -> io::Result<u64> {
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut copied = 0_u64;
+    loop {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "oscilloscope FTP screenshot transfer timed out",
+            ));
+        }
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(copied);
+        }
+        writer.write_all(&buffer[..read])?;
+        copied = copied
+            .checked_add(read as u64)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "FTP byte count overflow"))?;
+    }
 }
 
 fn validate_image_file(path: &Path, format: ImageFormat) -> io::Result<()> {
@@ -502,6 +544,34 @@ mod tests {
         assert_eq!(fs::read(path).unwrap(), image);
         server.join().unwrap();
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ftp_file_wait_stops_at_deadline_when_scope_file_never_appears() {
+        let (address, server) = spawn_ftp_server_with_options(b"unused".to_vec(), true, usize::MAX);
+        let mut ftp = connect_ftp(address, Duration::from_secs(2)).unwrap();
+        ftp.login("anonymous", "anonymous@").unwrap();
+        ftp.transfer_type(FileType::Binary).unwrap();
+        let started = Instant::now();
+
+        let error = wait_for_remote_file(&mut ftp, DEFAULT_FTP_PATH, Duration::from_millis(25))
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        ftp.quit().unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn ftp_copy_rejects_an_expired_transfer_deadline() {
+        let mut reader = io::Cursor::new(b"payload");
+        let mut output = Vec::new();
+
+        let error = copy_with_deadline(&mut reader, &mut output, Instant::now()).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(output.is_empty());
     }
 
     #[test]
