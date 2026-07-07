@@ -141,8 +141,10 @@ pub(crate) fn capture_image(
         Ok(saved) => Ok(saved),
         Err(error) => {
             if save_completed {
-                report_saved_image(plan, local_path.as_deref());
-                ui::warn("screenshot was saved, but finalization failed");
+                if let Some(path) = local_path.as_deref() {
+                    ui::saved(format!("screenshot copy: {}", path.display()));
+                }
+                ui::warn("screenshot save command completed, but file verification or copy failed");
             }
             Err(error).context("failed to save oscilloscope screenshot")
         }
