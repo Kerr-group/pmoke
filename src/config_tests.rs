@@ -24,7 +24,7 @@ lpf_half_window_cycles = 1.0
 }
 
 #[test]
-fn image_config_defaults_to_disabled_screenshot() {
+fn screenshot_config_defaults_to_disabled() {
     let text = v3_base_lockin(
         r#"
 workers = 1
@@ -35,9 +35,9 @@ lpf_half_window_cycles = 1.0
 
     match load_from_str(&text) {
         ConfigLoad::Ready { config, .. } => {
-            assert!(!config.image.enabled);
+            assert!(!config.screenshot.enabled);
             let normalized = toml::to_string_pretty(&config).unwrap();
-            assert!(normalized.contains("[image]"));
+            assert!(normalized.contains("[screenshot]"));
             assert!(!normalized.contains("scope_path"));
             assert!(!normalized.contains("source_path"));
         }
@@ -46,26 +46,7 @@ lpf_half_window_cycles = 1.0
 }
 
 #[test]
-fn image_config_accepts_minimal_pc_capture_settings() {
-    let text = v3_base_lockin(
-        r#"
-workers = 1
-stride_samples = 1
-lpf_half_window_cycles = 1.0
-"#,
-    )
-    .replacen("version = 3", "version = 3\n\n[image]\nenabled = true", 1);
-
-    match load_from_str(&text) {
-        ConfigLoad::Ready { config, .. } => {
-            assert!(config.image.enabled);
-        }
-        other => panic!("expected ready image config, got {other:?}"),
-    }
-}
-
-#[test]
-fn image_config_rejects_removed_scope_path_setting() {
+fn screenshot_config_accepts_minimal_pc_capture_settings() {
     let text = v3_base_lockin(
         r#"
 workers = 1
@@ -75,7 +56,30 @@ lpf_half_window_cycles = 1.0
     )
     .replacen(
         "version = 3",
-        "version = 3\n\n[image]\nenabled = true\nscope_path = \"C:/screenshot.png\"",
+        "version = 3\n\n[screenshot]\nenabled = true",
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert!(config.screenshot.enabled);
+        }
+        other => panic!("expected ready screenshot config, got {other:?}"),
+    }
+}
+
+#[test]
+fn screenshot_config_rejects_removed_scope_path_setting() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 3",
+        "version = 3\n\n[screenshot]\nenabled = true\nscope_path = \"C:/screenshot.png\"",
         1,
     );
 
@@ -91,7 +95,29 @@ lpf_half_window_cycles = 1.0
 }
 
 #[test]
-fn image_target_accepts_pc_capture_transports_and_rejects_gpib() {
+fn screenshot_config_rejects_legacy_image_table() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen("version = 3", "version = 3\n\n[image]\nenabled = true", 1);
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics
+                .iter()
+                .any(|issue| issue.message.contains("unknown field `image`")),
+            "missing legacy image diagnostic: {diag:?}"
+        ),
+        other => panic!("expected diagnostics for legacy image config, got {other:?}"),
+    }
+}
+
+#[test]
+fn screenshot_target_accepts_pc_capture_transports_and_rejects_gpib() {
     for (connection, should_pass) in [
         (
             r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
@@ -119,7 +145,7 @@ lpf_half_window_cycles = 1.0
 connection = {connection}
 model = "DHO5108"
 
-[image]
+[screenshot]
 enabled = true"#
             ),
             1,
@@ -129,9 +155,9 @@ enabled = true"#
         };
 
         assert_eq!(
-            validate_for_target(&config, ValidationTarget::Image).is_ok(),
+            validate_for_target(&config, ValidationTarget::Screenshot).is_ok(),
             should_pass,
-            "unexpected image validation result for {connection}"
+            "unexpected screenshot validation result for {connection}"
         );
     }
 }
@@ -139,7 +165,7 @@ enabled = true"#
 #[test]
 fn load_from_path_records_config_location_without_serializing_it() {
     let dir = std::env::temp_dir().join(format!(
-        "pmoke_image_config_{}_{}",
+        "pmoke_screenshot_config_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -8,8 +8,6 @@ pub mod autoshot;
 pub mod completions;
 #[cfg(feature = "hw")]
 pub mod fetch;
-#[cfg(feature = "hw")]
-pub mod image;
 pub mod kerr;
 pub mod li;
 pub mod monitor;
@@ -17,6 +15,8 @@ pub mod phase;
 #[cfg(feature = "hw")]
 pub mod process;
 pub mod reference;
+#[cfg(feature = "hw")]
+pub mod screenshot;
 pub mod sensor;
 pub mod show;
 #[cfg(feature = "hw")]

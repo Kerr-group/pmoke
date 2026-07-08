@@ -18,7 +18,7 @@ pub(super) enum MonitorAction {
     #[cfg(feature = "hw")]
     Fetch,
     #[cfg(feature = "hw")]
-    Image,
+    Screenshot,
     #[cfg(feature = "hw")]
     Automeasure,
     #[cfg(feature = "hw")]
@@ -46,7 +46,7 @@ impl MonitorAction {
             #[cfg(feature = "hw")]
             Self::Fetch => "Fetch",
             #[cfg(feature = "hw")]
-            Self::Image => "Image",
+            Self::Screenshot => "Screenshot",
             #[cfg(feature = "hw")]
             Self::Automeasure => "Measure",
             #[cfg(feature = "hw")]
@@ -76,7 +76,7 @@ impl MonitorAction {
             #[cfg(feature = "hw")]
             Self::Fetch => "Fetch oscilloscope data using the configured output format.",
             #[cfg(feature = "hw")]
-            Self::Image => "Save an oscilloscope screenshot.",
+            Self::Screenshot => "Save an oscilloscope screenshot.",
             #[cfg(feature = "hw")]
             Self::Automeasure => "Single, trigger, then fetch waveform data.",
             #[cfg(feature = "hw")]
@@ -104,7 +104,7 @@ impl MonitorAction {
             #[cfg(feature = "hw")]
             Self::Fetch => Some(ValidationTarget::Fetch),
             #[cfg(feature = "hw")]
-            Self::Image => Some(ValidationTarget::Image),
+            Self::Screenshot => Some(ValidationTarget::Screenshot),
             #[cfg(feature = "hw")]
             Self::Automeasure => Some(ValidationTarget::Automeasure),
             #[cfg(feature = "hw")]
@@ -132,7 +132,7 @@ impl MonitorAction {
             #[cfg(feature = "hw")]
             Self::Fetch => "fetch",
             #[cfg(feature = "hw")]
-            Self::Image => "image",
+            Self::Screenshot => "screenshot",
             #[cfg(feature = "hw")]
             Self::Automeasure => "automeasure",
             #[cfg(feature = "hw")]
@@ -155,7 +155,7 @@ pub(super) fn monitor_actions() -> Vec<MonitorAction> {
         #[cfg(feature = "hw")]
         MonitorAction::Fetch,
         #[cfg(feature = "hw")]
-        MonitorAction::Image,
+        MonitorAction::Screenshot,
         #[cfg(feature = "hw")]
         MonitorAction::Automeasure,
         MonitorAction::Reference,

@@ -1,5 +1,7 @@
 use crate::cli::FetchFormat;
-use crate::commands::image::{capture_image, prepare_image, report_saved_image};
+use crate::commands::screenshot::{
+    capture_screenshot, prepare_screenshot, report_saved_screenshot,
+};
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::{Config, Connection, FetchOutput};
 use crate::constants::{
@@ -110,13 +112,17 @@ impl From<FetchFormat> for FetchOutput {
 }
 
 fn initialize_fetch_handler(cfg: &Config) -> Result<OscilloscopeHandler> {
-    let image_plan = cfg.image.enabled.then(|| prepare_image(cfg)).transpose()?;
+    let screenshot_plan = cfg
+        .screenshot
+        .enabled
+        .then(|| prepare_screenshot(cfg))
+        .transpose()?;
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
 
-    if let Some(plan) = image_plan {
-        let saved = capture_image(&mut handler, &plan, true)?;
-        report_saved_image(&saved);
+    if let Some(plan) = screenshot_plan {
+        let saved = capture_screenshot(&mut handler, &plan, true)?;
+        report_saved_screenshot(&saved);
     }
 
     Ok(handler)

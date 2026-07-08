@@ -63,9 +63,9 @@ fn main() -> Result<()> {
                 config::validate_for_target(&cfg, ValidationTarget::Fetch)?;
                 commands::fetch::fetch_with_options(&cfg, *format, out.as_deref())
             }
-            Some(Command::Image) => {
-                config::validate_for_target(&cfg, ValidationTarget::Image)?;
-                commands::image::image(&cfg)
+            Some(Command::Screenshot) => {
+                config::validate_for_target(&cfg, ValidationTarget::Screenshot)?;
+                commands::screenshot::screenshot(&cfg)
             }
             Some(Command::Automeasure) => {
                 config::validate_for_target(&cfg, ValidationTarget::Automeasure)?;

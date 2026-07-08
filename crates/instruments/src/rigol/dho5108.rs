@@ -498,6 +498,14 @@ mod tests {
     use std::io::{BufReader, Cursor, Read};
     use std::net::TcpListener;
 
+    fn tcp_stream(dho: &DHO5108) -> &TcpStream {
+        match &dho.transport {
+            DhoTransport::Tcp(reader) => reader.get_ref(),
+            #[cfg(target_os = "windows")]
+            DhoTransport::Visa(_) => panic!("test instrument unexpectedly uses VISA"),
+        }
+    }
+
     #[test]
     fn binary_block_length_skips_leftover_line_terminators() {
         let cursor = Cursor::new(b"\r\n#14abcd".to_vec());
@@ -575,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn display_png_uses_documented_binary_query() {
+    fn display_png_preserves_unlimited_timeout_and_allows_following_query() {
         let image = b"\x89PNG\r\n\x1a\npayload".to_vec();
         let expected_image = image.clone();
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -596,10 +604,21 @@ mod tests {
             reader.get_mut().write_all(&expected_image).unwrap();
             reader.get_mut().write_all(b"\n").unwrap();
             reader.get_mut().flush().unwrap();
-        });
-        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
 
+            command.clear();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command.trim_end(), ":ACQuire:MDEPth?");
+            reader.get_mut().write_all(b"200000000\n").unwrap();
+            reader.get_mut().flush().unwrap();
+        });
+        let mut dho = DHO5108::open("127.0.0.1", port, None).unwrap();
+
+        assert_eq!(tcp_stream(&dho).read_timeout().unwrap(), None);
+        assert_eq!(tcp_stream(&dho).write_timeout().unwrap(), None);
         assert_eq!(dho.capture_display_png().unwrap(), image);
+        assert_eq!(tcp_stream(&dho).read_timeout().unwrap(), None);
+        assert_eq!(tcp_stream(&dho).write_timeout().unwrap(), None);
+        assert_eq!(dho.query_memory_depth().unwrap(), 200_000_000);
         server.join().unwrap();
     }
 }

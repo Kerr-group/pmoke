@@ -110,7 +110,7 @@ pub struct Config {
     pub version: u32,
     pub instruments: Option<Instruments>,
     pub fetch: Fetch,
-    pub image: Image,
+    pub screenshot: Screenshot,
     pub plot: Plot,
     #[serde(skip_serializing)]
     pub source_path: PathBuf,
@@ -126,7 +126,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
-pub struct Image {
+pub struct Screenshot {
     pub enabled: bool,
 }
 
@@ -319,7 +319,7 @@ pub enum ValidationTarget {
     Trigger,
     Autoshot,
     Fetch,
-    Image,
+    Screenshot,
     Automeasure,
     Reference,
     Sensor,
@@ -424,7 +424,7 @@ struct ConfigV1 {
     version: u32,
     instruments: Option<InstrumentsV1>,
     #[serde(default)]
-    image: ImageV3,
+    screenshot: ScreenshotV3,
     timebase: TimebaseV1,
     roles: RolesV1,
     channels: Vec<ChannelV1>,
@@ -444,7 +444,7 @@ struct ConfigV2 {
     #[serde(default)]
     fetch: FetchV2,
     #[serde(default)]
-    image: ImageV3,
+    screenshot: ScreenshotV3,
     #[serde(default)]
     plot: PlotV2,
     timebase: TimebaseV2,
@@ -465,7 +465,7 @@ struct ConfigV3 {
     #[serde(default)]
     fetch: FetchV2,
     #[serde(default)]
-    image: ImageV3,
+    screenshot: ScreenshotV3,
     #[serde(default)]
     plot: PlotV2,
     roles: RolesV2,
@@ -488,13 +488,13 @@ struct FetchV2 {
 
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-struct ImageV3 {
+struct ScreenshotV3 {
     enabled: bool,
 }
 
-impl Default for ImageV3 {
+impl Default for ScreenshotV3 {
     fn default() -> Self {
-        let default = Image::default();
+        let default = Screenshot::default();
         Self {
             enabled: default.enabled,
         }
@@ -992,7 +992,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
         version: 3,
         instruments: raw.instruments.map(Into::into),
         fetch: Fetch::default(),
-        image: raw.image.into(),
+        screenshot: raw.screenshot.into(),
         plot: Plot::default(),
         source_path: PathBuf::from("config.toml"),
         legacy_timebase: Some(raw.timebase.into()),
@@ -1054,7 +1054,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         version: 3,
         instruments: raw.instruments.map(Into::into),
         fetch: raw.fetch.into(),
-        image: raw.image.into(),
+        screenshot: raw.screenshot.into(),
         plot: raw.plot.into(),
         source_path: PathBuf::from("config.toml"),
         legacy_timebase: Some(legacy_timebase),
@@ -1113,7 +1113,7 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
         version: raw.version,
         instruments: raw.instruments.map(Into::into),
         fetch: raw.fetch.into(),
-        image: raw.image.into(),
+        screenshot: raw.screenshot.into(),
         plot: raw.plot.into(),
         source_path: PathBuf::from("config.toml"),
         legacy_timebase: None,
@@ -1469,7 +1469,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
     match target {
         ValidationTarget::Single
         | ValidationTarget::Fetch
-        | ValidationTarget::Image
+        | ValidationTarget::Screenshot
         | ValidationTarget::Process
         | ValidationTarget::Auto => {
             validate_oscilloscope_required(cfg)?;
@@ -1486,8 +1486,8 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         | ValidationTarget::Analyze => {}
     }
 
-    let needs_image = matches!(target, ValidationTarget::Image)
-        || (cfg.image.enabled
+    let needs_screenshot = matches!(target, ValidationTarget::Screenshot)
+        || (cfg.screenshot.enabled
             && matches!(
                 target,
                 ValidationTarget::Fetch
@@ -1495,8 +1495,8 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
                     | ValidationTarget::Process
                     | ValidationTarget::Auto
             ));
-    if needs_image {
-        validate_image_target(cfg)?;
+    if needs_screenshot {
+        validate_screenshot_target(cfg)?;
     }
 
     match target {
@@ -1555,7 +1555,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         }
         ValidationTarget::Automeasure
         | ValidationTarget::Fetch
-        | ValidationTarget::Image
+        | ValidationTarget::Screenshot
         | ValidationTarget::Single
         | ValidationTarget::Trigger
         | ValidationTarget::Autoshot => {}
@@ -1564,7 +1564,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
     Ok(())
 }
 
-fn validate_image_target(cfg: &Config) -> Result<()> {
+fn validate_screenshot_target(cfg: &Config) -> Result<()> {
     let oscilloscope = &cfg
         .instruments
         .as_ref()
@@ -1749,8 +1749,8 @@ impl From<FetchV2> for Fetch {
     }
 }
 
-impl From<ImageV3> for Image {
-    fn from(value: ImageV3) -> Self {
+impl From<ScreenshotV3> for Screenshot {
+    fn from(value: ScreenshotV3) -> Self {
         Self {
             enabled: value.enabled,
         }

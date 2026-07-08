@@ -3,9 +3,6 @@ use crate::config::{Config, Connection};
 use anyhow::{Result, anyhow};
 use instruments::rigol::{DHO5108, DhoHorizontalSettings, DhoRawWaveform, DhoRawWaveformWritten};
 use std::io::Write;
-use std::time::Duration;
-
-const OSCILLOSCOPE_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub enum Oscilloscope {
     DHO5108(DHO5108),
@@ -26,11 +23,11 @@ impl OscilloscopeHandler {
 
         let osc = match (model, connection) {
             ("DHO5108", Connection::Tcpip { ip, port }) => {
-                let dho = DHO5108::open(ip, *port, Some(OSCILLOSCOPE_IO_TIMEOUT))?;
+                let dho = DHO5108::open(ip, *port, None)?;
                 Oscilloscope::DHO5108(dho)
             }
             ("DHO5108", Connection::Usbtmc { resource }) => {
-                let dho = DHO5108::open_usbtmc(resource, Some(OSCILLOSCOPE_IO_TIMEOUT))?;
+                let dho = DHO5108::open_usbtmc(resource, None)?;
                 Oscilloscope::DHO5108(dho)
             }
             (other, _) => return Err(anyhow!("Unknown oscilloscope model: {other}")),

@@ -100,7 +100,7 @@ Commands:
   trigger      Send trigger signal from the function generator
   autoshot     Run single + trigger
   fetch        Fetch oscilloscope data
-  image        Save an oscilloscope screenshot
+  screenshot   Save an oscilloscope screenshot
   automeasure  Run single + trigger + fetch
   reference    Analyze the reference signal
   sensor       Analyze the sensor signal
@@ -167,7 +167,7 @@ model = "DHO5108"
 output = "raw"             # "csv", "raw", or "csv_and_raw"
 analysis_input = "raw"     # "csv", "raw", or "auto"
 
-[image]
+[screenshot]
 enabled = true
 
 [plot]
@@ -250,25 +250,25 @@ with NI MAX or a VISA resource listing tool before putting it in the config.
 The minimal screenshot configuration is:
 
 ```toml
-[image]
+[screenshot]
 enabled = true
 ```
 
 When enabled, `fetch`, `automeasure`, `process`, and `auto` save one screenshot
 before waveform transfer. The fetch path first sends `:STOP`, reads the current
 display as PNG, saves it on the PC, and only then starts waveform queries. If
-image capture or PC storage fails, waveform fetching does not start. The
+screenshot capture or PC storage fails, waveform fetching does not start. The
 standalone command is available regardless of `enabled`:
 
 ```sh
-pmoke --config config.toml image
+pmoke --config config.toml screenshot
 ```
 
 pmoke uses the documented `:DISPlay:DATA? PNG` binary query and writes the
 returned image directly to:
 
 ```text
-<config.toml directory>/images/screenshot.png
+<config.toml directory>/screenshot/oscilloscope.png
 ```
 
 The image is validated before and after writing to a temporary file, synchronized
@@ -278,7 +278,8 @@ the existing file before the next capture.
 
 TCP/IP and USB-TMC use the same direct PC-storage flow. pmoke does not issue
 `:SAVE:IMAGe`, access the oscilloscope Local Disk, or require FTP. GPIB
-screenshot capture is not supported. SCPI reads have a 30-second I/O timeout.
+screenshot capture is not supported. Screenshot capture does not introduce a
+separate application-level I/O timeout.
 
 ## Fetch Output
 
@@ -402,8 +403,8 @@ Typical analysis output:
 ```text
 raw.csv
 raw_waveform/
-images/
-  screenshot.png
+screenshot/
+  oscilloscope.png
 lockin_results_ch3.csv
 lockin_rotated_ch3.csv
 kerr_results.csv

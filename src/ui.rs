@@ -78,6 +78,7 @@ pub fn read(message: impl Display) {
 
 pub fn saved(message: impl Display) {
     println!("{} {}", style(badge("SAVE")).magenta().bold(), message);
+    flush_stdout();
 }
 
 pub fn skipped(message: impl Display) {

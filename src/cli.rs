@@ -53,7 +53,7 @@ pub enum Command {
     },
     /// Capture an oscilloscope screenshot directly to the PC
     #[cfg(feature = "hw")]
-    Image,
+    Screenshot,
     /// Perform auto measurement (set single mode, trigger, fetch)
     #[cfg(feature = "hw")]
     Automeasure,
@@ -89,4 +89,16 @@ pub enum FetchFormat {
     Csv,
     Raw,
     CsvAndRaw,
+}
+
+#[cfg(all(test, feature = "hw"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screenshot_command_replaces_image_command() {
+        let cli = Cli::try_parse_from(["pmoke", "screenshot"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Screenshot)));
+        assert!(Cli::try_parse_from(["pmoke", "image"]).is_err());
+    }
 }

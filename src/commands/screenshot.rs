@@ -6,54 +6,54 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-const IMAGE_DIR: &str = "images";
-const IMAGE_FILENAME: &str = "screenshot.png";
+const SCREENSHOT_DIR: &str = "screenshot";
+const SCREENSHOT_FILENAME: &str = "oscilloscope.png";
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 #[derive(Debug)]
-pub(crate) struct ImagePlan {
+pub(crate) struct ScreenshotPlan {
     temp_path: PathBuf,
     final_path: PathBuf,
 }
 
-pub fn image(cfg: &Config) -> Result<()> {
-    let plan = prepare_image(cfg)?;
+pub fn screenshot(cfg: &Config) -> Result<()> {
+    let plan = prepare_screenshot(cfg)?;
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
-    let saved = capture_image(&mut handler, &plan, false)?;
-    report_saved_image(&saved);
+    let saved = capture_screenshot(&mut handler, &plan, false)?;
+    report_saved_screenshot(&saved);
     Ok(())
 }
 
-pub(crate) fn prepare_image(cfg: &Config) -> Result<ImagePlan> {
+pub(crate) fn prepare_screenshot(cfg: &Config) -> Result<ScreenshotPlan> {
     cfg.instruments
         .as_ref()
         .ok_or_else(|| anyhow!("instruments.oscilloscope is required"))?;
-    prepare_image_output(&cfg.source_path)
+    prepare_screenshot_output(&cfg.source_path)
 }
 
-fn prepare_image_output(config_path: &Path) -> Result<ImagePlan> {
+fn prepare_screenshot_output(config_path: &Path) -> Result<ScreenshotPlan> {
     let config_parent = config_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let output_dir = config_parent.join(IMAGE_DIR);
+    let output_dir = config_parent.join(SCREENSHOT_DIR);
     ensure_image_directory(&output_dir)?;
 
-    let final_path = output_dir.join(IMAGE_FILENAME);
-    let temp_path = output_dir.join(format!(".{IMAGE_FILENAME}.tmp"));
+    let final_path = output_dir.join(SCREENSHOT_FILENAME);
+    let temp_path = output_dir.join(format!(".{SCREENSHOT_FILENAME}.tmp"));
     ensure_path_absent(&final_path, "screenshot output")?;
     ensure_path_absent(&temp_path, "screenshot temporary output")?;
 
-    Ok(ImagePlan {
+    Ok(ScreenshotPlan {
         temp_path,
         final_path,
     })
 }
 
-pub(crate) fn capture_image(
+pub(crate) fn capture_screenshot(
     handler: &mut OscilloscopeHandler,
-    plan: &ImagePlan,
+    plan: &ScreenshotPlan,
     stop_first: bool,
 ) -> Result<PathBuf> {
     if stop_first {
@@ -68,11 +68,11 @@ pub(crate) fn capture_image(
     write_display_image(plan, &image).context("failed to save oscilloscope screenshot to PC")
 }
 
-pub(crate) fn report_saved_image(path: &Path) {
+pub(crate) fn report_saved_screenshot(path: &Path) {
     ui::saved(format!("oscilloscope screenshot: {}", path.display()));
 }
 
-fn write_display_image(plan: &ImagePlan, image: &[u8]) -> io::Result<PathBuf> {
+fn write_display_image(plan: &ScreenshotPlan, image: &[u8]) -> io::Result<PathBuf> {
     validate_png_bytes(image)?;
     let output = OpenOptions::new()
         .write(true)
@@ -86,7 +86,7 @@ fn write_display_image(plan: &ImagePlan, image: &[u8]) -> io::Result<PathBuf> {
 }
 
 fn write_display_image_inner(
-    plan: &ImagePlan,
+    plan: &ScreenshotPlan,
     image: &[u8],
     mut output: File,
 ) -> io::Result<PathBuf> {
@@ -173,30 +173,30 @@ mod tests {
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
-    fn image_output_uses_config_sibling_directory_and_refuses_existing_outputs() {
+    fn screenshot_output_uses_config_sibling_directory_and_refuses_existing_outputs() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
         let config_path = dir.join("config.toml");
 
-        let plan = prepare_image_output(&config_path).unwrap();
-        assert_eq!(plan.final_path, dir.join("images/screenshot.png"));
-        assert_eq!(plan.temp_path, dir.join("images/.screenshot.png.tmp"));
-        assert!(dir.join("images").is_dir());
+        let plan = prepare_screenshot_output(&config_path).unwrap();
+        assert_eq!(plan.final_path, dir.join("screenshot/oscilloscope.png"));
+        assert_eq!(plan.temp_path, dir.join("screenshot/.oscilloscope.png.tmp"));
+        assert!(dir.join("screenshot").is_dir());
 
         fs::write(&plan.final_path, b"existing").unwrap();
-        assert!(prepare_image_output(&config_path).is_err());
+        assert!(prepare_screenshot_output(&config_path).is_err());
         fs::remove_file(&plan.final_path).unwrap();
         fs::write(&plan.temp_path, b"partial").unwrap();
-        assert!(prepare_image_output(&config_path).is_err());
+        assert!(prepare_screenshot_output(&config_path).is_err());
 
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn image_directory_rejects_non_directories() {
+    fn screenshot_directory_rejects_non_directories() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
-        let file = dir.join("images");
+        let file = dir.join("screenshot");
         fs::write(&file, b"not a directory").unwrap();
 
         assert!(ensure_image_directory(&file).is_err());
@@ -208,7 +208,7 @@ mod tests {
     fn display_image_is_validated_and_published_atomically() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
-        let plan = test_image_plan(&dir);
+        let plan = test_screenshot_plan(&dir);
         let image = b"\x89PNG\r\n\x1a\npayload";
 
         let path = write_display_image(&plan, image).unwrap();
@@ -223,7 +223,7 @@ mod tests {
     fn invalid_display_image_does_not_create_output() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
-        let plan = test_image_plan(&dir);
+        let plan = test_screenshot_plan(&dir);
 
         let error = write_display_image(&plan, b"not a png").unwrap_err();
 
@@ -237,7 +237,7 @@ mod tests {
     fn display_image_does_not_remove_temporary_file_owned_by_another_writer() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
-        let plan = test_image_plan(&dir);
+        let plan = test_screenshot_plan(&dir);
         fs::write(&plan.temp_path, b"other writer").unwrap();
 
         assert!(write_display_image(&plan, PNG_SIGNATURE).is_err());
@@ -250,7 +250,7 @@ mod tests {
     fn late_output_collision_preserves_existing_file_and_removes_temporary_file() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
-        let plan = test_image_plan(&dir);
+        let plan = test_screenshot_plan(&dir);
         fs::write(&plan.final_path, b"other screenshot").unwrap();
 
         let error = write_display_image(&plan, b"\x89PNG\r\n\x1a\npayload").unwrap_err();
@@ -265,8 +265,8 @@ mod tests {
     fn screenshot_publish_rolls_back_final_file_when_temp_cleanup_fails() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
-        let temp_path = dir.join(".screenshot.png.tmp");
-        let final_path = dir.join("screenshot.png");
+        let temp_path = dir.join(".oscilloscope.png.tmp");
+        let final_path = dir.join("oscilloscope.png");
         fs::write(&temp_path, b"complete image").unwrap();
 
         let error = publish_temp_file_with(&temp_path, &final_path, |_| {
@@ -283,10 +283,10 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    fn test_image_plan(dir: &Path) -> ImagePlan {
-        ImagePlan {
-            temp_path: dir.join(".screenshot.png.tmp"),
-            final_path: dir.join("screenshot.png"),
+    fn test_screenshot_plan(dir: &Path) -> ScreenshotPlan {
+        ScreenshotPlan {
+            temp_path: dir.join(".oscilloscope.png.tmp"),
+            final_path: dir.join("oscilloscope.png"),
         }
     }
 
@@ -297,7 +297,7 @@ mod tests {
             .as_nanos();
         let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "pmoke_image_test_{}_{}_{}",
+            "pmoke_screenshot_test_{}_{}_{}",
             std::process::id(),
             nanos,
             sequence

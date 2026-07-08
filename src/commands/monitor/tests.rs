@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{
-    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Image, Kerr, KerrType, Lockin, LockinLpfKind,
-    Phase, Plot, Pulse, Reference, Roles, Window,
+    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Kerr, KerrType, Lockin, LockinLpfKind, Phase,
+    Plot, Pulse, Reference, Roles, Screenshot, Window,
 };
 
 fn test_app() -> MonitorApp {
@@ -29,7 +29,7 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                 version: 3,
                 instruments: None,
                 fetch: Fetch::default(),
-                image: Image::default(),
+                screenshot: Screenshot::default(),
                 plot: Plot::default(),
                 source_path: "config.toml".into(),
                 legacy_timebase: None,
@@ -481,9 +481,9 @@ fn analyze_timeline_marks_done_current_and_pending_steps() {
 
 #[cfg(feature = "hw")]
 #[test]
-fn failed_image_timeline_marks_stage_failed_instead_of_pending() {
-    let timeline = timeline_for_action(MonitorAction::Image, &[], StageProgressState::Failed)
-        .expect("image has a timeline stage");
+fn failed_screenshot_timeline_marks_stage_failed_instead_of_pending() {
+    let timeline = timeline_for_action(MonitorAction::Screenshot, &[], StageProgressState::Failed)
+        .expect("screenshot has a timeline stage");
 
     assert_eq!(timeline.done, 0);
     assert_eq!(timeline.total, 1);
