@@ -125,19 +125,9 @@ pub struct Config {
     pub kerr: Kerr,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Image {
     pub enabled: bool,
-    pub scope_path: String,
-}
-
-impl Default for Image {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            scope_path: "C:/screenshot.png".to_string(),
-        }
-    }
 }
 
 impl Config {
@@ -500,7 +490,6 @@ struct FetchV2 {
 #[serde(default, deny_unknown_fields)]
 struct ImageV3 {
     enabled: bool,
-    scope_path: String,
 }
 
 impl Default for ImageV3 {
@@ -508,7 +497,6 @@ impl Default for ImageV3 {
         let default = Image::default();
         Self {
             enabled: default.enabled,
-            scope_path: default.scope_path,
         }
     }
 }
@@ -1202,14 +1190,6 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
-    if let Err(message) = validate_image_scope_path(&cfg.image.scope_path) {
-        errors.push(ConfigDiagnostic::new(
-            DiagnosticKind::Validation,
-            Some("image.scope_path".to_string()),
-            message,
-            Some("use an ASCII path such as C:/screenshot.png".to_string()),
-        ));
-    }
     if cfg.plot.max_points == 0 {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
@@ -1475,53 +1455,6 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     ValidationSummary { warnings, errors }
 }
 
-pub fn validate_image_scope_path(path: &str) -> std::result::Result<(), String> {
-    if !path.is_ascii() {
-        return Err("image.scope_path must contain only ASCII characters".to_string());
-    }
-    if path.contains(['\r', '\n', '"', '\'', ';', '\\']) {
-        return Err("image.scope_path contains an unsupported character".to_string());
-    }
-    let Some((drive, relative)) = path.split_once(":/") else {
-        return Err("image.scope_path must start with C:/, D:/, or E:/".to_string());
-    };
-    if !matches!(drive, "C" | "D" | "E") || relative.is_empty() {
-        return Err("image.scope_path must start with C:/, D:/, or E:/".to_string());
-    }
-    let components = relative.split('/').collect::<Vec<_>>();
-    if components
-        .iter()
-        .any(|part| part.is_empty() || *part == "." || *part == "..")
-    {
-        return Err("image.scope_path must not contain empty, '.' or '..' components".to_string());
-    }
-    if components.iter().any(|part| {
-        !part
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    }) {
-        return Err(
-            "image.scope_path components may contain only letters, digits, '.', '_' and '-'"
-                .to_string(),
-        );
-    }
-    let filename = components.last().expect("relative path is non-empty");
-    if filename.len() > 16 {
-        return Err(
-            "image.scope_path filename, including its extension, must be at most 16 characters"
-                .to_string(),
-        );
-    }
-    let extension = filename.rsplit_once('.').map(|(_, extension)| extension);
-    if !matches!(
-        extension.map(str::to_ascii_lowercase).as_deref(),
-        Some("png" | "bmp" | "jpg")
-    ) {
-        return Err("image.scope_path extension must be .png, .bmp, or .jpg".to_string());
-    }
-    Ok(())
-}
-
 fn is_safe_debug_label(label: &str) -> bool {
     !label.is_empty()
         && label.len() <= 64
@@ -1638,14 +1571,8 @@ fn validate_image_target(cfg: &Config) -> Result<()> {
         .ok_or_else(|| anyhow!("instruments.oscilloscope is required"))?
         .oscilloscope;
     match &oscilloscope.connection {
-        Connection::Tcpip { .. } if cfg.image.scope_path != "C:/screenshot.png" => {
-            bail!(
-                "TCP screenshot transfer currently supports only C:/screenshot.png; got {}",
-                cfg.image.scope_path
-            );
-        }
         Connection::Gpib { .. } => {
-            bail!("DHO5108 image saving does not support GPIB");
+            bail!("DHO5108 display capture does not support GPIB");
         }
         Connection::Tcpip { .. } | Connection::Usbtmc { .. } => {}
     }
@@ -1826,7 +1753,6 @@ impl From<ImageV3> for Image {
     fn from(value: ImageV3) -> Self {
         Self {
             enabled: value.enabled,
-            scope_path: value.scope_path,
         }
     }
 }

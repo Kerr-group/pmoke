@@ -1,9 +1,7 @@
 use crate::communications::validator::validate_oscilloscope;
 use crate::config::{Config, Connection};
 use anyhow::{Result, anyhow};
-use instruments::rigol::{
-    DHO5108, DhoHorizontalSettings, DhoImageFormat, DhoRawWaveform, DhoRawWaveformWritten,
-};
+use instruments::rigol::{DHO5108, DhoHorizontalSettings, DhoRawWaveform, DhoRawWaveformWritten};
 use std::io::Write;
 use std::time::Duration;
 
@@ -113,25 +111,9 @@ impl OscilloscopeHandler {
         }
     }
 
-    pub fn save_image_with<T, F>(
-        &mut self,
-        path: &str,
-        format: DhoImageFormat,
-        after_save: F,
-    ) -> Result<T>
-    where
-        F: FnOnce() -> std::io::Result<T>,
-    {
+    pub fn capture_display_png(&mut self) -> Result<Vec<u8>> {
         match &mut self.inner {
-            Oscilloscope::DHO5108(dev) => {
-                Ok(dev.save_image_with(path, format, OSCILLOSCOPE_IO_TIMEOUT, after_save)?)
-            }
-        }
-    }
-
-    pub fn capture_display_image(&mut self, format: DhoImageFormat) -> Result<Vec<u8>> {
-        match &mut self.inner {
-            Oscilloscope::DHO5108(dev) => Ok(dev.capture_display_image(format)?),
+            Oscilloscope::DHO5108(dev) => Ok(dev.capture_display_png()?),
         }
     }
 }

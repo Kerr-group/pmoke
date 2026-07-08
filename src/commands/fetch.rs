@@ -116,7 +116,7 @@ fn initialize_fetch_handler(cfg: &Config) -> Result<OscilloscopeHandler> {
 
     if let Some(plan) = image_plan {
         let saved = capture_image(&mut handler, &plan, true)?;
-        report_saved_image(&plan, saved.as_deref());
+        report_saved_image(&saved);
     }
 
     Ok(handler)

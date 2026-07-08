@@ -255,70 +255,30 @@ enabled = true
 ```
 
 When enabled, `fetch`, `automeasure`, `process`, and `auto` save one screenshot
-before waveform transfer. The fetch path first sends `:STOP`, saves the image,
-waits for completion, and only then starts waveform queries. If image saving or
-transfer fails, waveform fetching does not start. The standalone command is
-available regardless of `enabled`:
+before waveform transfer. The fetch path first sends `:STOP`, reads the current
+display as PNG, saves it on the PC, and only then starts waveform queries. If
+image capture or PC storage fails, waveform fetching does not start. The
+standalone command is available regardless of `enabled`:
 
 ```sh
 pmoke --config config.toml image
 ```
 
-The default oscilloscope path is `C:/screenshot.png`. pmoke temporarily selects
-PNG, color, non-inverted output with a header and enables oscilloscope-side
-overwrite. It restores the previous image settings afterward. `*CLS` is used to
-clear SCPI status and errors; pmoke does not send the waveform-clearing
-`:CLEar` command.
-
-For a TCP/IP oscilloscope connection, pmoke then downloads `screenshot.png`
-from the FTP login directory over anonymous passive FTP in binary mode to:
+pmoke uses the documented `:DISPlay:DATA? PNG` binary query and writes the
+returned image directly to:
 
 ```text
 <config.toml directory>/images/screenshot.png
 ```
 
-The oscilloscope FTP server must be enabled and reachable on port 21. No FTP
-username or password setting is required. A temporary file is validated for
-size and image signature before being published. pmoke refuses to overwrite an
-existing PC-side screenshot or temporary file; move or rename the existing file
-before the next capture.
+The image is validated before and after writing to a temporary file, synchronized
+to disk, and then published without exposing a partial final file. pmoke refuses
+to overwrite an existing PC-side screenshot or temporary file; move or rename
+the existing file before the next capture.
 
-For a TCP/IP capture, pmoke removes an existing Local Disk `screenshot.png` over
-FTP and verifies its removal before issuing `:SAVE:IMAGe`. This prevents a stale
-file from satisfying post-save verification when the oscilloscope reports save
-completion without actually overwriting the file.
-
-A DHO5000 may report `:SAVE:STATus?` completion without publishing a newly
-created file in Local Disk. If the file is still absent after a short FTP
-visibility grace period, pmoke reads the current screen with the documented
-`:DISPlay:DATA?` binary query, uploads it as `screenshot.png` to Local Disk,
-verifies it, and then copies it to the PC. This fallback is used only when the
-normal `:SAVE:IMAGe` path completed but the expected file is absent. A successful
-fallback is reported as information rather than a warning; only fallback failure
-causes the command to fail.
-
-Screenshot operations do not wait indefinitely. SCPI image saving and FTP
-transfer each have a 30-second deadline. Normal FTP file visibility gets a
-2-second grace period before the fallback above; individual FTP network
-operations fail after 5 seconds without progress. A timeout is reported as an
-error and prevents waveform fetching from starting.
-
-TCP transfer intentionally requires the default `C:/screenshot.png` path so the
-SCPI save path and FTP path cannot diverge. With USB-TMC, the image remains on
-the oscilloscope or attached storage and no PC copy is attempted. USB-TMC may
-override the destination when needed:
-
-```toml
-[image]
-enabled = true
-scope_path = "D:/shot.jpg"
-```
-
-GPIB screenshot capture is not supported.
-
-Valid destinations begin with `C:/`, `D:/`, or `E:/`; valid formats are PNG,
-BMP, and JPG. Keep the full filename, including the extension, at 16 ASCII
-characters or fewer as required by the DHO5000 save interface.
+TCP/IP and USB-TMC use the same direct PC-storage flow. pmoke does not issue
+`:SAVE:IMAGe`, access the oscilloscope Local Disk, or require FTP. GPIB
+screenshot capture is not supported. SCPI reads have a 30-second I/O timeout.
 
 ## Fetch Output
 

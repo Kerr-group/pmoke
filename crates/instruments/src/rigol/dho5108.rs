@@ -1,7 +1,6 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 enum DhoTransport {
     Tcp(BufReader<TcpStream>),
@@ -42,32 +41,6 @@ pub struct DhoRawWaveform {
 pub struct DhoRawWaveformWritten {
     pub preamble: DhoWaveformPreamble,
     pub byte_count: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DhoImageFormat {
-    Png,
-    Bmp,
-    Jpg,
-}
-
-impl DhoImageFormat {
-    fn scpi(self) -> &'static str {
-        match self {
-            Self::Png => "PNG",
-            Self::Bmp => "BMP",
-            Self::Jpg => "JPG",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DhoImageSettings {
-    format: String,
-    color: String,
-    invert: bool,
-    header: bool,
-    overwrite: bool,
 }
 
 #[allow(dead_code)]
@@ -267,140 +240,8 @@ impl DHO5108 {
         self.write_line(":STOP")
     }
 
-    pub fn capture_display_image(&mut self, format: DhoImageFormat) -> io::Result<Vec<u8>> {
-        self.query_binary(&format!(":DISPlay:DATA? {}", format.scpi()))
-    }
-
-    pub fn save_image_with<T, F>(
-        &mut self,
-        path: &str,
-        format: DhoImageFormat,
-        timeout: Duration,
-        after_save: F,
-    ) -> io::Result<T>
-    where
-        F: FnOnce() -> io::Result<T>,
-    {
-        let deadline = Instant::now()
-            .checked_add(timeout)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "image timeout overflow"))?;
-        let previous = self.query_image_settings(deadline)?;
-
-        let primary = self
-            .save_image_inner(path, format, deadline)
-            .and_then(|()| after_save());
-        let restore = self.restore_image_settings(&previous);
-
-        match (primary, restore) {
-            (Ok(value), Ok(())) => Ok(value),
-            (Err(primary), Ok(())) => Err(primary),
-            (Ok(_), Err(restore)) => Err(io::Error::other(format!(
-                "image was saved, but oscilloscope image settings could not be restored: {restore}"
-            ))),
-            (Err(primary), Err(restore)) => Err(io::Error::other(format!(
-                "{primary}; additionally failed to restore oscilloscope image settings: {restore}"
-            ))),
-        }
-    }
-
-    fn query_image_settings(&mut self, deadline: Instant) -> io::Result<DhoImageSettings> {
-        Ok(DhoImageSettings {
-            format: parse_image_format_response(&self.query_with_deadline(
-                ":SAVE:IMAGe:FORMat?",
-                deadline,
-                "image save",
-            )?)?,
-            color: parse_image_color_response(&self.query_with_deadline(
-                ":SAVE:IMAGe:COLor?",
-                deadline,
-                "image save",
-            )?)?,
-            invert: parse_scpi_bool(
-                &self.query_with_deadline(":SAVE:IMAGe:INVert?", deadline, "image save")?,
-                "image invert",
-            )?,
-            header: parse_scpi_bool(
-                &self.query_with_deadline(":SAVE:IMAGe:HEADer?", deadline, "image save")?,
-                "image header",
-            )?,
-            overwrite: parse_scpi_bool(
-                &self.query_with_deadline(":SAVE:OVERlap?", deadline, "image save")?,
-                "save overwrite",
-            )?,
-        })
-    }
-
-    fn save_image_inner(
-        &mut self,
-        path: &str,
-        format: DhoImageFormat,
-        deadline: Instant,
-    ) -> io::Result<()> {
-        self.write_lines(&[
-            "*CLS".to_string(),
-            format!(":SAVE:IMAGe:FORMat {}", format.scpi()),
-            ":SAVE:IMAGe:COLor COLor".to_string(),
-            ":SAVE:IMAGe:INVert OFF".to_string(),
-            ":SAVE:IMAGe:HEADer ON".to_string(),
-            ":SAVE:OVERlap ON".to_string(),
-        ])?;
-        validate_opc_response(&self.query_with_deadline("*OPC?", deadline, "image save")?)?;
-        let error = self.query_with_deadline(":SYSTem:ERRor:NEXT?", deadline, "image save")?;
-        validate_system_error_response(&error)?;
-
-        self.write_line(&format!(":SAVE:IMAGe {path}"))?;
-        validate_opc_response(&self.query_with_deadline("*OPC?", deadline, "image save")?)?;
-        loop {
-            let status = self.query_with_deadline(":SAVE:STATus?", deadline, "image save")?;
-            match status.trim() {
-                "1" => break,
-                "0" => thread::sleep(Duration::from_millis(100)),
-                response => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("invalid :SAVE:STATus? response: {response:?}"),
-                    ));
-                }
-            }
-        }
-
-        let error = self.query_with_deadline(":SYSTem:ERRor:NEXT?", deadline, "image save")?;
-        validate_system_error_response(&error)
-    }
-
-    fn query_with_deadline(
-        &mut self,
-        command: &str,
-        deadline: Instant,
-        operation: &str,
-    ) -> io::Result<String> {
-        ensure_before_deadline(deadline, operation)?;
-        let response = self.query(command)?;
-        ensure_before_deadline(deadline, operation)?;
-        Ok(response)
-    }
-
-    fn restore_image_settings(&mut self, settings: &DhoImageSettings) -> io::Result<()> {
-        self.write_lines(&[
-            format!(":SAVE:IMAGe:FORMat {}", settings.format),
-            format!(":SAVE:IMAGe:COLor {}", settings.color),
-            format!(
-                ":SAVE:IMAGe:INVert {}",
-                if settings.invert { "ON" } else { "OFF" }
-            ),
-            format!(
-                ":SAVE:IMAGe:HEADer {}",
-                if settings.header { "ON" } else { "OFF" }
-            ),
-            format!(
-                ":SAVE:OVERlap {}",
-                if settings.overwrite { "ON" } else { "OFF" }
-            ),
-            "*OPC?".to_string(),
-        ])?;
-        validate_opc_response(&self.read_line()?)?;
-        let error = self.query(":SYSTem:ERRor:NEXT?")?;
-        validate_system_error_response(&error)
+    pub fn capture_display_png(&mut self) -> io::Result<Vec<u8>> {
+        self.query_binary(":DISPlay:DATA? PNG")
     }
 
     fn setup_raw_word_fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {
@@ -525,72 +366,6 @@ fn validate_opc_response(response: &str) -> io::Result<()> {
         io::ErrorKind::InvalidData,
         format!("invalid *OPC? response: {response:?}"),
     ))
-}
-
-fn parse_image_format_response(response: &str) -> io::Result<String> {
-    match response.trim().to_ascii_uppercase().as_str() {
-        "PNG" => Ok("PNG".to_string()),
-        "BMP" => Ok("BMP".to_string()),
-        "JPG" | "JPEG" => Ok("JPG".to_string()),
-        value => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid image format response: {value:?}"),
-        )),
-    }
-}
-
-fn parse_image_color_response(response: &str) -> io::Result<String> {
-    match response.trim().to_ascii_uppercase().as_str() {
-        "COL" | "COLOR" => Ok("COLor".to_string()),
-        "GRAY" => Ok("GRAY".to_string()),
-        value => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid image color response: {value:?}"),
-        )),
-    }
-}
-
-fn parse_scpi_bool(response: &str, name: &str) -> io::Result<bool> {
-    match response.trim().to_ascii_uppercase().as_str() {
-        "1" | "ON" => Ok(true),
-        "0" | "OFF" => Ok(false),
-        value => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid {name} response: {value:?}"),
-        )),
-    }
-}
-
-fn validate_system_error_response(response: &str) -> io::Result<()> {
-    let code = response
-        .split_once(',')
-        .map_or(response, |(code, _)| code)
-        .trim()
-        .parse::<i32>()
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid system error response {response:?}: {error}"),
-            )
-        })?;
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
-            "oscilloscope reported an image save error: {response}"
-        )))
-    }
-}
-
-fn ensure_before_deadline(deadline: Instant, operation: &str) -> io::Result<()> {
-    if Instant::now() < deadline {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!("{operation} timed out"),
-        ))
-    }
 }
 
 fn read_binary_block_length<R: BufRead>(reader: &mut R) -> io::Result<usize> {
@@ -722,8 +497,6 @@ mod tests {
     use super::*;
     use std::io::{BufReader, Cursor, Read};
     use std::net::TcpListener;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     fn binary_block_length_skips_leftover_line_terminators() {
@@ -802,19 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn image_response_parsers_accept_documented_values() {
-        assert_eq!(parse_image_format_response("PNG\n").unwrap(), "PNG");
-        assert_eq!(parse_image_format_response("JPEG").unwrap(), "JPG");
-        assert_eq!(parse_image_color_response("COL").unwrap(), "COLor");
-        assert_eq!(parse_image_color_response("GRAY").unwrap(), "GRAY");
-        assert!(parse_scpi_bool("ON", "test").unwrap());
-        assert!(!parse_scpi_bool("0", "test").unwrap());
-        validate_system_error_response("0,\"No error\"").unwrap();
-        assert!(validate_system_error_response("-113,\"Undefined header\"").is_err());
-    }
-
-    #[test]
-    fn display_image_uses_documented_binary_query() {
+    fn display_png_uses_documented_binary_query() {
         let image = b"\x89PNG\r\n\x1a\npayload".to_vec();
         let expected_image = image.clone();
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -838,222 +599,7 @@ mod tests {
         });
         let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
 
-        assert_eq!(
-            dho.capture_display_image(DhoImageFormat::Png).unwrap(),
-            image
-        );
+        assert_eq!(dho.capture_display_png().unwrap(), image);
         server.join().unwrap();
-    }
-
-    #[test]
-    fn save_image_applies_settings_and_restores_previous_values() {
-        let expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
-        let (port, server) = spawn_scpi_server(expected);
-        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
-        let callback_called = Arc::new(AtomicBool::new(false));
-        let callback_flag = Arc::clone(&callback_called);
-
-        let value = dho
-            .save_image_with(
-                "C:/screenshot.png",
-                DhoImageFormat::Png,
-                Duration::from_secs(2),
-                move || {
-                    callback_flag.store(true, Ordering::SeqCst);
-                    Ok(42)
-                },
-            )
-            .unwrap();
-
-        assert_eq!(value, 42);
-        assert!(callback_called.load(Ordering::SeqCst));
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn save_image_restores_settings_after_scope_error() {
-        let expected = image_save_exchange("-113,\"Undefined header\"", "0,\"No error\"");
-        let (port, server) = spawn_scpi_server(expected);
-        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
-        let callback_called = Arc::new(AtomicBool::new(false));
-        let callback_flag = Arc::clone(&callback_called);
-
-        let error = dho
-            .save_image_with(
-                "C:/screenshot.png",
-                DhoImageFormat::Png,
-                Duration::from_secs(2),
-                move || {
-                    callback_flag.store(true, Ordering::SeqCst);
-                    Ok(())
-                },
-            )
-            .unwrap_err();
-
-        assert!(error.to_string().contains("Undefined header"));
-        assert!(!callback_called.load(Ordering::SeqCst));
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn save_image_does_not_start_save_after_configuration_error() {
-        let mut expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
-        let config_error_index = expected
-            .iter()
-            .position(|(command, _)| *command == ":SYSTem:ERRor:NEXT?")
-            .expect("image exchange must check configuration errors");
-        expected[config_error_index].1 = Some("-113,\"Undefined header\"");
-        let restore_index = expected
-            .iter()
-            .position(|(command, _)| *command == ":SAVE:IMAGe:FORMat BMP")
-            .expect("image exchange must restore previous settings");
-        expected.drain(config_error_index + 1..restore_index);
-        let (port, server) = spawn_scpi_server(expected);
-        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
-        let callback_called = Arc::new(AtomicBool::new(false));
-        let callback_flag = Arc::clone(&callback_called);
-
-        let error = dho
-            .save_image_with(
-                "C:/screenshot.png",
-                DhoImageFormat::Png,
-                Duration::from_secs(2),
-                move || {
-                    callback_flag.store(true, Ordering::SeqCst);
-                    Ok(())
-                },
-            )
-            .unwrap_err();
-
-        assert!(error.to_string().contains("Undefined header"));
-        assert!(!callback_called.load(Ordering::SeqCst));
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn save_image_restores_settings_after_transfer_error() {
-        let expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
-        let (port, server) = spawn_scpi_server(expected);
-        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
-
-        let error = dho
-            .save_image_with(
-                "C:/screenshot.png",
-                DhoImageFormat::Png,
-                Duration::from_secs(2),
-                || Err::<(), _>(io::Error::other("FTP transfer failed")),
-            )
-            .unwrap_err();
-
-        assert!(error.to_string().contains("FTP transfer failed"));
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn save_image_times_out_when_scope_remains_busy() {
-        let mut expected = image_save_exchange("0,\"No error\"", "0,\"No error\"");
-        let status_index = expected
-            .iter()
-            .position(|(command, _)| *command == ":SAVE:STATus?")
-            .expect("image exchange must query save status");
-        expected[status_index].1 = Some("0");
-        let skipped_error_query = expected.remove(status_index + 1);
-        assert_eq!(skipped_error_query.0, ":SYSTem:ERRor:NEXT?");
-        let (port, server) = spawn_scpi_server(expected);
-        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
-        let started = Instant::now();
-
-        let error = dho
-            .save_image_with(
-                "C:/screenshot.png",
-                DhoImageFormat::Png,
-                Duration::from_millis(25),
-                || Ok(()),
-            )
-            .unwrap_err();
-
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert!(started.elapsed() < Duration::from_millis(500));
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn save_image_deadline_covers_initial_settings_queries() {
-        let (port, server) = spawn_scpi_server(Vec::new());
-        let mut dho = DHO5108::open("127.0.0.1", port, Some(Duration::from_secs(2))).unwrap();
-        let callback_called = Arc::new(AtomicBool::new(false));
-        let callback_flag = Arc::clone(&callback_called);
-
-        let error = dho
-            .save_image_with(
-                "C:/screenshot.png",
-                DhoImageFormat::Png,
-                Duration::ZERO,
-                move || {
-                    callback_flag.store(true, Ordering::SeqCst);
-                    Ok(())
-                },
-            )
-            .unwrap_err();
-
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert!(!callback_called.load(Ordering::SeqCst));
-        server.join().unwrap();
-    }
-
-    fn image_save_exchange(
-        save_error: &'static str,
-        restore_error: &'static str,
-    ) -> Vec<(&'static str, Option<&'static str>)> {
-        vec![
-            (":SAVE:IMAGe:FORMat?", Some("BMP")),
-            (":SAVE:IMAGe:COLor?", Some("GRAY")),
-            (":SAVE:IMAGe:INVert?", Some("1")),
-            (":SAVE:IMAGe:HEADer?", Some("0")),
-            (":SAVE:OVERlap?", Some("0")),
-            ("*CLS", None),
-            (":SAVE:IMAGe:FORMat PNG", None),
-            (":SAVE:IMAGe:COLor COLor", None),
-            (":SAVE:IMAGe:INVert OFF", None),
-            (":SAVE:IMAGe:HEADer ON", None),
-            (":SAVE:OVERlap ON", None),
-            ("*OPC?", Some("1")),
-            (":SYSTem:ERRor:NEXT?", Some("0,\"No error\"")),
-            (":SAVE:IMAGe C:/screenshot.png", None),
-            ("*OPC?", Some("1")),
-            (":SAVE:STATus?", Some("1")),
-            (":SYSTem:ERRor:NEXT?", Some(save_error)),
-            (":SAVE:IMAGe:FORMat BMP", None),
-            (":SAVE:IMAGe:COLor GRAY", None),
-            (":SAVE:IMAGe:INVert ON", None),
-            (":SAVE:IMAGe:HEADer OFF", None),
-            (":SAVE:OVERlap OFF", None),
-            ("*OPC?", Some("1")),
-            (":SYSTem:ERRor:NEXT?", Some(restore_error)),
-        ]
-    }
-
-    fn spawn_scpi_server(
-        expected: Vec<(&'static str, Option<&'static str>)>,
-    ) -> (u16, std::thread::JoinHandle<()>) {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = std::thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let mut reader = BufReader::new(stream);
-            for (command, response) in expected {
-                let mut actual = String::new();
-                reader.read_line(&mut actual).unwrap();
-                assert_eq!(actual.trim_end(), command);
-                if let Some(response) = response {
-                    writeln!(reader.get_mut(), "{response}").unwrap();
-                    reader.get_mut().flush().unwrap();
-                }
-            }
-        });
-        (port, handle)
     }
 }

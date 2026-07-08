@@ -36,9 +36,9 @@ lpf_half_window_cycles = 1.0
     match load_from_str(&text) {
         ConfigLoad::Ready { config, .. } => {
             assert!(!config.image.enabled);
-            assert_eq!(config.image.scope_path, "C:/screenshot.png");
             let normalized = toml::to_string_pretty(&config).unwrap();
             assert!(normalized.contains("[image]"));
+            assert!(!normalized.contains("scope_path"));
             assert!(!normalized.contains("source_path"));
         }
         other => panic!("expected ready load, got {other:?}"),
@@ -46,107 +46,62 @@ lpf_half_window_cycles = 1.0
 }
 
 #[test]
-fn image_config_accepts_minimal_and_custom_scope_path() {
-    for (section, expected_path) in [
-        ("[image]\nenabled = true", "C:/screenshot.png"),
-        (
-            "[image]\nenabled = true\nscope_path = \"D:/shot.jpg\"",
-            "D:/shot.jpg",
-        ),
-    ] {
-        let text = v3_base_lockin(
-            r#"
+fn image_config_accepts_minimal_pc_capture_settings() {
+    let text = v3_base_lockin(
+        r#"
 workers = 1
 stride_samples = 1
 lpf_half_window_cycles = 1.0
 "#,
-        )
-        .replacen("version = 3", &format!("version = 3\n\n{section}"), 1);
+    )
+    .replacen("version = 3", "version = 3\n\n[image]\nenabled = true", 1);
 
-        match load_from_str(&text) {
-            ConfigLoad::Ready { config, .. } => {
-                assert!(config.image.enabled);
-                assert_eq!(config.image.scope_path, expected_path);
-            }
-            other => panic!("expected ready load for {section}, got {other:?}"),
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert!(config.image.enabled);
         }
+        other => panic!("expected ready image config, got {other:?}"),
     }
 }
 
 #[test]
-fn image_scope_path_validation_rejects_unsafe_or_unsupported_paths() {
-    for path in [
-        "screenshot.png",
-        "F:/screenshot.png",
-        "C:/../shot.png",
-        "C:/shot;*CLS.png",
-        "C:/スクリーン.png",
-        "C:/screenshot.gif",
-        "C:/this-name-is-too-long.png",
-    ] {
-        let text = v3_base_lockin(
-            r#"
+fn image_config_rejects_removed_scope_path_setting() {
+    let text = v3_base_lockin(
+        r#"
 workers = 1
 stride_samples = 1
 lpf_half_window_cycles = 1.0
 "#,
-        )
-        .replacen(
-            "version = 3",
-            &format!("version = 3\n\n[image]\nscope_path = {path:?}"),
-            1,
-        );
+    )
+    .replacen(
+        "version = 3",
+        "version = 3\n\n[image]\nenabled = true\nscope_path = \"C:/screenshot.png\"",
+        1,
+    );
 
-        match load_from_str(&text) {
-            ConfigLoad::Diagnostics(diag) => assert!(
-                diag.diagnostics
-                    .iter()
-                    .any(|issue| issue.path.as_deref() == Some("image.scope_path")),
-                "missing image.scope_path diagnostic for {path:?}: {diag:?}"
-            ),
-            other => panic!("expected diagnostics for {path:?}, got {other:?}"),
-        }
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics
+                .iter()
+                .any(|issue| issue.message.contains("unknown field `scope_path`")),
+            "missing removed scope_path diagnostic: {diag:?}"
+        ),
+        other => panic!("expected diagnostics for removed scope_path, got {other:?}"),
     }
 }
 
 #[test]
-fn image_target_enforces_tcp_transfer_path_but_accepts_usbtmc_storage() {
-    for (connection, enabled, path, target, should_pass) in [
+fn image_target_accepts_pc_capture_transports_and_rejects_gpib() {
+    for (connection, should_pass) in [
         (
             r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
-            true,
-            "C:/screenshot.png",
-            ValidationTarget::Fetch,
-            true,
-        ),
-        (
-            r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
-            true,
-            "D:/shot.jpg",
-            ValidationTarget::Fetch,
-            false,
-        ),
-        (
-            r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
-            false,
-            "D:/shot.jpg",
-            ValidationTarget::Fetch,
             true,
         ),
         (
             r#"{ protocol = "usbtmc", resource = "USB0::DHO::INSTR" }"#,
             true,
-            "D:/shot.jpg",
-            ValidationTarget::Image,
-            true,
         ),
-        (
-            r#"{ protocol = "gpib", board = 0, address = 1 }"#,
-            true,
-            "C:/screenshot.png",
-            ValidationTarget::Image,
-            false,
-        ),
+        (r#"{ protocol = "gpib", board = 0, address = 1 }"#, false),
     ] {
         let text = v3_base_lockin(
             r#"
@@ -165,8 +120,7 @@ connection = {connection}
 model = "DHO5108"
 
 [image]
-enabled = {enabled}
-scope_path = {path:?}"#
+enabled = true"#
             ),
             1,
         );
@@ -175,9 +129,9 @@ scope_path = {path:?}"#
         };
 
         assert_eq!(
-            validate_for_target(&config, target).is_ok(),
+            validate_for_target(&config, ValidationTarget::Image).is_ok(),
             should_pass,
-            "unexpected validation result for {connection}, enabled={enabled}, path={path}, target={target:?}"
+            "unexpected image validation result for {connection}"
         );
     }
 }
