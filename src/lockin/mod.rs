@@ -13,7 +13,7 @@ use crate::constants::{HARMONICS, LI_HEADER, LI_RESULTS_NAME};
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
-use crate::lockin::sensor::run_sensor;
+use crate::lockin::sensor::{SensorOutput, run_sensor};
 use crate::utils::waveform::read_all_fetched_waveforms;
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
@@ -25,7 +25,7 @@ pub struct LockinProcessOutput {
     pub output_index_range: (usize, usize),
 }
 
-type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>);
+type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>);
 
 pub fn run(cfg: &Config) -> Result<()> {
     let pb = ui::spinner("reading fetched waveform data");
@@ -77,13 +77,17 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOut
     let ref_fit_params = run_fit_ref_core(cfg, t, ref_data)?;
 
     // Sensor analysis
-    let (mut t_stride, mut sensor_integral_stride) =
-        run_sensor(cfg, t, &sensor_data, &sensor_ch, ref_fit_params.f_ref)?;
+    let SensorOutput {
+        t: mut t_stride,
+        rate: mut sensor_rate_stride,
+        integral: mut sensor_integral_stride,
+    } = run_sensor(cfg, t, &sensor_data, &sensor_ch, ref_fit_params.f_ref)?;
 
     // Lock-in processing
     let lockin_output = li_process(cfg, t, &signal_ch, &signal_data, ref_fit_params)?;
     trim_lockin_context_to_result(
         &mut t_stride,
+        &mut sensor_rate_stride,
         &mut sensor_integral_stride,
         &lockin_output.result,
         lockin_output.base_index_range,
@@ -99,6 +103,7 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOut
             &li_result_fname,
             &headers,
             &t_stride,
+            &sensor_rate_stride,
             &sensor_integral_stride,
             li_result,
         )?;
@@ -133,7 +138,12 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOut
         },
     )?;
 
-    Ok((t_stride, sensor_integral_stride, lockin_output.result))
+    Ok((
+        t_stride,
+        sensor_rate_stride,
+        sensor_integral_stride,
+        lockin_output.result,
+    ))
 }
 
 pub fn li_process(
@@ -275,6 +285,7 @@ pub fn li_process(
 
 fn trim_lockin_context_to_result(
     t_stride: &mut Vec<f64>,
+    sensor_rate_stride: &mut [Vec<f64>],
     sensor_integral_stride: &mut [Vec<f64>],
     result: &[Vec<Vec<f64>>],
     base_index_range: (usize, usize),
@@ -339,7 +350,10 @@ fn trim_lockin_context_to_result(
             t_stride.len()
         );
     }
-    for col in sensor_integral_stride.iter() {
+    for col in sensor_rate_stride
+        .iter()
+        .chain(sensor_integral_stride.iter())
+    {
         if col.len() != t_stride.len() {
             bail!(
                 "sensor stride length ({}) does not match time stride length ({})",
@@ -355,7 +369,10 @@ fn trim_lockin_context_to_result(
     let trim_front = output_start - base_start;
     t_stride.drain(..trim_front);
     t_stride.truncate(target_len);
-    for col in sensor_integral_stride {
+    for col in sensor_rate_stride
+        .iter_mut()
+        .chain(sensor_integral_stride.iter_mut())
+    {
         if target_len > col.len() {
             bail!(
                 "lock-in result length ({target_len}) exceeds sensor stride length ({})",

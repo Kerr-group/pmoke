@@ -33,7 +33,8 @@ pub fn analyze(cfg: &Config) -> Result<()> {
 }
 
 pub fn run_analyze(cfg: &Config, data: WaveformData) -> Result<()> {
-    let (t_stride, sensor_integral_stride, li_results) = run_li(cfg, &data.t, &data.channels)?;
+    let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results) =
+        run_li(cfg, &data.t, &data.channels)?;
 
     // run phase analysis here
     let ch = cfg.phase_signal_ch();
@@ -42,12 +43,23 @@ pub fn run_analyze(cfg: &Config, data: WaveformData) -> Result<()> {
         ui::skipped("phase analysis: no channels specified");
         return Ok(());
     }
-    let li_rotated_results =
-        run_phase_analysis(cfg, &t_stride, &sensor_integral_stride, &li_results)?;
+    let li_rotated_results = run_phase_analysis(
+        cfg,
+        &t_stride,
+        &sensor_rate_stride,
+        &sensor_integral_stride,
+        &li_results,
+    )?;
     drop(li_results);
 
     // run Kerr analysis here
-    run_kerr_analysis(cfg, &t_stride, &sensor_integral_stride, &li_rotated_results)?;
+    run_kerr_analysis(
+        cfg,
+        &t_stride,
+        &sensor_rate_stride,
+        &sensor_integral_stride,
+        &li_rotated_results,
+    )?;
 
     Ok(())
 }
