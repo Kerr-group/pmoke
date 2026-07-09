@@ -1,7 +1,8 @@
 use super::{
     ConfigLoad, Connection, FetchAnalysisInput, FetchOutput, LockinLpfKind, PlotDecimation,
-    load_from_str,
+    ValidationTarget, load_from_path, load_from_str, validate_for_target,
 };
+use std::fs;
 
 #[test]
 fn v2_fetch_output_defaults_to_csv() {
@@ -20,6 +21,183 @@ lpf_half_window_cycles = 1.0
         }
         other => panic!("expected ready load, got {other:?}"),
     }
+}
+
+#[test]
+fn screenshot_config_defaults_to_disabled() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert!(!config.screenshot.enabled);
+            let normalized = toml::to_string_pretty(&config).unwrap();
+            assert!(normalized.contains("[screenshot]"));
+            assert!(!normalized.contains("scope_path"));
+            assert!(!normalized.contains("source_path"));
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
+fn screenshot_config_accepts_minimal_pc_capture_settings() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 3",
+        "version = 3\n\n[screenshot]\nenabled = true",
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { config, .. } => {
+            assert!(config.screenshot.enabled);
+        }
+        other => panic!("expected ready screenshot config, got {other:?}"),
+    }
+}
+
+#[test]
+fn screenshot_config_rejects_removed_scope_path_setting() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 3",
+        "version = 3\n\n[screenshot]\nenabled = true\nscope_path = \"C:/screenshot.png\"",
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics
+                .iter()
+                .any(|issue| issue.message.contains("unknown field `scope_path`")),
+            "missing removed scope_path diagnostic: {diag:?}"
+        ),
+        other => panic!("expected diagnostics for removed scope_path, got {other:?}"),
+    }
+}
+
+#[test]
+fn screenshot_config_rejects_legacy_image_table() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen("version = 3", "version = 3\n\n[image]\nenabled = true", 1);
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics
+                .iter()
+                .any(|issue| issue.message.contains("unknown field `image`")),
+            "missing legacy image diagnostic: {diag:?}"
+        ),
+        other => panic!("expected diagnostics for legacy image config, got {other:?}"),
+    }
+}
+
+#[test]
+fn screenshot_target_accepts_pc_capture_transports_and_rejects_gpib() {
+    for (connection, should_pass) in [
+        (
+            r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
+            true,
+        ),
+        (
+            r#"{ protocol = "usbtmc", resource = "USB0::DHO::INSTR" }"#,
+            true,
+        ),
+        (r#"{ protocol = "gpib", board = 0, address = 1 }"#, false),
+    ] {
+        let text = v3_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+        )
+        .replacen(
+            "version = 3",
+            &format!(
+                r#"version = 3
+
+[instruments.oscilloscope]
+connection = {connection}
+model = "DHO5108"
+
+[screenshot]
+enabled = true"#
+            ),
+            1,
+        );
+        let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+            panic!("expected ready config for {connection}");
+        };
+
+        assert_eq!(
+            validate_for_target(&config, ValidationTarget::Screenshot).is_ok(),
+            should_pass,
+            "unexpected screenshot validation result for {connection}"
+        );
+    }
+}
+
+#[test]
+fn load_from_path_records_config_location_without_serializing_it() {
+    let dir = std::env::temp_dir().join(format!(
+        "pmoke_screenshot_config_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&dir).unwrap();
+    let path = dir.join("experiment.toml");
+    fs::write(
+        &path,
+        v3_base_lockin(
+            r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+        ),
+    )
+    .unwrap();
+
+    match load_from_path(&path) {
+        ConfigLoad::Ready { config, .. } => {
+            assert_eq!(config.source_path, path);
+            assert!(
+                !toml::to_string_pretty(&config)
+                    .unwrap()
+                    .contains("source_path")
+            );
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

@@ -6,7 +6,11 @@ use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn eval_f64_expr(s: &str) -> Result<f64> {
     if contains_print_call(s) {
@@ -106,7 +110,10 @@ pub struct Config {
     pub version: u32,
     pub instruments: Option<Instruments>,
     pub fetch: Fetch,
+    pub screenshot: Screenshot,
     pub plot: Plot,
+    #[serde(skip_serializing)]
+    pub source_path: PathBuf,
     #[serde(skip_serializing)]
     pub legacy_timebase: Option<Timebase>,
     pub roles: Roles,
@@ -116,6 +123,11 @@ pub struct Config {
     pub lockin: Lockin,
     pub phase: Phase,
     pub kerr: Kerr,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Screenshot {
+    pub enabled: bool,
 }
 
 impl Config {
@@ -307,6 +319,7 @@ pub enum ValidationTarget {
     Trigger,
     Autoshot,
     Fetch,
+    Screenshot,
     Automeasure,
     Reference,
     Sensor,
@@ -410,6 +423,8 @@ struct ConfigV1 {
     #[allow(dead_code)]
     version: u32,
     instruments: Option<InstrumentsV1>,
+    #[serde(default)]
+    screenshot: ScreenshotV3,
     timebase: TimebaseV1,
     roles: RolesV1,
     channels: Vec<ChannelV1>,
@@ -428,6 +443,8 @@ struct ConfigV2 {
     instruments: Option<InstrumentsV2>,
     #[serde(default)]
     fetch: FetchV2,
+    #[serde(default)]
+    screenshot: ScreenshotV3,
     #[serde(default)]
     plot: PlotV2,
     timebase: TimebaseV2,
@@ -448,6 +465,8 @@ struct ConfigV3 {
     #[serde(default)]
     fetch: FetchV2,
     #[serde(default)]
+    screenshot: ScreenshotV3,
+    #[serde(default)]
     plot: PlotV2,
     roles: RolesV2,
     channels: Vec<ChannelV2>,
@@ -465,6 +484,21 @@ struct FetchV2 {
     output: FetchOutput,
     #[serde(default)]
     analysis_input: FetchAnalysisInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ScreenshotV3 {
+    enabled: bool,
+}
+
+impl Default for ScreenshotV3 {
+    fn default() -> Self {
+        let default = Screenshot::default();
+        Self {
+            enabled: default.enabled,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -754,7 +788,11 @@ pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
         }
     };
 
-    load_from_str(&text)
+    let mut load = load_from_str(&text);
+    if let ConfigLoad::Ready { config, .. } = &mut load {
+        config.source_path = path.to_path_buf();
+    }
+    load
 }
 
 pub fn load_from_str(s: &str) -> ConfigLoad {
@@ -954,7 +992,9 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
         version: 3,
         instruments: raw.instruments.map(Into::into),
         fetch: Fetch::default(),
+        screenshot: raw.screenshot.into(),
         plot: Plot::default(),
+        source_path: PathBuf::from("config.toml"),
         legacy_timebase: Some(raw.timebase.into()),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -1014,7 +1054,9 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         version: 3,
         instruments: raw.instruments.map(Into::into),
         fetch: raw.fetch.into(),
+        screenshot: raw.screenshot.into(),
         plot: raw.plot.into(),
+        source_path: PathBuf::from("config.toml"),
         legacy_timebase: Some(legacy_timebase),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -1071,7 +1113,9 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
         version: raw.version,
         instruments: raw.instruments.map(Into::into),
         fetch: raw.fetch.into(),
+        screenshot: raw.screenshot.into(),
         plot: raw.plot.into(),
+        source_path: PathBuf::from("config.toml"),
         legacy_timebase: None,
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -1425,6 +1469,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
     match target {
         ValidationTarget::Single
         | ValidationTarget::Fetch
+        | ValidationTarget::Screenshot
         | ValidationTarget::Process
         | ValidationTarget::Auto => {
             validate_oscilloscope_required(cfg)?;
@@ -1439,6 +1484,19 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         | ValidationTarget::Phase
         | ValidationTarget::Kerr
         | ValidationTarget::Analyze => {}
+    }
+
+    let needs_screenshot = matches!(target, ValidationTarget::Screenshot)
+        || (cfg.screenshot.enabled
+            && matches!(
+                target,
+                ValidationTarget::Fetch
+                    | ValidationTarget::Automeasure
+                    | ValidationTarget::Process
+                    | ValidationTarget::Auto
+            ));
+    if needs_screenshot {
+        validate_screenshot_target(cfg)?;
     }
 
     match target {
@@ -1497,11 +1555,27 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         }
         ValidationTarget::Automeasure
         | ValidationTarget::Fetch
+        | ValidationTarget::Screenshot
         | ValidationTarget::Single
         | ValidationTarget::Trigger
         | ValidationTarget::Autoshot => {}
     }
 
+    Ok(())
+}
+
+fn validate_screenshot_target(cfg: &Config) -> Result<()> {
+    let oscilloscope = &cfg
+        .instruments
+        .as_ref()
+        .ok_or_else(|| anyhow!("instruments.oscilloscope is required"))?
+        .oscilloscope;
+    match &oscilloscope.connection {
+        Connection::Gpib { .. } => {
+            bail!("DHO5108 display capture does not support GPIB");
+        }
+        Connection::Tcpip { .. } | Connection::Usbtmc { .. } => {}
+    }
     Ok(())
 }
 
@@ -1671,6 +1745,14 @@ impl From<FetchV2> for Fetch {
         Self {
             output: value.output,
             analysis_input: value.analysis_input,
+        }
+    }
+}
+
+impl From<ScreenshotV3> for Screenshot {
+    fn from(value: ScreenshotV3) -> Self {
+        Self {
+            enabled: value.enabled,
         }
     }
 }

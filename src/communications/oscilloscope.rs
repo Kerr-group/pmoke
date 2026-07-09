@@ -101,4 +101,16 @@ impl OscilloscopeHandler {
             Oscilloscope::DHO5108(dev) => Ok(dev.query_memory_depth()?),
         }
     }
+
+    pub fn stop(&mut self) -> Result<()> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.stop()?),
+        }
+    }
+
+    pub fn capture_display_png(&mut self) -> Result<Vec<u8>> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.capture_display_png()?),
+        }
+    }
 }

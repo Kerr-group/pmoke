@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{
     Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Kerr, KerrType, Lockin, LockinLpfKind, Phase,
-    Plot, Pulse, Reference, Roles, Window,
+    Plot, Pulse, Reference, Roles, Screenshot, Window,
 };
 
 fn test_app() -> MonitorApp {
@@ -29,7 +29,9 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                 version: 3,
                 instruments: None,
                 fetch: Fetch::default(),
+                screenshot: Screenshot::default(),
                 plot: Plot::default(),
+                source_path: "config.toml".into(),
                 legacy_timebase: None,
                 roles: Roles {
                     sensor_ch: vec![1],
@@ -475,6 +477,17 @@ fn analyze_timeline_marks_done_current_and_pending_steps() {
     assert_eq!(timeline.steps[1].state, TimelineStepState::Done);
     assert_eq!(timeline.steps[2].state, TimelineStepState::Current);
     assert_eq!(timeline.steps[3].state, TimelineStepState::Pending);
+}
+
+#[cfg(feature = "hw")]
+#[test]
+fn failed_screenshot_timeline_marks_stage_failed_instead_of_pending() {
+    let timeline = timeline_for_action(MonitorAction::Screenshot, &[], StageProgressState::Failed)
+        .expect("screenshot has a timeline stage");
+
+    assert_eq!(timeline.done, 0);
+    assert_eq!(timeline.total, 1);
+    assert_eq!(timeline.steps[0].state, TimelineStepState::Failed);
 }
 
 #[test]

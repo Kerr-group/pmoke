@@ -236,6 +236,14 @@ impl DHO5108 {
         parse_memory_depth(&raw)
     }
 
+    pub fn stop(&mut self) -> io::Result<()> {
+        self.write_line(":STOP")
+    }
+
+    pub fn capture_display_png(&mut self) -> io::Result<Vec<u8>> {
+        self.query_binary(":DISPlay:DATA? PNG")
+    }
+
     fn setup_raw_word_fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {
         // Send sequential setup commands in one write and synchronize once at the end.
         self.write_lines(&raw_word_setup_commands(ch, memory_depth))?;
@@ -488,6 +496,15 @@ fn parse_finite_f64(raw: &str, name: &str) -> io::Result<f64> {
 mod tests {
     use super::*;
     use std::io::{BufReader, Cursor, Read};
+    use std::net::TcpListener;
+
+    fn tcp_stream(dho: &DHO5108) -> &TcpStream {
+        match &dho.transport {
+            DhoTransport::Tcp(reader) => reader.get_ref(),
+            #[cfg(target_os = "windows")]
+            DhoTransport::Visa(_) => panic!("test instrument unexpectedly uses VISA"),
+        }
+    }
 
     #[test]
     fn binary_block_length_skips_leftover_line_terminators() {
@@ -563,5 +580,45 @@ mod tests {
         assert!(validate_opc_response("").is_err());
         assert!(validate_opc_response("0").is_err());
         assert!(validate_opc_response("ready").is_err());
+    }
+
+    #[test]
+    fn display_png_preserves_unlimited_timeout_and_allows_following_query() {
+        let image = b"\x89PNG\r\n\x1a\npayload".to_vec();
+        let expected_image = image.clone();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut command = String::new();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command.trim_end(), ":DISPlay:DATA? PNG");
+            write!(
+                reader.get_mut(),
+                "#{}{}",
+                expected_image.len().to_string().len(),
+                expected_image.len()
+            )
+            .unwrap();
+            reader.get_mut().write_all(&expected_image).unwrap();
+            reader.get_mut().write_all(b"\n").unwrap();
+            reader.get_mut().flush().unwrap();
+
+            command.clear();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command.trim_end(), ":ACQuire:MDEPth?");
+            reader.get_mut().write_all(b"200000000\n").unwrap();
+            reader.get_mut().flush().unwrap();
+        });
+        let mut dho = DHO5108::open("127.0.0.1", port, None).unwrap();
+
+        assert_eq!(tcp_stream(&dho).read_timeout().unwrap(), None);
+        assert_eq!(tcp_stream(&dho).write_timeout().unwrap(), None);
+        assert_eq!(dho.capture_display_png().unwrap(), image);
+        assert_eq!(tcp_stream(&dho).read_timeout().unwrap(), None);
+        assert_eq!(tcp_stream(&dho).write_timeout().unwrap(), None);
+        assert_eq!(dho.query_memory_depth().unwrap(), 200_000_000);
+        server.join().unwrap();
     }
 }
