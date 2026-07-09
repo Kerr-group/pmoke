@@ -1,6 +1,6 @@
 use super::{
     ConfigLoad, Connection, FetchAnalysisInput, FetchOutput, LockinLpfKind, PlotDecimation,
-    ValidationTarget, load_from_path, load_from_str, validate_for_target,
+    ValidationTarget, load_from_path, load_from_str, validate_for_target, validate_sensor_metadata,
 };
 use std::fs;
 
@@ -904,6 +904,86 @@ lpf_debug_label = "../bad"
         }
         other => panic!("expected diagnostics, got {:?}", other),
     }
+}
+
+#[test]
+fn sensor_scale_to_abs_max_is_accepted_for_sensor_channel() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen("factor = 1.0", "scale_to_abs_max = -55.0", 1);
+
+    let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+        panic!("expected ready load");
+    };
+
+    validate_sensor_metadata(&config).unwrap();
+    assert_eq!(config.channels[0].factor, None);
+    assert_eq!(config.channels[0].scale_to_abs_max, Some(-55.0));
+
+    let normalized = toml::to_string_pretty(&config).unwrap();
+    assert!(normalized.contains("scale_to_abs_max = -55.0"));
+}
+
+#[test]
+fn sensor_scale_to_abs_max_rejects_ambiguous_sensor_scale() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen("factor = 1.0", "factor = 1.0\nscale_to_abs_max = 55.0", 1);
+
+    let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+        panic!("expected ready load");
+    };
+
+    let error = validate_sensor_metadata(&config).unwrap_err();
+    assert!(error.to_string().contains("cannot set both"));
+}
+
+#[test]
+fn sensor_scale_to_abs_max_rejects_zero_target() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen("factor = 1.0", "scale_to_abs_max = 0.0", 1);
+
+    let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+        panic!("expected ready load");
+    };
+
+    let error = validate_sensor_metadata(&config).unwrap_err();
+    assert!(error.to_string().contains("finite and non-zero"));
+}
+
+#[test]
+fn sensor_scale_to_abs_max_rejects_non_sensor_channel() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen("index = 2", "index = 2\nscale_to_abs_max = 1.0", 1);
+
+    let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+        panic!("expected ready load");
+    };
+
+    let error = validate_sensor_metadata(&config).unwrap_err();
+    assert!(error.to_string().contains("not listed in roles.sensor_ch"));
 }
 
 fn v2_base_lockin(lockin: &str) -> String {

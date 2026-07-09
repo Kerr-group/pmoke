@@ -42,6 +42,7 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                     .map(|index| Channel {
                         index,
                         factor: None,
+                        scale_to_abs_max: None,
                         label: Some(format!("channel {index}")),
                         unit_out: None,
                     })

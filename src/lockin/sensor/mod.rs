@@ -2,7 +2,7 @@ pub mod pulse_calculator;
 pub mod sensor_integral_plot;
 pub mod sensor_raw_plot;
 
-use crate::config::Config;
+use crate::config::{Channel, Config};
 use crate::constants::FETCHED_FNAME;
 use crate::lockin::reference::run_fit_ref;
 use crate::lockin::stride::{li_stride_1d, li_stride_2d};
@@ -11,9 +11,15 @@ use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
 
 pub struct SensorMeta<'a> {
-    pub factor: f64,
+    pub scale: SensorScale,
     pub label: &'a str,
     pub unit: &'a str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SensorScale {
+    Factor(f64),
+    ScaleToAbsMax(f64),
 }
 
 pub struct SensorOutput {
@@ -111,18 +117,46 @@ pub fn run_sensor(
         .next()
         .map(|w| w[1] - w[0])
         .ok_or_else(|| anyhow::anyhow!("time axis must contain at least two samples"))?;
-    let s_rate = calculate_sensor_rates(s_cols, &c_bg_arr, &sensor_meta);
-
-    let s_integral = s_cols
+    let sensor_series = s_cols
         .iter()
         .zip(c_bg_arr.iter())
         .zip(sensor_meta.iter())
         .map(|((s, &c_bg), meta)| {
-            let integral =
-                pulse_calculator::PulseIntegralCalculator::new(dt).integrate(s, c_bg, meta.factor);
+            let series = calculate_sensor_series(dt, s, c_bg, meta)?;
             pb.inc(1);
-            integral
+            Ok(series)
         })
+        .collect::<Result<Vec<_>>>()?;
+    let scale_summary = sensor_ch
+        .iter()
+        .zip(sensor_meta.iter())
+        .zip(sensor_series.iter())
+        .filter_map(|((&ch, meta), series)| match meta.scale {
+            SensorScale::ScaleToAbsMax(target) => Some((
+                format!("ch{ch} {}", meta.label),
+                format!(
+                    "scale_to_abs_max={:.6e} {}, unscaled_max_abs={:.6e}, factor={:.6e}",
+                    target,
+                    meta.unit,
+                    series
+                        .unscaled_max_abs
+                        .expect("auto-scaled sensor series must record unscaled max abs"),
+                    series.factor
+                ),
+            )),
+            SensorScale::Factor(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if !scale_summary.is_empty() {
+        ui::settings_table("Sensor auto scales", scale_summary);
+    }
+    let s_rate = sensor_series
+        .iter()
+        .map(|series| series.rate.clone())
+        .collect::<Vec<_>>();
+    let s_integral = sensor_series
+        .iter()
+        .map(|series| series.integral.clone())
         .collect::<Vec<_>>();
 
     let elapsed = start.elapsed();
@@ -261,9 +295,7 @@ pub fn extract_sensor_metadata<'a>(cfg: &'a Config) -> Result<Vec<SensorMeta<'a>
                 .find(|c| c.index == *ch)
                 .with_context(|| format!("channel {} is not defined in [channels]", ch))?;
 
-            let factor = conf
-                .factor
-                .with_context(|| format!("channel {} has no 'factor'", ch))?;
+            let scale = sensor_scale_from_channel(conf)?;
             let label = conf
                 .label
                 .as_deref()
@@ -273,13 +305,37 @@ pub fn extract_sensor_metadata<'a>(cfg: &'a Config) -> Result<Vec<SensorMeta<'a>
                 .as_deref()
                 .with_context(|| format!("channel {} has no 'unit_out'", ch))?;
 
-            Ok(SensorMeta {
-                factor,
-                label,
-                unit,
-            })
+            Ok(SensorMeta { scale, label, unit })
         })
         .collect::<Result<Vec<_>>>()
+}
+
+fn sensor_scale_from_channel(channel: &Channel) -> Result<SensorScale> {
+    match (channel.factor, channel.scale_to_abs_max) {
+        (Some(factor), None) => {
+            if !factor.is_finite() {
+                bail!("channel {} factor must be finite", channel.index);
+            }
+            Ok(SensorScale::Factor(factor))
+        }
+        (None, Some(scale_to_abs_max)) => {
+            if !scale_to_abs_max.is_finite() || scale_to_abs_max == 0.0 {
+                bail!(
+                    "channel {} scale_to_abs_max must be finite and non-zero",
+                    channel.index
+                );
+            }
+            Ok(SensorScale::ScaleToAbsMax(scale_to_abs_max))
+        }
+        (Some(_), Some(_)) => bail!(
+            "channel {} cannot set both 'factor' and 'scale_to_abs_max'",
+            channel.index
+        ),
+        (None, None) => bail!(
+            "channel {} must set either 'factor' or 'scale_to_abs_max'",
+            channel.index
+        ),
+    }
 }
 
 fn validate_sensor_lengths(t: &[f64], s_cols: &[&[f64]]) -> Result<()> {
@@ -322,28 +378,103 @@ fn calculate_background_averages(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> 
         .collect::<Result<Vec<_>>>()
 }
 
+#[cfg(test)]
 fn calculate_sensor_rates(
     s_cols: &[&[f64]],
     c_bg_arr: &[f64],
     sensor_meta: &[SensorMeta<'_>],
-) -> Vec<Vec<f64>> {
+) -> Result<Vec<Vec<f64>>> {
     s_cols
         .iter()
         .zip(c_bg_arr.iter())
         .zip(sensor_meta.iter())
         .map(|((s, &c_bg), meta)| {
-            s.iter()
-                .map(|&value| (value - c_bg) * meta.factor)
-                .collect::<Vec<_>>()
+            let factor = match meta.scale {
+                SensorScale::Factor(factor) => factor,
+                SensorScale::ScaleToAbsMax(_) => {
+                    bail!("scale_to_abs_max requires integral-based factor calculation")
+                }
+            };
+            Ok(s.iter()
+                .map(|&value| (value - c_bg) * factor)
+                .collect::<Vec<_>>())
         })
         .collect()
+}
+
+#[derive(Debug)]
+struct SensorSeries {
+    factor: f64,
+    unscaled_max_abs: Option<f64>,
+    rate: Vec<f64>,
+    integral: Vec<f64>,
+}
+
+fn calculate_sensor_series(
+    dt: f64,
+    data: &[f64],
+    background: f64,
+    meta: &SensorMeta<'_>,
+) -> Result<SensorSeries> {
+    let unscaled_integral =
+        pulse_calculator::PulseIntegralCalculator::new(dt).integrate(data, background, 1.0);
+    let (factor, unscaled_max_abs) = match meta.scale {
+        SensorScale::Factor(factor) => {
+            if !factor.is_finite() {
+                bail!("sensor factor is not finite");
+            }
+            (factor, None)
+        }
+        SensorScale::ScaleToAbsMax(target) => {
+            if !target.is_finite() || target == 0.0 {
+                bail!("sensor scale_to_abs_max must be finite and non-zero");
+            }
+            let max_abs = max_abs_finite(&unscaled_integral)?;
+            (target / max_abs, Some(max_abs))
+        }
+    };
+    if !factor.is_finite() {
+        bail!("sensor factor is not finite");
+    }
+    let rate = data
+        .iter()
+        .map(|&value| (value - background) * factor)
+        .collect::<Vec<_>>();
+    let integral = unscaled_integral
+        .iter()
+        .map(|&value| value * factor)
+        .collect::<Vec<_>>();
+    Ok(SensorSeries {
+        factor,
+        unscaled_max_abs,
+        rate,
+        integral,
+    })
+}
+
+fn max_abs_finite(values: &[f64]) -> Result<f64> {
+    let mut max_abs = None;
+    for &value in values {
+        if !value.is_finite() {
+            bail!("sensor unscaled integral contains a non-finite value");
+        }
+        let abs = value.abs();
+        if max_abs.is_none_or(|current| abs > current) {
+            max_abs = Some(abs);
+        }
+    }
+    let max_abs = max_abs.ok_or_else(|| anyhow::anyhow!("sensor unscaled integral is empty"))?;
+    if max_abs == 0.0 {
+        bail!("sensor unscaled integral maximum is zero");
+    }
+    Ok(max_abs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        SensorMeta, calculate_sensor_rates, maximum_absolute_integral,
-        validate_sensor_channel_alignment, validate_sensor_lengths,
+        SensorMeta, SensorScale, calculate_sensor_rates, calculate_sensor_series,
+        maximum_absolute_integral, validate_sensor_channel_alignment, validate_sensor_lengths,
     };
 
     #[test]
@@ -362,7 +493,7 @@ mod tests {
         let data = [0.0, 1.0];
         let columns = [&data[..]];
         let metadata = [SensorMeta {
-            factor: 1.0,
+            scale: SensorScale::Factor(1.0),
             label: "sensor",
             unit: "V s",
         }];
@@ -412,20 +543,50 @@ mod tests {
         let second = [10.0, 8.0, 6.0];
         let metadata = [
             SensorMeta {
-                factor: 2.0,
+                scale: SensorScale::Factor(2.0),
                 label: "field",
                 unit: "T",
             },
             SensorMeta {
-                factor: -0.5,
+                scale: SensorScale::Factor(-0.5),
                 label: "current",
                 unit: "A",
             },
         ];
 
-        let rates = calculate_sensor_rates(&[&first, &second], &[1.5, 8.0], &metadata);
+        let rates = calculate_sensor_rates(&[&first, &second], &[1.5, 8.0], &metadata).unwrap();
 
         assert_eq!(rates[0], vec![-1.0, 1.0, 5.0]);
         assert_eq!(rates[1], vec![-1.0, -0.0, 1.0]);
+    }
+
+    #[test]
+    fn sensor_scale_to_abs_max_uses_unscaled_integral_maximum() {
+        let data = [1.0, 3.0, 5.0];
+        let metadata = SensorMeta {
+            scale: SensorScale::ScaleToAbsMax(-8.0),
+            label: "field",
+            unit: "T",
+        };
+
+        let series = calculate_sensor_series(1.0, &data, 1.0, &metadata).unwrap();
+
+        assert_eq!(series.factor, -2.0);
+        assert_eq!(series.unscaled_max_abs, Some(4.0));
+        assert_eq!(series.rate, vec![-0.0, -4.0, -8.0]);
+        assert_eq!(series.integral, vec![-0.0, -2.0, -8.0]);
+    }
+
+    #[test]
+    fn sensor_scale_to_abs_max_rejects_zero_integral() {
+        let metadata = SensorMeta {
+            scale: SensorScale::ScaleToAbsMax(1.0),
+            label: "field",
+            unit: "T",
+        };
+
+        let error = calculate_sensor_series(1.0, &[1.0, 1.0], 1.0, &metadata).unwrap_err();
+
+        assert!(error.to_string().contains("maximum is zero"));
     }
 }
