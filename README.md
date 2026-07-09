@@ -213,13 +213,9 @@ window_samples = 1_000
 
 [lockin]
 workers = 2
-stride_samples = 1_000
-lpf_kind = "sync_iir_zero_phase"
+stride_samples = 100
+lpf_kind = "boxcar_legacy"
 lpf_half_window_cycles = 1.0
-lpf_cutoff_ref_ratio = 2e-2
-lpf_stopband_atten_db = 60.0
-lpf_sync_average_cycles = 1.0
-lpf_iir_order = 2
 lpf_debug_output = false
 lpf_debug_overwrite = false
 
@@ -501,21 +497,17 @@ output_rate = 1 / (x_increment * lockin.stride_samples)
 cutoff_hz < 0.45 * output_rate
 ```
 
-Example starting point for `f_ref = 1 MHz`:
+Simple `boxcar_legacy` starting point:
 
 ```toml
 [lockin]
-lpf_kind = "sync_iir_zero_phase"
+stride_samples = 100
+lpf_kind = "boxcar_legacy"
 lpf_half_window_cycles = 1.0
-lpf_cutoff_ref_ratio = 2e-2
-lpf_sync_average_cycles = 1.0
-lpf_iir_order = 2
 ```
 
-If the result is noisy, try `lpf_iir_order = 4` or a smaller cutoff. If the pulse
-shape is too rounded, use a larger cutoff. `lpf_half_window_cycles` describes
-support width for FIR-related calculations; it is not a universal precision
-setting.
+Use a smaller `stride_samples` when you want to keep dense data for later
+smoothing. Increase it when the CSV is unnecessarily large.
 
 ## Lock-in Debug Output
 
