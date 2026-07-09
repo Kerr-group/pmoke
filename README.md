@@ -1,156 +1,61 @@
 # pmoke
 
-`pmoke` is a command-line tool for pulsed Magneto-Optical Kerr Effect
-(MOKE) measurements. It controls the oscilloscope and function generator,
-fetches waveform data, runs reference/sensor/lock-in/phase/Kerr analysis, and
-keeps the measurement settings in a reproducible TOML config.
+`pmoke` is a command-line tool for pulsed MOKE measurements.
 
-The current code is optimized for Rigol DHO5000-series oscilloscope workflows,
-including large-memory WORD waveform transfer and raw binary preservation.
+It controls the oscilloscope and function generator, fetches waveform data, and
+runs the full analysis chain:
 
-## Features
-
-- Single TOML config for instruments, channel roles, timing, filtering, plotting,
-  and Kerr conversion.
-- Hardware commands for oscilloscope single mode, function-generator trigger,
-  screenshot capture, data fetch, and automated measurement.
-- CSV output for compatibility and raw WORD output for large DHO5000 captures.
-- Analysis can read either `raw.csv` or preserved raw binary waveform files.
-- Reference fitting, sensor background/integral processing, numerical lock-in,
-  phase rotation, and Kerr-angle extraction.
-- Non-interactive PNG plot generation by default, with optional interactive
-  matplotlib windows.
-- Live terminal dashboard through `pmoke monitor`.
-
-## Requirements
-
-### Core
-
-- Rust stable
-- Python 3
-- Python packages:
-  - `numpy`
-  - `scipy`
-  - `matplotlib`
-  - `lmfit`
-  - `gsplot`
-
-### Hardware I/O
-
-Default builds include hardware support.
-
-- Windows:
-  - NI-VISA for TCPIP/USB-TMC VISA resources
-  - NI-488.2 when using GPIB
-  - Visual C++ Build Tools for Rust native dependencies
-- Linux:
-  - `linux-gpib` when using GPIB
-  - VISA/USB-TMC support as required by the selected backend
-
-For analysis-only use, install without hardware features:
-
-```sh
-cargo install --path . --no-default-features
+```text
+reference -> sensor integral -> lock-in -> phase rotation -> Kerr angle
 ```
 
-## Installation
+The current workflow is tuned for Rigol DHO5000-series oscilloscopes, large
+WORD waveform captures, and reproducible TOML-based analysis.
+
+## What It Does
+
+- Runs hardware shots, waveform fetch, screenshots, and analysis from one config.
+- Stores large captures as raw DHO WORD files with scaling metadata.
+- Reads either `raw_waveform/` or `raw.csv` for analysis.
+- Produces lock-in, phase-rotated, Kerr, and PNG plot outputs.
+- Opens a live terminal dashboard with `pmoke monitor`.
+
+## Install
+
+Hardware-enabled build:
 
 ```sh
 cargo install --path .
 ```
 
-From the repository root during development:
+Analysis-only build:
+
+```sh
+cargo install --path . --no-default-features
+```
+
+Development commands:
 
 ```sh
 cargo run -- --config config.toml show
-cargo run --no-default-features -- --config config.toml analyze
-```
-
-For performance-sensitive runs, build or run the optimized release binary:
-
-```sh
-cargo build --release
-cargo run --release -- --config config.toml analyze
+cargo run --release -- --config config.toml process
 cargo run --release --no-default-features -- --config config.toml analyze
 ```
-
-For a machine-local binary, `target-cpu=native` may improve CPU-bound analysis by
-enabling instructions available on the build machine:
-
-```sh
-RUSTFLAGS="-C target-cpu=native" cargo build --release
-RUSTFLAGS="-C target-cpu=native" cargo run --release --no-default-features -- --config config.toml analyze
-```
-
-Use this only for binaries that will run on the same class of CPU. For portable
-release artifacts, omit `target-cpu=native`.
 
 ## Commands
 
 ```text
-pmoke [OPTIONS] [COMMAND]
-
-Options:
-  -c, --config <FILE>  Path to the configuration file (default: config.toml)
-
-Commands:
-  show         Validate and print the normalized config
-  monitor      Open the live terminal dashboard
-  single       Set the oscilloscope to single mode
-  trigger      Send trigger signal from the function generator
-  autoshot     Run single + trigger
-  fetch        Fetch oscilloscope data
-  screenshot   Save an oscilloscope screenshot
-  automeasure  Run single + trigger + fetch
-  reference    Analyze the reference signal
-  sensor       Analyze the sensor signal
-  li           Run numerical lock-in analysis
-  phase        Rotate lock-in phase
-  kerr         Calculate Kerr angle
-  analyze      Run reference + sensor + lock-in + phase + Kerr
-  process      Run fetch + analyze after manual pulse triggering
-  auto         Run automeasure + analyze
-  completions  Generate shell completion script
+pmoke --config config.toml show       # validate config
+pmoke --config config.toml monitor    # terminal dashboard
+pmoke --config config.toml fetch      # fetch waveforms
+pmoke --config config.toml analyze    # analyze existing data
+pmoke --config config.toml process    # fetch + analyze
+pmoke --config config.toml auto       # single + trigger + fetch + analyze
 ```
 
 If no command is provided, `pmoke` opens `monitor`.
 
-Hardware commands are available only in default builds. Analysis commands are
-available with `--no-default-features`.
-
-## Typical Workflows
-
-Validate a config:
-
-```sh
-pmoke --config config.toml show
-```
-
-Fetch data only:
-
-```sh
-pmoke --config config.toml fetch
-```
-
-Run the full analysis after data already exists:
-
-```sh
-pmoke --config config.toml analyze
-```
-
-Fetch and analyze:
-
-```sh
-pmoke --config config.toml process
-```
-
-Fully automated shot:
-
-```sh
-pmoke --config config.toml auto
-```
-
-## Example `config.toml`
+## Example Config
 
 ```toml
 version = 3
@@ -164,8 +69,8 @@ connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
 model = "DHO5108"
 
 [fetch]
-output = "raw"             # "csv", "raw", or "csv_and_raw"
-analysis_input = "raw"     # "csv", "raw", or "auto"
+output = "raw"          # "csv", "raw", or "csv_and_raw"
+analysis_input = "raw"  # "csv", "raw", or "auto"
 
 [screenshot]
 enabled = true
@@ -199,7 +104,7 @@ index = 3
 [[channels]]
 index = 4
 factor = 1.0
-label = "test"
+label = "sensor"
 unit_out = "a.u."
 
 [pulse]
@@ -224,328 +129,98 @@ m_omega_t0_offset = ["0", "0", "0", "0", "0", "0"]
 
 [kerr]
 use_sensor_ch = 1
-kerr_type = "harmonics"    # "standard" or "harmonics"
+kerr_type = "harmonics" # "standard" or "harmonics"
 factor = -1.0
 ```
 
-## Instrument Connections
+## Data Layout
 
-Supported connection protocols:
-
-```toml
-connection = { protocol = "gpib", board = 0, address = 11 }
-connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
-connection = { protocol = "usbtmc", resource = "USB0::0x1AB1::0x0450::DHO5A27090041::INSTR" }
-```
-
-USB-TMC uses a VISA resource string. On Windows, confirm the exact resource name
-with NI MAX or a VISA resource listing tool before putting it in the config.
-
-## Oscilloscope Screenshots
-
-The minimal screenshot configuration is:
-
-```toml
-[screenshot]
-enabled = true
-```
-
-When enabled, `fetch`, `automeasure`, `process`, and `auto` save one screenshot
-before waveform transfer. The fetch path first sends `:STOP`, reads the current
-display as PNG, saves it on the PC, and only then starts waveform queries. If
-screenshot capture or PC storage fails, waveform fetching does not start. The
-standalone command is available regardless of `enabled`:
-
-```sh
-pmoke --config config.toml screenshot
-```
-
-pmoke uses the documented `:DISPlay:DATA? PNG` binary query and writes the
-returned image directly to:
-
-```text
-<config.toml directory>/screenshot/oscilloscope.png
-```
-
-The image is validated before and after writing to a temporary file, synchronized
-to disk, and then published without exposing a partial final file. pmoke refuses
-to overwrite an existing PC-side screenshot or temporary file; move or rename
-the existing file before the next capture.
-
-TCP/IP and USB-TMC use the same direct PC-storage flow. pmoke does not issue
-`:SAVE:IMAGe`, access the oscilloscope Local Disk, or require FTP. GPIB
-screenshot capture is not supported. Screenshot capture does not introduce a
-separate application-level I/O timeout.
-
-## Fetch Output
-
-`pmoke fetch` uses `[fetch].output` unless overridden on the command line:
-
-```toml
-[fetch]
-output = "csv"              # writes raw.csv
-output = "raw"              # writes raw_waveform/
-output = "csv_and_raw"      # writes both
-```
-
-For large DHO5000 captures, use raw WORD as the normal path:
-
-```toml
-[fetch]
-output = "raw"
-analysis_input = "raw" # or "auto" while migrating existing directories
-```
-
-This avoids making `raw.csv` part of the hot path. The raw WORD files preserve
-the oscilloscope payload bytes, and `metadata.toml` stores the scaling needed to
-reconstruct both voltage and time values later.
-
-Command-line overrides:
-
-```sh
-pmoke fetch --format csv --out raw.csv
-pmoke fetch --format raw --out raw_waveform
-pmoke fetch --format csv-and-raw
-```
-
-`--out` is accepted for `csv` and `raw`. It is intentionally rejected for
-`csv-and-raw`; that mode writes the standard `raw.csv` and `raw_waveform/`
-outputs together.
-
-### CSV Output
-
-CSV output writes converted voltage data to:
-
-```text
-raw.csv
-```
-
-Current CSV output includes a `time (s)` column followed by channel voltage
-columns. This is convenient for inspection and compatibility, but very large
-captures can become slow and large. For 200 Mpts data, prefer raw WORD output as
-the primary archive and analysis format. Generate CSV only when it is needed for
-inspection or external tools.
-
-### Raw WORD Output
-
-Raw output writes:
+Typical files after acquisition and analysis:
 
 ```text
 raw_waveform/
   metadata.toml
   ch1.u16le
   ch2.u16le
-  ch3.u16le
   ...
-```
-
-Each `chN.u16le` file stores the little-endian DHO WORD payload exactly as
-received. The metadata stores the raw preamble for audit and separately queried
-scaling values used for reconstruction:
-
-RAW memory transfer stops oscilloscope acquisition before reading so every
-selected channel comes from the same stable acquisition memory.
-
-Clipped or over-limit captures are still saved when the WORD samples saturate
-at a constant code; constant sample values are not treated as a fetch error.
-
-- raw metadata schema `version` (currently `1`; unknown versions are rejected)
-- `x_increment`, `x_origin`, `x_reference`
-- `y_increment`, `y_origin`, `y_reference`
-- `vertical_offset`, `vertical_scale`
-- `horizontal_offset`, `horizontal_scale`
-- sample count and channel file names
-
-The `x_*` and `y_*` values are queried with `WAV:XINC?`, `WAV:XOR?`,
-`WAV:XREF?`, `WAV:YINC?`, `WAV:YOR?`, and `WAV:YREF?`, not parsed from rounded
-`WAV:PRE?` fields. The horizontal display settings are queried separately with
-`:TIMebase:MAIN:OFFSet?` and `:TIMebase:MAIN:SCALe?`.
-
-Voltage reconstruction uses the DHO scaling formula:
-
-```text
-voltage = (word - y_origin - y_reference) * y_increment
-```
-
-Use raw output when precision and reproducibility matter. It preserves the
-oscilloscope WORD data and avoids CSV formatting as the primary storage format.
-
-## Analysis Input
-
-Analysis commands read waveform input according to `[fetch].analysis_input`:
-
-```toml
-[fetch]
-analysis_input = "csv"   # read raw.csv with a time column
-analysis_input = "raw"   # read raw_waveform/metadata.toml and chN.u16le
-analysis_input = "auto"  # prefer complete raw_waveform/, otherwise raw.csv
-```
-
-`raw` is strict: missing metadata or channel files is an error.
-`csv` requires a time column in current `version = 3` configs. Legacy `version =
-2` configs can still use their deprecated `[timebase]` as a fallback for old
-CSV files without a time column.
-
-`auto` is useful while migrating. It uses raw binary data only when
-`raw_waveform/metadata.toml` and all required channel files are complete. If
-`raw_waveform/` is absent, it falls back to `raw.csv`. If `raw_waveform/`
-exists but is incomplete, `auto` reports an error instead of silently falling
-back to CSV.
-
-## Generated Files
-
-Typical analysis output:
-
-```text
-raw.csv
-raw_waveform/
 screenshot/
   oscilloscope.png
 lockin_results_ch3.csv
 lockin_rotated_ch3.csv
 kerr_results.csv
 plots/
-  reference_fit.png
-  sensor_raw.png
-  sensor_integral.png
-  lockin_results.png
-  phase_rotated.png
-  omega_t0_analysis.png
-  kerr_ch3.png
 ```
 
-For multiple signal channels, lock-in, rotated, and Kerr files are generated per
-configured signal channel.
+Use `fetch.output = "raw"` for large DHO captures. It preserves the original
+WORD payload and avoids huge CSV files in the hot path.
 
-## Plot Settings
+Use `fetch.analysis_input = "raw"` for strict raw analysis, or `"auto"` while
+migrating existing data directories.
 
-Plotting is configured under `[plot]`:
+## Lock-In Notes
+
+The README config uses:
 
 ```toml
-[plot]
-enabled = true
-save = true
-interactive = false
-output_dir = "plots"
-max_points = 100_000
-decimation = "stride"
-fail_on_error = false
+lpf_kind = "boxcar_legacy"
+stride_samples = 100
 ```
 
-Defaults are chosen for unattended analysis:
+`boxcar_legacy` keeps continuity with the older moving-average style lock-in.
+`stride_samples = 100` keeps dense output, which is useful if you want to apply
+additional smoothing later.
 
-- `interactive = false`: do not open GUI windows during analysis.
-- `save = true`: write PNG files.
-- `output_dir = "plots"`: keep generated images out of the top-level shot
-  directory.
-- `max_points = 100_000`: decimate plot data only. Analysis still uses the full
-  data.
-- `fail_on_error = false`: plot failures are reported as warnings unless this is
-  set to `true`.
+Other LPF modes are available:
 
-Set `interactive = true` only when you want each plot window to block progress
-until the window is closed.
+- `sync_iir_zero_phase`
+- `fir_zero_phase`
+- `fir_boxcar_enbw`
+- `boxcar_legacy`
 
-## Config Notes
-
-`version = 3` is the normalized schema used by the current code.
-
-Important rules:
-
-- `roles.reference_ch` is a single channel index.
-- `roles.sensor_ch` and `roles.signal_ch` are arrays.
-- Sensor channels used for field/current conversion must define `factor`,
-  `label`, and `unit_out`.
-- `kerr.use_sensor_ch` must be one of `roles.sensor_ch`.
-- `phase.m_omega_t0_offset` must contain six values, one for each harmonic.
-- `[timebase]` is no longer used. Time axis values come from raw waveform
-  metadata or the CSV `time (s)` column.
-- Unknown keys in `version = 3` are rejected.
-- Unused `[[channels]]` entries are allowed but produce warnings.
-
-`version = 1` and `version = 2` configs are still read and normalized where
-migration is unambiguous. `version = 2` `[timebase]` is treated as deprecated
-legacy fallback data for old CSV files. Use `pmoke show` to inspect the
-normalized result.
-
-## Lock-in LPF
-
-`lockin.lpf_kind` selects the low-pass filter after complex demodulation:
-
-- `sync_iir_zero_phase`: recommended starting point for MHz modulation and
-  millisecond-scale pulse data. It applies short synchronous averaging followed
-  by forward/backward Butterworth IIR filtering for zero-phase offline analysis.
-- `fir_zero_phase`: complex-baseband FIR filtering with a symmetric
-  Kaiser-windowed low-pass filter.
-- `fir_boxcar_enbw`: FIR comparison mode that approximately matches the
-  equivalent noise bandwidth of the legacy boxcar weighting.
-- `boxcar_legacy`: old moving-average/trapezoidal-integration style lock-in,
-  useful for continuity with older datasets.
-
-For `fir_zero_phase` and `sync_iir_zero_phase`, set exactly one cutoff:
-
-```toml
-lpf_cutoff_hz = 20_000.0
-# or
-lpf_cutoff_ref_ratio = 2e-2
-```
-
-The cutoff must fit within the output sampling rate:
+For FIR/IIR cutoff-based modes, keep the output rate high enough:
 
 ```text
 output_rate = 1 / (x_increment * lockin.stride_samples)
 cutoff_hz < 0.45 * output_rate
 ```
 
-Simple `boxcar_legacy` starting point:
+## Config Rules
 
-```toml
-[lockin]
-stride_samples = 100
-lpf_kind = "boxcar_legacy"
-lpf_half_window_cycles = 1.0
-```
+- `roles.reference_ch` is one channel.
+- `roles.sensor_ch` and `roles.signal_ch` are arrays.
+- Sensor channels must define `factor`, `label`, and `unit_out`.
+- `kerr.use_sensor_ch` must be included in `roles.sensor_ch`.
+- `phase.m_omega_t0_offset` must contain six values.
+- Time values come from raw metadata or the CSV `time (s)` column.
+- Unknown keys in `version = 3` configs are rejected.
 
-Use a smaller `stride_samples` when you want to keep dense data for later
-smoothing. Increase it when the CSV is unnecessarily large.
+## Hardware Notes
 
-## Lock-in Debug Output
+Default builds include hardware support.
 
-Enable debug output when comparing filters:
+- Windows: install NI-VISA, and NI-488.2 when using GPIB.
+- Linux: install `linux-gpib` when using GPIB.
+- USB-TMC uses a VISA resource string.
 
-```toml
-[lockin]
-lpf_debug_output = true
-lpf_debug_label = "trial_001"
-lpf_debug_overwrite = false
-snr_background_window = { start = -5e-3, end = -0.1e-3 }
-snr_signal_window = { start = 0e-3, end = 5e-3 }
-```
-
-Files are written under:
+Screenshot capture uses `:DISPlay:DATA? PNG` and writes directly to:
 
 ```text
-lockin_debug/{label}/{lpf_kind}_ch{ch}_h{m}/
+screenshot/oscilloscope.png
 ```
 
-Typical files:
+GPIB screenshot capture is not supported.
 
-- `metadata.csv`
-- `filter_response.csv`
-- `baseband_psd.csv`
-- `snr_summary.csv`
-
-Debug windows affect only diagnostics. They do not change the lock-in result.
-
-## Precision Guidance
+## Precision Notes
 
 For DHO5000 large-memory measurements:
 
-- Prefer `fetch.output = "raw"` or `"csv_and_raw"` for acquisition.
-- Prefer `fetch.analysis_input = "raw"` or `"auto"` for analysis.
-- Keep raw WORD files and `metadata.toml` as the primary archived data.
-- Use CSV for compatibility, quick inspection, or exported subsets.
-- Avoid BYTE waveform transfer for precision-sensitive work.
+- Prefer `fetch.output = "raw"` or `"csv_and_raw"`.
+- Prefer `fetch.analysis_input = "raw"` or `"auto"`.
+- Keep `raw_waveform/metadata.toml` with the `chN.u16le` files.
+- Generate CSV only when needed for inspection or external tools.
 
-The raw path preserves the original WORD bytes and stores the exact parsed
-preamble values used for voltage reconstruction.
+Voltage reconstruction uses:
+
+```text
+voltage = (word - y_origin - y_reference) * y_increment
+```
