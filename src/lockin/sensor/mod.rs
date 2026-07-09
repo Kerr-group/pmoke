@@ -16,6 +16,12 @@ pub struct SensorMeta<'a> {
     pub unit: &'a str,
 }
 
+pub struct SensorOutput {
+    pub t: Vec<f64>,
+    pub rate: Vec<Vec<f64>>,
+    pub integral: Vec<Vec<f64>>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SensorIntegralMaximum {
     value: f64,
@@ -56,7 +62,7 @@ pub fn run_sensor(
     s_cols: &[&[f64]],
     sensor_ch: &[u8],
     f_ref: f64,
-) -> Result<(Vec<f64>, Vec<Vec<f64>>)> {
+) -> Result<SensorOutput> {
     if s_cols.is_empty() {
         bail!("No sensor data columns were read from {}", FETCHED_FNAME);
     }
@@ -105,6 +111,8 @@ pub fn run_sensor(
         .next()
         .map(|w| w[1] - w[0])
         .ok_or_else(|| anyhow::anyhow!("time axis must contain at least two samples"))?;
+    let s_rate = calculate_sensor_rates(s_cols, &c_bg_arr, &sensor_meta);
+
     let s_integral = s_cols
         .iter()
         .zip(c_bg_arr.iter())
@@ -151,6 +159,7 @@ pub fn run_sensor(
     );
 
     let s_integral_stride = li_stride_2d(cfg, t, &s_integral, f_ref)?;
+    let s_rate_stride = li_stride_2d(cfg, t, &s_rate, f_ref)?;
 
     let labels: Vec<&str> = sensor_meta.iter().map(|m| m.label).collect();
     let units: Vec<&str> = sensor_meta.iter().map(|m| m.unit).collect();
@@ -173,7 +182,11 @@ pub fn run_sensor(
         },
     )?;
 
-    Ok((t_stride, s_integral_stride))
+    Ok(SensorOutput {
+        t: t_stride,
+        rate: s_rate_stride,
+        integral: s_integral_stride,
+    })
 }
 
 fn validate_sensor_channel_alignment(
@@ -309,11 +322,28 @@ fn calculate_background_averages(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> 
         .collect::<Result<Vec<_>>>()
 }
 
+fn calculate_sensor_rates(
+    s_cols: &[&[f64]],
+    c_bg_arr: &[f64],
+    sensor_meta: &[SensorMeta<'_>],
+) -> Vec<Vec<f64>> {
+    s_cols
+        .iter()
+        .zip(c_bg_arr.iter())
+        .zip(sensor_meta.iter())
+        .map(|((s, &c_bg), meta)| {
+            s.iter()
+                .map(|&value| (value - c_bg) * meta.factor)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        SensorMeta, maximum_absolute_integral, validate_sensor_channel_alignment,
-        validate_sensor_lengths,
+        SensorMeta, calculate_sensor_rates, maximum_absolute_integral,
+        validate_sensor_channel_alignment, validate_sensor_lengths,
     };
 
     #[test]
@@ -374,5 +404,28 @@ mod tests {
         assert!(maximum_absolute_integral(&[0.0], &[0.0, 1.0], 1).is_err());
         assert!(maximum_absolute_integral(&[f64::NAN], &[0.0], 1).is_err());
         assert!(maximum_absolute_integral(&[0.0], &[f64::INFINITY], 1).is_err());
+    }
+
+    #[test]
+    fn sensor_rate_applies_background_subtraction_and_factor() {
+        let first = [1.0, 2.0, 4.0];
+        let second = [10.0, 8.0, 6.0];
+        let metadata = [
+            SensorMeta {
+                factor: 2.0,
+                label: "field",
+                unit: "T",
+            },
+            SensorMeta {
+                factor: -0.5,
+                label: "current",
+                unit: "A",
+            },
+        ];
+
+        let rates = calculate_sensor_rates(&[&first, &second], &[1.5, 8.0], &metadata);
+
+        assert_eq!(rates[0], vec![-1.0, 1.0, 5.0]);
+        assert_eq!(rates[1], vec![-1.0, -0.0, 1.0]);
     }
 }

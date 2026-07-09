@@ -9,6 +9,8 @@ mod lockin;
 mod phase;
 mod plot;
 mod python;
+#[cfg(test)]
+mod test_support;
 mod ui;
 mod utils;
 
