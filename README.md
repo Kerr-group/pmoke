@@ -1,4 +1,4 @@
-# pmoke
+# 💥 pmoke
 
 `pmoke` is a command-line tool for pulsed MOKE measurements.
 
@@ -12,7 +12,7 @@ reference -> sensor integral -> lock-in -> phase rotation -> Kerr angle
 The current workflow is tuned for Rigol DHO5000-series oscilloscopes, large
 WORD waveform captures, and reproducible TOML-based analysis.
 
-## What It Does
+## ✨ What It Does
 
 - Runs hardware shots, waveform fetch, screenshots, and analysis from one config.
 - Stores large captures as raw DHO WORD files with scaling metadata.
@@ -20,7 +20,7 @@ WORD waveform captures, and reproducible TOML-based analysis.
 - Produces lock-in, phase-rotated, Kerr, and PNG plot outputs.
 - Opens a live terminal dashboard with `pmoke monitor`.
 
-## Install
+## ⚡ Install
 
 Hardware-enabled build:
 
@@ -42,7 +42,7 @@ cargo run --release -- --config config.toml process
 cargo run --release --no-default-features -- --config config.toml analyze
 ```
 
-## Commands
+## 🚀 Commands
 
 ```text
 pmoke --config config.toml show       # validate config
@@ -55,7 +55,7 @@ pmoke --config config.toml auto       # single + trigger + fetch + analyze
 
 If no command is provided, `pmoke` opens `monitor`.
 
-## Example Config
+## ⚙️ Example Config
 
 ```toml
 version = 3
@@ -133,7 +133,7 @@ kerr_type = "harmonics" # "standard" or "harmonics"
 factor = -1.0
 ```
 
-## Data Layout
+## 📁 Data Layout
 
 Typical files after acquisition and analysis:
 
@@ -157,7 +157,7 @@ WORD payload and avoids huge CSV files in the hot path.
 Use `fetch.analysis_input = "raw"` for strict raw analysis, or `"auto"` while
 migrating existing data directories.
 
-## Lock-In Notes
+## 🎛️ Lock-In Notes
 
 The README config uses:
 
@@ -184,7 +184,7 @@ output_rate = 1 / (x_increment * lockin.stride_samples)
 cutoff_hz < 0.45 * output_rate
 ```
 
-## Config Rules
+## ✅ Config Rules
 
 - `roles.reference_ch` is one channel.
 - `roles.sensor_ch` and `roles.signal_ch` are arrays.
@@ -194,7 +194,7 @@ cutoff_hz < 0.45 * output_rate
 - Time values come from raw metadata or the CSV `time (s)` column.
 - Unknown keys in `version = 3` configs are rejected.
 
-## Hardware Notes
+## 🔌 Hardware Notes
 
 Default builds include hardware support.
 
@@ -210,7 +210,7 @@ screenshot/oscilloscope.png
 
 GPIB screenshot capture is not supported.
 
-## Precision Notes
+## 🎯 Precision Notes
 
 For DHO5000 large-memory measurements:
 
