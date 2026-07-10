@@ -446,6 +446,25 @@ fn classifies_common_output_lines_for_highlighting() {
         LogKind::Warning
     );
     assert_eq!(
+        classify_log_entry(
+            OutputStream::Stderr,
+            "[ WARN ] legacy config v2: [timebase] is deprecated"
+        ),
+        LogKind::Warning
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stderr, "(warn) read timeout status"),
+        LogKind::Warning
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stderr, "(info) gpib.conf was applied"),
+        LogKind::Info
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stderr, "Error: raw metadata is missing"),
+        LogKind::Error
+    );
+    assert_eq!(
         classify_log_entry(OutputStream::Stdout, "╭─────────┬────────╮"),
         LogKind::Section
     );
@@ -602,6 +621,14 @@ fn display_output_text_removes_cli_badges_from_status_lines() {
     assert_eq!(
         display_output_text(LogKind::Save, "[ SAVE ] lock-in results for signals [4]").as_deref(),
         Some("lock-in results for signals [4]")
+    );
+    assert_eq!(
+        display_output_text(
+            LogKind::Warning,
+            "[ WARN ] legacy config v2: [timebase] is deprecated"
+        )
+        .as_deref(),
+        Some("legacy config v2: [timebase] is deprecated")
     );
 }
 

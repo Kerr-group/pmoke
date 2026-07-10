@@ -265,6 +265,33 @@ lpf_half_window_cycles = 1.0
 }
 
 #[test]
+fn v2_timebase_warning_explains_legacy_fallback() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { warnings, .. } => {
+            let warning = warnings
+                .iter()
+                .find(|warning| warning.message.contains("[timebase]"))
+                .expect("v2 timebase warning");
+            assert!(
+                warning
+                    .message
+                    .contains("used only when raw.csv has no time column")
+            );
+            assert!(warning.message.contains("recorded time axis"));
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
 fn v2_plot_options_load() {
     let text = v2_base_lockin(
         r#"

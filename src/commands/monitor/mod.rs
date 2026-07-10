@@ -2774,14 +2774,17 @@ fn output_display(kind: LogKind, text: &str) -> Option<OutputDisplay> {
     }
 
     match kind {
-        LogKind::Success | LogKind::Info | LogKind::Read | LogKind::Save => {
-            Some(OutputDisplay::Event(
-                strip_cli_badge(trimmed)
-                    .unwrap_or(trimmed)
-                    .trim_start()
-                    .to_string(),
-            ))
-        }
+        LogKind::Success
+        | LogKind::Info
+        | LogKind::Read
+        | LogKind::Save
+        | LogKind::Warning
+        | LogKind::Error => Some(OutputDisplay::Event(
+            strip_cli_badge(trimmed)
+                .unwrap_or(trimmed)
+                .trim_start()
+                .to_string(),
+        )),
         LogKind::Fit => Some(OutputDisplay::Event(
             trimmed
                 .strip_prefix("🛠️")
@@ -2809,19 +2812,28 @@ fn classify_log_entry(stream: OutputStream, text: &str) -> LogKind {
     if matches!(stream, OutputStream::System) {
         return LogKind::System;
     }
+
+    // stderr is also the conventional stream for warnings. Respect an explicit
+    // severity marker before using the stream as an error fallback.
+    if let Some(kind) = cli_badge_kind(trimmed) {
+        return kind;
+    }
+    if lower.contains("warning")
+        || lower.starts_with("warn:")
+        || lower.starts_with("[warn]")
+        || lower.starts_with("(warn)")
+    {
+        return LogKind::Warning;
+    }
+    if lower.starts_with("info:") || lower.starts_with("[info]") || lower.starts_with("(info)") {
+        return LogKind::Info;
+    }
     if matches!(stream, OutputStream::Stderr)
         || lower.contains("error")
         || lower.contains("failed")
         || lower.contains("traceback")
     {
-        return if lower.contains("warning") {
-            LogKind::Warning
-        } else {
-            LogKind::Error
-        };
-    }
-    if lower.contains("warning") || lower.contains("userwarning") {
-        return LogKind::Warning;
+        return LogKind::Error;
     }
     if trimmed.contains("Fit result") || trimmed.starts_with("[[") {
         return LogKind::Fit;
@@ -2839,19 +2851,29 @@ fn classify_log_entry(stream: OutputStream, text: &str) -> LogKind {
     {
         return LogKind::Section;
     }
-    if trimmed.contains("✅") || trimmed.starts_with("[  OK") || trimmed.starts_with("[ OK") {
+    if trimmed.contains("✅") {
         return LogKind::Success;
     }
-    if trimmed.starts_with("[ INFO") {
-        return LogKind::Info;
-    }
-    if trimmed.starts_with("[ READ") {
-        return LogKind::Read;
-    }
-    if trimmed.starts_with("[ SAVE") {
-        return LogKind::Save;
-    }
     LogKind::Plain
+}
+
+fn cli_badge_kind(text: &str) -> Option<LogKind> {
+    let label = text
+        .strip_prefix('[')?
+        .split_once(']')?
+        .0
+        .trim()
+        .to_ascii_uppercase();
+
+    match label.as_str() {
+        "OK" => Some(LogKind::Success),
+        "INFO" => Some(LogKind::Info),
+        "READ" => Some(LogKind::Read),
+        "SAVE" => Some(LogKind::Save),
+        "WARN" | "WARNING" => Some(LogKind::Warning),
+        "ERR" | "ERROR" => Some(LogKind::Error),
+        _ => None,
+    }
 }
 
 fn is_table_border_line(text: &str) -> bool {
