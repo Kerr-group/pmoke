@@ -243,6 +243,7 @@ pub struct Roles {
 pub struct Channel {
     pub index: u8,
     pub factor: Option<f64>,
+    pub scale_to_abs_max: Option<f64>,
     pub label: Option<String>,
     pub unit_out: Option<String>,
 }
@@ -612,6 +613,8 @@ struct ChannelV1 {
     #[serde(default)]
     factor: Option<f64>,
     #[serde(default)]
+    scale_to_abs_max: Option<f64>,
+    #[serde(default)]
     label: Option<String>,
     #[serde(default)]
     unit_out: Option<String>,
@@ -623,6 +626,8 @@ struct ChannelV2 {
     index: u8,
     #[serde(default)]
     factor: Option<f64>,
+    #[serde(default)]
+    scale_to_abs_max: Option<f64>,
     #[serde(default)]
     label: Option<String>,
     #[serde(default)]
@@ -1637,14 +1642,37 @@ fn validate_sensor_metadata(cfg: &Config) -> Result<()> {
             .find(|c| c.index == *ch)
             .ok_or_else(|| anyhow!("channel {} is not defined in [channels]", ch))?;
 
-        if meta.factor.is_none() {
-            bail!("channel {} has no 'factor'", ch);
+        match (meta.factor, meta.scale_to_abs_max) {
+            (Some(_), Some(_)) => {
+                bail!("channel {ch} cannot set both 'factor' and 'scale_to_abs_max'");
+            }
+            (Some(factor), None) => {
+                if !factor.is_finite() {
+                    bail!("channel {ch} factor must be finite");
+                }
+            }
+            (None, Some(scale_to_abs_max)) => {
+                if !scale_to_abs_max.is_finite() || scale_to_abs_max == 0.0 {
+                    bail!("channel {ch} scale_to_abs_max must be finite and non-zero");
+                }
+            }
+            (None, None) => {
+                bail!("channel {ch} must set either 'factor' or 'scale_to_abs_max'");
+            }
         }
         if meta.label.is_none() {
             bail!("channel {} has no 'label'", ch);
         }
         if meta.unit_out.is_none() {
             bail!("channel {} has no 'unit_out'", ch);
+        }
+    }
+    for channel in &cfg.channels {
+        if channel.scale_to_abs_max.is_some() && !cfg.roles.sensor_ch.contains(&channel.index) {
+            bail!(
+                "channel {} has 'scale_to_abs_max' but is not listed in roles.sensor_ch",
+                channel.index
+            );
         }
     }
     Ok(())
@@ -1830,6 +1858,7 @@ impl From<ChannelV1> for Channel {
         Self {
             index: value.index,
             factor: value.factor,
+            scale_to_abs_max: value.scale_to_abs_max,
             label: value.label,
             unit_out: value.unit_out,
         }
@@ -1841,6 +1870,7 @@ impl From<ChannelV2> for Channel {
         Self {
             index: value.index,
             factor: value.factor,
+            scale_to_abs_max: value.scale_to_abs_max,
             label: value.label,
             unit_out: value.unit_out,
         }

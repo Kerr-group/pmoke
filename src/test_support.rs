@@ -35,6 +35,7 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
             .map(|index| Channel {
                 index,
                 factor: Some(index as f64),
+                scale_to_abs_max: None,
                 label: Some(format!("ch{index}")),
                 unit_out: Some("T".to_string()),
             })

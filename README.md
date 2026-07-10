@@ -92,6 +92,7 @@ signal_ch = [3]
 [[channels]]
 index = 1
 factor = -39364.84663082185
+# Or replace factor with scale_to_abs_max = -55.0 to auto-scale the sensor integral.
 label = "$\\mu_0H$"
 unit_out = "T"
 
@@ -188,7 +189,8 @@ cutoff_hz < 0.45 * output_rate
 
 - `roles.reference_ch` is one channel.
 - `roles.sensor_ch` and `roles.signal_ch` are arrays.
-- Sensor channels must define `factor`, `label`, and `unit_out`.
+- Sensor channels must define exactly one of `factor` or `scale_to_abs_max`, plus `label` and `unit_out`.
+- `scale_to_abs_max` scales the background-subtracted sensor integral to the requested maximum absolute value.
 - `kerr.use_sensor_ch` must be included in `roles.sensor_ch`.
 - `phase.m_omega_t0_offset` must contain six values.
 - Time values come from raw metadata or the CSV `time (s)` column.
