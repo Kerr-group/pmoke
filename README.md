@@ -46,6 +46,7 @@ cargo run --release --no-default-features -- --config config.toml analyze
 
 ```text
 pmoke --config config.toml show       # validate config
+pmoke --config config.toml config upgrade # preview a config upgrade
 pmoke --config config.toml monitor    # terminal dashboard
 pmoke --config config.toml fetch      # fetch waveforms
 pmoke --config config.toml analyze    # analyze existing data
@@ -54,6 +55,26 @@ pmoke --config config.toml auto       # single + trigger + fetch + analyze
 ```
 
 If no command is provided, `pmoke` opens `monitor`.
+
+### Upgrade Legacy Configs
+
+Preview the migration to the latest supported config version:
+
+```sh
+pmoke --config config.toml config upgrade
+```
+
+The preview does not modify files. Write to a new file with `--output`, or use
+`--in-place` to create a versioned backup and atomically replace the source:
+
+```sh
+pmoke --config config.toml config upgrade --output config.v4.toml
+pmoke --config config.toml config upgrade --in-place
+```
+
+Potential behavior changes, such as removing a legacy `[timebase]` or changing
+the artifact base directory, require `--accept-lossy`. Existing output and
+backup files are never overwritten.
 
 ## ⚙️ Example Config
 

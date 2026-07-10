@@ -12,6 +12,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod migration;
+pub use migration::{LATEST_CONFIG_VERSION, MigrationPlan, plan_upgrade};
+
 fn eval_f64_expr(s: &str) -> Result<f64> {
     if contains_print_call(s) {
         bail!("invalid expression '{s}': print() is not allowed in config values");
@@ -1153,10 +1156,14 @@ pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
 
 pub fn render_normalized_config(config: &Config) -> Result<String> {
     if config.version == 4 {
-        toml::to_string_pretty(&normalized_config_v4(config)?).map_err(Into::into)
+        render_config_v4(config)
     } else {
         toml::to_string_pretty(config).map_err(Into::into)
     }
+}
+
+fn render_config_v4(config: &Config) -> Result<String> {
+    toml::to_string_pretty(&normalized_config_v4(config)?).map_err(Into::into)
 }
 
 fn normalized_config_v4(config: &Config) -> Result<NormalizedConfigV4> {
