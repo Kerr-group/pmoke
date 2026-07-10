@@ -58,7 +58,7 @@ If no command is provided, `pmoke` opens `monitor`.
 
 ### Upgrade Legacy Configs
 
-Preview the migration to the latest supported config version:
+Preview the migration to the latest executable config version:
 
 ```sh
 pmoke --config config.toml config upgrade
@@ -68,11 +68,13 @@ The preview does not modify files. Write to a new file with `--output`, or use
 `--in-place` to create a versioned backup and atomically replace the source:
 
 ```sh
-pmoke --config config.toml config upgrade --output config.v4.toml
+pmoke --config config.toml config upgrade --output config.upgraded.toml
 pmoke --config config.toml config upgrade --in-place
 ```
 
-Potential behavior changes, such as removing a legacy `[timebase]` or changing
+If a v1/v2 CSV has no time column, upgrade preserves `[timebase]`: v1 advances
+only to v2, and v2 remains v2. An explicit `--to 4` is blocked in that case.
+Other potential behavior changes, such as removing unused metadata or changing
 the artifact base directory, require `--accept-lossy`. Existing output and
 backup files are never overwritten.
 

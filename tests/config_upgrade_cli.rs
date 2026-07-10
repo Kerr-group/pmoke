@@ -39,6 +39,20 @@ fn pmoke(config: &std::path::Path, arguments: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
+fn pmoke_in_dir(
+    working_dir: &std::path::Path,
+    config: &std::path::Path,
+    arguments: &[&str],
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_pmoke"))
+        .current_dir(working_dir)
+        .arg("--config")
+        .arg(config)
+        .args(arguments)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn check_and_output_enforce_lossy_acceptance_end_to_end() {
     let dir = TempDir::new();
@@ -81,4 +95,77 @@ fn check_and_output_enforce_lossy_acceptance_end_to_end() {
 
     let latest = pmoke(&target, &["config", "upgrade", "--check"]);
     assert_eq!(latest.status.code(), Some(0));
+}
+
+#[test]
+fn v2_csv_without_time_stays_executable_instead_of_advancing_to_v4() {
+    let dir = TempDir::new();
+    let source = dir.0.join("config.toml");
+    let v2 = include_str!("fixtures/config_v3.toml").replacen(
+        "version = 3",
+        "version = 2\n\n[timebase]\nt0 = -8.5e-3\ndt = 0.5e-9",
+        1,
+    );
+    fs::write(&source, &v2).unwrap();
+    fs::write(
+        dir.0.join("raw.csv"),
+        "Channel 1 (V),Channel 2 (V),Channel 3 (V)\n0.1,0.2,0.3\n",
+    )
+    .unwrap();
+
+    let compatible = pmoke_in_dir(&dir.0, &source, &["config", "upgrade", "--check"]);
+    assert_eq!(compatible.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&compatible.stdout).contains("Status: LIMITED"));
+    assert_eq!(fs::read_to_string(&source).unwrap(), v2);
+
+    let forced_v4 = pmoke_in_dir(
+        &dir.0,
+        &source,
+        &[
+            "config",
+            "upgrade",
+            "--check",
+            "--to",
+            "4",
+            "--accept-lossy",
+        ],
+    );
+    assert_eq!(forced_v4.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&forced_v4.stderr).contains("would not be executable"));
+    assert_eq!(fs::read_to_string(&source).unwrap(), v2);
+}
+
+#[test]
+fn v2_csv_with_recorded_time_can_advance_to_v4() {
+    let dir = TempDir::new();
+    let source = dir.0.join("config.toml");
+    let target = dir.0.join("config.v4.toml");
+    let v2 = include_str!("fixtures/config_v3.toml").replacen(
+        "version = 3",
+        "version = 2\n\n[timebase]\nt0 = -8.5e-3\ndt = 0.5e-9",
+        1,
+    );
+    fs::write(&source, &v2).unwrap();
+    fs::write(
+        dir.0.join("raw.csv"),
+        "time (s),Channel 1 (V),Channel 2 (V),Channel 3 (V)\n0.0,0.1,0.2,0.3\n",
+    )
+    .unwrap();
+
+    let available = pmoke_in_dir(&dir.0, &source, &["config", "upgrade", "--check"]);
+    assert_eq!(available.status.code(), Some(1));
+
+    let written = pmoke_in_dir(
+        &dir.0,
+        &source,
+        &["config", "upgrade", "--output", target.to_str().unwrap()],
+    );
+    assert!(
+        written.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&written.stderr)
+    );
+    let upgraded = fs::read_to_string(&target).unwrap();
+    assert!(upgraded.contains("version = 4"));
+    assert!(!upgraded.contains("[timebase]"));
 }

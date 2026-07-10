@@ -1,5 +1,5 @@
 use crate::cli::ConfigCommand;
-use crate::config::{MigrationPlan, plan_upgrade};
+use crate::config::{MigrationPlan, plan_latest_executable_upgrade, plan_upgrade};
 use anyhow::{Context, Result, bail};
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
@@ -36,7 +36,7 @@ fn run_upgrade(
     in_place: bool,
     check: bool,
     accept_lossy: bool,
-    target_version: u32,
+    target_version: Option<u32>,
 ) -> Result<ConfigCommandOutcome> {
     let stdout_output = output == Some(Path::new("-"));
     let destination = match (in_place, output) {
@@ -44,8 +44,11 @@ fn run_upgrade(
         (false, Some(path)) if path != Path::new("-") => Some(path),
         _ => Some(source),
     };
-    let plan =
-        plan_upgrade(source, destination, target_version).context("config upgrade blocked")?;
+    let plan = match target_version {
+        Some(target) => plan_upgrade(source, destination, target),
+        None => plan_latest_executable_upgrade(source, destination),
+    }
+    .context("config upgrade blocked")?;
 
     if stdout_output {
         eprint!("{}", migration_report(&plan));
@@ -118,7 +121,18 @@ fn migration_report(plan: &MigrationPlan) -> String {
         plan.compatibility_label()
     );
     if !plan.changed {
-        report.push_str("The config is already at the requested version; no files were changed.\n");
+        for issue in &plan.issues {
+            report.push_str(&format!("[{}] {}\n", issue.level.label(), issue.message));
+        }
+        if plan.limited {
+            report.push_str(
+                "No higher config version can preserve the currently executable analysis path; no files were changed.\n",
+            );
+        } else {
+            report.push_str(
+                "The config is already at the requested version; no files were changed.\n",
+            );
+        }
         return report;
     }
     for issue in &plan.issues {
@@ -427,6 +441,7 @@ mod tests {
             target_toml: after.to_string(),
             issues: Vec::new(),
             changed: true,
+            limited: false,
             original: before.to_vec(),
         }
     }

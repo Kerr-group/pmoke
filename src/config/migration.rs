@@ -1,4 +1,7 @@
-use super::{Config, ConfigLoad, load_from_path, load_from_str, render_config_v4};
+use super::{
+    Config, ConfigLoad, FetchAnalysisInput, load_from_path, load_from_str, render_config_v4,
+};
+use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR};
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::BTreeSet;
 use std::env;
@@ -53,6 +56,7 @@ pub struct MigrationPlan {
     pub target_toml: String,
     pub issues: Vec<MigrationIssue>,
     pub changed: bool,
+    pub limited: bool,
     pub(crate) original: Vec<u8>,
 }
 
@@ -64,7 +68,9 @@ impl MigrationPlan {
     }
 
     pub fn compatibility_label(&self) -> &'static str {
-        if !self.changed {
+        if self.limited {
+            "LIMITED"
+        } else if !self.changed {
             "LATEST"
         } else if self.has_lossy_changes() {
             "LOSSY"
@@ -72,6 +78,72 @@ impl MigrationPlan {
             "EXACT"
         }
     }
+}
+
+pub fn plan_latest_executable_upgrade(
+    source_path: impl AsRef<Path>,
+    destination_path: Option<&Path>,
+) -> Result<MigrationPlan> {
+    let source_path = source_path.as_ref();
+    let original = fs::read(source_path)
+        .with_context(|| format!("failed to read config: {}", source_path.display()))?;
+    let source_text = std::str::from_utf8(&original)
+        .with_context(|| format!("config is not UTF-8: {}", source_path.display()))?
+        .to_string();
+    let source_version = declared_version(&source_text)?;
+    let destination_path = destination_path.unwrap_or(source_path).to_path_buf();
+
+    if source_version > LATEST_CONFIG_VERSION {
+        bail!(
+            "config v{source_version} is newer than the latest version supported by this pmoke (v{LATEST_CONFIG_VERSION})"
+        );
+    }
+
+    if source_version == LATEST_CONFIG_VERSION {
+        return plan_upgrade(source_path, Some(&destination_path), LATEST_CONFIG_VERSION);
+    }
+
+    let mut blockers = Vec::new();
+    for target in (source_version + 1..=LATEST_CONFIG_VERSION).rev() {
+        if !matches!(target, 2..=LATEST_CONFIG_VERSION) {
+            continue;
+        }
+        match plan_upgrade(source_path, Some(&destination_path), target) {
+            Ok(mut plan) => {
+                plan.limited = target < LATEST_CONFIG_VERSION;
+                for blocker in blockers.into_iter().rev() {
+                    plan.issues.insert(
+                        0,
+                        MigrationIssue::notice(format!(
+                            "a newer config version was skipped: {blocker}"
+                        )),
+                    );
+                }
+                return Ok(plan);
+            }
+            Err(error) => blockers.push(format!("{error:#}")),
+        }
+    }
+
+    let (_, warnings) = ready_config(load_from_path(source_path), "source config")?;
+    let mut issues = warnings
+        .into_iter()
+        .map(|warning| MigrationIssue::notice(warning.message))
+        .collect::<Vec<_>>();
+    issues.extend(blockers.into_iter().map(|blocker| {
+        MigrationIssue::notice(format!("a newer config version was skipped: {blocker}"))
+    }));
+    Ok(MigrationPlan {
+        source_version,
+        target_version: source_version,
+        source_path: source_path.to_path_buf(),
+        destination_path,
+        target_toml: source_text,
+        issues,
+        changed: false,
+        limited: true,
+        original,
+    })
 }
 
 pub fn plan_upgrade(
@@ -83,12 +155,13 @@ pub fn plan_upgrade(
     let original = fs::read(source_path)
         .with_context(|| format!("failed to read config: {}", source_path.display()))?;
     let source_text = std::str::from_utf8(&original)
-        .with_context(|| format!("config is not UTF-8: {}", source_path.display()))?;
-    let source_version = declared_version(source_text)?;
+        .with_context(|| format!("config is not UTF-8: {}", source_path.display()))?
+        .to_string();
+    let source_version = declared_version(&source_text)?;
 
-    if target_version != LATEST_CONFIG_VERSION {
+    if !matches!(target_version, 2..=LATEST_CONFIG_VERSION) {
         bail!(
-            "unsupported migration target v{target_version}; this pmoke supports config upgrade to v{LATEST_CONFIG_VERSION}"
+            "unsupported migration target v{target_version}; this pmoke supports config upgrade to v2, v3, or v{LATEST_CONFIG_VERSION}"
         );
     }
     if source_version > target_version {
@@ -106,11 +179,41 @@ pub fn plan_upgrade(
             target_version,
             source_path: source_path.to_path_buf(),
             destination_path,
-            target_toml: source_text.to_string(),
+            target_toml: source_text,
             issues: Vec::new(),
             changed: false,
+            limited: false,
             original,
         });
+    }
+
+    if target_version >= 3 && legacy_timebase_is_required(&config)? {
+        bail!(
+            "target v{target_version} would not be executable: the current CSV input has no time column and requires legacy [timebase]"
+        );
+    }
+
+    if target_version == 2 {
+        return plan_v1_to_v2(
+            source_path,
+            destination_path,
+            original,
+            config,
+            source_warnings,
+            source_text,
+        );
+    }
+
+    if target_version == 3 {
+        return plan_to_v3(
+            source_path,
+            destination_path,
+            original,
+            config,
+            source_warnings,
+            source_text,
+            source_version,
+        );
     }
 
     let mut issues = vec![MigrationIssue::notice(
@@ -123,11 +226,11 @@ pub fn plan_upgrade(
     );
 
     if config.legacy_timebase.is_some() {
-        issues.push(MigrationIssue::lossy(
-            "legacy [timebase] is not representable in v4; CSV files without a recorded time column may no longer be readable",
+        issues.push(MigrationIssue::notice(
+            "legacy [timebase] is omitted because the current analysis input records its own time axis",
         ));
     }
-    if source_version == 1 && has_filter_length_samples(source_text)? {
+    if source_version == 1 && has_filter_length_samples(&source_text)? {
         issues.push(MigrationIssue::lossy(
             "v1 lockin.filter_length_samples is interpreted as lockin.filter.half_window_cycles by the existing compatibility normalization",
         ));
@@ -161,8 +264,220 @@ pub fn plan_upgrade(
         target_toml,
         issues,
         changed: true,
+        limited: false,
         original,
     })
+}
+
+fn plan_v1_to_v2(
+    source_path: &Path,
+    destination_path: PathBuf,
+    original: Vec<u8>,
+    config: Config,
+    source_warnings: Vec<super::ConfigWarning>,
+    source_text: String,
+) -> Result<MigrationPlan> {
+    let mut issues = vec![MigrationIssue::notice(
+        "comments, table order, whitespace, and numeric formatting are not preserved",
+    )];
+    issues.extend(
+        source_warnings
+            .into_iter()
+            .map(|warning| MigrationIssue::notice(warning.message)),
+    );
+    if has_filter_length_samples(&source_text)? {
+        issues.push(MigrationIssue::lossy(
+            "v1 lockin.filter_length_samples is replaced by v2 lockin.lpf_half_window_cycles using the existing compatibility interpretation",
+        ));
+    }
+    issues.push(MigrationIssue::lossy(
+        "the permissive v1 schema may contain unrecognized legacy keys; only recognized v1 settings are migrated",
+    ));
+
+    let cwd = env::current_dir().context("failed to determine current directory")?;
+    if absolute_parent(source_path, &cwd) != absolute_parent(&destination_path, &cwd) {
+        issues.push(MigrationIssue::lossy(
+            "relocating the config changes the directory used for screenshot artifacts",
+        ));
+    }
+
+    let target_toml = render_config_v2(&config)?;
+    let (target_config, target_warnings) =
+        ready_config(load_from_str(&target_toml), "generated v2 config")?;
+    issues.extend(
+        target_warnings
+            .into_iter()
+            .map(|warning| MigrationIssue::notice(warning.message)),
+    );
+    verify_v2_semantics(&config, &target_config)?;
+
+    Ok(MigrationPlan {
+        source_version: 1,
+        target_version: 2,
+        source_path: source_path.to_path_buf(),
+        destination_path,
+        target_toml,
+        issues,
+        changed: true,
+        limited: true,
+        original,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_to_v3(
+    source_path: &Path,
+    destination_path: PathBuf,
+    original: Vec<u8>,
+    config: Config,
+    source_warnings: Vec<super::ConfigWarning>,
+    source_text: String,
+    source_version: u32,
+) -> Result<MigrationPlan> {
+    let mut issues = vec![MigrationIssue::notice(
+        "comments, table order, whitespace, and numeric formatting are not preserved",
+    )];
+    issues.extend(
+        source_warnings
+            .into_iter()
+            .map(|warning| MigrationIssue::notice(warning.message)),
+    );
+    if config.legacy_timebase.is_some() {
+        issues.push(MigrationIssue::notice(
+            "legacy [timebase] is omitted because the current analysis input records its own time axis",
+        ));
+    }
+    if source_version == 1 && has_filter_length_samples(&source_text)? {
+        issues.push(MigrationIssue::lossy(
+            "v1 lockin.filter_length_samples is replaced by v3 lockin.lpf_half_window_cycles using the existing compatibility interpretation",
+        ));
+    }
+    if source_version == 1 {
+        issues.push(MigrationIssue::lossy(
+            "the permissive v1 schema may contain unrecognized legacy keys; only recognized v1 settings are migrated",
+        ));
+    }
+
+    let cwd = env::current_dir().context("failed to determine current directory")?;
+    if absolute_parent(source_path, &cwd) != absolute_parent(&destination_path, &cwd) {
+        issues.push(MigrationIssue::lossy(
+            "relocating the config changes the directory used for screenshot artifacts",
+        ));
+    }
+
+    let target_toml = render_config_v3(&config)?;
+    let (target_config, target_warnings) =
+        ready_config(load_from_str(&target_toml), "generated v3 config")?;
+    issues.extend(
+        target_warnings
+            .into_iter()
+            .map(|warning| MigrationIssue::notice(warning.message)),
+    );
+    verify_v3_semantics(&config, &target_config)?;
+
+    Ok(MigrationPlan {
+        source_version,
+        target_version: 3,
+        source_path: source_path.to_path_buf(),
+        destination_path,
+        target_toml,
+        issues,
+        changed: true,
+        limited: true,
+        original,
+    })
+}
+
+fn render_config_v2(config: &Config) -> Result<String> {
+    let timebase = config
+        .legacy_timebase
+        .as_ref()
+        .ok_or_else(|| anyhow!("v2 output requires legacy [timebase]"))?;
+    let mut value = toml::Value::try_from(config).context("failed to encode v2 config")?;
+    let table = value
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("normalized config did not encode as a TOML table"))?;
+    table.insert("version".to_string(), toml::Value::Integer(2));
+    table.insert(
+        "timebase".to_string(),
+        toml::Value::try_from(timebase).context("failed to encode v2 timebase")?,
+    );
+    toml::to_string_pretty(&value).context("failed to render v2 config")
+}
+
+fn render_config_v3(config: &Config) -> Result<String> {
+    let mut value = toml::Value::try_from(config).context("failed to encode v3 config")?;
+    let table = value
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("normalized config did not encode as a TOML table"))?;
+    table.insert("version".to_string(), toml::Value::Integer(3));
+    toml::to_string_pretty(&value).context("failed to render v3 config")
+}
+
+fn verify_v2_semantics(source: &Config, target: &Config) -> Result<()> {
+    let source_config = toml::Value::try_from(source).context("failed to compare v1 semantics")?;
+    let target_config = toml::Value::try_from(target).context("failed to compare v2 semantics")?;
+    let timebase_matches = match (&source.legacy_timebase, &target.legacy_timebase) {
+        (Some(source), Some(target)) => source.t0 == target.t0 && source.dt == target.dt,
+        (None, None) => true,
+        _ => false,
+    };
+    if source_config != target_config || !timebase_matches {
+        bail!("generated v2 config does not preserve the normalized v1 execution semantics");
+    }
+    Ok(())
+}
+
+fn verify_v3_semantics(source: &Config, target: &Config) -> Result<()> {
+    let source = toml::Value::try_from(source).context("failed to compare legacy semantics")?;
+    let target = toml::Value::try_from(target).context("failed to compare v3 semantics")?;
+    if source != target {
+        bail!("generated v3 config does not preserve the normalized source execution semantics");
+    }
+    Ok(())
+}
+
+fn legacy_timebase_is_required(config: &Config) -> Result<bool> {
+    if config.legacy_timebase.is_none() {
+        return Ok(false);
+    }
+    match config.fetch.analysis_input {
+        FetchAnalysisInput::Raw => Ok(false),
+        FetchAnalysisInput::Csv => Ok(!csv_has_recorded_time(
+            &config.artifact_path(FETCHED_FNAME),
+        )?),
+        FetchAnalysisInput::Auto => {
+            let metadata = config
+                .artifact_path(RAW_WAVEFORM_DIR)
+                .join(RAW_METADATA_FNAME);
+            if metadata.exists() {
+                Ok(false)
+            } else {
+                Ok(!csv_has_recorded_time(
+                    &config.artifact_path(FETCHED_FNAME),
+                )?)
+            }
+        }
+    }
+}
+
+fn csv_has_recorded_time(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_path(path)
+        .with_context(|| format!("failed to inspect CSV time column: {}", path.display()))?;
+    let headers = reader
+        .headers()
+        .with_context(|| format!("failed to read CSV header: {}", path.display()))?;
+    Ok(headers.iter().any(|header| {
+        matches!(
+            header.trim().to_ascii_lowercase().as_str(),
+            "time" | "time (s)" | "t" | "t (s)"
+        )
+    }))
 }
 
 fn declared_version(source: &str) -> Result<u32> {

@@ -89,7 +89,7 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum ConfigCommand {
-    /// Upgrade the config to the latest compatible schema
+    /// Upgrade the config to the latest executable schema
     Upgrade {
         /// Write the upgraded TOML to FILE; use '-' for standard output
         #[arg(long, value_name = "FILE", conflicts_with_all = ["in_place", "check"])]
@@ -107,13 +107,9 @@ pub enum ConfigCommand {
         #[arg(long)]
         accept_lossy: bool,
 
-        /// Target config version (only version 4 is currently supported)
-        #[arg(
-            long,
-            default_value_t = crate::config::LATEST_CONFIG_VERSION,
-            value_name = "VERSION"
-        )]
-        to: u32,
+        /// Require a specific target version instead of the latest executable version
+        #[arg(long, value_name = "VERSION")]
+        to: Option<u32>,
     },
 }
 
