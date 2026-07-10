@@ -99,8 +99,9 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOut
     let t0 = std::time::Instant::now();
     for (sig_ch, li_result) in signal_ch.iter().zip(lockin_output.result.iter()) {
         let li_result_fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, sig_ch);
+        let li_result_path = cfg.artifact_path(&li_result_fname);
         write_li_results(
-            &li_result_fname,
+            &li_result_path,
             &headers,
             &t_stride,
             &sensor_rate_stride,

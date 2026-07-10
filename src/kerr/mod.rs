@@ -33,7 +33,7 @@ pub fn run(cfg: &Config) -> Result<()> {
         .par_iter()
         .map(|channel| {
             let fname = format!("{}_ch{}.csv", LI_ROTATED_NAME, channel);
-            read_csv(fname)
+            read_csv(cfg.artifact_path(fname))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -150,9 +150,10 @@ pub fn run_kerr_analysis(
         pb.inc(1);
     }
     let fname = format!("{}_results.csv", KERR_NAME);
+    let path = cfg.artifact_path(&fname);
     let headers = get_kerr_headers(cfg)?;
     write_kerr_results(
-        &fname,
+        &path,
         &headers,
         t,
         sensor_rate_ch,

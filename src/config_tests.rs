@@ -1,6 +1,7 @@
 use super::{
     ConfigLoad, Connection, FetchAnalysisInput, FetchOutput, LockinLpfKind, PlotDecimation,
-    ValidationTarget, load_from_path, load_from_str, validate_for_target, validate_sensor_metadata,
+    ValidationTarget, load_from_path, load_from_str, render_normalized_config, validate_for_target,
+    validate_sensor_metadata,
 };
 use std::fs;
 
@@ -1192,6 +1193,65 @@ fn v4_base_schema_normalizes_to_runtime_config() {
 }
 
 #[test]
+fn v4_normalized_output_uses_v4_schema_and_round_trips() {
+    let text = v4_base().replace(
+        "scale = { factor = -39364.84663082185 }",
+        "scale = { max_abs = 55.0, polarity = -1 }",
+    );
+    let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+        panic!("expected ready v4 config");
+    };
+
+    let rendered = render_normalized_config(&config).unwrap();
+    assert!(rendered.contains("[scope]"));
+    assert!(rendered.contains("[[sensors]]"));
+    assert!(!rendered.contains("[instruments]"));
+    assert!(!rendered.contains("[roles]"));
+
+    let ConfigLoad::Ready {
+        config: round_trip, ..
+    } = load_from_str(&rendered)
+    else {
+        panic!("rendered v4 config must be readable:\n{rendered}");
+    };
+    let sensor = round_trip
+        .channels
+        .iter()
+        .find(|channel| channel.index == 1)
+        .unwrap();
+    assert_eq!(sensor.scale_to_abs_max, Some(-55.0));
+    assert_eq!(round_trip.fetch.output, FetchOutput::Raw);
+    assert_eq!(round_trip.lockin.lpf_kind, LockinLpfKind::BoxcarLegacy);
+}
+
+#[test]
+fn v4_artifacts_are_relative_to_config_directory() {
+    let dir = std::env::temp_dir().join(format!(
+        "pmoke_v4_artifacts_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&dir).unwrap();
+    let path = dir.join("experiment.toml");
+    fs::write(&path, v4_base()).unwrap();
+
+    let ConfigLoad::Ready { config, .. } = load_from_path(&path) else {
+        panic!("expected ready v4 config from path");
+    };
+    assert_eq!(config.artifact_path("raw.csv"), dir.join("raw.csv"));
+    assert_eq!(
+        config.artifact_path("raw_waveform"),
+        dir.join("raw_waveform")
+    );
+    assert_eq!(config.plot.output_dir, dir.join("plots").to_string_lossy());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn v4_max_abs_scale_normalizes_polarity_to_signed_target() {
     let text = v4_base().replace(
         "scale = { factor = -39364.84663082185 }",
@@ -1317,6 +1377,44 @@ fn v4_filter_rejects_fields_from_another_variant() {
         "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0, cutoff_hz = 10.0 }",
     );
     assert!(matches!(load_from_str(&text), ConfigLoad::Diagnostics(_)));
+}
+
+#[test]
+fn v4_validation_reports_v4_field_names() {
+    let text = v4_base()
+        .replace(
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 0.0 }",
+        )
+        .replace("offsets = [0, 0, 0, 0, 0, 0]", "offsets = [0, 0, 0]");
+    let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
+        panic!("expected v4 validation diagnostics");
+    };
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.path.as_deref() == Some("lockin.filter.half_window_cycles")
+            && diagnostic
+                .message
+                .contains("lockin.filter.half_window_cycles")
+    }));
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.path.as_deref() == Some("phase.offsets")
+            && diagnostic.message.contains("phase.offsets")
+    }));
+}
+
+#[test]
+fn v4_rejects_non_finite_time_windows() {
+    let text = v4_base().replace(
+        "fft_window = { start = 0.0, end = 15e-3 }",
+        "fft_window = { start = -inf, end = 15e-3 }",
+    );
+    let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
+        panic!("expected non-finite window diagnostic");
+    };
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.path.as_deref() == Some("reference.fft_window")
+            && diagnostic.message.contains("must be finite")
+    }));
 }
 
 #[test]

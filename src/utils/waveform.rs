@@ -101,13 +101,14 @@ pub fn read_all_fetched_waveforms(cfg: &Config) -> Result<WaveformData> {
 pub fn read_waveform_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
     match cfg.fetch.analysis_input {
         FetchAnalysisInput::Csv => read_csv_channels(cfg, channels),
-        FetchAnalysisInput::Raw => read_raw_channels(channels),
+        FetchAnalysisInput::Raw => read_raw_channels(cfg, channels),
         FetchAnalysisInput::Auto => read_auto_channels(cfg, channels),
     }
 }
 
 fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
-    let (time_index, column_indices) = csv_column_indices(channels)?;
+    let csv_path = cfg.artifact_path(FETCHED_FNAME);
+    let (time_index, column_indices) = csv_column_indices(&csv_path, channels)?;
     let mut read_indices =
         Vec::with_capacity(column_indices.len() + usize::from(time_index.is_some()));
     if let Some(time_index) = time_index {
@@ -115,8 +116,12 @@ fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
     }
     read_indices.extend(column_indices.iter().copied());
 
-    let mut columns = read_selected_columns(FETCHED_FNAME, &read_indices)
-        .with_context(|| format!("failed to read waveform columns from {FETCHED_FNAME}"))?;
+    let mut columns = read_selected_columns(&csv_path, &read_indices).with_context(|| {
+        format!(
+            "failed to read waveform columns from {}",
+            csv_path.display()
+        )
+    })?;
 
     let t = if time_index.is_some() {
         columns.remove(0)
@@ -131,7 +136,8 @@ fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
         .build()
     } else {
         bail!(
-            "{FETCHED_FNAME} has no time column; fetch again with the current version or use raw_waveform metadata"
+            "{} has no time column; fetch again with the current version or use raw_waveform metadata",
+            csv_path.display()
         );
     };
 
@@ -142,15 +148,15 @@ fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
 }
 
 fn read_auto_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
-    match raw_status(channels)? {
-        RawStatus::Complete => read_raw_channels(channels),
+    match raw_status(cfg, channels)? {
+        RawStatus::Complete => read_raw_channels(cfg, channels),
         RawStatus::Missing => read_csv_channels(cfg, channels),
         RawStatus::Invalid(message) => bail!("{message}"),
     }
 }
 
-fn read_raw_channels(channels: &[u8]) -> Result<WaveformData> {
-    read_raw_waveform_channels_from_dir(Path::new(RAW_WAVEFORM_DIR), channels)
+fn read_raw_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
+    read_raw_waveform_channels_from_dir(&cfg.artifact_path(RAW_WAVEFORM_DIR), channels)
 }
 
 pub fn read_raw_waveform_channels_from_dir(
@@ -439,8 +445,8 @@ enum RawStatus {
     Invalid(String),
 }
 
-fn raw_status(channels: &[u8]) -> Result<RawStatus> {
-    raw_status_in_dir(Path::new(RAW_WAVEFORM_DIR), channels)
+fn raw_status(cfg: &Config, channels: &[u8]) -> Result<RawStatus> {
+    raw_status_in_dir(&cfg.artifact_path(RAW_WAVEFORM_DIR), channels)
 }
 
 fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
@@ -487,8 +493,8 @@ fn path_entry_exists(path: &Path) -> Result<bool> {
     }
 }
 
-fn csv_column_indices(channels: &[u8]) -> Result<(Option<usize>, Vec<usize>)> {
-    let csv_columns = csv_columns_from_header(Path::new(FETCHED_FNAME))?;
+fn csv_column_indices(path: &Path, channels: &[u8]) -> Result<(Option<usize>, Vec<usize>)> {
+    let csv_columns = csv_columns_from_header(path)?;
     resolve_csv_column_indices(csv_columns, channels)
 }
 

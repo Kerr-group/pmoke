@@ -134,6 +134,18 @@ impl Config {
     pub fn phase_signal_ch(&self) -> &[u8] {
         &self.roles.signal_ch
     }
+
+    pub fn artifact_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        let path = path.as_ref();
+        if self.version < 4 || path.is_absolute() {
+            return path.to_path_buf();
+        }
+        self.source_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join(path)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -521,7 +533,7 @@ struct DataV4 {
     screenshot: bool,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum DataOutputV4 {
     Csv,
@@ -637,7 +649,7 @@ struct KerrV4 {
     factor: f64,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum PlotModeV4 {
     Off,
@@ -647,7 +659,7 @@ enum PlotModeV4 {
     Both,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum PlotErrorModeV4 {
     #[default]
@@ -676,6 +688,139 @@ impl Default for PlotV4 {
             on_error: PlotErrorModeV4::Warn,
         }
     }
+}
+
+#[derive(Serialize)]
+struct NormalizedConfigV4 {
+    version: u32,
+    scope: ScopeOutputV4,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generator: Option<GeneratorOutputV4>,
+    data: DataOutputConfigV4,
+    channels: ChannelsOutputV4,
+    sensors: Vec<SensorOutputV4>,
+    pulse: PulseOutputV4,
+    reference: Reference,
+    lockin: LockinOutputV4,
+    phase: PhaseOutputV4,
+    kerr: KerrOutputV4,
+    plot: PlotOutputV4,
+}
+
+#[derive(Serialize)]
+struct ScopeOutputV4 {
+    model: String,
+    connection: String,
+}
+
+#[derive(Serialize)]
+struct GeneratorOutputV4 {
+    model: String,
+    connection: String,
+}
+
+#[derive(Serialize)]
+struct DataOutputConfigV4 {
+    output: DataOutputV4,
+    input: FetchAnalysisInput,
+    screenshot: bool,
+}
+
+#[derive(Serialize)]
+struct ChannelsOutputV4 {
+    reference: u8,
+    signals: Vec<u8>,
+}
+
+#[derive(Serialize)]
+struct SensorOutputV4 {
+    channel: u8,
+    scale: SensorScaleOutputV4,
+    label: String,
+    unit: String,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum SensorScaleOutputV4 {
+    Factor { factor: f64 },
+    MaxAbs { max_abs: f64, polarity: i8 },
+}
+
+#[derive(Serialize)]
+struct PulseOutputV4 {
+    background_before: Window,
+    background_after: Window,
+}
+
+#[derive(Serialize)]
+struct LockinOutputV4 {
+    workers: usize,
+    stride_samples: usize,
+    filter: LockinFilterOutputV4,
+    #[serde(skip_serializing_if = "is_false")]
+    debug_output: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    debug_label: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    debug_overwrite: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snr_background_window: Option<Window>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snr_signal_window: Option<Window>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum LockinFilterOutputV4 {
+    BoxcarLegacy {
+        half_window_cycles: f64,
+    },
+    FirBoxcarEnbw {
+        half_window_cycles: f64,
+    },
+    FirZeroPhase {
+        half_window_cycles: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cutoff_hz: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cutoff_ref_ratio: Option<f64>,
+        stopband_atten_db: f64,
+    },
+    SyncIirZeroPhase {
+        half_window_cycles: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cutoff_hz: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cutoff_ref_ratio: Option<f64>,
+        sync_average_cycles: f64,
+        iir_order: usize,
+    },
+}
+
+#[derive(Serialize)]
+struct PhaseOutputV4 {
+    offsets: Vec<f64>,
+}
+
+#[derive(Serialize)]
+struct KerrOutputV4 {
+    sensor: u8,
+    method: KerrType,
+    factor: f64,
+}
+
+#[derive(Serialize)]
+struct PlotOutputV4 {
+    mode: PlotModeV4,
+    output_dir: String,
+    max_points: usize,
+    decimation: PlotDecimation,
+    on_error: PlotErrorModeV4,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -996,8 +1141,173 @@ pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
     let mut load = load_from_str(&text);
     if let ConfigLoad::Ready { config, .. } = &mut load {
         config.source_path = path.to_path_buf();
+        if config.version >= 4 {
+            config.plot.output_dir = config
+                .artifact_path(&config.plot.output_dir)
+                .to_string_lossy()
+                .into_owned();
+        }
     }
     load
+}
+
+pub fn render_normalized_config(config: &Config) -> Result<String> {
+    if config.version == 4 {
+        toml::to_string_pretty(&normalized_config_v4(config)?).map_err(Into::into)
+    } else {
+        toml::to_string_pretty(config).map_err(Into::into)
+    }
+}
+
+fn normalized_config_v4(config: &Config) -> Result<NormalizedConfigV4> {
+    let instruments = config
+        .instruments
+        .as_ref()
+        .ok_or_else(|| anyhow!("version 4 normalized config has no oscilloscope"))?;
+    let scope = ScopeOutputV4 {
+        model: instruments.oscilloscope.model.clone(),
+        connection: connection_string_v4(&instruments.oscilloscope.connection),
+    };
+    let generator = instruments
+        .function_generator
+        .as_ref()
+        .map(|generator| GeneratorOutputV4 {
+            model: generator.model.clone(),
+            connection: connection_string_v4(&generator.connection),
+        });
+    let sensors = config
+        .roles
+        .sensor_ch
+        .iter()
+        .map(|&channel| sensor_output_v4(config, channel))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(NormalizedConfigV4 {
+        version: 4,
+        scope,
+        generator,
+        data: DataOutputConfigV4 {
+            output: match config.fetch.output {
+                FetchOutput::Csv => DataOutputV4::Csv,
+                FetchOutput::Raw => DataOutputV4::Raw,
+                FetchOutput::CsvAndRaw => DataOutputV4::Both,
+            },
+            input: config.fetch.analysis_input,
+            screenshot: config.screenshot.enabled,
+        },
+        channels: ChannelsOutputV4 {
+            reference: config.roles.reference_ch,
+            signals: config.roles.signal_ch.clone(),
+        },
+        sensors,
+        pulse: PulseOutputV4 {
+            background_before: config.pulse.bg_window_before,
+            background_after: config.pulse.bg_window_after,
+        },
+        reference: config.reference.clone(),
+        lockin: lockin_output_v4(&config.lockin),
+        phase: PhaseOutputV4 {
+            offsets: config.phase.m_omega_t0_offset.clone(),
+        },
+        kerr: KerrOutputV4 {
+            sensor: config.kerr.use_sensor_ch,
+            method: config.kerr.kerr_type,
+            factor: config.kerr.factor,
+        },
+        plot: plot_output_v4(&config.plot),
+    })
+}
+
+fn sensor_output_v4(config: &Config, index: u8) -> Result<SensorOutputV4> {
+    let channel = config
+        .channels
+        .iter()
+        .find(|channel| channel.index == index)
+        .ok_or_else(|| anyhow!("version 4 sensor channel {index} is not defined"))?;
+    let scale = match (channel.factor, channel.scale_to_abs_max) {
+        (Some(factor), None) => SensorScaleOutputV4::Factor { factor },
+        (None, Some(target)) => SensorScaleOutputV4::MaxAbs {
+            max_abs: target.abs(),
+            polarity: if target.is_sign_negative() { -1 } else { 1 },
+        },
+        _ => bail!("version 4 sensor channel {index} has an invalid scale"),
+    };
+    Ok(SensorOutputV4 {
+        channel: index,
+        scale,
+        label: channel
+            .label
+            .clone()
+            .ok_or_else(|| anyhow!("version 4 sensor channel {index} has no label"))?,
+        unit: channel
+            .unit_out
+            .clone()
+            .ok_or_else(|| anyhow!("version 4 sensor channel {index} has no unit"))?,
+    })
+}
+
+fn connection_string_v4(connection: &Connection) -> String {
+    match connection {
+        Connection::Tcpip { ip, port } if ip.contains(':') => format!("tcp://[{ip}]:{port}"),
+        Connection::Tcpip { ip, port } => format!("tcp://{ip}:{port}"),
+        Connection::Usbtmc { resource } => format!("visa:{resource}"),
+        Connection::Gpib { board, address } => format!("gpib://{board}/{address}"),
+    }
+}
+
+fn lockin_output_v4(lockin: &Lockin) -> LockinOutputV4 {
+    let filter = match lockin.lpf_kind {
+        LockinLpfKind::BoxcarLegacy => LockinFilterOutputV4::BoxcarLegacy {
+            half_window_cycles: lockin.lpf_half_window_cycles,
+        },
+        LockinLpfKind::FirBoxcarEnbw => LockinFilterOutputV4::FirBoxcarEnbw {
+            half_window_cycles: lockin.lpf_half_window_cycles,
+        },
+        LockinLpfKind::FirZeroPhase => LockinFilterOutputV4::FirZeroPhase {
+            half_window_cycles: lockin.lpf_half_window_cycles,
+            cutoff_hz: lockin.lpf_cutoff_hz,
+            cutoff_ref_ratio: lockin.lpf_cutoff_ref_ratio,
+            stopband_atten_db: lockin.lpf_stopband_atten_db,
+        },
+        LockinLpfKind::SyncIirZeroPhase => LockinFilterOutputV4::SyncIirZeroPhase {
+            half_window_cycles: lockin.lpf_half_window_cycles,
+            cutoff_hz: lockin.lpf_cutoff_hz,
+            cutoff_ref_ratio: lockin.lpf_cutoff_ref_ratio,
+            sync_average_cycles: lockin.lpf_sync_average_cycles,
+            iir_order: lockin.lpf_iir_order,
+        },
+    };
+    LockinOutputV4 {
+        workers: lockin.workers,
+        stride_samples: lockin.stride_samples,
+        filter,
+        debug_output: lockin.lpf_debug_output,
+        debug_label: lockin.lpf_debug_label.clone(),
+        debug_overwrite: lockin.lpf_debug_overwrite,
+        snr_background_window: lockin.snr_background_window,
+        snr_signal_window: lockin.snr_signal_window,
+    }
+}
+
+fn plot_output_v4(plot: &Plot) -> PlotOutputV4 {
+    let mode = match (plot.enabled, plot.save, plot.interactive) {
+        (false, _, _) => PlotModeV4::Off,
+        (true, true, true) => PlotModeV4::Both,
+        (true, false, true) => PlotModeV4::Interactive,
+        (true, true, false) => PlotModeV4::Save,
+        (true, false, false) => PlotModeV4::Off,
+    };
+    PlotOutputV4 {
+        mode,
+        output_dir: plot.output_dir.clone(),
+        max_points: plot.max_points,
+        decimation: plot.decimation,
+        on_error: if plot.fail_on_error {
+            PlotErrorModeV4::Fail
+        } else {
+            PlotErrorModeV4::Warn
+        },
+    }
 }
 
 pub fn load_from_str(s: &str) -> ConfigLoad {
@@ -1543,7 +1853,7 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         },
     };
 
-    let validation = validate_common(&mut cfg);
+    let validation = remap_v4_validation(validate_common(&mut cfg));
     errors.extend(validation.errors);
     if errors.is_empty() {
         ConfigLoad::Ready {
@@ -1572,6 +1882,52 @@ fn channel_from_sensor_v4(sensor: &SensorV4) -> Channel {
         label: Some(sensor.label.clone()),
         unit_out: Some(sensor.unit.clone()),
     }
+}
+
+fn remap_v4_validation(mut validation: ValidationSummary) -> ValidationSummary {
+    for warning in &mut validation.warnings {
+        warning.message = v4_config_terms(&warning.message);
+    }
+    for error in &mut validation.errors {
+        error.path = error.path.as_deref().map(v4_config_terms);
+        error.message = v4_config_terms(&error.message);
+        error.suggestion = error.suggestion.as_deref().map(v4_config_terms);
+    }
+    validation
+}
+
+fn v4_config_terms(value: &str) -> String {
+    [
+        (
+            "lockin.lpf_sync_average_cycles",
+            "lockin.filter.sync_average_cycles",
+        ),
+        (
+            "lockin.lpf_half_window_cycles",
+            "lockin.filter.half_window_cycles",
+        ),
+        (
+            "lockin.lpf_stopband_atten_db",
+            "lockin.filter.stopband_atten_db",
+        ),
+        (
+            "lockin.lpf_cutoff_ref_ratio",
+            "lockin.filter.cutoff_ref_ratio",
+        ),
+        ("lockin.lpf_cutoff_hz", "lockin.filter.cutoff_hz"),
+        ("lockin.lpf_iir_order", "lockin.filter.iir_order"),
+        ("lockin.lpf_debug_label", "lockin.debug_label"),
+        ("lockin.lpf_kind", "lockin.filter.kind"),
+        ("phase.m_omega_t0_offset", "phase.offsets"),
+        ("pulse.bg_window_before", "pulse.background_before"),
+        ("pulse.bg_window_after", "pulse.background_after"),
+        ("kerr.use_sensor_ch", "kerr.sensor"),
+        ("roles.reference_ch", "channels.reference"),
+        ("roles.signal_ch", "channels.signals"),
+        ("roles.sensor_ch", "sensors"),
+    ]
+    .into_iter()
+    .fold(value.to_string(), |text, (old, new)| text.replace(old, new))
 }
 
 fn validate_v4_fields(raw: &ConfigV4, errors: &mut Vec<ConfigDiagnostic>) {
@@ -1991,7 +2347,17 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     }
 
     let check_win = |label: &str, w: Window| -> Option<ConfigDiagnostic> {
-        if matches!(w.start.partial_cmp(&w.end), Some(std::cmp::Ordering::Less)) {
+        if !w.start.is_finite() || !w.end.is_finite() {
+            Some(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(label.to_string()),
+                format!(
+                    "{label}: start and end must be finite (start={}, end={})",
+                    w.start, w.end
+                ),
+                None,
+            ))
+        } else if w.start < w.end {
             None
         } else {
             Some(ConfigDiagnostic::new(
@@ -2272,35 +2638,37 @@ fn validate_sensor_metadata(cfg: &Config) -> Result<()> {
 
 fn validate_analysis_input_exists(cfg: &Config) -> Result<()> {
     match cfg.fetch.analysis_input {
-        FetchAnalysisInput::Csv => validate_raw_csv_exists(),
-        FetchAnalysisInput::Raw => validate_raw_metadata_exists(),
+        FetchAnalysisInput::Csv => validate_raw_csv_exists(cfg),
+        FetchAnalysisInput::Raw => validate_raw_metadata_exists(cfg),
         FetchAnalysisInput::Auto => {
-            let raw_dir = Path::new(RAW_WAVEFORM_DIR);
+            let raw_dir = cfg.artifact_path(RAW_WAVEFORM_DIR);
             let metadata = raw_dir.join(RAW_METADATA_FNAME);
             if metadata.exists() {
                 Ok(())
             } else if raw_dir.exists() {
                 bail!("raw metadata not found: {}", metadata.display())
             } else {
-                validate_raw_csv_exists()
+                validate_raw_csv_exists(cfg)
             }
         }
     }
 }
 
-fn validate_raw_csv_exists() -> Result<()> {
-    validate_file_exists(Path::new(FETCHED_FNAME), FETCHED_FNAME)
+fn validate_raw_csv_exists(cfg: &Config) -> Result<()> {
+    let path = cfg.artifact_path(FETCHED_FNAME);
+    validate_file_exists(&path, &path.display().to_string())
 }
 
-fn validate_raw_metadata_exists() -> Result<()> {
-    let path = Path::new(RAW_WAVEFORM_DIR).join(RAW_METADATA_FNAME);
+fn validate_raw_metadata_exists(cfg: &Config) -> Result<()> {
+    let path = cfg.artifact_path(RAW_WAVEFORM_DIR).join(RAW_METADATA_FNAME);
     validate_file_exists(&path, &path.display().to_string())
 }
 
 fn validate_lockin_results_exist(cfg: &Config) -> Result<()> {
     for ch in cfg.phase_signal_ch() {
         let fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, ch);
-        validate_file_exists(Path::new(&fname), &fname)?;
+        let path = cfg.artifact_path(&fname);
+        validate_file_exists(&path, &path.display().to_string())?;
     }
     Ok(())
 }
@@ -2308,7 +2676,8 @@ fn validate_lockin_results_exist(cfg: &Config) -> Result<()> {
 fn validate_rotated_results_exist(cfg: &Config) -> Result<()> {
     for ch in cfg.phase_signal_ch() {
         let fname = format!("{}_ch{}.csv", LI_ROTATED_NAME, ch);
-        validate_file_exists(Path::new(&fname), &fname)?;
+        let path = cfg.artifact_path(&fname);
+        validate_file_exists(&path, &path.display().to_string())?;
     }
     Ok(())
 }

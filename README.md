@@ -58,59 +58,40 @@ If no command is provided, `pmoke` opens `monitor`.
 ## ⚙️ Example Config
 
 ```toml
-version = 3
+version = 4
 
-[instruments.function_generator]
-connection = { protocol = "gpib", board = 0, address = 11 }
-model = "WF1946B"
-
-[instruments.oscilloscope]
-connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
+[scope]
 model = "DHO5108"
+connection = "tcp://192.168.10.100:55255"
 
-[fetch]
-output = "raw"          # "csv", "raw", or "csv_and_raw"
-analysis_input = "raw"  # "csv", "raw", or "auto"
+[generator]
+model = "WF1946B"
+connection = "gpib://0/11"
 
-[screenshot]
-enabled = true
+[data]
+output = "raw"       # "csv", "raw", or "both"
+input = "raw"        # "csv", "raw", or "auto"
+screenshot = true
 
-[plot]
-enabled = true
-save = true
-interactive = false
-output_dir = "plots"
-max_points = 100_000
-decimation = "stride"
-fail_on_error = false
+[channels]
+reference = 2
+signals = [3]
 
-[roles]
-sensor_ch = [1, 4]
-reference_ch = 2
-signal_ch = [3]
-
-[[channels]]
-index = 1
-factor = -39364.84663082185
-# Or replace factor with scale_to_abs_max = -55.0 to auto-scale the sensor integral.
+[[sensors]]
+channel = 1
+scale = { max_abs = 55.0, polarity = -1 }
 label = "$\\mu_0H$"
-unit_out = "T"
+unit = "T"
 
-[[channels]]
-index = 2
-
-[[channels]]
-index = 3
-
-[[channels]]
-index = 4
-factor = 1.0
+[[sensors]]
+channel = 4
+scale = { factor = 1.0 }
 label = "sensor"
-unit_out = "a.u."
+unit = "a.u."
 
 [pulse]
-bg_window_before = { start = -5e-3, end = -0.1e-3 }
-bg_window_after  = { start = 43e-3, end = 46e-3 }
+background_before = { start = -5e-3, end = -0.1e-3 }
+background_after  = { start = 43e-3, end = 46e-3 }
 
 [reference]
 fft_window = { start = 0e-3, end = 15e-3 }
@@ -120,18 +101,18 @@ window_samples = 1_000
 [lockin]
 workers = 2
 stride_samples = 100
-lpf_kind = "boxcar_legacy"
-lpf_half_window_cycles = 1.0
-lpf_debug_output = false
-lpf_debug_overwrite = false
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 
 [phase]
-m_omega_t0_offset = ["0", "0", "0", "0", "0", "0"]
+offsets = [0, 0, 0, 0, 0, 0]
 
 [kerr]
-use_sensor_ch = 1
-kerr_type = "harmonics" # "standard" or "harmonics"
+sensor = 1
+method = "harmonics" # "standard" or "harmonics"
 factor = -1.0
+
+[plot]
+mode = "save" # "off", "save", "interactive", or "both"
 ```
 
 ## 📁 Data Layout
@@ -152,10 +133,12 @@ kerr_results.csv
 plots/
 ```
 
-Use `fetch.output = "raw"` for large DHO captures. It preserves the original
+With v4, relative data and plot paths are resolved from the config directory.
+
+Use `data.output = "raw"` for large DHO captures. It preserves the original
 WORD payload and avoids huge CSV files in the hot path.
 
-Use `fetch.analysis_input = "raw"` for strict raw analysis, or `"auto"` while
+Use `data.input = "raw"` for strict raw analysis, or `"auto"` while
 migrating existing data directories.
 
 ## 🎛️ Lock-In Notes
@@ -163,8 +146,9 @@ migrating existing data directories.
 The README config uses:
 
 ```toml
-lpf_kind = "boxcar_legacy"
+[lockin]
 stride_samples = 100
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 ```
 
 `boxcar_legacy` keeps continuity with the older moving-average style lock-in.
@@ -187,22 +171,21 @@ cutoff_hz < 0.45 * output_rate
 
 ## ✅ Config Rules
 
-- `roles.reference_ch` is one channel.
-- `roles.sensor_ch` and `roles.signal_ch` are arrays.
-- Sensor channels must define exactly one of `factor` or `scale_to_abs_max`, plus `label` and `unit_out`.
-- `scale_to_abs_max` scales the background-subtracted sensor integral to the requested maximum absolute value.
-- `kerr.use_sensor_ch` must be included in `roles.sensor_ch`.
-- `phase.m_omega_t0_offset` must contain six values.
+- `channels.reference` is one channel; `channels.signals` is an array.
+- Each sensor defines exactly one scale: `{ factor = ... }` or `{ max_abs = ..., polarity = -1|1 }`.
+- `max_abs` scales the background-subtracted sensor integral to the requested maximum absolute value.
+- `kerr.sensor` must refer to a channel in `sensors`.
+- `phase.offsets` must contain six values.
 - Time values come from raw metadata or the CSV `time (s)` column.
-- Unknown keys in `version = 3` configs are rejected.
+- Unknown keys in v4 configs are rejected. Legacy v1–v3 configs remain readable.
 
 ## 🔌 Hardware Notes
 
 Default builds include hardware support.
 
-- Windows: install NI-VISA, and NI-488.2 when using GPIB.
-- Linux: install `linux-gpib` when using GPIB.
-- USB-TMC uses a VISA resource string.
+- Use `tcp://host:port` for the DHO5108.
+- Windows: `visa:RESOURCE` is also supported with NI-VISA installed.
+- Install NI-488.2 or `linux-gpib` when using a GPIB function generator.
 
 Screenshot capture uses `:DISPlay:DATA? PNG` and writes directly to:
 
@@ -216,8 +199,8 @@ GPIB screenshot capture is not supported.
 
 For DHO5000 large-memory measurements:
 
-- Prefer `fetch.output = "raw"` or `"csv_and_raw"`.
-- Prefer `fetch.analysis_input = "raw"` or `"auto"`.
+- Prefer `data.output = "raw"` or `"both"`.
+- Prefer `data.input = "raw"` or `"auto"`.
 - Keep `raw_waveform/metadata.toml` with the `chN.u16le` files.
 - Generate CSV only when needed for inspection or external tools.
 
