@@ -1121,10 +1121,6 @@ output = "raw"
 input = "raw"
 screenshot = true
 
-[channels]
-reference = 3
-signals = [2]
-
 [[sensors]]
 channel = 1
 scale = { factor = -39364.84663082185 }
@@ -1142,11 +1138,13 @@ background_before = { start = -5e-3, end = -0.1e-3 }
 background_after = { start = 4.2e-3, end = 15e-3 }
 
 [reference]
+channel = 3
 fft_window = { start = 0.0, end = 15e-3 }
 stride_samples = 10_000
 window_samples = 1_000
 
 [lockin]
+signal_channels = [2]
 workers = 2
 stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
@@ -1205,8 +1203,12 @@ fn v4_normalized_output_uses_v4_schema_and_round_trips() {
     let rendered = render_normalized_config(&config).unwrap();
     assert!(rendered.contains("[scope]"));
     assert!(rendered.contains("[[sensors]]"));
+    assert!(rendered.contains("[reference]"));
+    assert!(rendered.contains("channel = 3"));
+    assert!(rendered.contains("signal_channels = [2]"));
     assert!(!rendered.contains("[instruments]"));
     assert!(!rendered.contains("[roles]"));
+    assert!(!rendered.contains("[channels]"));
 
     let ConfigLoad::Ready {
         config: round_trip, ..
@@ -1222,6 +1224,29 @@ fn v4_normalized_output_uses_v4_schema_and_round_trips() {
     assert_eq!(sensor.scale_to_abs_max, Some(-55.0));
     assert_eq!(round_trip.fetch.output, FetchOutput::Raw);
     assert_eq!(round_trip.lockin.lpf_kind, LockinLpfKind::BoxcarLegacy);
+}
+
+#[test]
+fn v4_rejects_removed_channels_role_table() {
+    let text = v4_base()
+        .replace("channel = 3\nfft_window", "fft_window")
+        .replace("signal_channels = [2]\n", "")
+        .replacen(
+            "[[sensors]]",
+            "[channels]\nreference = 3\nsignals = [2]\n\n[[sensors]]",
+            1,
+        );
+    assert!(matches!(load_from_str(&text), ConfigLoad::Diagnostics(_)));
+}
+
+#[test]
+fn v4_requires_local_reference_and_signal_channel_assignments() {
+    for text in [
+        v4_base().replace("channel = 3\nfft_window", "fft_window"),
+        v4_base().replace("signal_channels = [2]\n", ""),
+    ] {
+        assert!(matches!(load_from_str(&text), ConfigLoad::Diagnostics(_)));
+    }
 }
 
 #[test]
@@ -1288,12 +1313,13 @@ fn v4_scale_rejects_mixed_or_invalid_options() {
 
 #[test]
 fn v4_rejects_channel_role_collisions() {
-    let text = v4_base().replace("reference = 3", "reference = 1");
+    let text = v4_base().replace("[reference]\nchannel = 3", "[reference]\nchannel = 1");
     match load_from_str(&text) {
         ConfigLoad::Diagnostics(diag) => assert!(
-            diag.diagnostics
-                .iter()
-                .any(|issue| issue.message.contains("duplicate channel index")),
+            diag.diagnostics.iter().any(|issue| {
+                issue.path.as_deref() == Some("reference.channel")
+                    && issue.message.contains("assigned more than once")
+            }),
             "missing duplicate channel diagnostic: {diag:?}"
         ),
         other => panic!("expected v4 channel diagnostics, got {other:?}"),

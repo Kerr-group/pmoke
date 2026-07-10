@@ -45,6 +45,10 @@ fn v3_plan_generates_readable_v4_and_preserves_sensor_scale() {
     assert_eq!(plan.target_version, 4);
     assert!(plan.changed);
     assert!(plan.target_toml.contains("version = 4"));
+    assert!(!plan.target_toml.contains("[channels]"));
+    assert!(plan.target_toml.contains("[reference]"));
+    assert!(plan.target_toml.contains("channel = 2"));
+    assert!(plan.target_toml.contains("signal_channels = [3]"));
     assert!(plan.target_toml.contains("max_abs = 55.0"));
     assert!(plan.target_toml.contains("polarity = -1"));
     assert!(matches!(

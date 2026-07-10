@@ -501,11 +501,10 @@ struct ConfigV4 {
     #[serde(default)]
     generator: Option<GeneratorV4>,
     data: DataV4,
-    channels: ChannelsV4,
     #[serde(default)]
     sensors: Vec<SensorV4>,
     pulse: PulseV4,
-    reference: ReferenceV2,
+    reference: ReferenceV4,
     lockin: LockinV4,
     phase: PhaseV4,
     kerr: KerrV4,
@@ -546,14 +545,6 @@ enum DataOutputV4 {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ChannelsV4 {
-    reference: u8,
-    #[serde(default)]
-    signals: Vec<u8>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct SensorV4 {
     channel: u8,
     scale: SensorScaleV4,
@@ -590,7 +581,17 @@ struct PulseV4 {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReferenceV4 {
+    channel: u8,
+    fft_window: Window,
+    stride_samples: usize,
+    window_samples: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LockinV4 {
+    signal_channels: Vec<u8>,
     workers: usize,
     stride_samples: usize,
     filter: LockinFilterV4,
@@ -700,10 +701,9 @@ struct NormalizedConfigV4 {
     #[serde(skip_serializing_if = "Option::is_none")]
     generator: Option<GeneratorOutputV4>,
     data: DataOutputConfigV4,
-    channels: ChannelsOutputV4,
     sensors: Vec<SensorOutputV4>,
     pulse: PulseOutputV4,
-    reference: Reference,
+    reference: ReferenceOutputV4,
     lockin: LockinOutputV4,
     phase: PhaseOutputV4,
     kerr: KerrOutputV4,
@@ -730,12 +730,6 @@ struct DataOutputConfigV4 {
 }
 
 #[derive(Serialize)]
-struct ChannelsOutputV4 {
-    reference: u8,
-    signals: Vec<u8>,
-}
-
-#[derive(Serialize)]
 struct SensorOutputV4 {
     channel: u8,
     scale: SensorScaleOutputV4,
@@ -757,7 +751,16 @@ struct PulseOutputV4 {
 }
 
 #[derive(Serialize)]
+struct ReferenceOutputV4 {
+    channel: u8,
+    fft_window: Window,
+    stride_samples: usize,
+    window_samples: usize,
+}
+
+#[derive(Serialize)]
 struct LockinOutputV4 {
+    signal_channels: Vec<u8>,
     workers: usize,
     stride_samples: usize,
     filter: LockinFilterOutputV4,
@@ -1202,17 +1205,18 @@ fn normalized_config_v4(config: &Config) -> Result<NormalizedConfigV4> {
             input: config.fetch.analysis_input,
             screenshot: config.screenshot.enabled,
         },
-        channels: ChannelsOutputV4 {
-            reference: config.roles.reference_ch,
-            signals: config.roles.signal_ch.clone(),
-        },
         sensors,
         pulse: PulseOutputV4 {
             background_before: config.pulse.bg_window_before,
             background_after: config.pulse.bg_window_after,
         },
-        reference: config.reference.clone(),
-        lockin: lockin_output_v4(&config.lockin),
+        reference: ReferenceOutputV4 {
+            channel: config.roles.reference_ch,
+            fft_window: config.reference.fft_window,
+            stride_samples: config.reference.stride_samples,
+            window_samples: config.reference.window_samples,
+        },
+        lockin: lockin_output_v4(&config.lockin, &config.roles.signal_ch),
         phase: PhaseOutputV4 {
             offsets: config.phase.m_omega_t0_offset.clone(),
         },
@@ -1262,7 +1266,7 @@ fn connection_string_v4(connection: &Connection) -> String {
     }
 }
 
-fn lockin_output_v4(lockin: &Lockin) -> LockinOutputV4 {
+fn lockin_output_v4(lockin: &Lockin, signal_channels: &[u8]) -> LockinOutputV4 {
     let filter = match lockin.lpf_kind {
         LockinLpfKind::BoxcarLegacy => LockinFilterOutputV4::BoxcarLegacy {
             half_window_cycles: lockin.lpf_half_window_cycles,
@@ -1285,6 +1289,7 @@ fn lockin_output_v4(lockin: &Lockin) -> LockinOutputV4 {
         },
     };
     LockinOutputV4 {
+        signal_channels: signal_channels.to_vec(),
         workers: lockin.workers,
         stride_samples: lockin.stride_samples,
         filter,
@@ -1796,7 +1801,7 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         .iter()
         .map(channel_from_sensor_v4)
         .collect::<Vec<_>>();
-    channels.extend(raw.channels.signals.iter().map(|&index| Channel {
+    channels.extend(raw.lockin.signal_channels.iter().map(|&index| Channel {
         index,
         factor: None,
         scale_to_abs_max: None,
@@ -1804,7 +1809,7 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         unit_out: None,
     }));
     channels.push(Channel {
-        index: raw.channels.reference,
+        index: raw.reference.channel,
         factor: None,
         scale_to_abs_max: None,
         label: None,
@@ -1840,8 +1845,8 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         legacy_timebase: None,
         roles: Roles {
             sensor_ch,
-            reference_ch: raw.channels.reference,
-            signal_ch: raw.channels.signals,
+            reference_ch: raw.reference.channel,
+            signal_ch: raw.lockin.signal_channels.clone(),
         },
         channels,
         pulse: Pulse {
@@ -1900,6 +1905,10 @@ fn remap_v4_validation(mut validation: ValidationSummary) -> ValidationSummary {
         error.message = v4_config_terms(&error.message);
         error.suggestion = error.suggestion.as_deref().map(v4_config_terms);
     }
+    validation.errors.retain(|error| {
+        !(error.path.as_deref() == Some("channels")
+            && error.message.starts_with("duplicate channel index:"))
+    });
     validation
 }
 
@@ -1929,8 +1938,8 @@ fn v4_config_terms(value: &str) -> String {
         ("pulse.bg_window_before", "pulse.background_before"),
         ("pulse.bg_window_after", "pulse.background_after"),
         ("kerr.use_sensor_ch", "kerr.sensor"),
-        ("roles.reference_ch", "channels.reference"),
-        ("roles.signal_ch", "channels.signals"),
+        ("roles.reference_ch", "reference.channel"),
+        ("roles.signal_ch", "lockin.signal_channels"),
         ("roles.sensor_ch", "sensors"),
     ]
     .into_iter()
@@ -1939,22 +1948,43 @@ fn v4_config_terms(value: &str) -> String {
 
 fn validate_v4_fields(raw: &ConfigV4, errors: &mut Vec<ConfigDiagnostic>) {
     let channel_in_range = |channel: u8| (1..=8).contains(&channel);
-    if !channel_in_range(raw.channels.reference) {
+    let mut assignments = BTreeMap::<u8, String>::new();
+    let mut assign = |channel: u8, path: String| {
+        if let Some(first) = assignments.get(&channel) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(path.clone()),
+                format!("channel {channel} is assigned more than once (first assigned at {first})"),
+                None,
+            ));
+        } else {
+            assignments.insert(channel, path);
+        }
+    };
+    for (index, sensor) in raw.sensors.iter().enumerate() {
+        assign(sensor.channel, format!("sensors[{index}].channel"));
+    }
+    assign(raw.reference.channel, "reference.channel".to_string());
+    for (index, &channel) in raw.lockin.signal_channels.iter().enumerate() {
+        assign(channel, format!("lockin.signal_channels[{index}]"));
+    }
+
+    if !channel_in_range(raw.reference.channel) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
-            Some("channels.reference".to_string()),
+            Some("reference.channel".to_string()),
             format!(
                 "DHO5108 channel must be in 1..=8 (got {})",
-                raw.channels.reference
+                raw.reference.channel
             ),
             None,
         ));
     }
-    for (index, &channel) in raw.channels.signals.iter().enumerate() {
+    for (index, &channel) in raw.lockin.signal_channels.iter().enumerate() {
         if !channel_in_range(channel) {
             errors.push(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
-                Some(format!("channels.signals[{index}]")),
+                Some(format!("lockin.signal_channels[{index}]")),
                 format!("DHO5108 channel must be in 1..=8 (got {channel})"),
                 None,
             ));
@@ -2953,6 +2983,16 @@ impl From<ReferenceV1> for Reference {
 
 impl From<ReferenceV2> for Reference {
     fn from(value: ReferenceV2) -> Self {
+        Self {
+            fft_window: value.fft_window,
+            stride_samples: value.stride_samples,
+            window_samples: value.window_samples,
+        }
+    }
+}
+
+impl From<ReferenceV4> for Reference {
+    fn from(value: ReferenceV4) -> Self {
         Self {
             fft_window: value.fft_window,
             stride_samples: value.stride_samples,

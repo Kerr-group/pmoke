@@ -94,10 +94,6 @@ output = "raw"       # "csv", "raw", or "both"
 input = "raw"        # "csv", "raw", or "auto"
 screenshot = true
 
-[channels]
-reference = 2
-signals = [3]
-
 [[sensors]]
 channel = 1
 scale = { max_abs = 55.0, polarity = -1 }
@@ -115,11 +111,13 @@ background_before = { start = -5e-3, end = -0.1e-3 }
 background_after  = { start = 43e-3, end = 46e-3 }
 
 [reference]
+channel = 2
 fft_window = { start = 0e-3, end = 15e-3 }
 stride_samples = 10_000
 window_samples = 1_000
 
 [lockin]
+signal_channels = [3]
 workers = 2
 stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
@@ -192,7 +190,7 @@ cutoff_hz < 0.45 * output_rate
 
 ## ✅ Config Rules
 
-- `channels.reference` is one channel; `channels.signals` is an array.
+- `reference.channel` is the reference input; `lockin.signal_channels` lists the demodulated inputs.
 - Each sensor defines exactly one scale: `{ factor = ... }` or `{ max_abs = ..., polarity = -1|1 }`.
 - `max_abs` scales the background-subtracted sensor integral to the requested maximum absolute value.
 - `kerr.sensor` must refer to a channel in `sensors`.
