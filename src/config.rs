@@ -478,6 +478,206 @@ struct ConfigV3 {
     kerr: KerrV2,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigV4 {
+    version: u32,
+    scope: ScopeV4,
+    #[serde(default)]
+    generator: Option<GeneratorV4>,
+    data: DataV4,
+    channels: ChannelsV4,
+    #[serde(default)]
+    sensors: Vec<SensorV4>,
+    pulse: PulseV4,
+    reference: ReferenceV2,
+    lockin: LockinV4,
+    phase: PhaseV4,
+    kerr: KerrV4,
+    #[serde(default)]
+    plot: PlotV4,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScopeV4 {
+    model: String,
+    connection: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratorV4 {
+    model: String,
+    connection: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DataV4 {
+    output: DataOutputV4,
+    input: FetchAnalysisInput,
+    #[serde(default)]
+    screenshot: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum DataOutputV4 {
+    Csv,
+    Raw,
+    Both,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChannelsV4 {
+    reference: u8,
+    #[serde(default)]
+    signals: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SensorV4 {
+    channel: u8,
+    scale: SensorScaleV4,
+    label: String,
+    unit: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SensorScaleV4 {
+    Factor(SensorFactorScaleV4),
+    MaxAbs(SensorMaxAbsScaleV4),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SensorFactorScaleV4 {
+    factor: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SensorMaxAbsScaleV4 {
+    max_abs: f64,
+    polarity: i8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PulseV4 {
+    background_before: Window,
+    background_after: Window,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LockinV4 {
+    workers: usize,
+    stride_samples: usize,
+    filter: LockinFilterV4,
+    #[serde(default)]
+    debug_output: bool,
+    #[serde(default)]
+    debug_label: Option<String>,
+    #[serde(default)]
+    debug_overwrite: bool,
+    #[serde(default)]
+    snr_background_window: Option<Window>,
+    #[serde(default)]
+    snr_signal_window: Option<Window>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum LockinFilterV4 {
+    BoxcarLegacy {
+        half_window_cycles: f64,
+    },
+    FirBoxcarEnbw {
+        half_window_cycles: f64,
+    },
+    FirZeroPhase {
+        half_window_cycles: f64,
+        #[serde(default)]
+        cutoff_hz: Option<f64>,
+        #[serde(default)]
+        cutoff_ref_ratio: Option<f64>,
+        #[serde(default = "default_lockin_stopband_atten_db")]
+        stopband_atten_db: f64,
+    },
+    SyncIirZeroPhase {
+        half_window_cycles: f64,
+        #[serde(default)]
+        cutoff_hz: Option<f64>,
+        #[serde(default)]
+        cutoff_ref_ratio: Option<f64>,
+        #[serde(default = "default_lockin_sync_average_cycles")]
+        sync_average_cycles: f64,
+        #[serde(default = "default_lockin_iir_order")]
+        iir_order: usize,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PhaseV4 {
+    #[serde(deserialize_with = "de_vec_f64_or_expr")]
+    offsets: Vec<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KerrV4 {
+    sensor: u8,
+    method: KerrType,
+    factor: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum PlotModeV4 {
+    Off,
+    #[default]
+    Save,
+    Interactive,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum PlotErrorModeV4 {
+    #[default]
+    Warn,
+    Fail,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PlotV4 {
+    mode: PlotModeV4,
+    output_dir: String,
+    max_points: usize,
+    decimation: PlotDecimation,
+    on_error: PlotErrorModeV4,
+}
+
+impl Default for PlotV4 {
+    fn default() -> Self {
+        let default = Plot::default();
+        Self {
+            mode: PlotModeV4::Save,
+            output_dir: default.output_dir,
+            max_points: default.max_points,
+            decimation: default.decimation,
+            on_error: PlotErrorModeV4::Warn,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct FetchV2 {
@@ -876,6 +1076,15 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
                 normalized: None,
             }),
         },
+        4 => match deserialize_versioned::<ConfigV4>(s) {
+            Ok(raw) => normalize_v4(raw),
+            Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
+                version: Some(4),
+                warnings: Vec::new(),
+                diagnostics: vec![diag],
+                normalized: None,
+            }),
+        },
         other => {
             ConfigLoad::Diagnostics(ConfigDiagnostics {
                 version: Some(other),
@@ -884,7 +1093,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
                 DiagnosticKind::Parse,
                 Some("version".to_string()),
                 format!("unsupported config version: {other}"),
-                Some("use version = 1 or 2 for legacy configs, or version = 3 for the normalized schema"
+                Some("use version = 1, 2, or 3 for legacy configs, or version = 4 for the simplified schema"
                     .to_string()),
             )],
                 normalized: None,
@@ -1168,6 +1377,389 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
     }
 }
 
+fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
+    let mut errors = Vec::new();
+
+    let scope_connection = match parse_connection_v4(&raw.scope.connection, "scope.connection") {
+        Ok(connection) => Some(connection),
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
+    let generator_connection = match raw.generator.as_ref() {
+        Some(generator) => match parse_connection_v4(&generator.connection, "generator.connection")
+        {
+            Ok(connection) => Some(connection),
+            Err(error) => {
+                errors.push(error);
+                None
+            }
+        },
+        None => None,
+    };
+
+    if raw.version != 4 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("version".to_string()),
+            format!(
+                "version 4 schema must declare version = 4 (got {})",
+                raw.version
+            ),
+            None,
+        ));
+    }
+    if raw.scope.model != "DHO5108" {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("scope.model".to_string()),
+            format!("unsupported oscilloscope model: {}", raw.scope.model),
+            Some("use model = \"DHO5108\"".to_string()),
+        ));
+    }
+    if let Some(connection) = &scope_connection {
+        match connection {
+            Connection::Tcpip { .. } => {}
+            Connection::Usbtmc { .. } if cfg!(target_os = "windows") => {}
+            Connection::Usbtmc { .. } => errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("scope.connection".to_string()),
+                "visa connections currently require NI-VISA on Windows",
+                Some("use a tcp://host:port connection on this platform".to_string()),
+            )),
+            Connection::Gpib { .. } => errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("scope.connection".to_string()),
+                "DHO5108 does not support a GPIB connection",
+                Some("use tcp://host:port or visa:RESOURCE".to_string()),
+            )),
+        }
+    }
+    if let Some(generator) = &raw.generator {
+        if generator.model != "WF1946B" {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("generator.model".to_string()),
+                format!("unsupported function generator model: {}", generator.model),
+                Some("use model = \"WF1946B\"".to_string()),
+            ));
+        }
+        if let Some(connection) = &generator_connection
+            && !matches!(connection, Connection::Gpib { .. })
+        {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("generator.connection".to_string()),
+                "WF1946B requires a gpib://board/address connection",
+                None,
+            ));
+        }
+    }
+
+    validate_v4_fields(&raw, &mut errors);
+
+    if scope_connection.is_none() || (raw.generator.is_some() && generator_connection.is_none()) {
+        return ConfigLoad::Diagnostics(ConfigDiagnostics {
+            version: Some(4),
+            warnings: Vec::new(),
+            diagnostics: errors,
+            normalized: None,
+        });
+    }
+    let scope_connection = scope_connection.expect("scope connection parsed above");
+
+    let sensor_ch = raw
+        .sensors
+        .iter()
+        .map(|sensor| sensor.channel)
+        .collect::<Vec<_>>();
+    let mut channels = raw
+        .sensors
+        .iter()
+        .map(channel_from_sensor_v4)
+        .collect::<Vec<_>>();
+    channels.extend(raw.channels.signals.iter().map(|&index| Channel {
+        index,
+        factor: None,
+        scale_to_abs_max: None,
+        label: None,
+        unit_out: None,
+    }));
+    channels.push(Channel {
+        index: raw.channels.reference,
+        factor: None,
+        scale_to_abs_max: None,
+        label: None,
+        unit_out: None,
+    });
+
+    let function_generator = raw.generator.map(|generator| FunctionGenerator {
+        connection: generator_connection.expect("generator connection parsed above"),
+        model: generator.model,
+    });
+    let mut cfg = Config {
+        version: 4,
+        instruments: Some(Instruments {
+            function_generator,
+            oscilloscope: Oscilloscope {
+                connection: scope_connection,
+                model: raw.scope.model,
+            },
+        }),
+        fetch: Fetch {
+            output: match raw.data.output {
+                DataOutputV4::Csv => FetchOutput::Csv,
+                DataOutputV4::Raw => FetchOutput::Raw,
+                DataOutputV4::Both => FetchOutput::CsvAndRaw,
+            },
+            analysis_input: raw.data.input,
+        },
+        screenshot: Screenshot {
+            enabled: raw.data.screenshot,
+        },
+        plot: raw.plot.into(),
+        source_path: PathBuf::from("config.toml"),
+        legacy_timebase: None,
+        roles: Roles {
+            sensor_ch,
+            reference_ch: raw.channels.reference,
+            signal_ch: raw.channels.signals,
+        },
+        channels,
+        pulse: Pulse {
+            bg_window_before: raw.pulse.background_before,
+            bg_window_after: raw.pulse.background_after,
+        },
+        reference: raw.reference.into(),
+        lockin: raw.lockin.into(),
+        phase: Phase {
+            m_omega_t0_offset: raw.phase.offsets,
+        },
+        kerr: Kerr {
+            use_sensor_ch: raw.kerr.sensor,
+            kerr_type: raw.kerr.method,
+            factor: raw.kerr.factor,
+        },
+    };
+
+    let validation = validate_common(&mut cfg);
+    errors.extend(validation.errors);
+    if errors.is_empty() {
+        ConfigLoad::Ready {
+            config: cfg,
+            warnings: validation.warnings,
+        }
+    } else {
+        ConfigLoad::Diagnostics(ConfigDiagnostics {
+            version: Some(4),
+            warnings: validation.warnings,
+            diagnostics: errors,
+            normalized: None,
+        })
+    }
+}
+
+fn channel_from_sensor_v4(sensor: &SensorV4) -> Channel {
+    let (factor, scale_to_abs_max) = match sensor.scale {
+        SensorScaleV4::Factor(ref scale) => (Some(scale.factor), None),
+        SensorScaleV4::MaxAbs(ref scale) => (None, Some(scale.max_abs * f64::from(scale.polarity))),
+    };
+    Channel {
+        index: sensor.channel,
+        factor,
+        scale_to_abs_max,
+        label: Some(sensor.label.clone()),
+        unit_out: Some(sensor.unit.clone()),
+    }
+}
+
+fn validate_v4_fields(raw: &ConfigV4, errors: &mut Vec<ConfigDiagnostic>) {
+    let channel_in_range = |channel: u8| (1..=8).contains(&channel);
+    if !channel_in_range(raw.channels.reference) {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("channels.reference".to_string()),
+            format!(
+                "DHO5108 channel must be in 1..=8 (got {})",
+                raw.channels.reference
+            ),
+            None,
+        ));
+    }
+    for (index, &channel) in raw.channels.signals.iter().enumerate() {
+        if !channel_in_range(channel) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("channels.signals[{index}]")),
+                format!("DHO5108 channel must be in 1..=8 (got {channel})"),
+                None,
+            ));
+        }
+    }
+    for (index, sensor) in raw.sensors.iter().enumerate() {
+        if !channel_in_range(sensor.channel) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("sensors[{index}].channel")),
+                format!("DHO5108 channel must be in 1..=8 (got {})", sensor.channel),
+                None,
+            ));
+        }
+        if sensor.label.trim().is_empty() {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("sensors[{index}].label")),
+                "sensor label must not be empty",
+                None,
+            ));
+        }
+        if sensor.unit.trim().is_empty() {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("sensors[{index}].unit")),
+                "sensor unit must not be empty",
+                None,
+            ));
+        }
+        match sensor.scale {
+            SensorScaleV4::Factor(ref scale)
+                if !scale.factor.is_finite() || scale.factor == 0.0 =>
+            {
+                errors.push(ConfigDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Some(format!("sensors[{index}].scale.factor")),
+                    "sensor scale factor must be finite and non-zero",
+                    None,
+                ));
+            }
+            SensorScaleV4::MaxAbs(ref scale) => {
+                if !scale.max_abs.is_finite() || scale.max_abs <= 0.0 {
+                    errors.push(ConfigDiagnostic::new(
+                        DiagnosticKind::Validation,
+                        Some(format!("sensors[{index}].scale.max_abs")),
+                        "sensor scale max_abs must be finite and positive",
+                        None,
+                    ));
+                }
+                if !matches!(scale.polarity, -1 | 1) {
+                    errors.push(ConfigDiagnostic::new(
+                        DiagnosticKind::Validation,
+                        Some(format!("sensors[{index}].scale.polarity")),
+                        "sensor scale polarity must be -1 or 1",
+                        None,
+                    ));
+                }
+            }
+            SensorScaleV4::Factor(_) => {}
+        }
+    }
+    if raw.reference.stride_samples == 0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("reference.stride_samples".to_string()),
+            "reference.stride_samples must be positive",
+            None,
+        ));
+    }
+    if raw.reference.window_samples == 0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("reference.window_samples".to_string()),
+            "reference.window_samples must be positive",
+            None,
+        ));
+    }
+    if !raw.kerr.factor.is_finite() {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("kerr.factor".to_string()),
+            "kerr.factor must be finite",
+            None,
+        ));
+    }
+    let before = raw.pulse.background_before;
+    let after = raw.pulse.background_after;
+    if before.start <= after.end && after.start <= before.end {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("pulse".to_string()),
+            "pulse background windows must not overlap",
+            None,
+        ));
+    }
+}
+
+fn parse_connection_v4(
+    value: &str,
+    path: &str,
+) -> std::result::Result<Connection, ConfigDiagnostic> {
+    let invalid = |message: String| {
+        ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some(path.to_string()),
+            message,
+            Some("use tcp://host:port, visa:RESOURCE, or gpib://board/address".to_string()),
+        )
+    };
+    if let Some(endpoint) = value.strip_prefix("tcp://") {
+        let (host, port) = parse_tcp_endpoint_v4(endpoint)
+            .map_err(|message| invalid(format!("invalid TCP connection '{value}': {message}")))?;
+        return Ok(Connection::Tcpip { ip: host, port });
+    }
+    if let Some(resource) = value.strip_prefix("visa:") {
+        let resource = resource.trim();
+        if resource.is_empty() {
+            return Err(invalid("VISA resource must not be empty".to_string()));
+        }
+        return Ok(Connection::Usbtmc {
+            resource: resource.to_string(),
+        });
+    }
+    if let Some(endpoint) = value.strip_prefix("gpib://") {
+        let (board, address) = endpoint
+            .split_once('/')
+            .ok_or_else(|| invalid("GPIB connection must be gpib://board/address".to_string()))?;
+        let board = board
+            .parse::<u8>()
+            .map_err(|_| invalid(format!("invalid GPIB board: {board}")))?;
+        let address = address
+            .parse::<u8>()
+            .map_err(|_| invalid(format!("invalid GPIB address: {address}")))?;
+        if address > 30 {
+            return Err(invalid(format!(
+                "GPIB address must be in 0..=30 (got {address})"
+            )));
+        }
+        return Ok(Connection::Gpib { board, address });
+    }
+    Err(invalid(format!("unsupported connection string: {value}")))
+}
+
+fn parse_tcp_endpoint_v4(endpoint: &str) -> std::result::Result<(String, u16), String> {
+    let (host, port) = if let Some(rest) = endpoint.strip_prefix('[') {
+        let (host, port) = rest
+            .split_once("]:")
+            .ok_or_else(|| "IPv6 endpoint must be [address]:port".to_string())?;
+        (host, port)
+    } else {
+        endpoint
+            .rsplit_once(':')
+            .ok_or_else(|| "endpoint must include a port".to_string())?
+    };
+    let host = host.trim();
+    if host.is_empty() {
+        return Err("host must not be empty".to_string());
+    }
+    let port = port
+        .parse::<u16>()
+        .map_err(|_| format!("invalid port: {port}"))?;
+    if port == 0 {
+        return Err("port must be in 1..=65535".to_string());
+    }
+    Ok((host.to_string(), port))
+}
+
 struct ValidationSummary {
     warnings: Vec<ConfigWarning>,
     errors: Vec<ConfigDiagnostic>,
@@ -1184,12 +1776,12 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
 
-    if cfg.version != 3 {
+    if !matches!(cfg.version, 3 | 4) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("version".to_string()),
             format!(
-                "normalized config must have version 3 (got {})",
+                "normalized config must have version 3 or 4 (got {})",
                 cfg.version
             ),
             None,
@@ -1227,7 +1819,7 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
-    if cfg.lockin.lpf_half_window_cycles <= 0.0 {
+    if !cfg.lockin.lpf_half_window_cycles.is_finite() || cfg.lockin.lpf_half_window_cycles <= 0.0 {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("lockin.lpf_half_window_cycles".to_string()),
@@ -1238,7 +1830,7 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
-    if cfg.lockin.lpf_stopband_atten_db <= 0.0 {
+    if !cfg.lockin.lpf_stopband_atten_db.is_finite() || cfg.lockin.lpf_stopband_atten_db <= 0.0 {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("lockin.lpf_stopband_atten_db".to_string()),
@@ -1283,7 +1875,7 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
     }
     if uses_explicit_cutoff(cfg.lockin.lpf_kind) {
         if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz
-            && cutoff_hz <= 0.0
+            && (!cutoff_hz.is_finite() || cutoff_hz <= 0.0)
         {
             errors.push(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
@@ -1293,7 +1885,7 @@ fn validate_common(cfg: &mut Config) -> ValidationSummary {
             ));
         }
         if let Some(cutoff_ratio) = cfg.lockin.lpf_cutoff_ref_ratio
-            && cutoff_ratio <= 0.0
+            && (!cutoff_ratio.is_finite() || cutoff_ratio <= 0.0)
         {
             errors.push(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
@@ -1796,6 +2388,84 @@ impl From<PlotV2> for Plot {
             decimation: value.decimation,
             fail_on_error: value.fail_on_error,
         }
+    }
+}
+
+impl From<PlotV4> for Plot {
+    fn from(value: PlotV4) -> Self {
+        let (enabled, save, interactive) = match value.mode {
+            PlotModeV4::Off => (false, false, false),
+            PlotModeV4::Save => (true, true, false),
+            PlotModeV4::Interactive => (true, false, true),
+            PlotModeV4::Both => (true, true, true),
+        };
+        Self {
+            enabled,
+            save,
+            interactive,
+            output_dir: value.output_dir,
+            max_points: value.max_points,
+            decimation: value.decimation,
+            fail_on_error: value.on_error == PlotErrorModeV4::Fail,
+        }
+    }
+}
+
+impl From<LockinV4> for Lockin {
+    fn from(value: LockinV4) -> Self {
+        let mut lockin = Self {
+            workers: value.workers,
+            stride_samples: value.stride_samples,
+            lpf_kind: LockinLpfKind::BoxcarLegacy,
+            lpf_half_window_cycles: 0.0,
+            lpf_cutoff_hz: None,
+            lpf_cutoff_ref_ratio: None,
+            lpf_stopband_atten_db: default_lockin_stopband_atten_db(),
+            lpf_sync_average_cycles: default_lockin_sync_average_cycles(),
+            lpf_iir_order: default_lockin_iir_order(),
+            lpf_debug_output: value.debug_output,
+            lpf_debug_label: value.debug_label,
+            lpf_debug_overwrite: value.debug_overwrite,
+            snr_background_window: value.snr_background_window,
+            snr_signal_window: value.snr_signal_window,
+        };
+        match value.filter {
+            LockinFilterV4::BoxcarLegacy { half_window_cycles } => {
+                lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
+                lockin.lpf_half_window_cycles = half_window_cycles;
+            }
+            LockinFilterV4::FirBoxcarEnbw { half_window_cycles } => {
+                lockin.lpf_kind = LockinLpfKind::FirBoxcarEnbw;
+                lockin.lpf_half_window_cycles = half_window_cycles;
+            }
+            LockinFilterV4::FirZeroPhase {
+                half_window_cycles,
+                cutoff_hz,
+                cutoff_ref_ratio,
+                stopband_atten_db,
+            } => {
+                lockin.lpf_kind = LockinLpfKind::FirZeroPhase;
+                lockin.lpf_half_window_cycles = half_window_cycles;
+                lockin.lpf_cutoff_hz = cutoff_hz;
+                lockin.lpf_cutoff_ref_ratio = cutoff_ref_ratio;
+                lockin.lpf_stopband_atten_db = stopband_atten_db;
+            }
+            LockinFilterV4::SyncIirZeroPhase {
+                half_window_cycles,
+                cutoff_hz,
+                cutoff_ref_ratio,
+                sync_average_cycles,
+                iir_order,
+            } => {
+                lockin.lpf_kind = LockinLpfKind::SyncIirZeroPhase;
+                lockin.lpf_half_window_cycles = half_window_cycles;
+                lockin.lpf_cutoff_hz = cutoff_hz;
+                lockin.lpf_cutoff_ref_ratio = cutoff_ref_ratio;
+                lockin.lpf_sync_average_cycles = sync_average_cycles;
+                lockin.lpf_iir_order = iir_order;
+            }
+        }
+        lockin
     }
 }
 

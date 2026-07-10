@@ -46,8 +46,7 @@ pub struct DhoRawWaveformWritten {
 #[allow(dead_code)]
 impl DHO5108 {
     pub fn open(ip: &str, port: u16, timeout: Option<Duration>) -> io::Result<Self> {
-        let addr = format!("{}:{}", ip, port);
-        let stream = TcpStream::connect(addr)?;
+        let stream = TcpStream::connect((ip, port))?;
         stream.set_read_timeout(timeout)?;
         stream.set_write_timeout(timeout)?;
         stream.set_nodelay(true)?;
