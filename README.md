@@ -46,7 +46,7 @@ cargo run --release --no-default-features -- --config config.toml analyze
 
 ```text
 pmoke --config config.toml show       # validate config
-pmoke --config config.toml config upgrade # preview a config upgrade
+pmoke --config config.toml config migrate # preview a config migration
 pmoke --config config.toml monitor    # terminal dashboard
 pmoke --config config.toml fetch      # fetch waveforms
 pmoke --config config.toml analyze    # analyze existing data
@@ -56,23 +56,23 @@ pmoke --config config.toml auto       # single + trigger + fetch + analyze
 
 If no command is provided, `pmoke` opens `monitor`.
 
-### Upgrade Legacy Configs
+### Migrate Legacy Configs
 
 Preview the migration to the latest executable config version:
 
 ```sh
-pmoke --config config.toml config upgrade
+pmoke --config config.toml config migrate
 ```
 
 The preview does not modify files. Write to a new file with `--output`, or use
 `--in-place` to create a versioned backup and atomically replace the source:
 
 ```sh
-pmoke --config config.toml config upgrade --output config.upgraded.toml
-pmoke --config config.toml config upgrade --in-place
+pmoke --config config.toml config migrate --output config.migrated.toml
+pmoke --config config.toml config migrate --in-place
 ```
 
-If a v1/v2 CSV has no time column, upgrade preserves `[timebase]`: v1 advances
+If a v1/v2 CSV has no time column, migration preserves `[timebase]`: v1 advances
 only to v2, and v2 remains v2. An explicit `--to 4` is blocked in that case.
 Other potential behavior changes, such as removing unused metadata or changing
 the artifact base directory, require `--accept-lossy`. Existing output and

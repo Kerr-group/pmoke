@@ -13,7 +13,7 @@ use std::{
 };
 
 mod migration;
-pub use migration::{MigrationPlan, plan_latest_executable_upgrade, plan_upgrade};
+pub use migration::{MigrationPlan, plan_latest_executable_migration, plan_migration};
 
 fn eval_f64_expr(s: &str) -> Result<f64> {
     if contains_print_call(s) {

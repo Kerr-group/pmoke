@@ -29,12 +29,12 @@ fn main() -> Result<()> {
     }
 
     if let Some(Command::Config { command }) = args.command.as_ref() {
-        let check = matches!(command, ConfigCommand::Upgrade { check: true, .. });
+        let check = matches!(command, ConfigCommand::Migrate { check: true, .. });
         match commands::config::run(&args.config, command) {
             Ok(outcome) if outcome.exit_code == 0 => return Ok(()),
             Ok(outcome) => std::process::exit(i32::from(outcome.exit_code)),
             Err(error) if check => {
-                eprintln!("Config upgrade blocked: {error:#}");
+                eprintln!("Config migration blocked: {error:#}");
                 std::process::exit(2);
             }
             Err(error) => return Err(error),

@@ -89,9 +89,9 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum ConfigCommand {
-    /// Upgrade the config to the latest executable schema
-    Upgrade {
-        /// Write the upgraded TOML to FILE; use '-' for standard output
+    /// Migrate the config to the latest executable schema
+    Migrate {
+        /// Write the migrated TOML to FILE; use '-' for standard output
         #[arg(long, value_name = "FILE", conflicts_with_all = ["in_place", "check"])]
         output: Option<PathBuf>,
 
@@ -99,7 +99,7 @@ pub enum ConfigCommand {
         #[arg(long, conflicts_with_all = ["output", "check"])]
         in_place: bool,
 
-        /// Only report whether an upgrade is required
+        /// Only report whether a migration is required
         #[arg(long, conflicts_with_all = ["output", "in_place"])]
         check: bool,
 
@@ -138,13 +138,13 @@ mod config_command_tests {
     use super::*;
 
     #[test]
-    fn parses_config_upgrade_options_without_hardware_feature() {
+    fn parses_config_migrate_options_without_hardware_feature() {
         let cli = Cli::try_parse_from([
             "pmoke",
             "--config",
             "old.toml",
             "config",
-            "upgrade",
+            "migrate",
             "--output",
             "new.toml",
             "--accept-lossy",
@@ -153,7 +153,7 @@ mod config_command_tests {
         assert!(matches!(
             cli.command,
             Some(Command::Config {
-                command: ConfigCommand::Upgrade {
+                command: ConfigCommand::Migrate {
                     output: Some(_),
                     accept_lossy: true,
                     ..
@@ -163,17 +163,22 @@ mod config_command_tests {
     }
 
     #[test]
-    fn rejects_conflicting_upgrade_destinations() {
+    fn rejects_conflicting_migration_destinations() {
         assert!(
             Cli::try_parse_from([
                 "pmoke",
                 "config",
-                "upgrade",
+                "migrate",
                 "--output",
                 "new.toml",
                 "--in-place",
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn rejects_unpublished_upgrade_command_name() {
+        assert!(Cli::try_parse_from(["pmoke", "config", "upgrade"]).is_err());
     }
 }

@@ -1,5 +1,5 @@
 use crate::cli::ConfigCommand;
-use crate::config::{MigrationPlan, plan_latest_executable_upgrade, plan_upgrade};
+use crate::config::{MigrationPlan, plan_latest_executable_migration, plan_migration};
 use anyhow::{Context, Result, bail};
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
@@ -13,13 +13,13 @@ pub struct ConfigCommandOutcome {
 
 pub fn run(config_path: &str, command: &ConfigCommand) -> Result<ConfigCommandOutcome> {
     match command {
-        ConfigCommand::Upgrade {
+        ConfigCommand::Migrate {
             output,
             in_place,
             check,
             accept_lossy,
             to,
-        } => run_upgrade(
+        } => run_migrate(
             Path::new(config_path),
             output.as_deref(),
             *in_place,
@@ -30,7 +30,7 @@ pub fn run(config_path: &str, command: &ConfigCommand) -> Result<ConfigCommandOu
     }
 }
 
-fn run_upgrade(
+fn run_migrate(
     source: &Path,
     output: Option<&Path>,
     in_place: bool,
@@ -45,10 +45,10 @@ fn run_upgrade(
         _ => Some(source),
     };
     let plan = match target_version {
-        Some(target) => plan_upgrade(source, destination, target),
-        None => plan_latest_executable_upgrade(source, destination),
+        Some(target) => plan_migration(source, destination, target),
+        None => plan_latest_executable_migration(source, destination),
     }
-    .context("config upgrade blocked")?;
+    .context("config migration blocked")?;
 
     if stdout_output {
         eprint!("{}", migration_report(&plan));
@@ -81,13 +81,13 @@ fn run_upgrade(
         print!("{}", plan.target_toml);
         io::stdout()
             .flush()
-            .context("failed to flush upgraded config to stdout")?;
+            .context("failed to flush migrated config to stdout")?;
     } else if in_place {
         replace_in_place(&plan)?;
-        println!("Upgraded {} in place.", source.display());
+        println!("Migrated {} in place.", source.display());
     } else if let Some(path) = output {
         write_new_output(path, plan.target_toml.as_bytes())?;
-        println!("Wrote upgraded config to {}.", path.display());
+        println!("Wrote migrated config to {}.", path.display());
     }
 
     Ok(ConfigCommandOutcome { exit_code: 0 })
@@ -114,7 +114,7 @@ fn require_lossy_acceptance(has_lossy_changes: bool, accept_lossy: bool) -> Resu
 
 fn migration_report(plan: &MigrationPlan) -> String {
     let mut report = format!(
-        "Config upgrade: v{} -> v{}\nDestination: {}\nStatus: {}\n",
+        "Config migration: v{} -> v{}\nDestination: {}\nStatus: {}\n",
         plan.source_version,
         plan.target_version,
         plan.destination_path.display(),
@@ -345,7 +345,7 @@ fn ensure_source_unchanged(path: &Path, expected: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to re-read source config: {}", path.display()))?;
     if current != expected {
         bail!(
-            "source config changed while the upgrade was being prepared; no replacement was performed"
+            "source config changed while the migration was being prepared; no replacement was performed"
         );
     }
     Ok(())
@@ -365,7 +365,7 @@ fn create_temporary(source: &Path) -> Result<(PathBuf, File)> {
     for attempt in 0..100u32 {
         let mut name = OsStr::new(".").to_os_string();
         name.push(filename);
-        name.push(format!(".upgrade.{}.{attempt}.tmp", std::process::id()));
+        name.push(format!(".migrate.{}.{attempt}.tmp", std::process::id()));
         let path = parent.join(name);
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => return Ok((path, file)),
@@ -466,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn check_exit_codes_distinguish_latest_upgrade_and_lossy_block() {
+    fn check_exit_codes_distinguish_latest_migration_and_lossy_block() {
         assert_eq!(check_exit_code(false, false, false), 0);
         assert_eq!(check_exit_code(true, false, false), 1);
         assert_eq!(check_exit_code(true, true, false), 2);
@@ -481,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn in_place_upgrade_creates_versioned_backup() {
+    fn in_place_migration_creates_versioned_backup() {
         let dir = TempDir::new();
         let source = dir.0.join("config.toml");
         let before = b"version = 3\n";
@@ -498,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_backup_blocks_in_place_upgrade_without_modifying_source() {
+    fn existing_backup_blocks_in_place_migration_without_modifying_source() {
         let dir = TempDir::new();
         let source = dir.0.join("config.toml");
         let before = b"version = 3\n";
@@ -517,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_source_blocks_in_place_upgrade_without_creating_backup() {
+    fn changed_source_blocks_in_place_migration_without_creating_backup() {
         let dir = TempDir::new();
         let source = dir.0.join("config.toml");
         let planned = b"version = 3\n";
@@ -544,7 +544,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn in_place_upgrade_refuses_symlink_source() {
+    fn in_place_migration_refuses_symlink_source() {
         use std::os::unix::fs::symlink;
 
         let dir = TempDir::new();

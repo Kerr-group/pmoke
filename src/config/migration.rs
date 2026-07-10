@@ -80,7 +80,7 @@ impl MigrationPlan {
     }
 }
 
-pub fn plan_latest_executable_upgrade(
+pub fn plan_latest_executable_migration(
     source_path: impl AsRef<Path>,
     destination_path: Option<&Path>,
 ) -> Result<MigrationPlan> {
@@ -100,7 +100,7 @@ pub fn plan_latest_executable_upgrade(
     }
 
     if source_version == LATEST_CONFIG_VERSION {
-        return plan_upgrade(source_path, Some(&destination_path), LATEST_CONFIG_VERSION);
+        return plan_migration(source_path, Some(&destination_path), LATEST_CONFIG_VERSION);
     }
 
     let mut blockers = Vec::new();
@@ -108,7 +108,7 @@ pub fn plan_latest_executable_upgrade(
         if !matches!(target, 2..=LATEST_CONFIG_VERSION) {
             continue;
         }
-        match plan_upgrade(source_path, Some(&destination_path), target) {
+        match plan_migration(source_path, Some(&destination_path), target) {
             Ok(mut plan) => {
                 plan.limited = target < LATEST_CONFIG_VERSION;
                 for blocker in blockers.into_iter().rev() {
@@ -146,7 +146,7 @@ pub fn plan_latest_executable_upgrade(
     })
 }
 
-pub fn plan_upgrade(
+pub fn plan_migration(
     source_path: impl AsRef<Path>,
     destination_path: Option<&Path>,
     target_version: u32,
@@ -161,7 +161,7 @@ pub fn plan_upgrade(
 
     if !matches!(target_version, 2..=LATEST_CONFIG_VERSION) {
         bail!(
-            "unsupported migration target v{target_version}; this pmoke supports config upgrade to v2, v3, or v{LATEST_CONFIG_VERSION}"
+            "unsupported migration target v{target_version}; this pmoke supports migration to v2, v3, or v{LATEST_CONFIG_VERSION}"
         );
     }
     if source_version > target_version {
@@ -575,7 +575,7 @@ fn inspect_artifact_base_change(
     }
     if source_parent != destination_parent {
         issues.push(MigrationIssue::lossy(format!(
-            "the upgraded config is being relocated from {} to {}; relative plot and artifact paths will use the new directory",
+            "the migrated config is being relocated from {} to {}; relative plot and artifact paths will use the new directory",
             source_parent.display(),
             destination_parent.display()
         )));

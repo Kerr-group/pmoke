@@ -11,7 +11,7 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "pmoke_config_upgrade_cli_{}_{}_{}",
+            "pmoke_config_migrate_cli_{}_{}_{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -61,15 +61,15 @@ fn check_and_output_enforce_lossy_acceptance_end_to_end() {
     let original = include_str!("fixtures/config_v3.toml");
     fs::write(&source, original).unwrap();
 
-    let blocked_check = pmoke(&source, &["config", "upgrade", "--check"]);
+    let blocked_check = pmoke(&source, &["config", "migrate", "--check"]);
     assert_eq!(blocked_check.status.code(), Some(2));
 
-    let available_check = pmoke(&source, &["config", "upgrade", "--check", "--accept-lossy"]);
+    let available_check = pmoke(&source, &["config", "migrate", "--check", "--accept-lossy"]);
     assert_eq!(available_check.status.code(), Some(1));
 
     let blocked_output = pmoke(
         &source,
-        &["config", "upgrade", "--output", target.to_str().unwrap()],
+        &["config", "migrate", "--output", target.to_str().unwrap()],
     );
     assert!(!blocked_output.status.success());
     assert!(!target.exists());
@@ -79,7 +79,7 @@ fn check_and_output_enforce_lossy_acceptance_end_to_end() {
         &source,
         &[
             "config",
-            "upgrade",
+            "migrate",
             "--output",
             target.to_str().unwrap(),
             "--accept-lossy",
@@ -93,7 +93,7 @@ fn check_and_output_enforce_lossy_acceptance_end_to_end() {
     assert!(fs::read_to_string(&target).unwrap().contains("version = 4"));
     assert_eq!(fs::read_to_string(&source).unwrap(), original);
 
-    let latest = pmoke(&target, &["config", "upgrade", "--check"]);
+    let latest = pmoke(&target, &["config", "migrate", "--check"]);
     assert_eq!(latest.status.code(), Some(0));
 }
 
@@ -113,7 +113,7 @@ fn v2_csv_without_time_stays_executable_instead_of_advancing_to_v4() {
     )
     .unwrap();
 
-    let compatible = pmoke_in_dir(&dir.0, &source, &["config", "upgrade", "--check"]);
+    let compatible = pmoke_in_dir(&dir.0, &source, &["config", "migrate", "--check"]);
     assert_eq!(compatible.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&compatible.stdout).contains("Status: LIMITED"));
     assert_eq!(fs::read_to_string(&source).unwrap(), v2);
@@ -123,7 +123,7 @@ fn v2_csv_without_time_stays_executable_instead_of_advancing_to_v4() {
         &source,
         &[
             "config",
-            "upgrade",
+            "migrate",
             "--check",
             "--to",
             "4",
@@ -152,20 +152,20 @@ fn v2_csv_with_recorded_time_can_advance_to_v4() {
     )
     .unwrap();
 
-    let available = pmoke_in_dir(&dir.0, &source, &["config", "upgrade", "--check"]);
+    let available = pmoke_in_dir(&dir.0, &source, &["config", "migrate", "--check"]);
     assert_eq!(available.status.code(), Some(1));
 
     let written = pmoke_in_dir(
         &dir.0,
         &source,
-        &["config", "upgrade", "--output", target.to_str().unwrap()],
+        &["config", "migrate", "--output", target.to_str().unwrap()],
     );
     assert!(
         written.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&written.stderr)
     );
-    let upgraded = fs::read_to_string(&target).unwrap();
-    assert!(upgraded.contains("version = 4"));
-    assert!(!upgraded.contains("[timebase]"));
+    let migrated = fs::read_to_string(&target).unwrap();
+    assert!(migrated.contains("version = 4"));
+    assert!(!migrated.contains("[timebase]"));
 }
