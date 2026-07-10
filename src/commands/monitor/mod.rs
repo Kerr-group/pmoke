@@ -3459,26 +3459,33 @@ struct ArtifactRow {
 }
 
 fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
-    let mut files = vec![("raw".to_string(), FETCHED_FNAME.to_string())];
+    let resolve = |path: String| {
+        cfg.map(|config| config.artifact_path(&path).display().to_string())
+            .unwrap_or(path)
+    };
+    let mut files = vec![("raw".to_string(), resolve(FETCHED_FNAME.to_string()))];
 
     if let Some(cfg) = cfg {
         if uses_raw_waveform_artifact(cfg) {
             files.push((
                 "raw word".to_string(),
-                format!("{RAW_WAVEFORM_DIR}/{RAW_METADATA_FNAME}"),
+                resolve(format!("{RAW_WAVEFORM_DIR}/{RAW_METADATA_FNAME}")),
             ));
         }
         for ch in cfg.phase_signal_ch() {
             files.push((
                 format!("li ch{ch}"),
-                format!("{}_ch{}.csv", LI_RESULTS_NAME, ch),
+                resolve(format!("{}_ch{}.csv", LI_RESULTS_NAME, ch)),
             ));
             files.push((
                 format!("rotated ch{ch}"),
-                format!("{}_ch{}.csv", LI_ROTATED_NAME, ch),
+                resolve(format!("{}_ch{}.csv", LI_ROTATED_NAME, ch)),
             ));
         }
-        files.push(("kerr".to_string(), format!("{}_results.csv", KERR_NAME)));
+        files.push((
+            "kerr".to_string(),
+            resolve(format!("{}_results.csv", KERR_NAME)),
+        ));
     }
 
     files

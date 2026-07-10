@@ -72,31 +72,30 @@ pub fn fetch_with_options(
     out: Option<&Path>,
 ) -> Result<()> {
     let output = format.map(FetchOutput::from).unwrap_or(cfg.fetch.output);
+    let default_csv = cfg.artifact_path(FETCHED_FNAME);
+    let default_raw = cfg.artifact_path(RAW_WAVEFORM_DIR);
     match format {
-        Some(FetchFormat::Csv) => fetch_csv(cfg, out.unwrap_or_else(|| Path::new(FETCHED_FNAME))),
-        Some(FetchFormat::Raw) => {
-            fetch_raw(cfg, out.unwrap_or_else(|| Path::new(RAW_WAVEFORM_DIR)))
-        }
+        Some(FetchFormat::Csv) => fetch_csv(cfg, out.unwrap_or(&default_csv)),
+        Some(FetchFormat::Raw) => fetch_raw(cfg, out.unwrap_or(&default_raw)),
         Some(FetchFormat::CsvAndRaw) if out.is_some() => {
             bail!(
                 "--out cannot be used with --format csv-and-raw; use the default raw.csv and raw_waveform outputs"
             )
         }
         _ => match (output, out) {
-            (FetchOutput::Csv, out) => {
-                fetch_csv(cfg, out.unwrap_or_else(|| Path::new(FETCHED_FNAME)))
-            }
-            (FetchOutput::Raw, out) => {
-                fetch_raw(cfg, out.unwrap_or_else(|| Path::new(RAW_WAVEFORM_DIR)))
-            }
+            (FetchOutput::Csv, out) => fetch_csv(cfg, out.unwrap_or(&default_csv)),
+            (FetchOutput::Raw, out) => fetch_raw(cfg, out.unwrap_or(&default_raw)),
             (FetchOutput::CsvAndRaw, Some(_)) => {
+                let setting = if cfg.version >= 4 {
+                    "data.output = \"both\""
+                } else {
+                    "fetch.output = \"csv_and_raw\""
+                };
                 bail!(
-                    "--out cannot be used with fetch.output = \"csv_and_raw\"; use the default raw.csv and raw_waveform outputs"
+                    "--out cannot be used with {setting}; use the default raw.csv and raw_waveform outputs"
                 )
             }
-            (FetchOutput::CsvAndRaw, None) => {
-                fetch_csv_and_raw(cfg, Path::new(FETCHED_FNAME), Path::new(RAW_WAVEFORM_DIR))
-            }
+            (FetchOutput::CsvAndRaw, None) => fetch_csv_and_raw(cfg, &default_csv, &default_raw),
         },
     }
 }
@@ -142,18 +141,17 @@ fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
 }
 
 pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
+    let csv_out = cfg.artifact_path(FETCHED_FNAME);
+    let raw_out = cfg.artifact_path(RAW_WAVEFORM_DIR);
     match cfg.fetch.output {
         FetchOutput::Csv => {
-            let out = Path::new(FETCHED_FNAME);
-            ensure_output_parent(out)?;
-            let data = run_fetch_to_csv_path(cfg, out)?;
-            write_fetched_csv(cfg, out, &data)?;
+            ensure_output_parent(&csv_out)?;
+            let data = run_fetch_to_csv_path(cfg, &csv_out)?;
+            write_fetched_csv(cfg, &csv_out, &data)?;
             Ok(data)
         }
-        FetchOutput::Raw => fetch_raw_collect(cfg, Path::new(RAW_WAVEFORM_DIR)),
-        FetchOutput::CsvAndRaw => {
-            fetch_csv_and_raw_collect(cfg, Path::new(FETCHED_FNAME), Path::new(RAW_WAVEFORM_DIR))
-        }
+        FetchOutput::Raw => fetch_raw_collect(cfg, &raw_out),
+        FetchOutput::CsvAndRaw => fetch_csv_and_raw_collect(cfg, &csv_out, &raw_out),
     }
 }
 

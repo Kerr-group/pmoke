@@ -38,7 +38,7 @@ pub fn run(cfg: &Config) -> Result<()> {
         .par_iter()
         .map(|channel| {
             let fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, channel);
-            read_csv(fname)
+            read_csv(cfg.artifact_path(fname))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -116,9 +116,10 @@ pub fn run_phase_analysis(
         });
         let li_rotated_name = LI_ROTATED_NAME;
         let fname = format!("{}_ch{}.csv", li_rotated_name, ch_i);
+        let path = cfg.artifact_path(&fname);
         let headers = get_li_rotated_headers(cfg)?;
         write_li_rotated_results(
-            &fname,
+            &path,
             &headers,
             t,
             sensor_rate_ch,

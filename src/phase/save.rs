@@ -5,6 +5,7 @@ use crate::{
     utils::csv::write_csv,
 };
 use anyhow::Result;
+use std::path::Path;
 
 pub fn get_li_rotated_headers(cfg: &Config) -> Result<Vec<String>> {
     let t_header = T_HEADER.to_string();
@@ -36,8 +37,8 @@ pub fn get_li_rotated_headers(cfg: &Config) -> Result<Vec<String>> {
     Ok(headers)
 }
 
-pub fn write_li_rotated_results(
-    fname: &str,
+pub fn write_li_rotated_results<P: AsRef<Path>>(
+    fname: P,
     headers: &[String],
     t: &[f64],
     s_rate: &[Vec<f64>],

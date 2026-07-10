@@ -1,4 +1,6 @@
-use crate::config::{Channel, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning};
+use crate::config::{
+    Channel, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning, render_normalized_config,
+};
 use crate::ui;
 use anyhow::Result;
 
@@ -7,7 +9,7 @@ pub fn show(load: &ConfigLoad) -> Result<()> {
         ConfigLoad::Ready { config, warnings } => {
             print_warnings(warnings);
             print_config_summary(config);
-            let rendered = toml::to_string_pretty(config)?;
+            let rendered = render_normalized_config(config)?;
             ui::section("Normalized Config");
             println!("{rendered}");
         }
@@ -16,7 +18,7 @@ pub fn show(load: &ConfigLoad) -> Result<()> {
             if let Some(config) = &diag.normalized {
                 println!();
                 println!("# Normalized Config");
-                let rendered = toml::to_string_pretty(config)?;
+                let rendered = render_normalized_config(config)?;
                 println!("{rendered}");
             }
         }
@@ -111,19 +113,24 @@ fn channel_row(config: &Config, channel: &Channel) -> (String, String) {
     } else {
         roles.join(", ")
     };
-    let factor = channel
-        .factor
-        .map(|factor| factor.to_string())
-        .unwrap_or_else(|| "-".to_string());
+    let scale = match (channel.factor, channel.scale_to_abs_max) {
+        (Some(factor), None) => format!("factor={factor}"),
+        (None, Some(target)) => format!(
+            "max_abs={}, polarity={}",
+            target.abs(),
+            if target.is_sign_negative() { -1 } else { 1 }
+        ),
+        _ => "scale=-".to_string(),
+    };
 
     (
         format!("ch{}", channel.index),
         format!(
-            "role={}, label={}, unit={}, factor={}",
+            "role={}, label={}, unit={}, {}",
             role,
             missing(channel.label.as_deref()),
             missing(channel.unit_out.as_deref()),
-            factor
+            scale
         ),
     )
 }
