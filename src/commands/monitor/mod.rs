@@ -93,6 +93,7 @@ struct MonitorApp {
     last_run: Option<RunRecord>,
     active_run: Option<ActiveRun>,
     run_output: Vec<LogEntry>,
+    last_stderr_kind: Option<LogKind>,
     run_output_scroll: usize,
     output_selected: Option<usize>,
     output_selection_anchor: Option<usize>,
@@ -123,6 +124,7 @@ impl MonitorApp {
             last_run: None,
             active_run: None,
             run_output: Vec::new(),
+            last_stderr_kind: None,
             run_output_scroll: 0,
             output_selected: None,
             output_selection_anchor: None,
@@ -272,12 +274,26 @@ impl MonitorApp {
         let mut appended = 0;
         for line in text.replace('\r', "\n").split('\n') {
             if line.is_empty() {
+                if matches!(stream, OutputStream::Stderr) {
+                    self.last_stderr_kind = None;
+                }
                 continue;
             }
-            self.run_output.push(LogEntry {
-                stream,
-                text: line.to_string(),
-            });
+            let clean_line = strip_ansi_codes(line);
+            let mut kind = classify_log_entry(stream, &clean_line);
+            if matches!(stream, OutputStream::Stderr)
+                && kind == LogKind::Error
+                && clean_line.starts_with(char::is_whitespace)
+                && marked_log_kind(&clean_line).is_none()
+                && let Some(inherited @ (LogKind::Warning | LogKind::Info)) = self.last_stderr_kind
+            {
+                kind = inherited;
+            }
+            if matches!(stream, OutputStream::Stderr) {
+                self.last_stderr_kind = Some(kind);
+            }
+            self.run_output
+                .push(LogEntry::with_kind(line.to_string(), kind));
             appended += 1;
         }
         if self.run_output_scroll > 0 {
@@ -525,8 +541,7 @@ fn shift_log_index_after_drain(index: Option<usize>, drained: usize) -> Option<u
 
 fn is_renderable_output_entry(entry: &LogEntry) -> bool {
     let text = strip_ansi_codes(&entry.text);
-    let kind = classify_log_entry(entry.stream, &text);
-    output_display(kind, &text).is_some()
+    output_display(entry.kind, &text).is_some()
 }
 
 fn first_renderable_output_index(entries: &[LogEntry]) -> Option<usize> {
@@ -629,8 +644,21 @@ enum FocusPane {
 }
 
 struct LogEntry {
-    stream: OutputStream,
     text: String,
+    kind: LogKind,
+}
+
+impl LogEntry {
+    #[cfg(test)]
+    fn new(stream: OutputStream, text: impl Into<String>) -> Self {
+        let text = text.into();
+        let kind = classify_log_entry(stream, &strip_ansi_codes(&text));
+        Self { text, kind }
+    }
+
+    fn with_kind(text: String, kind: LogKind) -> Self {
+        Self { text, kind }
+    }
 }
 
 enum RunEvent {
@@ -639,7 +667,7 @@ enum RunEvent {
     Failed(String),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OutputStream {
     Stdout,
     Stderr,
@@ -1225,6 +1253,7 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
     let table_width = output_table_width_for_area(app, area);
     let handle = spawn_command_runner(action, app.config_path.clone(), table_width)?;
     app.run_output.clear();
+    app.last_stderr_kind = None;
     app.output_selected = None;
     app.output_selection_anchor = None;
     app.copy_status = None;
@@ -1401,17 +1430,55 @@ fn spawn_stream_reader<R: Read + Send + 'static>(
     tx: Sender<RunEvent>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let mut buf = [0; 4096];
+        let mut read_buf = [0_u8; 4096];
+        let mut record = Vec::new();
+        let mut previous_was_cr = false;
+
+        let emit = |bytes: &[u8]| {
+            tx.send(RunEvent::Output(
+                kind,
+                String::from_utf8_lossy(bytes).into_owned(),
+            ))
+        };
+
         loop {
-            match stream.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                    if tx.send(RunEvent::Output(kind, text)).is_err() {
-                        break;
+            match stream.read(&mut read_buf) {
+                Ok(0) => {
+                    if !record.is_empty() {
+                        let _ = emit(&record);
+                    }
+                    break;
+                }
+                Ok(read) => {
+                    for &byte in &read_buf[..read] {
+                        match byte {
+                            b'\r' => {
+                                if emit(&record).is_err() {
+                                    return;
+                                }
+                                record.clear();
+                                previous_was_cr = true;
+                            }
+                            b'\n' if previous_was_cr => {
+                                previous_was_cr = false;
+                            }
+                            b'\n' => {
+                                if emit(&record).is_err() {
+                                    return;
+                                }
+                                record.clear();
+                            }
+                            _ => {
+                                previous_was_cr = false;
+                                record.push(byte);
+                            }
+                        }
                     }
                 }
                 Err(err) => {
+                    if !record.is_empty() {
+                        let _ = emit(&record);
+                    }
                     let _ = tx.send(RunEvent::Output(
                         OutputStream::Stderr,
                         format!("failed to read command output: {err}"),
@@ -2071,7 +2138,7 @@ fn output_header_spans_with_motion(width: u16, running: bool, frame: usize) -> V
         },
     ];
 
-    if width >= 52 {
+    if width >= 60 {
         spans.extend([
             Span::raw("  "),
             Span::styled("●", Style::default().fg(Color::Green)),
@@ -2081,6 +2148,10 @@ fn output_header_spans_with_motion(width: u16, running: bool, frame: usize) -> V
             Span::styled("●", Style::default().fg(Color::Cyan)),
             Span::raw(" "),
             Span::styled("info", Style::default().fg(Color::DarkGray)),
+            Span::raw(" "),
+            Span::styled("●", Style::default().fg(Color::Yellow)),
+            Span::raw(" "),
+            Span::styled("warn", Style::default().fg(Color::DarkGray)),
             Span::raw(" "),
             Span::styled("●", Style::default().fg(Color::LightRed)),
             Span::raw(" "),
@@ -2194,7 +2265,7 @@ fn visual_output_lines_with_motion(
         .enumerate()
         .flat_map(|(entry_index, entry)| {
             let text = strip_ansi_codes(&entry.text);
-            let kind = classify_log_entry(entry.stream, &text);
+            let kind = entry.kind;
             let Some(display) = output_display(kind, &text) else {
                 return Vec::new();
             };
@@ -2222,7 +2293,7 @@ fn visual_output_line_count(entries: &[LogEntry], width: u16) -> usize {
         .iter()
         .map(|entry| {
             let text = strip_ansi_codes(&entry.text);
-            let kind = classify_log_entry(entry.stream, &text);
+            let kind = entry.kind;
             output_display(kind, &text)
                 .map(|display| output_display_line_count(&display, width))
                 .unwrap_or(0)
@@ -2636,6 +2707,7 @@ fn event_text_style(kind: LogKind) -> Style {
         LogKind::Warning => Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
+        LogKind::Skipped => Style::default().fg(Color::Yellow),
         LogKind::Error => Style::default()
             .fg(Color::LightRed)
             .add_modifier(Modifier::BOLD),
@@ -2655,6 +2727,7 @@ enum LogKind {
     Save,
     Fit,
     Metric,
+    Skipped,
     Warning,
     Error,
     Section,
@@ -2671,6 +2744,7 @@ impl LogKind {
             Self::Save => "SAVE",
             Self::Fit => "FIT",
             Self::Metric => "KV",
+            Self::Skipped => "SKIP",
             Self::Warning => "WARN",
             Self::Error => "ERR",
             Self::Section => "STEP",
@@ -2687,6 +2761,7 @@ impl LogKind {
             Self::Save => "⬥",
             Self::Fit => "◇",
             Self::Metric => "›",
+            Self::Skipped => "→",
             Self::Warning => "!",
             Self::Error => "×",
             Self::Section => "▣",
@@ -2703,6 +2778,7 @@ impl LogKind {
             Self::Save => Color::Magenta,
             Self::Fit => Color::LightYellow,
             Self::Metric => Color::LightCyan,
+            Self::Skipped => Color::Yellow,
             Self::Warning => Color::Yellow,
             Self::Error => Color::LightRed,
             Self::Section => Color::White,
@@ -2774,14 +2850,18 @@ fn output_display(kind: LogKind, text: &str) -> Option<OutputDisplay> {
     }
 
     match kind {
-        LogKind::Success | LogKind::Info | LogKind::Read | LogKind::Save => {
-            Some(OutputDisplay::Event(
-                strip_cli_badge(trimmed)
-                    .unwrap_or(trimmed)
-                    .trim_start()
-                    .to_string(),
-            ))
-        }
+        LogKind::Success
+        | LogKind::Info
+        | LogKind::Read
+        | LogKind::Save
+        | LogKind::Skipped
+        | LogKind::Warning
+        | LogKind::Error => Some(OutputDisplay::Event(
+            strip_cli_badge(trimmed)
+                .unwrap_or(trimmed)
+                .trim_start()
+                .to_string(),
+        )),
         LogKind::Fit => Some(OutputDisplay::Event(
             trimmed
                 .strip_prefix("🛠️")
@@ -2804,24 +2884,18 @@ fn strip_cli_badge(text: &str) -> Option<&str> {
 
 fn classify_log_entry(stream: OutputStream, text: &str) -> LogKind {
     let trimmed = text.trim();
-    let lower = trimmed.to_ascii_lowercase();
 
     if matches!(stream, OutputStream::System) {
         return LogKind::System;
     }
-    if matches!(stream, OutputStream::Stderr)
-        || lower.contains("error")
-        || lower.contains("failed")
-        || lower.contains("traceback")
-    {
-        return if lower.contains("warning") {
-            LogKind::Warning
-        } else {
-            LogKind::Error
-        };
+
+    // stderr is also the conventional stream for warnings. Respect an explicit
+    // severity marker before using the stream as an error fallback.
+    if let Some(kind) = marked_log_kind(trimmed) {
+        return kind;
     }
-    if lower.contains("warning") || lower.contains("userwarning") {
-        return LogKind::Warning;
+    if matches!(stream, OutputStream::Stderr) {
+        return LogKind::Error;
     }
     if trimmed.contains("Fit result") || trimmed.starts_with("[[") {
         return LogKind::Fit;
@@ -2833,25 +2907,66 @@ fn classify_log_entry(stream: OutputStream, text: &str) -> LogKind {
         return LogKind::Metric;
     }
     if parse_panel_title(trimmed).is_some()
+        || matches!(trimmed, "Warnings" | "Diagnostics")
         || trimmed == "Lock-in settings"
         || trimmed.ends_with("settings")
         || is_table_border_line(trimmed)
     {
         return LogKind::Section;
     }
-    if trimmed.contains("✅") || trimmed.starts_with("[  OK") || trimmed.starts_with("[ OK") {
+    if trimmed.contains("✅") {
         return LogKind::Success;
     }
-    if trimmed.starts_with("[ INFO") {
-        return LogKind::Info;
-    }
-    if trimmed.starts_with("[ READ") {
-        return LogKind::Read;
-    }
-    if trimmed.starts_with("[ SAVE") {
-        return LogKind::Save;
-    }
     LogKind::Plain
+}
+
+fn marked_log_kind(text: &str) -> Option<LogKind> {
+    let trimmed = text.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    if let Some(kind) = cli_badge_kind(trimmed) {
+        return Some(kind);
+    }
+    if lower.contains("warning:")
+        || lower.starts_with("warn:")
+        || lower.starts_with("warn ")
+        || lower.starts_with("[warn]")
+        || lower.starts_with("(warn)")
+    {
+        return Some(LogKind::Warning);
+    }
+    if lower.starts_with("info:") || lower.starts_with("[info]") || lower.starts_with("(info)") {
+        return Some(LogKind::Info);
+    }
+    if lower.starts_with("error:")
+        || lower.starts_with("error[")
+        || lower.starts_with("(error)")
+        || lower.starts_with("traceback")
+        || lower.starts_with("failed to ")
+    {
+        return Some(LogKind::Error);
+    }
+    None
+}
+
+fn cli_badge_kind(text: &str) -> Option<LogKind> {
+    let label = text
+        .strip_prefix('[')?
+        .split_once(']')?
+        .0
+        .trim()
+        .to_ascii_uppercase();
+
+    match label.as_str() {
+        "OK" => Some(LogKind::Success),
+        "INFO" => Some(LogKind::Info),
+        "READ" => Some(LogKind::Read),
+        "SAVE" => Some(LogKind::Save),
+        "SKIP" | "SKIPPED" => Some(LogKind::Skipped),
+        "WARN" | "WARNING" => Some(LogKind::Warning),
+        "ERR" | "ERROR" => Some(LogKind::Error),
+        _ => None,
+    }
 }
 
 fn is_table_border_line(text: &str) -> bool {

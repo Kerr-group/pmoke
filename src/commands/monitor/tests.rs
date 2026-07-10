@@ -446,6 +446,53 @@ fn classifies_common_output_lines_for_highlighting() {
         LogKind::Warning
     );
     assert_eq!(
+        classify_log_entry(
+            OutputStream::Stderr,
+            "[ WARN ] legacy config v2: [timebase] is deprecated"
+        ),
+        LogKind::Warning
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stderr, "(warn) read timeout status"),
+        LogKind::Warning
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stderr, "(info) gpib.conf was applied"),
+        LogKind::Info
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stderr, "Error: raw metadata is missing"),
+        LogKind::Error
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stdout, "Error: raw metadata is missing"),
+        LogKind::Error
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stdout, "Traceback (most recent call last):"),
+        LogKind::Error
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stdout, "[ SKIP ] reference plot: no data"),
+        LogKind::Skipped
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stdout, "enbw_match_error=1.0e-3 Hz"),
+        LogKind::Plain
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stdout, "0 failed"),
+        LogKind::Plain
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stdout, "No warnings."),
+        LogKind::Plain
+    );
+    assert_eq!(
+        classify_log_entry(OutputStream::Stdout, "Warnings"),
+        LogKind::Section
+    );
+    assert_eq!(
         classify_log_entry(OutputStream::Stdout, "╭─────────┬────────╮"),
         LogKind::Section
     );
@@ -456,16 +503,109 @@ fn classifies_common_output_lines_for_highlighting() {
 }
 
 #[test]
+fn stderr_warning_continuation_keeps_warning_level() {
+    let mut app = test_app();
+
+    app.push_output(
+        OutputStream::Stderr,
+        "/tmp/plot.py:10: UserWarning: slow legend",
+    );
+    app.push_output(OutputStream::Stderr, "  plt.legend()");
+    app.push_output(OutputStream::Stderr, "  [ ERROR ] explicit failure");
+    app.push_output(OutputStream::Stderr, "Error: plotting failed");
+
+    assert_eq!(
+        app.run_output
+            .iter()
+            .map(|entry| entry.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            LogKind::Warning,
+            LogKind::Warning,
+            LogKind::Error,
+            LogKind::Error
+        ]
+    );
+}
+
+#[test]
+fn blank_stderr_line_ends_warning_continuation() {
+    let mut app = test_app();
+
+    app.push_output(
+        OutputStream::Stderr,
+        "UserWarning: warning body\n\n  independent stderr",
+    );
+
+    assert_eq!(app.run_output[0].kind, LogKind::Warning);
+    assert_eq!(app.run_output[1].kind, LogKind::Error);
+}
+
+#[test]
+fn stderr_info_continuation_keeps_info_level() {
+    let mut app = test_app();
+
+    app.push_output(OutputStream::Stderr, "(info) driver configuration");
+    app.push_output(OutputStream::Stderr, "  /dev/gpib0 is ready");
+
+    assert_eq!(app.run_output[0].kind, LogKind::Info);
+    assert_eq!(app.run_output[1].kind, LogKind::Info);
+}
+
+#[test]
+fn stream_reader_frames_records_across_short_reads() {
+    struct ChunkedReader {
+        bytes: Vec<u8>,
+        position: usize,
+        chunk_size: usize,
+    }
+
+    impl std::io::Read for ChunkedReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.position == self.bytes.len() {
+                return Ok(0);
+            }
+            let end = (self.position + self.chunk_size).min(self.bytes.len());
+            let len = (end - self.position).min(buf.len());
+            buf[..len].copy_from_slice(&self.bytes[self.position..self.position + len]);
+            self.position += len;
+            Ok(len)
+        }
+    }
+
+    let reader = ChunkedReader {
+        bytes: b"[ WARN ] one\r\nprogress 1\rprogress 2\nlast".to_vec(),
+        position: 0,
+        chunk_size: 3,
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = spawn_stream_reader(reader, OutputStream::Stderr, tx);
+    handle.join().unwrap();
+
+    let records = rx
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::Output(stream, text) => Some((stream, text)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        records,
+        vec![
+            (OutputStream::Stderr, "[ WARN ] one".to_string()),
+            (OutputStream::Stderr, "progress 1".to_string()),
+            (OutputStream::Stderr, "progress 2".to_string()),
+            (OutputStream::Stderr, "last".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn analyze_timeline_marks_done_current_and_pending_steps() {
     let output = vec![
-        LogEntry {
-            stream: OutputStream::Stdout,
-            text: "[ READ  ] fetched data: 4 channels".to_string(),
-        },
-        LogEntry {
-            stream: OutputStream::Stdout,
-            text: "[  OK   ] reference plot completed".to_string(),
-        },
+        LogEntry::new(OutputStream::Stdout, "[ READ  ] fetched data: 4 channels"),
+        LogEntry::new(OutputStream::Stdout, "[  OK   ] reference plot completed"),
     ];
 
     let timeline =
@@ -493,10 +633,10 @@ fn failed_screenshot_timeline_marks_stage_failed_instead_of_pending() {
 
 #[test]
 fn visual_output_lines_strip_ansi_and_add_badges() {
-    let entries = vec![LogEntry {
-        stream: OutputStream::Stdout,
-        text: "\x1b[32m[  OK   ] done\x1b[0m".to_string(),
-    }];
+    let entries = vec![LogEntry::new(
+        OutputStream::Stdout,
+        "\x1b[32m[  OK   ] done\x1b[0m",
+    )];
 
     let lines = visual_output_lines(&entries, 80, None, None);
     let rendered = lines[0]
@@ -517,6 +657,7 @@ fn event_feed_badges_are_centered_in_fixed_cells() {
     assert_eq!(event_badge_cell(LogKind::Success), "  OK  ");
     assert_eq!(event_badge_cell(LogKind::System), " SYS  ");
     assert_eq!(event_badge_cell(LogKind::Save), " SAVE ");
+    assert_eq!(event_badge_cell(LogKind::Skipped), " SKIP ");
 }
 
 #[test]
@@ -527,10 +668,7 @@ fn display_padding_uses_cjk_width() {
 
 #[test]
 fn latest_event_feed_line_animates_when_running() {
-    let entries = vec![LogEntry {
-        stream: OutputStream::Stdout,
-        text: "[  OK   ] done".to_string(),
-    }];
+    let entries = vec![LogEntry::new(OutputStream::Stdout, "[  OK   ] done")];
 
     let first = visual_output_lines_with_motion(&entries, 80, None, None, true, 0);
     let second = visual_output_lines_with_motion(&entries, 80, None, None, true, 1);
@@ -554,10 +692,10 @@ fn latest_event_feed_line_animates_when_running() {
 
 #[test]
 fn latest_wrapped_event_line_keeps_live_highlight_on_continuation() {
-    let entries = vec![LogEntry {
-        stream: OutputStream::System,
-        text: "pmoke --config config.toml fetch Fetch oscilloscope data using the configured output format.".to_string(),
-    }];
+    let entries = vec![LogEntry::new(
+        OutputStream::System,
+        "pmoke --config config.toml fetch Fetch oscilloscope data using the configured output format.",
+    )];
 
     let lines = visual_output_lines_with_motion(&entries, 36, None, None, true, 0);
 
@@ -574,11 +712,10 @@ fn latest_wrapped_event_line_keeps_live_highlight_on_continuation() {
 
 #[test]
 fn latest_wrapped_metric_line_keeps_live_highlight_on_continuation() {
-    let entries = vec![LogEntry {
-        stream: OutputStream::Stdout,
-        text: "│ output     Fetch oscilloscope data using the configured output format."
-            .to_string(),
-    }];
+    let entries = vec![LogEntry::new(
+        OutputStream::Stdout,
+        "│ output     Fetch oscilloscope data using the configured output format.",
+    )];
 
     let lines = visual_output_lines_with_motion(&entries, 34, None, None, true, 0);
 
@@ -602,6 +739,18 @@ fn display_output_text_removes_cli_badges_from_status_lines() {
     assert_eq!(
         display_output_text(LogKind::Save, "[ SAVE ] lock-in results for signals [4]").as_deref(),
         Some("lock-in results for signals [4]")
+    );
+    assert_eq!(
+        display_output_text(
+            LogKind::Warning,
+            "[ WARN ] legacy config v2: [timebase] is deprecated"
+        )
+        .as_deref(),
+        Some("legacy config v2: [timebase] is deprecated")
+    );
+    assert_eq!(
+        display_output_text(LogKind::Skipped, "[ SKIP ] reference plot: no data").as_deref(),
+        Some("reference plot: no data")
     );
 }
 
@@ -655,10 +804,10 @@ fn display_output_text_reframes_compact_panels_for_tui() {
 
 #[test]
 fn compact_panel_continuation_renders_without_raw_pipe() {
-    let entries = vec![LogEntry {
-        stream: OutputStream::Stdout,
-        text: "│            stride_samples=100".to_string(),
-    }];
+    let entries = vec![LogEntry::new(
+        OutputStream::Stdout,
+        "│            stride_samples=100",
+    )];
 
     let lines = visual_output_lines(&entries, 80, None, None);
     let rendered = lines[0]
@@ -674,10 +823,7 @@ fn compact_panel_continuation_renders_without_raw_pipe() {
 
 #[test]
 fn visual_output_line_count_does_not_overcount_exact_width() {
-    let entries = vec![LogEntry {
-        stream: OutputStream::Stdout,
-        text: "abcdefghijklm".to_string(),
-    }];
+    let entries = vec![LogEntry::new(OutputStream::Stdout, "abcdefghijklm")];
 
     assert_eq!(visual_output_line_count(&entries, 26), 1);
     assert_eq!(visual_output_line_count(&entries, 25), 2);
@@ -685,10 +831,7 @@ fn visual_output_line_count_does_not_overcount_exact_width() {
 
 #[test]
 fn visual_output_line_count_uses_cjk_display_width() {
-    let entries = vec![LogEntry {
-        stream: OutputStream::Stdout,
-        text: "○○○○○○○".to_string(),
-    }];
+    let entries = vec![LogEntry::new(OutputStream::Stdout, "○○○○○○○")];
 
     assert_eq!(visual_output_line_count(&entries, 27), 1);
     assert_eq!(visual_output_line_count(&entries, 26), 2);
@@ -701,14 +844,8 @@ fn visual_output_line_count_uses_cjk_display_width() {
 #[test]
 fn selected_output_status_uses_wrapped_visual_line_range() {
     let entries = vec![
-        LogEntry {
-            stream: OutputStream::Stdout,
-            text: "abcdefghijklmnopqrstuvwxyz".to_string(),
-        },
-        LogEntry {
-            stream: OutputStream::Stdout,
-            text: "tail".to_string(),
-        },
+        LogEntry::new(OutputStream::Stdout, "abcdefghijklmnopqrstuvwxyz"),
+        LogEntry::new(OutputStream::Stdout, "tail"),
     ];
 
     let lines = visual_output_lines(&entries, 26, None, None);
@@ -911,6 +1048,7 @@ fn output_header_omits_badge_legend_when_narrow() {
 
     assert!(!narrow_text.contains("error"));
     assert!(wide_text.contains("analysis output"));
+    assert!(wide_text.contains("warn"));
     assert!(wide_text.contains("error"));
 }
 

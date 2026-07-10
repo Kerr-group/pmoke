@@ -1053,7 +1053,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
 fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
     let legacy_timebase = raw.timebase.into();
     let mut warnings = vec![ConfigWarning::new(
-        "timebase is deprecated; waveform time axis is read from raw metadata or CSV time column",
+        "legacy config v2: [timebase] is deprecated and is used only when raw.csv has no time column; raw metadata and newer CSV files use their recorded time axis",
     )];
     let mut cfg = Config {
         version: 3,
