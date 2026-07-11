@@ -19,6 +19,10 @@ pub struct Cli {
     #[arg(short, long, default_value = "config.toml", value_name = "FILE")]
     pub config: String,
 
+    /// Store and read run artifacts under this directory
+    #[arg(long, global = true, value_name = "DIR")]
+    pub run_dir: Option<PathBuf>,
+
     /// Subcommands for the tool
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -269,5 +273,15 @@ mod config_command_tests {
                 }
             })
         ));
+    }
+
+    #[test]
+    fn parses_run_directory_as_a_global_option() {
+        let cli = Cli::try_parse_from(["pmoke", "--run-dir", "shot_000123", "analyze"]).unwrap();
+        assert_eq!(cli.run_dir, Some(PathBuf::from("shot_000123")));
+        assert!(matches!(cli.command, Some(Command::Analyze)));
+
+        let cli = Cli::try_parse_from(["pmoke", "analyze", "--run-dir", "shot_000124"]).unwrap();
+        assert_eq!(cli.run_dir, Some(PathBuf::from("shot_000124")));
     }
 }

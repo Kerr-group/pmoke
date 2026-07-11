@@ -35,6 +35,8 @@ struct RawWaveformMetadata {
     created_at: Option<String>,
     config_file: Option<String>,
     config_sha256: Option<String>,
+    resolved_config_file: Option<String>,
+    resolved_config_sha256: Option<String>,
     oscilloscope: RawOscilloscopeMetadata,
     channels: BTreeMap<String, RawChannelMetadata>,
 }
@@ -400,8 +402,29 @@ fn validate_manifest_config(base_dir: &Path, metadata: &RawWaveformMetadata) -> 
         .config_sha256
         .as_deref()
         .ok_or_else(|| anyhow!("raw metadata version 2 requires config_sha256"))?;
-    validate_sha256(expected, "config.source.toml")?;
-    let path = resolve_raw_channel_path(base_dir, file, "config.source.toml")?;
+    validate_config_snapshot(base_dir, file, expected, "config.source.toml")?;
+    match (
+        metadata.resolved_config_file.as_deref(),
+        metadata.resolved_config_sha256.as_deref(),
+    ) {
+        (Some(file), Some(expected)) => {
+            validate_config_snapshot(base_dir, file, expected, "config.resolved.toml")
+        }
+        (None, None) => Ok(()),
+        _ => bail!(
+            "raw metadata resolved config snapshot requires both resolved_config_file and resolved_config_sha256"
+        ),
+    }
+}
+
+fn validate_config_snapshot(
+    base_dir: &Path,
+    file: &str,
+    expected: &str,
+    label: &str,
+) -> Result<()> {
+    validate_sha256(expected, label)?;
+    let path = resolve_raw_channel_path(base_dir, file, label)?;
     let file_type = fs::symlink_metadata(&path)
         .with_context(|| format!("raw config snapshot not found: {}", path.display()))?;
     if !file_type.file_type().is_file() {

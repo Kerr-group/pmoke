@@ -34,7 +34,7 @@ impl Drop for TempConfig {
 }
 
 fn v3_config() -> String {
-    include_str!("../../../tests/fixtures/config_v3.toml").to_string()
+    include_str!("../../../tests/fixtures/config_v3.toml").replace("\r\n", "\n")
 }
 
 #[test]
@@ -176,6 +176,21 @@ fn csv_time_header_detection_matches_supported_time_names() {
     fs::write(&without_time, "sample,ch1\n0,1.0\n").unwrap();
     assert!(csv_has_recorded_time(&with_time).unwrap());
     assert!(!csv_has_recorded_time(&without_time).unwrap());
+}
+
+#[test]
+fn artifact_base_comparison_accepts_the_process_directory_on_all_platforms() {
+    let cwd = env::current_dir().unwrap();
+    let path = cwd.join("config.toml");
+    let mut issues = Vec::new();
+
+    inspect_artifact_base_change(&path, &path, &mut issues).unwrap();
+
+    assert!(
+        issues
+            .iter()
+            .all(|issue| issue.level != MigrationLevel::Lossy)
+    );
 }
 
 #[test]

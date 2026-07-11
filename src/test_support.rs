@@ -26,6 +26,8 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
         },
         source_path: "config.toml".into(),
         source_text: None,
+        artifact_root: None,
+        plot_output_relative: None,
         legacy_timebase: None,
         roles: Roles {
             sensor_ch,

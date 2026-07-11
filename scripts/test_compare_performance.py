@@ -60,6 +60,9 @@ class ComparePerformanceTests(unittest.TestCase):
             self.assertEqual(
                 measurements[("raw_waveform_read", 4, 10)].max_rss_kib, 2048
             )
+            self.assertEqual(
+                measurements[("raw_waveform_read", 4, 10)].commit, "unknown"
+            )
 
     def test_summary_warns_without_failing_on_large_regression(self):
         current = {
@@ -78,6 +81,7 @@ class ComparePerformanceTests(unittest.TestCase):
             summary = render_summary(current, previous, 30.0, 30.0)
 
         self.assertIn("+50.0%", summary)
+        self.assertIn("Baseline commit: `unknown`", summary)
         self.assertIn("::warning title=Performance regression::", warnings.getvalue())
         self.assertIn(
             "::warning title=Performance memory regression::", warnings.getvalue()

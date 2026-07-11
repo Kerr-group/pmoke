@@ -3,7 +3,7 @@ use crate::commands::screenshot::{
     capture_screenshot, prepare_screenshot, report_saved_screenshot,
 };
 use crate::communications::oscilloscope::OscilloscopeHandler;
-use crate::config::{Config, Connection, FetchOutput};
+use crate::config::{Config, Connection, FetchOutput, render_normalized_config};
 use crate::constants::{
     FETCHED_FNAME, RAW_METADATA_FNAME, RAW_METADATA_VERSION, RAW_WAVEFORM_DIR, T_HEADER,
 };
@@ -71,6 +71,8 @@ struct RawFetchMetadata {
     config_version: u32,
     config_file: &'static str,
     config_sha256: String,
+    resolved_config_file: &'static str,
+    resolved_config_sha256: String,
     oscilloscope: RawOscilloscopeMetadata,
     channels: BTreeMap<String, RawChannelMetadata>,
 }
@@ -465,7 +467,7 @@ fn fetch_raw_into_dir(
     dir: &Path,
     handler: &mut OscilloscopeHandler,
 ) -> Result<(Vec<u8>, RawFetchMetadata)> {
-    let config_sha256 = snapshot_source_config(cfg, dir)?;
+    let config_snapshots = snapshot_configs(cfg, dir)?;
     let idn_raw = handler
         .identify()
         .context("failed to identify oscilloscope before raw fetch")?;
@@ -484,7 +486,7 @@ fn fetch_raw_into_dir(
         .query_horizontal_settings()
         .context("failed to query oscilloscope horizontal settings")?;
     let mut metadata =
-        build_raw_metadata(cfg, &channels, depth, horizontal, idn_raw, config_sha256)?;
+        build_raw_metadata(cfg, &channels, depth, horizontal, idn_raw, config_snapshots)?;
     let mut time_axis = None;
 
     let pb = ui::progress(
@@ -541,7 +543,7 @@ fn build_raw_metadata(
     memory_depth: usize,
     horizontal: DhoHorizontalSettings,
     idn_raw: String,
-    config_sha256: String,
+    config_snapshots: ConfigSnapshotHashes,
 ) -> Result<RawFetchMetadata> {
     let osc_cfg = &cfg
         .instruments
@@ -563,7 +565,9 @@ fn build_raw_metadata(
         created_at_unix_seconds,
         config_version: cfg.version,
         config_file: "config.source.toml",
-        config_sha256,
+        config_sha256: config_snapshots.source,
+        resolved_config_file: "config.resolved.toml",
+        resolved_config_sha256: config_snapshots.resolved,
         oscilloscope: RawOscilloscopeMetadata {
             firmware: idn_firmware(&idn_raw),
             idn_raw,
@@ -597,7 +601,12 @@ fn ensure_scope_stopped(handler: &mut OscilloscopeHandler, context: &str) -> Res
     Ok(())
 }
 
-fn snapshot_source_config(cfg: &Config, dir: &Path) -> Result<String> {
+struct ConfigSnapshotHashes {
+    source: String,
+    resolved: String,
+}
+
+fn snapshot_configs(cfg: &Config, dir: &Path) -> Result<ConfigSnapshotHashes> {
     let contents = match &cfg.source_text {
         Some(source) => source.as_bytes().to_vec(),
         None => fs::read(&cfg.source_path).with_context(|| {
@@ -607,17 +616,28 @@ fn snapshot_source_config(cfg: &Config, dir: &Path) -> Result<String> {
             )
         })?,
     };
-    let final_path = dir.join("config.source.toml");
-    let tmp_path = dir.join("config.source.toml.tmp");
-    write_synced_file(&tmp_path, &contents)?;
+    write_snapshot(dir, "config.source.toml", &contents)?;
+    let resolved = render_normalized_config(cfg)
+        .context("failed to render resolved acquisition config")?
+        .into_bytes();
+    write_snapshot(dir, "config.resolved.toml", &resolved)?;
+    Ok(ConfigSnapshotHashes {
+        source: sha256_hex(&contents),
+        resolved: sha256_hex(&resolved),
+    })
+}
+
+fn write_snapshot(dir: &Path, name: &str, contents: &[u8]) -> Result<()> {
+    let final_path = dir.join(name);
+    let tmp_path = dir.join(format!("{name}.tmp"));
+    write_synced_file(&tmp_path, contents)?;
     fs::rename(&tmp_path, &final_path).with_context(|| {
         format!(
             "failed to rename {} to {}",
             tmp_path.display(),
             final_path.display()
         )
-    })?;
-    Ok(sha256_hex(&contents))
+    })
 }
 
 fn idn_firmware(idn: &str) -> Option<String> {

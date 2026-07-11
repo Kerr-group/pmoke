@@ -28,6 +28,7 @@ struct Report {
     rustc: String,
     os: &'static str,
     arch: &'static str,
+    machine_id: String,
     samples: usize,
     raw_csv_channels: usize,
     iterations: usize,
@@ -39,6 +40,8 @@ struct Report {
 struct Measurement {
     name: &'static str,
     median_seconds: f64,
+    mad_seconds: f64,
+    p95_seconds: f64,
     samples_per_second: f64,
     input_bytes: usize,
     output_values: usize,
@@ -318,12 +321,15 @@ fn main() {
     }
 
     let report = Report {
-        schema_version: 5,
+        schema_version: 6,
         case: options.case.name(),
         commit: command_output("git", &["rev-parse", "HEAD"]),
         rustc: command_output("rustc", &["--version"]),
         os: env::consts::OS,
         arch: env::consts::ARCH,
+        machine_id: env::var("PMOKE_BENCH_MACHINE")
+            .or_else(|_| env::var("RUNNER_NAME"))
+            .unwrap_or_else(|_| command_output("hostname", &[])),
         samples: options.samples,
         raw_csv_channels: options.channels,
         iterations: options.iterations,
@@ -430,11 +436,25 @@ fn measure(
         output_values = black_box(operation());
         durations.push(start.elapsed());
     }
-    durations.sort_unstable();
-    let median = median(&durations).as_secs_f64();
+    let mut seconds = durations
+        .iter()
+        .map(Duration::as_secs_f64)
+        .collect::<Vec<_>>();
+    seconds.sort_by(f64::total_cmp);
+    let median = median_f64(&seconds);
+    let mut deviations = seconds
+        .iter()
+        .map(|seconds| (seconds - median).abs())
+        .collect::<Vec<_>>();
+    deviations.sort_by(f64::total_cmp);
+    let mad = median_f64(&deviations);
+    let p95_index = (seconds.len() * 95).div_ceil(100).saturating_sub(1);
+    let p95 = seconds[p95_index];
     Measurement {
         name,
         median_seconds: median,
+        mad_seconds: mad,
+        p95_seconds: p95,
         samples_per_second: samples as f64 / median,
         input_bytes,
         output_values,
@@ -452,12 +472,12 @@ fn selected_signal<'a>(
         .expect("signal is available")
 }
 
-fn median(values: &[Duration]) -> Duration {
+fn median_f64(values: &[f64]) -> f64 {
     let middle = values.len() / 2;
     if values.len() % 2 == 1 {
         values[middle]
     } else {
-        (values[middle - 1] + values[middle]) / 2
+        (values[middle - 1] + values[middle]) / 2.0
     }
 }
 

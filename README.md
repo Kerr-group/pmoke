@@ -65,6 +65,16 @@ pmoke --config config.toml auto       # single + trigger + fetch + analyze
 
 If no command is provided, `pmoke` opens `monitor`.
 
+Use `--run-dir` to isolate one shot without changing config schema v4:
+
+```sh
+pmoke --config config.toml --run-dir shot_000123 auto
+```
+
+The directory receives immutable `config.source.toml` and
+`config.resolved.toml` snapshots. Reusing it with different config contents is
+rejected, preventing artifacts from different shots from being mixed.
+
 `doctor` only observes acquisition state by default. Add `--probe-fetch` to
 allow the preflight check to stop the oscilloscope before verifying its state.
 Use `--json` for a machine-readable report.
@@ -158,6 +168,7 @@ Typical files after acquisition and analysis:
 raw_waveform/
   metadata.toml
   config.source.toml
+  config.resolved.toml
   ch1.u16le
   ch2.u16le
   ...
@@ -186,6 +197,9 @@ New acquisitions use RAW metadata version 2 with SHA-256 checksums. Analysis
 verifies those checksums while reading the waveform. Metadata version 1 remains
 readable for existing measurements and can be checked for shape and file size
 with `pmoke raw verify`.
+
+New version 2 manifests also checksum the normalized resolved config. Older
+version 2 acquisitions without that optional snapshot remain readable.
 
 `analysis_metadata.toml` records the resolved reference frequency, sample and
 output rates, lock-in window, ENBW estimate, cutoff, and edge trimming used for
