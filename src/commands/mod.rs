@@ -7,6 +7,7 @@ pub mod automeasure;
 pub mod autoshot;
 pub mod completions;
 pub mod config;
+pub mod doctor;
 #[cfg(feature = "hw")]
 pub mod fetch;
 pub mod kerr;

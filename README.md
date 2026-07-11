@@ -50,12 +50,17 @@ pmoke --config config.toml config migrate # preview a config migration
 pmoke --config config.toml monitor    # terminal dashboard
 pmoke --config config.toml fetch      # fetch waveforms
 pmoke --config config.toml raw verify # verify stored RAW data
+pmoke --config config.toml doctor     # check storage, Python, and hardware
 pmoke --config config.toml analyze    # analyze existing data
 pmoke --config config.toml process    # fetch + analyze
 pmoke --config config.toml auto       # single + trigger + fetch + analyze
 ```
 
 If no command is provided, `pmoke` opens `monitor`.
+
+`doctor` only observes acquisition state by default. Add `--probe-fetch` to
+allow the preflight check to stop the oscilloscope before verifying its state.
+Use `--json` for a machine-readable report.
 
 ### Migrate Legacy Configs
 

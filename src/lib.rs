@@ -67,23 +67,37 @@ fn run_with(args: Cli) -> Result<()> {
         _ => {}
     }
 
+    if let (Some(Command::Doctor { json, .. }), ConfigLoad::Diagnostics(diagnostics)) =
+        (args.command.as_ref(), &load)
+    {
+        return commands::doctor::run_diagnostics(diagnostics, *json);
+    }
+
     if matches!(&load, ConfigLoad::Diagnostics(_)) {
         commands::show::show(&load)?;
         bail!("configuration is not runnable");
     }
 
     let (cfg, warnings) = load.into_ready()?;
-    commands::show::print_warnings(&warnings);
 
     if let Some(Command::Raw { command }) = args.command.as_ref() {
+        commands::show::print_warnings(&warnings);
         return commands::raw::run(&cfg, command);
     }
+    if let Some(Command::Doctor { json, probe_fetch }) = args.command.as_ref() {
+        return commands::doctor::run(&cfg, &warnings, *json, *probe_fetch);
+    }
+    commands::show::print_warnings(&warnings);
 
     #[cfg(feature = "hw")]
     {
         match args.command.as_ref() {
             Some(
-                Command::Show | Command::Monitor | Command::Config { .. } | Command::Raw { .. },
+                Command::Show
+                | Command::Monitor
+                | Command::Config { .. }
+                | Command::Raw { .. }
+                | Command::Doctor { .. },
             ) => unreachable!(),
             Some(Command::Single) => {
                 run_validated(&cfg, ValidationTarget::Single, commands::single::single)
@@ -143,7 +157,11 @@ fn run_with(args: Cli) -> Result<()> {
     {
         match args.command.as_ref() {
             Some(
-                Command::Show | Command::Monitor | Command::Config { .. } | Command::Raw { .. },
+                Command::Show
+                | Command::Monitor
+                | Command::Config { .. }
+                | Command::Raw { .. }
+                | Command::Doctor { .. },
             ) => unreachable!(),
             Some(Command::Reference) => run_validated(
                 &cfg,
