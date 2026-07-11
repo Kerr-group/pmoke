@@ -2,6 +2,7 @@ pub mod debug;
 pub mod lockin_core;
 pub mod lockin_params;
 pub mod lockin_plot;
+pub mod provenance;
 pub mod reference;
 pub mod resolve;
 pub mod save;
@@ -10,6 +11,7 @@ pub mod stride;
 
 use crate::config::Config;
 use crate::constants::{HARMONICS, LI_HEADER, LI_RESULTS_NAME};
+use crate::lockin::provenance::{LockinProvenance, write_analysis_metadata};
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
@@ -24,6 +26,7 @@ pub struct LockinProcessOutput {
     pub result: Vec<Vec<Vec<f64>>>,
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
+    pub provenance: LockinProvenance,
 }
 
 type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>);
@@ -115,6 +118,7 @@ pub fn run_li<'a>(
             li_result,
         )?;
     }
+    write_analysis_metadata(cfg, &lockin_output.provenance)?;
     let elapsed_save = t0.elapsed();
     ui::saved(format!(
         "lock-in results for signals {:?} ({})",
@@ -182,6 +186,7 @@ pub fn li_process<'a>(
     let mut printed_lockin_summary = false;
     let mut base_index_range = None;
     let mut output_index_range = None;
+    let mut provenance = None;
     let debug_time = cfg.lockin.lpf_debug_output.then(|| t.values(0..t.len()));
 
     for (&sig_ch, signal) in signal_ch.iter().zip(signal_data.iter()) {
@@ -190,6 +195,9 @@ pub fn li_process<'a>(
             lockin_core::LockinProcessor::new(t, signal, f_ref, omega_tref, &cfg.lockin)?;
         let processor_base_range = li_processor.base_index_range();
         let processor_output_range = li_processor.output_index_range();
+        if provenance.is_none() {
+            provenance = Some(LockinProvenance::from_processor(&li_processor));
+        }
         if let Some(expected) = base_index_range {
             if processor_base_range != expected {
                 bail!(
@@ -298,6 +306,8 @@ pub fn li_process<'a>(
         result: all_signals_results,
         base_index_range: base_index_range.unwrap_or((0, 0)),
         output_index_range: output_index_range.unwrap_or((0, 0)),
+        provenance: provenance
+            .context("no signal channels were available for lock-in processing")?,
     })
 }
 

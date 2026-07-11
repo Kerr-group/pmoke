@@ -21,6 +21,7 @@ pub const LI_HEADER: [&str; 12] = [
 ];
 
 pub const LI_RESULTS_NAME: &str = "lockin_results";
+pub const ANALYSIS_METADATA_FNAME: &str = "analysis_metadata.toml";
 
 pub const LI_ROTATED_HEADER: [&str; 12] = [
     "LIin_h1 (V)",
