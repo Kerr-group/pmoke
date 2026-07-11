@@ -36,6 +36,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Inspect and verify stored RAW waveform data
+    Raw {
+        #[command(subcommand)]
+        command: RawCommand,
+    },
     /// Set single mode to the oscilloscope
     #[cfg(feature = "hw")]
     Single,
@@ -113,6 +118,16 @@ pub enum ConfigCommand {
     },
 }
 
+#[derive(Subcommand, Debug)]
+pub enum RawCommand {
+    /// Verify RAW metadata, file sizes, and available checksums
+    Verify {
+        /// RAW waveform directory (defaults to the configured raw_waveform artifact)
+        #[arg(long, value_name = "DIR")]
+        input: Option<PathBuf>,
+    },
+}
+
 #[cfg(feature = "hw")]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum FetchFormat {
@@ -180,5 +195,17 @@ mod config_command_tests {
     #[test]
     fn rejects_unpublished_upgrade_command_name() {
         assert!(Cli::try_parse_from(["pmoke", "config", "upgrade"]).is_err());
+    }
+
+    #[test]
+    fn parses_raw_verify_without_hardware_feature() {
+        let cli = Cli::try_parse_from(["pmoke", "raw", "verify", "--input", "shot/raw_waveform"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Raw {
+                command: RawCommand::Verify { input: Some(_) }
+            })
+        ));
     }
 }

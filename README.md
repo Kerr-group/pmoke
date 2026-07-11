@@ -49,6 +49,7 @@ pmoke --config config.toml show       # validate config
 pmoke --config config.toml config migrate # preview a config migration
 pmoke --config config.toml monitor    # terminal dashboard
 pmoke --config config.toml fetch      # fetch waveforms
+pmoke --config config.toml raw verify # verify stored RAW data
 pmoke --config config.toml analyze    # analyze existing data
 pmoke --config config.toml process    # fetch + analyze
 pmoke --config config.toml auto       # single + trigger + fetch + analyze
@@ -143,6 +144,7 @@ Typical files after acquisition and analysis:
 ```text
 raw_waveform/
   metadata.toml
+  config.source.toml
   ch1.u16le
   ch2.u16le
   ...
@@ -161,6 +163,11 @@ WORD payload and avoids huge CSV files in the hot path.
 
 Use `data.input = "raw"` for strict raw analysis, or `"auto"` while
 migrating existing data directories.
+
+New acquisitions use RAW metadata version 2 with SHA-256 checksums. Analysis
+verifies those checksums while reading the waveform. Metadata version 1 remains
+readable for existing measurements and can be checked for shape and file size
+with `pmoke raw verify`.
 
 ## 🎛️ Lock-In Notes
 

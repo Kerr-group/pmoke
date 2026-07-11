@@ -25,6 +25,7 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
             ..Plot::default()
         },
         source_path: "config.toml".into(),
+        source_text: None,
         legacy_timebase: None,
         roles: Roles {
             sensor_ch,

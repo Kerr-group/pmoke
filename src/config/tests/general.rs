@@ -36,6 +36,7 @@ lpf_half_window_cycles = 1.0
             assert!(normalized.contains("[screenshot]"));
             assert!(!normalized.contains("scope_path"));
             assert!(!normalized.contains("source_path"));
+            assert!(!normalized.contains("source_text"));
         }
         other => panic!("expected ready load, got {other:?}"),
     }
@@ -186,9 +187,20 @@ lpf_half_window_cycles = 1.0
         ConfigLoad::Ready { config, .. } => {
             assert_eq!(config.source_path, path);
             assert!(
+                config
+                    .source_text
+                    .as_deref()
+                    .is_some_and(|source| source.contains("version = 3"))
+            );
+            assert!(
                 !toml::to_string_pretty(&config)
                     .unwrap()
                     .contains("source_path")
+            );
+            assert!(
+                !toml::to_string_pretty(&config)
+                    .unwrap()
+                    .contains("source_text")
             );
         }
         other => panic!("expected ready load, got {other:?}"),

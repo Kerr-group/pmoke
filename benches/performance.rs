@@ -11,6 +11,7 @@ use pmoke::utils::waveform::{WaveformData, read_raw_waveform_channels_from_dir};
 use pyo3::Python;
 use rayon::prelude::*;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
 use std::hint::black_box;
@@ -521,12 +522,16 @@ impl BenchmarkRawFixture {
         let files = (1..=channels)
             .map(|channel| format!("ch{channel}.u16le"))
             .collect::<Vec<_>>();
-        for file in &files {
-            write_synthetic_raw_file(&dir.join(file), sample_count);
-        }
+        let hashes = files
+            .iter()
+            .map(|file| write_synthetic_raw_file(&dir.join(file), sample_count))
+            .collect::<Vec<_>>();
+        let config = b"version = 4\n";
+        fs::write(dir.join("config.source.toml"), config).expect("write benchmark source config");
+        let config_sha256 = format!("{:x}", Sha256::digest(config));
         fs::write(
             dir.join("metadata.toml"),
-            raw_metadata(sample_count, &files),
+            raw_metadata(sample_count, &files, &hashes, &config_sha256),
         )
         .expect("write benchmark RAW metadata");
         let output = dir.join("waveform.csv");
@@ -576,11 +581,12 @@ impl Drop for BenchmarkRawFixture {
     }
 }
 
-fn write_synthetic_raw_file(path: &std::path::Path, sample_count: usize) {
+fn write_synthetic_raw_file(path: &std::path::Path, sample_count: usize) -> String {
     const CHUNK_SAMPLES: usize = 64 * 1024;
     let file = fs::File::create(path).expect("create benchmark RAW file");
     let mut writer = BufWriter::with_capacity(1024 * 1024, file);
     let mut bytes = Vec::with_capacity(CHUNK_SAMPLES * std::mem::size_of::<u16>());
+    let mut hasher = Sha256::new();
     let mut sample_start = 0usize;
     while sample_start < sample_count {
         let chunk_samples = (sample_count - sample_start).min(CHUNK_SAMPLES);
@@ -589,20 +595,32 @@ fn write_synthetic_raw_file(path: &std::path::Path, sample_count: usize) {
             let word = ((index.wrapping_mul(4051).wrapping_add(7919)) & 0xffff) as u16;
             bytes.extend_from_slice(&word.to_le_bytes());
         }
+        hasher.update(&bytes);
         writer.write_all(&bytes).expect("write benchmark RAW chunk");
         sample_start += chunk_samples;
     }
     writer.flush().expect("flush benchmark RAW file");
+    format!("{:x}", hasher.finalize())
 }
 
-fn raw_metadata(sample_count: usize, files: &[String]) -> String {
-    let mut metadata = String::from(
-        "version = 1\n\n[oscilloscope]\nwaveform_format = \"WORD\"\nbyte_order = \"little-endian\"\n",
+fn raw_metadata(
+    sample_count: usize,
+    files: &[String],
+    hashes: &[String],
+    config_sha256: &str,
+) -> String {
+    let channel_list = (1..=files.len())
+        .map(|channel| channel.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut metadata = format!(
+        "version = 2\nstatus = \"complete\"\npmoke_version = \"benchmark\"\ncreated_at = \"1970-01-01T00:00:00Z\"\nconfig_file = \"config.source.toml\"\nconfig_sha256 = \"{config_sha256}\"\n\n[oscilloscope]\nidn_raw = \"RIGOL,DHO5108,benchmark,benchmark\"\nwaveform_format = \"WORD\"\nbyte_order = \"little-endian\"\nmemory_depth = {sample_count}\nsample_count = {sample_count}\nchannels = [{channel_list}]\n"
     );
-    for (index, file) in files.iter().enumerate() {
+    for (index, (file, sha256)) in files.iter().zip(hashes).enumerate() {
         let channel = index + 1;
         metadata.push_str(&format!(
-            "\n[channels.ch{channel}]\nfile = \"{file}\"\nsample_count = {sample_count}\nx_increment = 1e-7\nx_origin = -1e-3\nx_reference = 0.0\ny_increment = 2.5e-4\ny_origin = 0.0\ny_reference = 32768.0\n"
+            "\n[channels.ch{channel}]\nfile = \"{file}\"\nbytes = {}\nsha256 = \"{sha256}\"\nsample_count = {sample_count}\nx_increment = 1e-7\nx_origin = -1e-3\nx_reference = 0.0\ny_increment = 2.5e-4\ny_origin = 0.0\ny_reference = 32768.0\n",
+            sample_count * std::mem::size_of::<u16>()
         ));
     }
     metadata
