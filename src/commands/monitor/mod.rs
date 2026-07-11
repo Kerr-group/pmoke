@@ -81,12 +81,19 @@ const EVENT_BADGE_WIDTH: usize = 6;
 const TIMELINE_BADGE_WIDTH: usize = 5;
 const EVENT_FEED_EFFECT_MS: u32 = 520;
 
+struct TerminalGuard<'a>(&'a mut Terminal<CrosstermBackend<Stdout>>);
+
+impl Drop for TerminalGuard<'_> {
+    fn drop(&mut self) {
+        let _ = restore_terminal(self.0);
+    }
+}
+
 pub fn monitor(config_path: &str, load: ConfigLoad) -> Result<()> {
     let mut terminal = setup_terminal()?;
+    let guard = TerminalGuard(&mut terminal);
     let mut app = MonitorApp::new(config_path.to_string(), load);
-    let result = run(&mut terminal, &mut app);
-    restore_terminal(&mut terminal)?;
-    result
+    run(guard.0, &mut app)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
