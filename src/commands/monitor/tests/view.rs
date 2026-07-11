@@ -1,4 +1,52 @@
 use super::*;
+use ratatui::backend::TestBackend;
+
+fn render_dashboard_text(width: u16, height: u16, app: &mut MonitorApp) -> String {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| render(frame, app, FxDuration::from_millis(0)))
+        .unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .chunks(width as usize)
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn dashboard_render_keeps_core_regions_at_wide_and_compact_sizes() {
+    for (width, height) in [(120, 30), (72, 24)] {
+        let mut app = test_app();
+        app.push_output(OutputStream::System, "dashboard render probe");
+        let rendered = render_dashboard_text(width, height, &mut app);
+
+        assert!(rendered.contains("WORKFLOW"), "{width}x{height}");
+        assert!(rendered.contains("INSPECTOR"), "{width}x{height}");
+        assert!(rendered.contains("OUTPUT"), "{width}x{height}");
+        assert!(
+            rendered.contains("dashboard render probe"),
+            "{width}x{height}"
+        );
+        assert!(!rendered.contains(" Config  Messages  Files "));
+    }
+}
+
+#[test]
+fn tiny_dashboard_hides_inspector_but_preserves_workflow_and_activity() {
+    let mut app = test_app();
+    app.push_output(OutputStream::System, "tiny output");
+
+    let rendered = render_dashboard_text(40, 14, &mut app);
+
+    assert!(rendered.contains("WORKFLOW"));
+    assert!(rendered.contains("OUTPUT"));
+    assert!(rendered.contains("tiny output"));
+    assert!(!rendered.contains("INSPECTOR"));
+}
 
 #[test]
 fn header_omits_pipeline_counter() {
@@ -12,19 +60,22 @@ fn header_omits_pipeline_counter() {
 }
 
 #[test]
-fn context_bar_shows_current_directory_on_every_tab() {
+fn context_bar_shows_current_directory_for_every_focus_pane() {
     let mut app = test_app();
     app.current_dir = "/workspace/pmoke".to_string();
 
-    for tab in 0..TAB_TITLES.len() {
-        app.active_tab = tab;
+    for focus in [FocusPane::Commands, FocusPane::Inspector, FocusPane::Output] {
+        app.focus = focus;
         let rendered = context_bar_spans(&app, 120)
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
 
-        assert!(rendered.contains("◆ cwd /workspace/pmoke"), "tab {tab}");
-        assert!(rendered.contains("config config.toml"), "tab {tab}");
+        assert!(
+            rendered.contains("◆ cwd /workspace/pmoke"),
+            "focus {focus:?}"
+        );
+        assert!(rendered.contains("config config.toml"), "focus {focus:?}");
     }
 }
 

@@ -39,30 +39,28 @@ fn strips_csi_ansi_codes() {
 }
 
 #[test]
-fn wide_actions_layout_keeps_output_visible() {
+fn wide_dashboard_layout_keeps_activity_visible() {
     let area = Rect::new(0, 0, 120, 28);
-    let (_, _, output) = actions_full_layout(area);
+    let layout = UiLayout::new(area);
 
-    assert!(output.height >= 6);
+    assert!(layout.activity.height >= 5);
 }
 
 #[test]
-fn actions_panel_width_fits_command_rows_without_fixed_padding() {
+fn workflow_panel_width_fits_command_rows_without_fixed_padding() {
     let area = Rect::new(0, 0, 120, 28);
-    let (commands, _, output) = actions_full_layout(area);
+    let layout = UiLayout::new(area);
 
-    assert!(commands.width < 36);
-    assert_eq!(commands.width, actions_panel_width(area.width));
-    assert!(output.width >= 40);
+    assert!(layout.workflow.width < 36);
+    assert_eq!(layout.workflow.width, workflow_panel_width(area.width));
+    assert!(layout.activity.width >= 40);
 }
 
 #[test]
 fn output_table_width_fits_inside_live_output_text_area() {
-    let mut app = test_app();
-    app.active_tab = 0;
     let area = Rect::new(0, 0, 120, 28);
-    let log_content = output_log_content_area(&app, area).expect("output area exists");
-    let table_width = output_table_width_for_area(&app, area).expect("table width exists");
+    let log_content = output_log_content_area(area).expect("output area exists");
+    let table_width = output_table_width_for_area(area).expect("table width exists");
 
     assert!(table_width <= log_content.width.saturating_sub(OUTPUT_PREFIX_WIDTH + 1));
     assert!(table_width >= 24);

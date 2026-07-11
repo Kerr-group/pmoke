@@ -9,12 +9,13 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &mut MonitorApp, effect_delta: 
         .constraints([
             Constraint::Length(2),
             Constraint::Min(10),
-            Constraint::Length(0),
+            Constraint::Length(1),
         ])
         .split(area);
 
     render_header(frame, app, outer[0]);
     render_body(frame, app, outer[1], effect_delta);
+    render_footer(frame, app, outer[2]);
 
     if app.show_help {
         render_help_overlay(frame, app, area);
@@ -182,49 +183,32 @@ pub(super) fn render_body(
     area: Rect,
     effect_delta: FxDuration,
 ) {
-    let (tabs, active_panel) = active_panel_layout(area);
-    render_tabs(frame, app, tabs);
-    match app.active_tab {
-        0 => render_actions(frame, app, active_panel, effect_delta),
-        1 => {
-            render_config(frame, app, active_panel);
-            process_event_feed_effects(app, effect_delta, frame.buffer_mut(), None);
-        }
-        2 => {
-            render_messages(frame, app, active_panel);
-            process_event_feed_effects(app, effect_delta, frame.buffer_mut(), None);
-        }
-        _ => {
-            render_files(frame, app, active_panel);
-            process_event_feed_effects(app, effect_delta, frame.buffer_mut(), None);
-        }
-    }
+    let layout = UiLayout::new(area);
+    render_command_palette(frame, app, layout.workflow);
+    render_inspector(frame, app, layout.inspector);
+    render_run_output(frame, app, layout.activity, effect_delta);
 }
 
-pub(super) fn render_tabs(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    let tabs = Tabs::new(TAB_TITLES)
-        .select(app.active_tab)
-        .style(Style::default().fg(Color::DarkGray))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .divider(symbols::line::VERTICAL);
-    frame.render_widget(tabs, area);
-}
-
-pub(super) fn render_actions(
-    frame: &mut Frame<'_>,
-    app: &mut MonitorApp,
-    area: Rect,
-    effect_delta: FxDuration,
-) {
-    let (command_palette, run_status, run_output) = actions_full_layout(area);
-    render_command_palette(frame, app, command_palette);
-    render_run_status(frame, app, run_status);
-    render_run_output(frame, app, run_output, effect_delta);
+pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    let focus = match app.focus {
+        FocusPane::Commands => "workflow",
+        FocusPane::Inspector => "inspector",
+        FocusPane::Output => "activity",
+    };
+    let line = Line::from(vec![
+        Span::styled(" Enter ", Style::default().fg(Color::Cyan)),
+        Span::raw("run  "),
+        Span::styled("Tab ", Style::default().fg(Color::Cyan)),
+        Span::raw("focus  "),
+        Span::styled("i ", Style::default().fg(Color::Cyan)),
+        Span::raw("inspect  "),
+        Span::styled("[ ] ", Style::default().fg(Color::Cyan)),
+        Span::raw("history  "),
+        Span::styled("? ", Style::default().fg(Color::Cyan)),
+        Span::raw("help  "),
+        Span::styled(format!("[{focus}]"), Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 pub(super) fn process_event_feed_effects(
@@ -240,27 +224,54 @@ pub(super) fn process_event_feed_effects(
 }
 
 pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    let (list_area, description_area) = command_palette_layout(area);
-    let selected = app.selected_action;
-    let actions = app.actions();
+    let (list_area, description_area) = workflow_layout(area);
+    let selected = app.workflow_cursor;
+    let entries = app.workflow_entries();
     let visible_rows = list_area.height.saturating_sub(2).max(1) as usize;
     let start = selected.saturating_sub(visible_rows / 2);
-    let items = actions
+    let items = entries
         .iter()
         .enumerate()
         .skip(start)
         .take(visible_rows)
-        .map(|(idx, action)| {
+        .map(|(idx, entry)| {
             let is_selected = idx == selected;
-            let selected_style = if idx == selected {
+            let WorkflowEntry::Action(action) = entry else {
+                let WorkflowEntry::Group(group) = entry else {
+                    unreachable!()
+                };
+                let collapsed = app.collapsed_groups.contains(group);
+                return ListItem::new(Line::from(vec![
+                    Span::styled(
+                        if is_selected { "▌ " } else { "  " },
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(
+                        if collapsed { "▸" } else { "▾" },
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        group.label(),
+                        Style::default()
+                            .fg(if is_selected {
+                                Color::White
+                            } else {
+                                Color::DarkGray
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            };
+            let runnable = action_runnable(*action, &app.load);
+            let accent_color = if runnable { Color::Cyan } else { Color::Red };
+            let selected_style = if is_selected {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Gray)
             };
-            let runnable = action_runnable(*action, &app.load);
-            let accent_color = if runnable { Color::Cyan } else { Color::Red };
             let marker = if is_selected { "▌" } else { " " };
             let icon = if runnable { "●" } else { "·" };
             let icon_style = if is_selected {
@@ -312,7 +323,7 @@ pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, ar
                     },
                 ),
                 Span::styled(
-                    format!("{:02}", idx + 1),
+                    "  ",
                     if is_selected {
                         Style::default()
                             .fg(accent_color)
@@ -331,15 +342,144 @@ pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, ar
         })
         .collect::<Vec<_>>();
 
+    let title = if entries.is_empty() {
+        format!(" WORKFLOW /{} · NO MATCHES ", app.action_query)
+    } else if app.search_mode || !app.action_query.is_empty() {
+        format!(" WORKFLOW /{} ", app.action_query)
+    } else {
+        format!(" WORKFLOW {:02}/{} ", selected + 1, entries.len())
+    };
+
     frame.render_widget(
-        List::new(items).block(
-            accent_panel(format!(" COMMANDS {:02}/{} ", selected + 1, actions.len())).border_style(
-                focus_border_style(app, FocusPane::Commands, Color::DarkGray),
-            ),
-        ),
+        List::new(items).block(accent_panel(title).border_style(focus_border_style(
+            app,
+            FocusPane::Commands,
+            Color::DarkGray,
+        ))),
         list_area,
     );
     render_command_description(frame, app, description_area);
+}
+
+pub(super) fn render_inspector(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    match app.inspector_view {
+        InspectorView::Summary => render_inspector_summary(frame, app, area),
+        InspectorView::Config => render_config(frame, app, area),
+        InspectorView::Diagnostics => render_messages(frame, app, area),
+        InspectorView::Artifacts => render_files(frame, app, area),
+    }
+}
+
+fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    if app.selected_workflow_entry().is_none() {
+        frame.render_widget(
+            Paragraph::new("No workflow action matches the current search.")
+                .style(Style::default().fg(Color::Yellow))
+                .block(
+                    accent_panel(format!(" INSPECTOR · {} ", app.inspector_view.label()))
+                        .border_style(focus_border_style(
+                            app,
+                            FocusPane::Inspector,
+                            Color::DarkGray,
+                        )),
+                )
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+    if let Some(WorkflowEntry::Group(group)) = app.selected_workflow_entry() {
+        let collapsed = app.collapsed_groups.contains(&group);
+        let lines = vec![
+            Line::styled(
+                group.label(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::styled(
+                if collapsed {
+                    "Enter to expand this workflow group."
+                } else {
+                    "Enter to collapse this workflow group."
+                },
+                Style::default().fg(Color::Gray),
+            ),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    accent_panel(format!(" INSPECTOR · {} ", app.inspector_view.label()))
+                        .border_style(focus_border_style(
+                            app,
+                            FocusPane::Inspector,
+                            Color::DarkGray,
+                        )),
+                )
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+    let action = app.selected_action();
+    let readiness = action_readiness(action, &app.load);
+    let color = if readiness.is_ok() {
+        Color::Green
+    } else {
+        Color::Red
+    };
+    let state = if readiness.is_ok() {
+        "READY"
+    } else {
+        "BLOCKED"
+    };
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!(" {state} "),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                action.label(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::styled(action.description(), Style::default().fg(Color::Gray)),
+        Line::from(vec![
+            Span::styled("command  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(
+                    "pmoke --config {} {}",
+                    app.config_path,
+                    action.command_name()
+                ),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+    ];
+    if let Err(reason) = readiness {
+        lines.push(Line::from(vec![
+            Span::styled("reason   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(reason, Style::default().fg(Color::LightRed)),
+        ]));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                accent_panel(format!(" INSPECTOR · {} ", app.inspector_view.label())).border_style(
+                    focus_border_style(app, FocusPane::Inspector, Color::DarkGray),
+                ),
+            )
+            .wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
@@ -347,7 +487,25 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
         return;
     }
 
+    let Some(entry) = app.selected_workflow_entry() else {
+        frame.render_widget(
+            Paragraph::new("Type to refine the search; Esc clears it.")
+                .style(Style::default().fg(Color::Gray))
+                .block(accent_panel(" DETAIL ")),
+            area,
+        );
+        return;
+    };
     let action = app.selected_action();
+    if let WorkflowEntry::Group(group) = entry {
+        frame.render_widget(
+            Paragraph::new("Enter toggles this group.")
+                .style(Style::default().fg(Color::Gray))
+                .block(accent_panel(format!(" DETAIL {} ", group.label()))),
+            area,
+        );
+        return;
+    }
     frame.render_widget(
         Paragraph::new(action.description())
             .style(Style::default().fg(Color::Gray))
@@ -357,102 +515,13 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
     );
 }
 
-pub(super) fn render_run_status(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    let selected_action = app.selected_action();
-    let block = accent_panel(" STATUS ").border_style(focus_border_style(
-        app,
-        FocusPane::Status,
-        run_status_color(app),
-    ));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1)])
-        .split(inner);
-
-    let status_line = if let Some(run) = &app.active_run {
-        let status = if run.cancel_requested {
-            "STOPPING "
-        } else {
-            "RUN "
-        };
-        Line::from(vec![
-            Span::styled(
-                status,
-                Style::default()
-                    .fg(if run.cancel_requested {
-                        Color::LightRed
-                    } else {
-                        Color::Yellow
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                run.label,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!(
-                "  {}",
-                format_live_duration(run.started_at.elapsed())
-            )),
-        ])
-    } else if let Some(record) = &app.last_run {
-        Line::from(vec![
-            Span::styled("LAST ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                record.label,
-                Style::default()
-                    .fg(if record.ok { Color::Green } else { Color::Red })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("  {}", format_duration(record.elapsed))),
-            Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                record.result.clone(),
-                Style::default().fg(if record.ok { Color::Green } else { Color::Red }),
-            ),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled("IDLE ", Style::default().fg(Color::Gray)),
-            Span::styled("NEXT ", Style::default().fg(Color::DarkGray)),
-            Span::styled(selected_action.label(), Style::default().fg(Color::Cyan)),
-        ])
-    };
-    frame.render_widget(Paragraph::new(status_line), chunks[0]);
-
-    let runnable = action_runnable(selected_action, &app.load);
-    let next_line = if app.command_running() {
-        Line::from(vec![
-            Span::styled("NEXT ", Style::default().fg(Color::DarkGray)),
-            Span::styled(selected_action.label(), Style::default().fg(Color::Gray)),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(
-                "READY ",
-                Style::default().fg(if runnable { Color::Green } else { Color::Red }),
-            ),
-            Span::styled("next ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                selected_action.label(),
-                Style::default().fg(if runnable { Color::Cyan } else { Color::Red }),
-            ),
-        ])
-    };
-    frame.render_widget(Paragraph::new(next_line), chunks[1]);
-}
-
 pub(super) fn render_run_output(
     frame: &mut Frame<'_>,
     app: &mut MonitorApp,
     area: Rect,
     effect_delta: FxDuration,
 ) {
+    let output = app.visible_output();
     let block_base = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -465,18 +534,20 @@ pub(super) fn render_run_output(
     let output_sections = output_inner_layout(inner);
     let log_area = output_sections.log;
     let log_width = log_area.width.saturating_sub(1);
-    let visual_lines_for_layout = if app.run_output.is_empty() {
+    let visual_lines_for_layout = if output.is_empty() {
         Vec::new()
     } else {
-        visual_output_lines(&app.run_output, log_width, None, None)
+        visual_output_lines(output, log_width, None, None)
     };
     let visual_line_count = visual_lines_for_layout.len();
     let selected_visual_range =
         visual_selection_range(&visual_lines_for_layout, app.output_selection_range());
     let visible_rows = output_visible_rows(log_area);
     let effective_scroll = effective_output_scroll(app, log_area, visual_line_count);
-    let title = if app.run_output.is_empty() {
+    let title = if output.is_empty() {
         " OUTPUT ".to_string()
+    } else if let Some((index, total)) = app.history_position() {
+        format!(" OUTPUT history {index}/{total} · {visual_line_count} lines ")
     } else if effective_scroll == 0 {
         format!(" OUTPUT latest · {visual_line_count} lines ")
     } else {
@@ -501,18 +572,18 @@ pub(super) fn render_run_output(
         return;
     }
 
-    let lines = if app.run_output.is_empty() {
+    let lines = if output.is_empty() {
         vec![Line::styled(
             "  ready",
             Style::default().fg(Color::DarkGray),
         )]
     } else {
         let visual_lines = visual_output_lines_with_motion(
-            &app.run_output,
+            output,
             log_width,
             app.output_selection_range(),
             app.output_selected,
-            app.command_running(),
+            app.command_running() && app.history_view.is_none(),
             timeline_motion_frame(app),
         );
         let end = visual_lines.len().saturating_sub(effective_scroll);
@@ -531,7 +602,7 @@ pub(super) fn render_run_output(
     frame.render_widget(
         output_header(
             log_chunks[0].width,
-            app.command_running(),
+            app.command_running() && app.history_view.is_none(),
             timeline_motion_frame(app),
         ),
         log_chunks[0],
