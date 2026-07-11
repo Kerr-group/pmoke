@@ -42,7 +42,7 @@ fn main() {
     let signal = synthetic_signal(&times);
 
     // One untimed run catches invalid inputs and reduces first-use noise.
-    black_box(convert_raw_word_to_voltages(&words, 2.5e-4, 0.0, 32_768.0));
+    black_box(convert_raw_word_to_voltages(&words, 2.5e-4, 0.0, 32_768.0).unwrap());
     black_box(PulseIntegralCalculator::new(1.0e-7).integrate(&signal, 0.125, -2.0));
     black_box(run_lockin(&times, &signal));
 
@@ -51,7 +51,11 @@ fn main() {
             "raw_word_decode",
             options.samples,
             options.iterations,
-            || convert_raw_word_to_voltages(black_box(&words), 2.5e-4, 0.0, 32_768.0).len(),
+            || {
+                convert_raw_word_to_voltages(black_box(&words), 2.5e-4, 0.0, 32_768.0)
+                    .unwrap()
+                    .len()
+            },
         ),
         measure(
             "sensor_integral",

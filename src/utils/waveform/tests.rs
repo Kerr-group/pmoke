@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[test]
 fn raw_word_conversion_matches_dho_formula() {
     let bytes = [0x00, 0x00, 0x01, 0x00, 0x10, 0x00];
-    let values = convert_raw_word_to_voltages(&bytes, 0.5, 1.0, 2.0);
+    let values = convert_raw_word_to_voltages(&bytes, 0.5, 1.0, 2.0).unwrap();
     assert_eq!(values, vec![-1.5, -1.0, 6.5]);
 }
 
@@ -93,6 +93,41 @@ fn read_raw_channel_converts_u16le_with_metadata_scaling() {
     assert_eq!(values, vec![-1.5, 6.5]);
     assert_eq!(time_axis.unwrap().build(), vec![1.0, 1.5]);
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn read_raw_channel_matches_conversion_across_chunks() {
+    let dir = unique_test_dir("raw_chunk_read");
+    fs::create_dir(&dir).unwrap();
+    let path = dir.join("ch1.u16le");
+    let words = [0_u16, 1, 32_767, 32_768, 65_535];
+    let bytes = words
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect::<Vec<_>>();
+    fs::write(&path, &bytes).unwrap();
+    let spec = RawChannelSpec {
+        key: "ch1".to_owned(),
+        path,
+        expected_bytes: bytes.len(),
+        y_increment: 0.25,
+        y_origin: 2.0,
+        y_reference: 32_768.0,
+    };
+
+    let chunked = read_raw_channel_data_with_chunk_size(&spec, 4).unwrap();
+    let contiguous =
+        convert_raw_word_to_voltages(&bytes, spec.y_increment, spec.y_origin, spec.y_reference)
+            .unwrap();
+
+    assert_eq!(chunked, contiguous);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn raw_word_conversion_rejects_incomplete_word() {
+    let error = convert_raw_word_to_voltages(&[1], 1.0, 0.0, 0.0).unwrap_err();
+    assert!(error.to_string().contains("incomplete final sample"));
 }
 
 #[test]
