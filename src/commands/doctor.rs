@@ -54,9 +54,10 @@ pub fn run(cfg: &Config, warnings: &[ConfigWarning], json: bool, probe_fetch: bo
         status: CheckStatus::Warn,
         detail: warning.message.clone(),
     }));
-    check_storage(cfg, &mut checks);
+    let free_bytes = check_storage(cfg, &mut checks);
     check_python(cfg, &mut checks);
-    check_hardware(cfg, probe_fetch, &mut checks);
+    let predicted_bytes = check_hardware(cfg, probe_fetch, &mut checks);
+    check_capacity(free_bytes, predicted_bytes, &mut checks);
 
     emit_report(checks, json)
 }
@@ -125,7 +126,7 @@ fn emit_report(checks: Vec<DoctorCheck>, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) {
+fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
     let raw_path = cfg.artifact_path(RAW_WAVEFORM_DIR);
     let parent = raw_path.parent().unwrap_or_else(|| Path::new("."));
     match writable_probe(parent) {
@@ -140,18 +141,24 @@ fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) {
             detail: format!("{error:#}"),
         }),
     }
-    match fs2::available_space(parent) {
-        Ok(bytes) => checks.push(DoctorCheck {
-            name: "storage.free".to_string(),
-            status: CheckStatus::Pass,
-            detail: format!("{:.2} GiB", bytes as f64 / 1024.0_f64.powi(3)),
-        }),
-        Err(error) => checks.push(DoctorCheck {
-            name: "storage.free".to_string(),
-            status: CheckStatus::Warn,
-            detail: error.to_string(),
-        }),
-    }
+    let free_bytes = match fs2::available_space(parent) {
+        Ok(bytes) => {
+            checks.push(DoctorCheck {
+                name: "storage.free".to_string(),
+                status: CheckStatus::Pass,
+                detail: format!("{:.2} GiB", bytes as f64 / 1024.0_f64.powi(3)),
+            });
+            Some(bytes)
+        }
+        Err(error) => {
+            checks.push(DoctorCheck {
+                name: "storage.free".to_string(),
+                status: CheckStatus::Warn,
+                detail: error.to_string(),
+            });
+            None
+        }
+    };
     let staging = staging_path(&raw_path);
     checks.push(if staging.exists() {
         DoctorCheck {
@@ -166,6 +173,62 @@ fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) {
             detail: "none".to_string(),
         }
     });
+    free_bytes
+}
+
+fn check_capacity(
+    free_bytes: Option<u64>,
+    predicted_bytes: Option<u64>,
+    checks: &mut Vec<DoctorCheck>,
+) {
+    let (Some(free_bytes), Some(predicted_bytes)) = (free_bytes, predicted_bytes) else {
+        checks.push(DoctorCheck {
+            name: "storage.capacity".to_string(),
+            status: CheckStatus::Skip,
+            detail: "free space or acquisition size is unavailable".to_string(),
+        });
+        return;
+    };
+    let margin = predicted_bytes / 20 + 64 * 1024 * 1024;
+    let recommended = predicted_bytes.saturating_add(margin);
+    let (status, detail) = if free_bytes < predicted_bytes {
+        (
+            CheckStatus::Fail,
+            format!(
+                "predicted RAW {:.2} GiB exceeds free space {:.2} GiB",
+                gibibytes(predicted_bytes),
+                gibibytes(free_bytes)
+            ),
+        )
+    } else if free_bytes < recommended {
+        (
+            CheckStatus::Warn,
+            format!(
+                "free {:.2} GiB covers RAW {:.2} GiB but is below the recommended {:.2} GiB",
+                gibibytes(free_bytes),
+                gibibytes(predicted_bytes),
+                gibibytes(recommended)
+            ),
+        )
+    } else {
+        (
+            CheckStatus::Pass,
+            format!(
+                "free {:.2} GiB, predicted RAW {:.2} GiB",
+                gibibytes(free_bytes),
+                gibibytes(predicted_bytes)
+            ),
+        )
+    };
+    checks.push(DoctorCheck {
+        name: "storage.capacity".to_string(),
+        status,
+        detail,
+    });
+}
+
+fn gibibytes(bytes: u64) -> f64 {
+    bytes as f64 / 1024.0_f64.powi(3)
 }
 
 fn writable_probe(parent: &Path) -> Result<()> {
@@ -236,12 +299,13 @@ fn check_python(cfg: &Config, checks: &mut Vec<DoctorCheck>) {
 }
 
 #[cfg(feature = "hw")]
-fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>) {
+fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
     use crate::communications::function_generator::FGHandler;
     use crate::communications::oscilloscope::OscilloscopeHandler;
     use crate::utils::channels::build_channel_list;
     use instruments::rigol::DhoTriggerStatus;
 
+    let mut predicted_bytes = None;
     match OscilloscopeHandler::initialize(cfg) {
         Ok(mut scope) => {
             match scope.identify() {
@@ -270,7 +334,11 @@ fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>
             match scope.query_memory_depth() {
                 Ok(depth) => {
                     let channels = build_channel_list(cfg).map_or(0, |channels| channels.len());
-                    let bytes = depth.saturating_mul(channels).saturating_mul(2);
+                    let bytes = u64::try_from(depth)
+                        .unwrap_or(u64::MAX)
+                        .saturating_mul(u64::try_from(channels).unwrap_or(u64::MAX))
+                        .saturating_mul(2);
+                    predicted_bytes = Some(bytes);
                     checks.push(DoctorCheck {
                         name: "scope.memory".to_string(),
                         status: CheckStatus::Pass,
@@ -307,6 +375,7 @@ fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>
             detail: "not configured".to_string(),
         });
     }
+    predicted_bytes
 }
 
 #[cfg(feature = "hw")]
@@ -319,12 +388,13 @@ fn failed(name: &str, error: impl std::fmt::Display) -> DoctorCheck {
 }
 
 #[cfg(not(feature = "hw"))]
-fn check_hardware(_cfg: &Config, _probe_fetch: bool, checks: &mut Vec<DoctorCheck>) {
+fn check_hardware(_cfg: &Config, _probe_fetch: bool, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
     checks.push(DoctorCheck {
         name: "hardware".to_string(),
         status: CheckStatus::Skip,
         detail: "built without hw feature".to_string(),
     });
+    None
 }
 
 #[cfg(test)]
@@ -364,5 +434,28 @@ mod tests {
         let directory = temporary_directory();
         let error = writable_probe(&directory).unwrap_err();
         assert!(error.to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn capacity_check_fails_before_an_acquisition_that_cannot_fit() {
+        let mut checks = Vec::new();
+        check_capacity(Some(999), Some(1_000), &mut checks);
+        assert_eq!(checks[0].status, CheckStatus::Fail);
+        assert!(checks[0].detail.contains("exceeds free space"));
+    }
+
+    #[test]
+    fn capacity_check_warns_when_only_the_safety_margin_is_missing() {
+        let mut checks = Vec::new();
+        let gib = 1024_u64.pow(3);
+        check_capacity(Some(2 * gib), Some(2 * gib - 1), &mut checks);
+        assert_eq!(checks[0].status, CheckStatus::Warn);
+    }
+
+    #[test]
+    fn capacity_check_passes_with_headroom() {
+        let mut checks = Vec::new();
+        check_capacity(Some(2_000_000_000), Some(1_000_000_000), &mut checks);
+        assert_eq!(checks[0].status, CheckStatus::Pass);
     }
 }
