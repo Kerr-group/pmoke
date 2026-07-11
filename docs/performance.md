@@ -22,6 +22,11 @@ Available cases are `raw_word_decode`, `raw_waveform_read`, `sensor_integral`,
 `analysis_pipeline`. Omitting `--case` runs all microbenchmarks except
 `analysis_pipeline`.
 
+Each case performs one untimed validation run before measurement. RAW read
+timings therefore use a warmed filesystem page cache and are intended to track
+metadata validation, decoding, allocation, and cached-I/O regressions rather
+than physical cold-storage throughput.
+
 For peak resident memory on Linux, run one case per process and wrap the
 command with `/usr/bin/time -v`.
 On macOS, use `/usr/bin/time -l`. The weekly `Performance` workflow stores the
