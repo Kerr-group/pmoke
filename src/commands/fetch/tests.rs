@@ -88,11 +88,13 @@ fn source_config_snapshot_uses_the_text_that_was_loaded() {
     config.source_path = dir.join("missing-config.toml");
     config.source_text = Some("version = 4\n# loaded snapshot\n".to_string());
 
-    let checksum = snapshot_source_config(&config, &dir).unwrap();
+    let checksums = snapshot_configs(&config, &dir).unwrap();
 
     let contents = fs::read(dir.join("config.source.toml")).unwrap();
     assert_eq!(contents, b"version = 4\n# loaded snapshot\n");
-    assert_eq!(checksum, sha256_hex(&contents));
+    assert_eq!(checksums.source, sha256_hex(&contents));
+    let resolved = fs::read(dir.join("config.resolved.toml")).unwrap();
+    assert_eq!(checksums.resolved, sha256_hex(&resolved));
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -180,6 +182,8 @@ fn raw_metadata_serializes_horizontal_settings() {
         config_version: 3,
         config_file: "config.source.toml",
         config_sha256: "0".repeat(64),
+        resolved_config_file: "config.resolved.toml",
+        resolved_config_sha256: "1".repeat(64),
         oscilloscope: RawOscilloscopeMetadata {
             idn_raw: "RIGOL,DHO5108,serial,firmware".to_string(),
             firmware: Some("firmware".to_string()),
@@ -506,6 +510,8 @@ fn single_channel_raw_metadata(file: &str, sample_count: usize) -> RawFetchMetad
         config_version: 3,
         config_file: "config.source.toml",
         config_sha256: "0".repeat(64),
+        resolved_config_file: "config.resolved.toml",
+        resolved_config_sha256: "1".repeat(64),
         oscilloscope: RawOscilloscopeMetadata {
             idn_raw: "RIGOL,DHO5108,serial,firmware".to_string(),
             firmware: Some("firmware".to_string()),

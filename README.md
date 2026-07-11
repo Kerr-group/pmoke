@@ -168,6 +168,7 @@ Typical files after acquisition and analysis:
 raw_waveform/
   metadata.toml
   config.source.toml
+  config.resolved.toml
   ch1.u16le
   ch2.u16le
   ...
@@ -196,6 +197,9 @@ New acquisitions use RAW metadata version 2 with SHA-256 checksums. Analysis
 verifies those checksums while reading the waveform. Metadata version 1 remains
 readable for existing measurements and can be checked for shape and file size
 with `pmoke raw verify`.
+
+New version 2 manifests also checksum the normalized resolved config. Older
+version 2 acquisitions without that optional snapshot remain readable.
 
 `analysis_metadata.toml` records the resolved reference frequency, sample and
 output rates, lock-in window, ENBW estimate, cutoff, and edge trimming used for

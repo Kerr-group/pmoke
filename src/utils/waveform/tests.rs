@@ -527,10 +527,13 @@ fn read_raw_waveform_v2_verifies_config_and_channel_checksums() {
     let dir = unique_test_dir("raw_v2_checksums");
     fs::create_dir(&dir).unwrap();
     let config = b"version = 4\n";
+    let resolved_config = b"version = 4\n# resolved\n";
     let raw = [0_u8, 0, 1, 0];
     fs::write(dir.join("config.source.toml"), config).unwrap();
+    fs::write(dir.join("config.resolved.toml"), resolved_config).unwrap();
     fs::write(dir.join("ch1.u16le"), raw).unwrap();
     let config_sha = format!("{:x}", Sha256::digest(config));
+    let resolved_config_sha = format!("{:x}", Sha256::digest(resolved_config));
     let raw_sha = format!("{:x}", Sha256::digest(raw));
     fs::write(
         dir.join(RAW_METADATA_FNAME),
@@ -541,6 +544,8 @@ pmoke_version = "0.2.0"
 created_at = "2026-07-11T00:00:00Z"
 config_file = "config.source.toml"
 config_sha256 = "{config_sha}"
+resolved_config_file = "config.resolved.toml"
+resolved_config_sha256 = "{resolved_config_sha}"
 
 [oscilloscope]
 idn_raw = "RIGOL,DHO5108,serial,firmware"
@@ -585,6 +590,19 @@ y_reference = 0.0
 
     fs::write(dir.join("ch1.u16le"), raw).unwrap();
     fs::write(dir.join("config.source.toml"), b"version = 3\n").unwrap();
+    let error = read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("config snapshot checksum mismatch"),
+        "{error:#}"
+    );
+    fs::write(dir.join("config.source.toml"), config).unwrap();
+    fs::write(
+        dir.join("config.resolved.toml"),
+        b"version = 4\n# changed\n",
+    )
+    .unwrap();
     let error = read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap_err();
     assert!(
         error
@@ -779,6 +797,8 @@ fn raw_metadata_with_channels<const N: usize>(
         created_at: None,
         config_file: None,
         config_sha256: None,
+        resolved_config_file: None,
+        resolved_config_sha256: None,
         oscilloscope: RawOscilloscopeMetadata {
             idn_raw: None,
             waveform_format: "WORD".to_string(),
