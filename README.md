@@ -124,7 +124,8 @@ screenshot = true
 [[sensors]]
 channel = 1
 scale = { max_abs = 55.0, polarity = -1 }
-label = "$\\mu_0H$"
+# A TOML literal string passes one backslash to Matplotlib mathtext.
+label = '$\mu_0H$'
 unit = "T"
 
 [[sensors]]
