@@ -9,6 +9,7 @@ use std::f64::consts::PI;
 
 const MAX_SYNC_AVERAGE_SAMPLES: usize = 1_000_000;
 const PHASE_RESYNC_INTERVAL: usize = 4096;
+const LEGACY_EDGE_BUFFER_MIN_STRIDE: usize = 5;
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
@@ -508,6 +509,10 @@ impl<'a> LockinProcessor<'a> {
         let (mut mixed_re, mut mixed_im) =
             self.compute_real_imag_mixed_signal_range(harmonic, raw_start, raw_end);
 
+        if self.params.stride < LEGACY_EDGE_BUFFER_MIN_STRIDE {
+            return self.compute_legacy_lockin_pair_full_prefix(raw_start, &mixed_re, &mixed_im);
+        }
+
         let m = if i_end >= i_start {
             i_end - i_start + 1
         } else {
@@ -578,6 +583,66 @@ impl<'a> LockinProcessor<'a> {
             mixed_signal: None,
         }
     }
+
+    fn compute_legacy_lockin_pair_full_prefix(
+        &self,
+        raw_start: usize,
+        mixed_re: &[f64],
+        mixed_im: &[f64],
+    ) -> HarmonicLockinResult {
+        let prefix_re = prefix_sum(mixed_re);
+        let prefix_im = prefix_sum(mixed_im);
+        let (i_start, i_end) = (self.params.i_start, self.params.i_end);
+        let m = i_end - i_start + 1;
+        let mut li_x = Vec::with_capacity(m);
+        let mut li_y = Vec::with_capacity(m);
+
+        for i_idx in i_start..=i_end {
+            let i_base = i_idx * self.params.stride;
+            let neg_idx0 = i_base - self.params.n_half - raw_start;
+            let pos_idx0 = i_base + self.params.n_half - raw_start;
+            let integ_re = trapezoid_integral_from_prefix(mixed_re, &prefix_re, neg_idx0, pos_idx0)
+                * self.params.dt;
+            let integ_im = trapezoid_integral_from_prefix(mixed_im, &prefix_im, neg_idx0, pos_idx0)
+                * self.params.dt;
+
+            let edge_dt = self.params.t_half - (self.params.n_half as f64) * self.params.dt;
+            let edge_neg_re = legacy_edge_integral(
+                mixed_re[neg_idx0],
+                mixed_re[neg_idx0 - 1],
+                edge_dt,
+                self.params.dt,
+            );
+            let edge_pos_re = legacy_edge_integral(
+                mixed_re[pos_idx0],
+                mixed_re[pos_idx0 + 1],
+                edge_dt,
+                self.params.dt,
+            );
+            let edge_neg_im = legacy_edge_integral(
+                mixed_im[neg_idx0],
+                mixed_im[neg_idx0 - 1],
+                edge_dt,
+                self.params.dt,
+            );
+            let edge_pos_im = legacy_edge_integral(
+                mixed_im[pos_idx0],
+                mixed_im[pos_idx0 + 1],
+                edge_dt,
+                self.params.dt,
+            );
+
+            let scale = 1.0 / (2.0 * self.params.t_half);
+            li_x.push(-(integ_im + edge_neg_im + edge_pos_im) * scale);
+            li_y.push((integ_re + edge_neg_re + edge_pos_re) * scale);
+        }
+
+        HarmonicLockinResult {
+            li_x,
+            li_y,
+            mixed_signal: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -612,7 +677,6 @@ fn trapezoid_integral_from_inclusive_prefix(
     0.5 * start_value + interior + 0.5 * end_value
 }
 
-#[cfg(test)]
 fn prefix_sum(values: &[f64]) -> Vec<f64> {
     let mut prefix = Vec::with_capacity(values.len() + 1);
     prefix.push(0.0);
@@ -624,7 +688,6 @@ fn prefix_sum(values: &[f64]) -> Vec<f64> {
     prefix
 }
 
-#[cfg(test)]
 fn trapezoid_integral_from_prefix(values: &[f64], prefix: &[f64], start: usize, end: usize) -> f64 {
     debug_assert!(start < end);
     debug_assert_eq!(prefix.len(), values.len() + 1);
