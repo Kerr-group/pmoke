@@ -157,7 +157,13 @@ fn v2_csv_with_recorded_time_can_advance_to_v4() {
     .unwrap();
 
     let available = pmoke_in_dir(&dir.0, &source, &["config", "migrate", "--check"]);
-    assert_eq!(available.status.code(), Some(1));
+    assert_eq!(
+        available.status.code(),
+        Some(1),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&available.stdout),
+        String::from_utf8_lossy(&available.stderr)
+    );
 
     let written = pmoke_in_dir(
         &dir.0,

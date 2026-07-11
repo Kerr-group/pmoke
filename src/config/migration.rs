@@ -560,6 +560,7 @@ fn inspect_artifact_base_change(
     issues: &mut Vec<MigrationIssue>,
 ) -> Result<()> {
     let cwd = env::current_dir().context("failed to determine current directory")?;
+    let cwd = fs::canonicalize(&cwd).unwrap_or(cwd);
     let source_parent = absolute_parent(source_path, &cwd);
     let destination_parent = absolute_parent(destination_path, &cwd);
     if destination_parent != cwd {

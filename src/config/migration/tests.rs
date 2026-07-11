@@ -179,6 +179,21 @@ fn csv_time_header_detection_matches_supported_time_names() {
 }
 
 #[test]
+fn artifact_base_comparison_accepts_the_process_directory_on_all_platforms() {
+    let cwd = env::current_dir().unwrap();
+    let path = cwd.join("config.toml");
+    let mut issues = Vec::new();
+
+    inspect_artifact_base_change(&path, &path, &mut issues).unwrap();
+
+    assert!(
+        issues
+            .iter()
+            .all(|issue| issue.level != MigrationLevel::Lossy)
+    );
+}
+
+#[test]
 fn all_legacy_lockin_filter_variants_round_trip_to_v4() {
     for replacement in [
         "lpf_kind = \"boxcar_legacy\"\nlpf_half_window_cycles = 1.0",
