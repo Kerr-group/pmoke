@@ -10,7 +10,7 @@ pub mod sensor;
 pub mod stride;
 
 use crate::config::Config;
-use crate::constants::{HARMONICS, LI_HEADER, LI_RESULTS_NAME};
+use crate::constants::{HARMONICS, LI_HEADER};
 use crate::lockin::provenance::{LockinProvenance, write_analysis_metadata};
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
@@ -61,6 +61,7 @@ pub fn run_li<'a>(
     t: impl Into<TimeAxisRef<'a>>,
     data: &[Vec<f64>],
 ) -> Result<LockinRunOutput> {
+    let paths = cfg.paths();
     let t = t.into();
     let (sensor_ch, sensor_idx) = resolve::sensor_column_indices(cfg)?;
     let (_, ref_idx) = resolve::reference_column_index(cfg)?;
@@ -107,8 +108,7 @@ pub fn run_li<'a>(
     let headers = get_li_headers(cfg)?;
     let t0 = std::time::Instant::now();
     for (sig_ch, li_result) in signal_ch.iter().zip(lockin_output.result.iter()) {
-        let li_result_fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, sig_ch);
-        let li_result_path = cfg.artifact_path(&li_result_fname);
+        let li_result_path = paths.lockin_xy_csv(*sig_ch);
         write_li_results(
             &li_result_path,
             &headers,

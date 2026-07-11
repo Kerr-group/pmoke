@@ -4,7 +4,7 @@ pub mod save;
 
 use crate::analysis_results::parse_analysis_result_files;
 use crate::config::{Channel, KerrType};
-use crate::constants::{KERR_NAME, LI_ROTATED_HEADER, LI_ROTATED_NAME};
+use crate::constants::{KERR_NAME, LI_ROTATED_HEADER};
 use crate::kerr::kerr_harmonics_analysis::{KerrHarmonicsAnalyser, KerrHarmonicsAnalysisInput};
 use crate::kerr::kerr_standard_analysis::{KerrStandardAnalyser, KerrStandardAnalysisInput};
 use crate::kerr::save::{get_kerr_headers, write_kerr_results};
@@ -28,12 +28,10 @@ pub fn run(cfg: &Config) -> Result<()> {
         ch
     ));
 
+    let paths = cfg.paths();
     let all_data: Vec<Vec<Vec<f64>>> = ch
         .par_iter()
-        .map(|channel| {
-            let fname = format!("{}_ch{}.csv", LI_ROTATED_NAME, channel);
-            read_csv(cfg.artifact_path(fname))
-        })
+        .map(|channel| read_csv(paths.lockin_rotated_csv(*channel)))
         .collect::<Result<Vec<_>, _>>()?;
 
     let elapsed_read = t0.elapsed();
@@ -71,6 +69,7 @@ pub fn run_kerr_analysis(
     sensor_integral_ch: &[Vec<f64>],
     li_rotated_results: &[Vec<Vec<f64>>],
 ) -> Result<()> {
+    let paths = cfg.paths();
     let kerr_sensor_ch_index = cfg.kerr.use_sensor_ch;
 
     let ch_conf: &Channel = cfg
@@ -138,8 +137,7 @@ pub fn run_kerr_analysis(
         kerr_results.push(kerr_i);
         pb.inc(1);
     }
-    let fname = format!("{}_results.csv", KERR_NAME);
-    let path = cfg.artifact_path(&fname);
+    let path = paths.kerr_csv();
     let headers = get_kerr_headers(cfg)?;
     write_kerr_results(
         &path,

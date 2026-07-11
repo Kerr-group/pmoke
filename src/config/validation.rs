@@ -516,12 +516,13 @@ pub(super) fn validate_sensor_metadata(cfg: &Config) -> Result<()> {
 }
 
 fn validate_analysis_input_exists(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
     match cfg.fetch.analysis_input {
         FetchAnalysisInput::Csv => validate_raw_csv_exists(cfg),
         FetchAnalysisInput::Raw => validate_raw_metadata_exists(cfg),
         FetchAnalysisInput::Auto => {
-            let raw_dir = cfg.artifact_path(RAW_WAVEFORM_DIR);
-            let metadata = raw_dir.join(RAW_METADATA_FNAME);
+            let raw_dir = paths.acquisition_dir();
+            let metadata = paths.acquisition_manifest();
             if metadata.exists() {
                 Ok(())
             } else if raw_dir.exists() {
@@ -534,28 +535,30 @@ fn validate_analysis_input_exists(cfg: &Config) -> Result<()> {
 }
 
 fn validate_raw_csv_exists(cfg: &Config) -> Result<()> {
-    let path = cfg.artifact_path(FETCHED_FNAME);
+    let paths = cfg.paths();
+    let path = paths.waveform_csv();
     validate_file_exists(&path, &path.display().to_string())
 }
 
 fn validate_raw_metadata_exists(cfg: &Config) -> Result<()> {
-    let path = cfg.artifact_path(RAW_WAVEFORM_DIR).join(RAW_METADATA_FNAME);
+    let paths = cfg.paths();
+    let path = paths.acquisition_manifest();
     validate_file_exists(&path, &path.display().to_string())
 }
 
 fn validate_lockin_results_exist(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
     for ch in cfg.phase_signal_ch() {
-        let fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, ch);
-        let path = cfg.artifact_path(&fname);
+        let path = paths.lockin_xy_csv(*ch);
         validate_file_exists(&path, &path.display().to_string())?;
     }
     Ok(())
 }
 
 fn validate_rotated_results_exist(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
     for ch in cfg.phase_signal_ch() {
-        let fname = format!("{}_ch{}.csv", LI_ROTATED_NAME, ch);
-        let path = cfg.artifact_path(&fname);
+        let path = paths.lockin_rotated_csv(*ch);
         validate_file_exists(&path, &path.display().to_string())?;
     }
     Ok(())

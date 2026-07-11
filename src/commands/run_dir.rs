@@ -4,22 +4,20 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-const SOURCE_CONFIG_NAME: &str = "config.source.toml";
-const RESOLVED_CONFIG_NAME: &str = "config.resolved.toml";
-
 pub fn prepare(cfg: &Config) -> Result<()> {
     let root = cfg
         .artifact_root
         .as_deref()
         .context("run directory is not configured")?;
     ensure_run_directory(root)?;
+    let paths = cfg.paths();
     let source = cfg
         .source_text
         .as_deref()
         .context("source config text is unavailable")?;
-    write_once_or_verify(&root.join(SOURCE_CONFIG_NAME), source.as_bytes())?;
+    write_once_or_verify(&paths.source_config(), source.as_bytes())?;
     let resolved = render_normalized_config(cfg).context("failed to render resolved config")?;
-    write_once_or_verify(&root.join(RESOLVED_CONFIG_NAME), resolved.as_bytes())?;
+    write_once_or_verify(&paths.resolved_config(), resolved.as_bytes())?;
     sync_directory(root)
 }
 
@@ -100,6 +98,7 @@ fn sync_directory(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ArtifactPaths;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -115,7 +114,8 @@ mod tests {
     fn snapshot_can_be_reused_only_with_identical_contents() {
         let directory = temporary_directory();
         fs::create_dir(&directory).unwrap();
-        let path = directory.join(SOURCE_CONFIG_NAME);
+        let paths = ArtifactPaths::new(&directory);
+        let path = paths.source_config();
 
         write_once_or_verify(&path, b"version = 4\n").unwrap();
         write_once_or_verify(&path, b"version = 4\n").unwrap();
@@ -133,15 +133,16 @@ mod tests {
         cfg.version = 3;
         cfg.source_text = Some("version = 3\n".to_string());
         cfg.set_artifact_root(directory.clone());
+        let paths = cfg.paths();
 
         prepare(&cfg).unwrap();
         prepare(&cfg).unwrap();
 
         assert_eq!(
-            fs::read_to_string(directory.join(SOURCE_CONFIG_NAME)).unwrap(),
+            fs::read_to_string(paths.source_config()).unwrap(),
             "version = 3\n"
         );
-        let resolved = fs::read_to_string(directory.join(RESOLVED_CONFIG_NAME)).unwrap();
+        let resolved = fs::read_to_string(paths.resolved_config()).unwrap();
         assert!(resolved.starts_with("version = 3\n"));
         assert!(resolved.contains("[plot]"));
         fs::remove_dir_all(directory).unwrap();

@@ -1,5 +1,5 @@
 use crate::config::{Config, ConfigDiagnostics, ConfigWarning};
-use crate::constants::RAW_WAVEFORM_DIR;
+
 use crate::ui;
 use anyhow::{Context, Result, bail};
 use pyo3::Python;
@@ -127,7 +127,7 @@ fn emit_report(checks: Vec<DoctorCheck>, json: bool) -> Result<()> {
 }
 
 fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
-    let raw_path = cfg.artifact_path(RAW_WAVEFORM_DIR);
+    let raw_path = cfg.paths().acquisition_dir();
     let parent = raw_path.parent().unwrap_or_else(|| Path::new("."));
     let probe_parent = match existing_storage_ancestor(parent) {
         Ok(probe_parent) => probe_parent,

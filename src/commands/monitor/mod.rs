@@ -1,10 +1,6 @@
 use crate::config::{
     self, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning, FetchAnalysisInput, FetchOutput,
 };
-use crate::constants::{
-    FETCHED_FNAME, KERR_NAME, LI_RESULTS_NAME, LI_ROTATED_NAME, RAW_METADATA_FNAME,
-    RAW_WAVEFORM_DIR,
-};
 use anyhow::Result;
 use crossterm::{
     event::{

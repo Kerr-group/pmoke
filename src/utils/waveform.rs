@@ -1,8 +1,5 @@
 use crate::config::{Config, FetchAnalysisInput};
-use crate::constants::{
-    FETCHED_FNAME, RAW_METADATA_FNAME, RAW_METADATA_LEGACY_VERSION, RAW_METADATA_VERSION,
-    RAW_WAVEFORM_DIR,
-};
+use crate::constants::{RAW_METADATA_FNAME, RAW_METADATA_LEGACY_VERSION, RAW_METADATA_VERSION};
 use crate::utils::channels::build_channel_list;
 use crate::utils::checksum::{finalize_sha256_hex, sha256_hex};
 use crate::utils::csv::read_selected_columns;
@@ -101,7 +98,8 @@ pub fn read_waveform_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformD
 }
 
 fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
-    let csv_path = cfg.artifact_path(FETCHED_FNAME);
+    let paths = cfg.paths();
+    let csv_path = paths.waveform_csv();
     let (time_index, column_indices) = csv_column_indices(&csv_path, channels)?;
     let mut read_indices =
         Vec::with_capacity(column_indices.len() + usize::from(time_index.is_some()));
@@ -149,7 +147,8 @@ fn read_auto_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
 }
 
 fn read_raw_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
-    read_raw_waveform_channels_from_dir(&cfg.artifact_path(RAW_WAVEFORM_DIR), channels)
+    let paths = cfg.paths();
+    read_raw_waveform_channels_from_dir(&paths.acquisition_dir(), channels)
 }
 
 pub fn read_raw_waveform_channels_from_dir(
@@ -870,7 +869,8 @@ enum RawStatus {
 }
 
 fn raw_status(cfg: &Config, channels: &[u8]) -> Result<RawStatus> {
-    raw_status_in_dir(&cfg.artifact_path(RAW_WAVEFORM_DIR), channels)
+    let paths = cfg.paths();
+    raw_status_in_dir(&paths.acquisition_dir(), channels)
 }
 
 fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {

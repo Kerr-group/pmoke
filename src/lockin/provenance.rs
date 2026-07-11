@@ -1,5 +1,5 @@
 use crate::config::{Config, LockinLpfKind};
-use crate::constants::ANALYSIS_METADATA_FNAME;
+
 use crate::lockin::lockin_core::{LockinProcessor, legacy_boxcar_enbw_hz};
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -64,7 +64,7 @@ struct AnalysisMetadata<'a> {
 }
 
 pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Result<()> {
-    let path = cfg.artifact_path(ANALYSIS_METADATA_FNAME);
+    let path = cfg.paths().analysis_manifest();
     let metadata = AnalysisMetadata {
         schema_version: 1,
         pmoke_version: env!("CARGO_PKG_VERSION"),

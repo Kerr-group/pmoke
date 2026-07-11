@@ -1,5 +1,4 @@
 use crate::config::{self, ConfigLoad, ValidationTarget};
-use crate::constants::RAW_WAVEFORM_DIR;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ActionGroup {
@@ -276,7 +275,7 @@ pub(super) fn action_readiness(action: MonitorAction, load: &ConfigLoad) -> Resu
     };
 
     if matches!(action, MonitorAction::RawVerify) {
-        let raw = config.artifact_path(RAW_WAVEFORM_DIR);
+        let raw = config.paths().acquisition_dir();
         return raw
             .is_dir()
             .then_some(())

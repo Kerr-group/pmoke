@@ -80,20 +80,22 @@ pub fn export(cfg: &Config, output: &Path) -> Result<()> {
 }
 
 fn export_into(cfg: &Config, staging: &Path) -> Result<ExportMetadata> {
-    let mut sources = cfg
-        .phase_signal_ch()
-        .iter()
-        .flat_map(|channel| {
-            [
-                format!("{LI_RESULTS_NAME}_ch{channel}.csv"),
-                format!("{LI_ROTATED_NAME}_ch{channel}.csv"),
-            ]
-        })
-        .collect::<Vec<_>>();
-    sources.push(format!("{KERR_NAME}_results.csv"));
+    let paths = cfg.paths();
+    let mut sources = Vec::new();
+    for &channel in cfg.phase_signal_ch() {
+        sources.push((
+            paths.lockin_xy_csv(channel),
+            format!("{LI_RESULTS_NAME}_ch{channel}.csv"),
+        ));
+        sources.push((
+            paths.lockin_rotated_csv(channel),
+            format!("{LI_ROTATED_NAME}_ch{channel}.csv"),
+        ));
+    }
+    sources.push((paths.kerr_csv(), format!("{KERR_NAME}_results.csv")));
+
     let mut arrays = Vec::with_capacity(sources.len());
-    for source_name in sources {
-        let source = cfg.artifact_path(&source_name);
+    for (source, source_name) in sources {
         let table = read_csv_table(&source)?;
         let output_name = source_name.strip_suffix(".csv").map_or_else(
             || format!("{source_name}.npy"),

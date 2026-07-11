@@ -1,6 +1,3 @@
-use crate::constants::{
-    FETCHED_FNAME, LI_RESULTS_NAME, LI_ROTATED_NAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR,
-};
 use anyhow::{Result, anyhow, bail};
 use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
@@ -14,11 +11,13 @@ use std::{
 
 mod load;
 mod migration;
+mod paths;
 mod render;
 mod schema;
 mod validation;
 pub use load::{load_from_path, load_from_str};
 pub use migration::{MigrationPlan, plan_latest_executable_migration, plan_migration};
+pub use paths::ArtifactPaths;
 use render::render_config_v4;
 pub use render::render_normalized_config;
 use schema::*;
@@ -154,6 +153,21 @@ pub struct Screenshot {
 impl Config {
     pub fn phase_signal_ch(&self) -> &[u8] {
         &self.roles.signal_ch
+    }
+
+    pub fn paths(&self) -> ArtifactPaths {
+        if let Some(root) = &self.artifact_root {
+            ArtifactPaths::new(root)
+        } else if self.version >= 4 {
+            let parent = self
+                .source_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            ArtifactPaths::new(parent)
+        } else {
+            ArtifactPaths::new(".")
+        }
     }
 
     pub fn artifact_path(&self, path: impl AsRef<Path>) -> PathBuf {

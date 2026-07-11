@@ -124,8 +124,9 @@ pub fn fetch_with_options(
     out: Option<&Path>,
 ) -> Result<()> {
     let output = format.map(FetchOutput::from).unwrap_or(cfg.fetch.output);
-    let default_csv = cfg.artifact_path(FETCHED_FNAME);
-    let default_raw = cfg.artifact_path(RAW_WAVEFORM_DIR);
+    let paths = cfg.paths();
+    let default_csv = paths.waveform_csv();
+    let default_raw = paths.acquisition_dir();
     match format {
         Some(FetchFormat::Csv) => fetch_csv(cfg, out.unwrap_or(&default_csv)),
         Some(FetchFormat::Raw) => fetch_raw(cfg, out.unwrap_or(&default_raw)),
@@ -193,8 +194,9 @@ fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
 }
 
 pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
-    let csv_out = cfg.artifact_path(FETCHED_FNAME);
-    let raw_out = cfg.artifact_path(RAW_WAVEFORM_DIR);
+    let paths = cfg.paths();
+    let csv_out = paths.waveform_csv();
+    let raw_out = paths.acquisition_dir();
     match cfg.fetch.output {
         FetchOutput::Csv => {
             ensure_output_parent(&csv_out)?;

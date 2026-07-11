@@ -1,6 +1,6 @@
 use crate::cli::ExportCommand;
 use crate::config::Config;
-use crate::constants::{FETCHED_FNAME, RAW_WAVEFORM_DIR};
+
 use crate::ui;
 use crate::utils::waveform::export_raw_waveform_csv;
 use anyhow::Result;
@@ -10,14 +10,16 @@ mod npy;
 pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
     match command {
         ExportCommand::Csv { input, output } => {
-            let default_input = cfg.artifact_path(RAW_WAVEFORM_DIR);
-            let default_output = cfg.artifact_path(FETCHED_FNAME);
+            let paths = cfg.paths();
+            let default_input = paths.acquisition_dir();
+            let default_output = paths.waveform_csv();
             let input = input.as_deref().unwrap_or(&default_input);
             let output = output.as_deref().unwrap_or(&default_output);
             csv(input, output)
         }
         ExportCommand::Npy { output } => {
-            let default_output = cfg.artifact_path("analysis_npy");
+            let paths = cfg.paths();
+            let default_output = paths.analysis_dir().join("analysis_npy");
             npy::export(cfg, output.as_deref().unwrap_or(&default_output))
         }
     }
