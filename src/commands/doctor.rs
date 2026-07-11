@@ -129,11 +129,30 @@ fn emit_report(checks: Vec<DoctorCheck>, json: bool) -> Result<()> {
 fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
     let raw_path = cfg.artifact_path(RAW_WAVEFORM_DIR);
     let parent = raw_path.parent().unwrap_or_else(|| Path::new("."));
-    match writable_probe(parent) {
+    let probe_parent = match existing_storage_ancestor(parent) {
+        Ok(probe_parent) => probe_parent,
+        Err(error) => {
+            checks.push(DoctorCheck {
+                name: "storage.write".to_string(),
+                status: CheckStatus::Fail,
+                detail: format!("{error:#}"),
+            });
+            return None;
+        }
+    };
+    match writable_probe(&probe_parent) {
         Ok(()) => checks.push(DoctorCheck {
             name: "storage.write".to_string(),
             status: CheckStatus::Pass,
-            detail: parent.display().to_string(),
+            detail: if probe_parent == parent {
+                parent.display().to_string()
+            } else {
+                format!(
+                    "{} will be created under writable {}",
+                    parent.display(),
+                    probe_parent.display()
+                )
+            },
         }),
         Err(error) => checks.push(DoctorCheck {
             name: "storage.write".to_string(),
@@ -141,7 +160,7 @@ fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
             detail: format!("{error:#}"),
         }),
     }
-    let free_bytes = match fs2::available_space(parent) {
+    let free_bytes = match fs2::available_space(&probe_parent) {
         Ok(bytes) => {
             checks.push(DoctorCheck {
                 name: "storage.free".to_string(),
@@ -174,6 +193,38 @@ fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
         }
     });
     free_bytes
+}
+
+fn existing_storage_ancestor(path: &Path) -> Result<PathBuf> {
+    let mut candidate = if path.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        path.to_path_buf()
+    };
+    loop {
+        match fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.file_type().is_dir() => return Ok(candidate),
+            Ok(_) => bail!(
+                "storage path ancestor is not a regular directory: {}",
+                candidate.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(parent) = candidate.parent() else {
+                    bail!("no existing storage ancestor found for {}", path.display());
+                };
+                candidate = if parent.as_os_str().is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    parent.to_path_buf()
+                };
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to inspect storage path: {}", candidate.display())
+                });
+            }
+        }
+    }
 }
 
 fn check_capacity(
@@ -434,6 +485,19 @@ mod tests {
         let directory = temporary_directory();
         let error = writable_probe(&directory).unwrap_err();
         assert!(error.to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn missing_output_directories_use_the_nearest_existing_ancestor() {
+        let directory = temporary_directory();
+        fs::create_dir(&directory).unwrap();
+        let planned = directory.join("shot/raw_waveform");
+
+        let ancestor = existing_storage_ancestor(&planned).unwrap();
+
+        assert_eq!(ancestor, directory);
+        assert!(!planned.exists());
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
