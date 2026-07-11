@@ -41,6 +41,15 @@ pub enum Command {
         #[command(subcommand)]
         command: RawCommand,
     },
+    /// Diagnose config, storage, Python, and connected instruments
+    Doctor {
+        /// Emit a machine-readable JSON report
+        #[arg(long)]
+        json: bool,
+        /// Allow active checks such as stopping the oscilloscope
+        #[arg(long)]
+        probe_fetch: bool,
+    },
     /// Set single mode to the oscilloscope
     #[cfg(feature = "hw")]
     Single,
@@ -205,6 +214,18 @@ mod config_command_tests {
             cli.command,
             Some(Command::Raw {
                 command: RawCommand::Verify { input: Some(_) }
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_doctor_options_without_hardware_feature() {
+        let cli = Cli::try_parse_from(["pmoke", "doctor", "--json", "--probe-fetch"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Doctor {
+                json: true,
+                probe_fetch: true,
             })
         ));
     }
