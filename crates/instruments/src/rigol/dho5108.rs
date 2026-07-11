@@ -784,6 +784,93 @@ mod tests {
         server.join().unwrap();
     }
 
+    #[test]
+    fn binary_query_rejects_declared_payload_length_mismatch() {
+        for response in [b"#13abc".as_slice(), b"#15abcde".as_slice()] {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let response = response.to_vec();
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream);
+                expect_command(&mut reader, "BIN?");
+                reader.get_mut().write_all(&response).unwrap();
+                reader.get_mut().flush().unwrap();
+            });
+            let mut dho = DHO5108::open_with_timeouts(
+                "127.0.0.1",
+                port,
+                Some(Duration::from_secs(1)),
+                Some(Duration::from_secs(1)),
+            )
+            .unwrap();
+            let mut output = Vec::new();
+
+            let error = dho
+                .query_binary_into_with_expected_length("BIN?", &mut output, Some(4))
+                .unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains("expected 4 bytes"));
+            assert!(output.is_empty());
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn binary_query_rejects_truncated_payload() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            expect_command(&mut reader, "BIN?");
+            reader.get_mut().write_all(b"#14abc").unwrap();
+            reader.get_mut().flush().unwrap();
+        });
+        let mut dho = DHO5108::open_with_timeouts(
+            "127.0.0.1",
+            port,
+            Some(Duration::from_secs(1)),
+            Some(Duration::from_secs(1)),
+        )
+        .unwrap();
+        let mut output = Vec::new();
+
+        let error = dho.query_binary_into("BIN?", &mut output).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(error.to_string().contains("expected 4"));
+        assert_eq!(output, b"abc");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn binary_query_without_terminator_allows_a_following_query() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            expect_command(&mut reader, "BIN?");
+            reader.get_mut().write_all(b"#14abcd").unwrap();
+            reader.get_mut().flush().unwrap();
+            expect_command(&mut reader, "*IDN?");
+            reply_line(&mut reader, "RIGOL,DHO5108,serial,firmware");
+        });
+        let mut dho = DHO5108::open_with_timeouts(
+            "127.0.0.1",
+            port,
+            Some(Duration::from_secs(1)),
+            Some(Duration::from_secs(1)),
+        )
+        .unwrap();
+
+        assert_eq!(dho.query_binary("BIN?").unwrap(), b"abcd");
+        assert_eq!(dho.identify().unwrap(), "RIGOL,DHO5108,serial,firmware");
+        server.join().unwrap();
+    }
+
     fn expect_command(reader: &mut BufReader<TcpStream>, expected: &str) {
         let mut command = String::new();
         reader.read_line(&mut command).unwrap();
