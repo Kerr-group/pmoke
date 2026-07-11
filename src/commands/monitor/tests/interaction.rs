@@ -319,7 +319,7 @@ fn mouse_wheel_scrolls_the_visible_inspector_without_moving_output() {
 #[test]
 fn command_panel_border_click_focuses_commands_without_changing_selection() {
     let mut app = test_app();
-    app.selected_action = 2;
+    app.workflow_cursor = 2;
     let area = Rect::new(0, 0, 120, 28);
     let commands = dashboard_layout(area).workflow;
 
@@ -340,7 +340,7 @@ fn command_panel_border_click_focuses_commands_without_changing_selection() {
             },
         )
         .unwrap();
-        assert_eq!(app.selected_action, 2);
+        assert_eq!(app.workflow_cursor, 2);
         assert_eq!(app.focus, FocusPane::Commands);
     }
 }
@@ -348,7 +348,7 @@ fn command_panel_border_click_focuses_commands_without_changing_selection() {
 #[test]
 fn command_panel_content_click_focuses_and_selects_the_clicked_action() {
     let mut app = test_app();
-    app.selected_action = 2;
+    app.workflow_cursor = 2;
     app.focus_output();
     let area = Rect::new(0, 0, 120, 28);
     let commands = dashboard_layout(area).workflow;
@@ -366,7 +366,7 @@ fn command_panel_content_click_focuses_and_selects_the_clicked_action() {
     .unwrap();
 
     assert_eq!(app.focus, FocusPane::Commands);
-    assert_eq!(app.selected_action, 0);
+    assert_eq!(app.workflow_cursor, 0);
 }
 
 #[test]

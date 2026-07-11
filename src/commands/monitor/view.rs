@@ -223,26 +223,53 @@ pub(super) fn process_event_feed_effects(
 
 pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     let (list_area, description_area) = workflow_layout(area);
-    let selected = app.selected_action;
-    let actions = app.actions();
+    let selected = app.workflow_cursor;
+    let entries = app.workflow_entries();
     let visible_rows = list_area.height.saturating_sub(2).max(1) as usize;
     let start = selected.saturating_sub(visible_rows / 2);
-    let items = actions
+    let items = entries
         .iter()
         .enumerate()
         .skip(start)
         .take(visible_rows)
-        .map(|(idx, action)| {
+        .map(|(idx, entry)| {
             let is_selected = idx == selected;
-            let selected_style = if idx == selected {
+            let WorkflowEntry::Action(action) = entry else {
+                let WorkflowEntry::Group(group) = entry else {
+                    unreachable!()
+                };
+                let collapsed = app.collapsed_groups.contains(group);
+                return ListItem::new(Line::from(vec![
+                    Span::styled(
+                        if is_selected { "▌ " } else { "  " },
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(
+                        if collapsed { "▸" } else { "▾" },
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        group.label(),
+                        Style::default()
+                            .fg(if is_selected {
+                                Color::White
+                            } else {
+                                Color::DarkGray
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            };
+            let runnable = action_runnable(*action, &app.load);
+            let accent_color = if runnable { Color::Cyan } else { Color::Red };
+            let selected_style = if is_selected {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Gray)
             };
-            let runnable = action_runnable(*action, &app.load);
-            let accent_color = if runnable { Color::Cyan } else { Color::Red };
             let marker = if is_selected { "▌" } else { " " };
             let icon = if runnable { "●" } else { "·" };
             let icon_style = if is_selected {
@@ -294,7 +321,7 @@ pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, ar
                     },
                 ),
                 Span::styled(
-                    format!("{:02}", idx + 1),
+                    "  ",
                     if is_selected {
                         Style::default()
                             .fg(accent_color)
@@ -313,12 +340,20 @@ pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, ar
         })
         .collect::<Vec<_>>();
 
+    let title = if entries.is_empty() {
+        format!(" WORKFLOW /{} · NO MATCHES ", app.action_query)
+    } else if app.search_mode || !app.action_query.is_empty() {
+        format!(" WORKFLOW /{} ", app.action_query)
+    } else {
+        format!(" WORKFLOW {:02}/{} ", selected + 1, entries.len())
+    };
+
     frame.render_widget(
-        List::new(items).block(
-            accent_panel(format!(" WORKFLOW {:02}/{} ", selected + 1, actions.len())).border_style(
-                focus_border_style(app, FocusPane::Commands, Color::DarkGray),
-            ),
-        ),
+        List::new(items).block(accent_panel(title).border_style(focus_border_style(
+            app,
+            FocusPane::Commands,
+            Color::DarkGray,
+        ))),
         list_area,
     );
     render_command_description(frame, app, description_area);
@@ -337,11 +372,69 @@ pub(super) fn render_inspector(frame: &mut Frame<'_>, app: &MonitorApp, area: Re
 }
 
 fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    if app.selected_workflow_entry().is_none() {
+        frame.render_widget(
+            Paragraph::new("No workflow action matches the current search.")
+                .style(Style::default().fg(Color::Yellow))
+                .block(
+                    accent_panel(format!(" INSPECTOR · {} ", app.inspector_view.label()))
+                        .border_style(focus_border_style(
+                            app,
+                            FocusPane::Inspector,
+                            Color::DarkGray,
+                        )),
+                )
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+    if let Some(WorkflowEntry::Group(group)) = app.selected_workflow_entry() {
+        let collapsed = app.collapsed_groups.contains(&group);
+        let lines = vec![
+            Line::styled(
+                group.label(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::styled(
+                if collapsed {
+                    "Enter to expand this workflow group."
+                } else {
+                    "Enter to collapse this workflow group."
+                },
+                Style::default().fg(Color::Gray),
+            ),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    accent_panel(format!(" INSPECTOR · {} ", app.inspector_view.label()))
+                        .border_style(focus_border_style(
+                            app,
+                            FocusPane::Inspector,
+                            Color::DarkGray,
+                        )),
+                )
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
     let action = app.selected_action();
-    let runnable = action_runnable(action, &app.load);
-    let state = if runnable { "READY" } else { "BLOCKED" };
-    let color = if runnable { Color::Green } else { Color::Red };
-    let lines = vec![
+    let readiness = action_readiness(action, &app.load);
+    let color = if readiness.is_ok() {
+        Color::Green
+    } else {
+        Color::Red
+    };
+    let state = if readiness.is_ok() {
+        "READY"
+    } else {
+        "BLOCKED"
+    };
+    let mut lines = vec![
         Line::from(vec![
             Span::styled(
                 format!(" {state} "),
@@ -369,6 +462,12 @@ fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
             ),
         ]),
     ];
+    if let Err(reason) = readiness {
+        lines.push(Line::from(vec![
+            Span::styled("reason   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(reason, Style::default().fg(Color::LightRed)),
+        ]));
+    }
     frame.render_widget(
         Paragraph::new(lines)
             .block(
@@ -386,7 +485,25 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
         return;
     }
 
+    let Some(entry) = app.selected_workflow_entry() else {
+        frame.render_widget(
+            Paragraph::new("Type to refine the search; Esc clears it.")
+                .style(Style::default().fg(Color::Gray))
+                .block(accent_panel(" DETAIL ")),
+            area,
+        );
+        return;
+    };
     let action = app.selected_action();
+    if let WorkflowEntry::Group(group) = entry {
+        frame.render_widget(
+            Paragraph::new("Enter toggles this group.")
+                .style(Style::default().fg(Color::Gray))
+                .block(accent_panel(format!(" DETAIL {} ", group.label()))),
+            area,
+        );
+        return;
+    }
     frame.render_widget(
         Paragraph::new(action.description())
             .style(Style::default().fg(Color::Gray))

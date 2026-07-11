@@ -1,6 +1,39 @@
 use crate::config::{self, ConfigLoad, ValidationTarget};
+use crate::constants::RAW_WAVEFORM_DIR;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum ActionGroup {
+    Acquisition,
+    Analysis,
+    Pipeline,
+    Utilities,
+}
+
+impl ActionGroup {
+    pub(super) const ALL: [Self; 4] = [
+        Self::Utilities,
+        Self::Acquisition,
+        Self::Analysis,
+        Self::Pipeline,
+    ];
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Acquisition => "ACQUISITION",
+            Self::Analysis => "ANALYSIS",
+            Self::Pipeline => "PIPELINE",
+            Self::Utilities => "UTILITIES",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WorkflowEntry {
+    Group(ActionGroup),
+    Action(MonitorAction),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MonitorAction {
     Show,
     Reference,
@@ -9,6 +42,8 @@ pub(super) enum MonitorAction {
     Phase,
     Kerr,
     Analyze,
+    Doctor,
+    RawVerify,
     #[cfg(feature = "hw")]
     Single,
     #[cfg(feature = "hw")]
@@ -37,6 +72,8 @@ impl MonitorAction {
             Self::Phase => "Phase",
             Self::Kerr => "Kerr",
             Self::Analyze => "Analyze",
+            Self::Doctor => "Doctor",
+            Self::RawVerify => "RAW verify",
             #[cfg(feature = "hw")]
             Self::Single => "Single",
             #[cfg(feature = "hw")]
@@ -67,6 +104,8 @@ impl MonitorAction {
             Self::Phase => "Rotate lock-in phase and write lockin_rotated.",
             Self::Kerr => "Calculate Kerr angle from rotated lock-in data.",
             Self::Analyze => "Run reference, sensor, lock-in, phase, and Kerr.",
+            Self::Doctor => "Check config, storage, Python, and available instruments.",
+            Self::RawVerify => "Verify the RAW manifest, sizes, and channel checksums.",
             #[cfg(feature = "hw")]
             Self::Single => "Set oscilloscope to single acquisition mode.",
             #[cfg(feature = "hw")]
@@ -95,6 +134,7 @@ impl MonitorAction {
             Self::Phase => Some(ValidationTarget::Phase),
             Self::Kerr => Some(ValidationTarget::Kerr),
             Self::Analyze => Some(ValidationTarget::Analyze),
+            Self::Doctor | Self::RawVerify => None,
             #[cfg(feature = "hw")]
             Self::Single => Some(ValidationTarget::Single),
             #[cfg(feature = "hw")]
@@ -123,6 +163,8 @@ impl MonitorAction {
             Self::Phase => "phase",
             Self::Kerr => "kerr",
             Self::Analyze => "analyze",
+            Self::Doctor => "doctor",
+            Self::RawVerify => "raw verify",
             #[cfg(feature = "hw")]
             Self::Single => "single",
             #[cfg(feature = "hw")]
@@ -139,6 +181,57 @@ impl MonitorAction {
             Self::Process => "process",
             #[cfg(feature = "hw")]
             Self::Auto => "auto",
+        }
+    }
+
+    pub(super) fn command_args(self) -> &'static [&'static str] {
+        match self {
+            Self::Show => &["show"],
+            Self::Reference => &["reference"],
+            Self::Sensor => &["sensor"],
+            Self::Li => &["li"],
+            Self::Phase => &["phase"],
+            Self::Kerr => &["kerr"],
+            Self::Analyze => &["analyze"],
+            Self::Doctor => &["doctor"],
+            Self::RawVerify => &["raw", "verify"],
+            #[cfg(feature = "hw")]
+            Self::Single => &["single"],
+            #[cfg(feature = "hw")]
+            Self::Trigger => &["trigger"],
+            #[cfg(feature = "hw")]
+            Self::Autoshot => &["autoshot"],
+            #[cfg(feature = "hw")]
+            Self::Fetch => &["fetch"],
+            #[cfg(feature = "hw")]
+            Self::Screenshot => &["screenshot"],
+            #[cfg(feature = "hw")]
+            Self::Automeasure => &["automeasure"],
+            #[cfg(feature = "hw")]
+            Self::Process => &["process"],
+            #[cfg(feature = "hw")]
+            Self::Auto => &["auto"],
+        }
+    }
+
+    pub(super) fn group(self) -> ActionGroup {
+        match self {
+            #[cfg(feature = "hw")]
+            Self::Single
+            | Self::Trigger
+            | Self::Autoshot
+            | Self::Fetch
+            | Self::Screenshot
+            | Self::Automeasure => ActionGroup::Acquisition,
+            Self::Reference
+            | Self::Sensor
+            | Self::Li
+            | Self::Phase
+            | Self::Kerr
+            | Self::Analyze => ActionGroup::Analysis,
+            #[cfg(feature = "hw")]
+            Self::Process | Self::Auto => ActionGroup::Pipeline,
+            Self::Show | Self::Doctor | Self::RawVerify => ActionGroup::Utilities,
         }
     }
 }
@@ -164,6 +257,8 @@ pub(super) fn monitor_actions() -> Vec<MonitorAction> {
         MonitorAction::Phase,
         MonitorAction::Kerr,
         MonitorAction::Analyze,
+        MonitorAction::Doctor,
+        MonitorAction::RawVerify,
         #[cfg(feature = "hw")]
         MonitorAction::Process,
         #[cfg(feature = "hw")]
@@ -171,17 +266,29 @@ pub(super) fn monitor_actions() -> Vec<MonitorAction> {
     ]
 }
 
-pub(super) fn action_runnable(action: MonitorAction, load: &ConfigLoad) -> bool {
-    if matches!(action, MonitorAction::Show) {
-        return true;
+pub(super) fn action_readiness(action: MonitorAction, load: &ConfigLoad) -> Result<(), String> {
+    if matches!(action, MonitorAction::Show | MonitorAction::Doctor) {
+        return Ok(());
     }
 
     let ConfigLoad::Ready { config, .. } = load else {
-        return false;
+        return Err("configuration has errors; open Diagnostics".to_string());
     };
 
-    action
+    if matches!(action, MonitorAction::RawVerify) {
+        let raw = config.artifact_path(RAW_WAVEFORM_DIR);
+        return raw
+            .is_dir()
+            .then_some(())
+            .ok_or_else(|| format!("RAW directory not found: {}", raw.display()));
+    }
+
+    let target = action
         .target()
-        .map(|target| config::validate_for_target(config, target).is_ok())
-        .unwrap_or(true)
+        .ok_or_else(|| "action has no validation target".to_string())?;
+    config::validate_for_target(config, target).map_err(|error| format!("{error:#}"))
+}
+
+pub(super) fn action_runnable(action: MonitorAction, load: &ConfigLoad) -> bool {
+    action_readiness(action, load).is_ok()
 }

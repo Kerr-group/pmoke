@@ -8,7 +8,10 @@ pub(super) struct MonitorApp {
     pub(super) last_refresh: SystemTime,
     pub(super) inspector_view: InspectorView,
     pub(super) focus: FocusPane,
-    pub(super) selected_action: usize,
+    pub(super) workflow_cursor: usize,
+    pub(super) collapsed_groups: std::collections::BTreeSet<ActionGroup>,
+    pub(super) action_query: String,
+    pub(super) search_mode: bool,
     pub(super) last_run: Option<RunRecord>,
     pub(super) active_run: Option<ActiveRun>,
     pub(super) run_output: Vec<LogEntry>,
@@ -39,7 +42,12 @@ impl MonitorApp {
             last_refresh: SystemTime::now(),
             inspector_view: InspectorView::Summary,
             focus: FocusPane::Commands,
-            selected_action: 0,
+            // Utilities is the first group, so row 1 selects the safe, read-only
+            // Config action instead of a collapsible group header.
+            workflow_cursor: 1,
+            collapsed_groups: std::collections::BTreeSet::new(),
+            action_query: String::new(),
+            search_mode: false,
             last_run: None,
             active_run: None,
             run_output: Vec::new(),
@@ -98,12 +106,98 @@ impl MonitorApp {
         monitor_actions()
     }
 
-    pub(super) fn selected_action(&self) -> MonitorAction {
+    pub(super) fn workflow_entries(&self) -> Vec<WorkflowEntry> {
+        let query = self.action_query.trim().to_ascii_lowercase();
         let actions = self.actions();
-        actions
-            .get(self.selected_action.min(actions.len().saturating_sub(1)))
+        let mut entries = Vec::new();
+        for group in ActionGroup::ALL {
+            let matching = actions
+                .iter()
+                .copied()
+                .filter(|action| action.group() == group)
+                .filter(|action| {
+                    query.is_empty()
+                        || action.label().to_ascii_lowercase().contains(&query)
+                        || action.command_name().to_ascii_lowercase().contains(&query)
+                        || action.description().to_ascii_lowercase().contains(&query)
+                })
+                .collect::<Vec<_>>();
+            if matching.is_empty() {
+                continue;
+            }
+            entries.push(WorkflowEntry::Group(group));
+            if !self.collapsed_groups.contains(&group) || !query.is_empty() {
+                entries.extend(matching.into_iter().map(WorkflowEntry::Action));
+            }
+        }
+        entries
+    }
+
+    pub(super) fn selected_workflow_entry(&self) -> Option<WorkflowEntry> {
+        let entries = self.workflow_entries();
+        entries
+            .get(self.workflow_cursor.min(entries.len().saturating_sub(1)))
             .copied()
-            .unwrap_or(MonitorAction::Show)
+    }
+
+    pub(super) fn selected_action(&self) -> MonitorAction {
+        match self.selected_workflow_entry() {
+            Some(WorkflowEntry::Action(action)) => action,
+            Some(WorkflowEntry::Group(group)) => self
+                .actions()
+                .into_iter()
+                .find(|action| action.group() == group)
+                .unwrap_or(MonitorAction::Show),
+            None => MonitorAction::Show,
+        }
+    }
+
+    pub(super) fn clamp_workflow_cursor(&mut self) {
+        self.workflow_cursor = self
+            .workflow_cursor
+            .min(self.workflow_entries().len().saturating_sub(1));
+    }
+
+    pub(super) fn toggle_selected_group(&mut self) -> bool {
+        let Some(WorkflowEntry::Group(group)) = self.selected_workflow_entry() else {
+            return false;
+        };
+        if !self.collapsed_groups.remove(&group) {
+            self.collapsed_groups.insert(group);
+        }
+        self.clamp_workflow_cursor();
+        true
+    }
+
+    pub(super) fn begin_action_search(&mut self) {
+        self.search_mode = true;
+        self.action_query.clear();
+        self.select_first_matching_action();
+        self.focus_actions();
+    }
+
+    pub(super) fn clear_action_search(&mut self) {
+        self.search_mode = false;
+        self.action_query.clear();
+        self.select_first_matching_action();
+    }
+
+    pub(super) fn push_action_query(&mut self, ch: char) {
+        self.action_query.push(ch);
+        self.select_first_matching_action();
+    }
+
+    pub(super) fn pop_action_query(&mut self) {
+        self.action_query.pop();
+        self.select_first_matching_action();
+    }
+
+    fn select_first_matching_action(&mut self) {
+        self.workflow_cursor = self
+            .workflow_entries()
+            .iter()
+            .position(|entry| matches!(entry, WorkflowEntry::Action(_)))
+            .unwrap_or(0);
     }
 
     pub(super) fn poll_command(&mut self) {

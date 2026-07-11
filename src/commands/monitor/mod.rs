@@ -44,7 +44,9 @@ mod panels;
 mod timeline;
 mod view;
 
-use actions::{MonitorAction, action_runnable, monitor_actions};
+use actions::{
+    ActionGroup, MonitorAction, WorkflowEntry, action_readiness, action_runnable, monitor_actions,
+};
 use app::*;
 #[cfg(test)]
 use clipboard::base64_encode;
@@ -250,12 +252,19 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             app.interrupt_current_operation();
                         }
-                        KeyCode::Char('?') => app.show_help = !app.show_help,
+                        KeyCode::Char('?') if !app.search_mode => app.show_help = !app.show_help,
+                        KeyCode::Esc if app.search_mode || !app.action_query.is_empty() => {
+                            app.clear_action_search()
+                        }
                         KeyCode::Esc => app.escape_current_mode(),
                         KeyCode::Char('q') if app.show_help => {
                             app.show_help = false;
                         }
                         _ if app.show_help => {}
+                        KeyCode::Char('/') if !app.search_mode => app.begin_action_search(),
+                        KeyCode::Backspace if app.search_mode => app.pop_action_query(),
+                        KeyCode::Enter if app.search_mode => app.search_mode = false,
+                        KeyCode::Char(ch) if app.search_mode => app.push_action_query(ch),
                         KeyCode::PageUp => {
                             scroll_focused_up(app, terminal.size()?.into(), 12);
                         }
@@ -365,23 +374,23 @@ fn tui_frame_tick(app: &MonitorApp) -> Duration {
 
 fn select_previous_action(app: &mut MonitorApp) {
     app.focus_commands();
-    app.selected_action = app.selected_action.saturating_sub(1);
+    app.workflow_cursor = app.workflow_cursor.saturating_sub(1);
 }
 
 fn select_next_action(app: &mut MonitorApp) {
     app.focus_commands();
-    let last = app.actions().len().saturating_sub(1);
-    app.selected_action = (app.selected_action + 1).min(last);
+    let last = app.workflow_entries().len().saturating_sub(1);
+    app.workflow_cursor = (app.workflow_cursor + 1).min(last);
 }
 
 fn select_first_action(app: &mut MonitorApp) {
     app.focus_commands();
-    app.selected_action = 0;
+    app.workflow_cursor = 0;
 }
 
 fn select_last_action(app: &mut MonitorApp) {
     app.focus_commands();
-    app.selected_action = app.actions().len().saturating_sub(1);
+    app.workflow_cursor = app.workflow_entries().len().saturating_sub(1);
 }
 
 fn focus_previous_pane(app: &mut MonitorApp) {
@@ -574,13 +583,13 @@ fn select_action_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
     if !contains(inner, column, row) {
         return;
     }
-    let selected = app.selected_action;
+    let selected = app.workflow_cursor;
     let visible_rows = list_area.height.saturating_sub(2).max(1) as usize;
     let start = selected.saturating_sub(visible_rows / 2);
     let row_index = row.saturating_sub(inner.y) as usize;
-    let actions_len = app.actions().len();
-    if row_index < visible_rows && start + row_index < actions_len {
-        app.selected_action = start + row_index;
+    let entries_len = app.workflow_entries().len();
+    if row_index < visible_rows && start + row_index < entries_len {
+        app.workflow_cursor = start + row_index;
     }
 }
 
@@ -761,7 +770,20 @@ fn output_selection_status(selected_visual_range: Option<(usize, usize)>) -> Str
 }
 
 fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
-    let action = app.selected_action();
+    let action = match app.selected_workflow_entry() {
+        Some(WorkflowEntry::Group(_)) => {
+            app.toggle_selected_group();
+            return Ok(());
+        }
+        Some(WorkflowEntry::Action(action)) => action,
+        None => {
+            app.push_output(
+                OutputStream::System,
+                "No workflow action matches the search.",
+            );
+            return Ok(());
+        }
+    };
     if app.command_running() {
         app.push_output(
             OutputStream::System,
@@ -770,20 +792,17 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
         return Ok(());
     }
 
-    if !action_runnable(action, &app.load) {
+    if let Err(reason) = action_readiness(action, &app.load) {
         app.last_run = Some(RunRecord {
             action,
             label: action.label(),
             elapsed: Duration::ZERO,
-            result: "not runnable with the current configuration or artifacts".to_string(),
+            result: reason.clone(),
             ok: false,
         });
         app.push_output(
             OutputStream::Stderr,
-            &format!(
-                "{} is not runnable with current config/artifacts",
-                action.label()
-            ),
+            &format!("{} is blocked: {reason}", action.label()),
         );
         return Ok(());
     }
@@ -796,12 +815,13 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
     app.output_selection_anchor = None;
     app.copy_status = None;
     app.follow_output();
+    let command_args = action.command_args();
     app.push_output(
         OutputStream::System,
         &format!(
             "pmoke --config {} {}",
             app.config_path,
-            action.command_name()
+            command_args.join(" ")
         ),
     );
     app.push_output(OutputStream::System, action.description());
@@ -822,7 +842,7 @@ fn spawn_command_runner(
     table_width: Option<u16>,
 ) -> Result<RunHandle> {
     let exe = std::env::current_exe()?;
-    let command_name = action.command_name().to_string();
+    let command_args = action.command_args();
     let (tx, rx) = mpsc::channel();
     let (cancel_tx, cancel_rx) = mpsc::channel();
 
@@ -831,7 +851,7 @@ fn spawn_command_runner(
         command
             .arg("--config")
             .arg(config_path)
-            .arg(command_name)
+            .args(command_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(width) = table_width {

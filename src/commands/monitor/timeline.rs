@@ -493,6 +493,14 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
             label: "Config",
             markers: &["config"],
         }],
+        MonitorAction::Doctor => vec![StageSpec {
+            label: "Doctor",
+            markers: &["doctor", "diagnostic"],
+        }],
+        MonitorAction::RawVerify => vec![StageSpec {
+            label: "Verify",
+            markers: &["raw waveform verification completed", "raw verification"],
+        }],
         MonitorAction::Reference => vec![
             StageSpec {
                 label: "Read",
