@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   benchmark:
-    name: Synthetic benchmark (${{ matrix.channels }} channels)
+    name: Synthetic benchmark (${{ matrix.channels }} RAW CSV channels)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -37,8 +37,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install NumPy
-        run: python -m pip install numpy
+      - name: Install Python dependencies
+        run: python -m pip install numpy scipy lmfit gsplot
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -61,6 +61,7 @@ jobs:
             "$benchmark" --bench \
               --samples "${{ steps.workload.outputs.samples }}" \
               --channels "${{ matrix.channels }}" \
+              --end-to-end \
               --output performance-results/results.json
 
       - name: Record environment

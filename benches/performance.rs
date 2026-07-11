@@ -4,6 +4,9 @@ use pmoke::lockin::lockin_core::LockinProcessor;
 use pmoke::lockin::sensor::pulse_calculator::PulseIntegralCalculator;
 use pmoke::python;
 use pmoke::utils::raw_csv::{RawCsvChannel, write_raw_csv};
+use pmoke::utils::raw_data::RawTimeAxis;
+use pmoke::utils::time_axis::WaveformTime;
+use pmoke::utils::waveform::WaveformData;
 use pmoke::utils::waveform::convert_raw_word_to_voltages;
 use pyo3::Python;
 use rayon::prelude::*;
@@ -22,7 +25,7 @@ struct Report {
     os: &'static str,
     arch: &'static str,
     samples: usize,
-    channels: usize,
+    raw_csv_channels: usize,
     iterations: usize,
     results: Vec<Measurement>,
     python_transfer: python::PythonTransferStats,
@@ -42,6 +45,7 @@ struct Options {
     channels: usize,
     iterations: usize,
     output: Option<PathBuf>,
+    end_to_end: bool,
 }
 
 fn main() {
@@ -50,6 +54,9 @@ fn main() {
     let times = synthetic_times(options.samples);
     let signal = synthetic_signal(&times);
     let raw_csv = BenchmarkRawCsv::new(&words, options.channels);
+    let analysis = options
+        .end_to_end
+        .then(|| AnalysisFixture::new(options.samples));
 
     // One untimed run catches invalid inputs and reduces first-use noise.
     black_box(convert_raw_word_to_voltages(&words, 2.5e-4, 0.0, 32_768.0).unwrap());
@@ -58,9 +65,12 @@ fn main() {
     black_box(run_lockin_harmonics(&times, &signal, 1));
     Python::attach(|py| black_box(python::f64_array1(py, &signal).len()));
     raw_csv.write(options.samples);
+    if let Some(analysis) = &analysis {
+        analysis.run();
+    }
     python::reset_transfer_stats();
 
-    let results = vec![
+    let mut results = vec![
         measure(
             "raw_word_decode",
             options.samples,
@@ -115,15 +125,27 @@ fn main() {
             },
         ),
     ];
+    if let Some(analysis) = &analysis {
+        results.push(measure(
+            "analyze_end_to_end",
+            options.samples,
+            options.samples * 4 * std::mem::size_of::<f64>(),
+            options.iterations,
+            || {
+                analysis.run();
+                options.samples
+            },
+        ));
+    }
 
     let report = Report {
-        schema_version: 3,
+        schema_version: 4,
         commit: command_output("git", &["rev-parse", "HEAD"]),
         rustc: command_output("rustc", &["--version"]),
         os: env::consts::OS,
         arch: env::consts::ARCH,
         samples: options.samples,
-        channels: options.channels,
+        raw_csv_channels: options.channels,
         iterations: options.iterations,
         results,
         python_transfer: python::transfer_stats(),
@@ -147,6 +169,7 @@ fn parse_options() -> Options {
     let mut samples_explicit = false;
     let mut iterations_explicit = false;
     let mut output = None;
+    let mut end_to_end = false;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -182,6 +205,7 @@ fn parse_options() -> Options {
                     .expect("--channels must be 2 or 4");
             }
             "--output" => output = Some(args.next().expect("--output requires a path").into()),
+            "--end-to-end" => end_to_end = true,
             other => panic!("unknown benchmark option: {other}"),
         }
     }
@@ -196,11 +220,16 @@ fn parse_options() -> Options {
     assert!(samples >= 1_000, "samples must be at least 1000");
     assert!(iterations > 0, "iterations must be positive");
     assert!(matches!(channels, 2 | 4), "channels must be 2 or 4");
+    assert!(
+        !end_to_end || samples >= 100_000,
+        "--end-to-end requires at least 100000 samples"
+    );
     Options {
         samples,
         channels,
         iterations,
         output,
+        end_to_end,
     }
 }
 
@@ -380,4 +409,161 @@ impl Drop for BenchmarkRawCsv {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
+}
+
+struct AnalysisFixture {
+    dir: PathBuf,
+    config: pmoke::config::Config,
+    channels: Vec<Vec<f64>>,
+    time: RawTimeAxis,
+}
+
+impl AnalysisFixture {
+    fn new(samples: usize) -> Self {
+        let dir = unique_temp_dir("analysis");
+        fs::create_dir(&dir).expect("create analysis benchmark directory");
+        let config_path = dir.join("config.toml");
+        fs::write(&config_path, analysis_config()).expect("write analysis benchmark config");
+        let (config, warnings) = pmoke::config::load_from_path(&config_path)
+            .into_ready()
+            .expect("load analysis benchmark config");
+        assert!(warnings.is_empty());
+
+        let dt = 1.0e-7;
+        let t0 = -0.001;
+        let omega = 2.0 * std::f64::consts::PI * 10_000.0;
+        let mut sensor1 = Vec::with_capacity(samples);
+        let mut sensor2 = Vec::with_capacity(samples);
+        let mut reference = Vec::with_capacity(samples);
+        let mut signal = Vec::with_capacity(samples);
+        for index in 0..samples {
+            let time = t0 + index as f64 * dt;
+            let pulse = if (0.0..=0.006).contains(&time) {
+                (std::f64::consts::PI * time / 0.006).sin().max(0.0)
+            } else {
+                0.0
+            };
+            sensor1.push(pulse);
+            sensor2.push(0.5 * pulse);
+            reference.push((omega * time).sin());
+            signal.push(
+                (1..=6)
+                    .map(|harmonic| {
+                        0.2 / harmonic as f64
+                            * (harmonic as f64 * omega * time + 0.1 * harmonic as f64).sin()
+                    })
+                    .sum(),
+            );
+        }
+
+        Self {
+            dir,
+            config,
+            channels: vec![sensor1, sensor2, reference, signal],
+            time: RawTimeAxis {
+                sample_count: samples,
+                x_increment: dt,
+                x_origin: t0,
+                x_reference: 0.0,
+            },
+        }
+    }
+
+    fn run(&self) {
+        let _cwd = CurrentDirGuard::enter(&self.dir);
+        let data = WaveformData {
+            t: WaveformTime::Uniform(self.time),
+            channels: self.channels.clone(),
+        };
+        pmoke::run_analysis_pipeline(&self.config, data)
+            .expect("run end-to-end analysis benchmark");
+    }
+}
+
+struct CurrentDirGuard {
+    previous: PathBuf,
+}
+
+impl CurrentDirGuard {
+    fn enter(path: &std::path::Path) -> Self {
+        let previous = env::current_dir().expect("read benchmark current directory");
+        env::set_current_dir(path).expect("enter analysis benchmark directory");
+        Self { previous }
+    }
+}
+
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        env::set_current_dir(&self.previous).expect("restore benchmark current directory");
+    }
+}
+
+impl Drop for AnalysisFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn unique_temp_dir(label: &str) -> PathBuf {
+    env::temp_dir().join(format!(
+        "pmoke-performance-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before Unix epoch")
+            .as_nanos()
+    ))
+}
+
+fn analysis_config() -> &'static str {
+    r#"version = 4
+
+[scope]
+model = "DHO5108"
+connection = "tcp://127.0.0.1:55255"
+
+[data]
+output = "raw"
+input = "raw"
+screenshot = false
+
+[[sensors]]
+channel = 1
+scale = { factor = 1.0 }
+label = "B"
+unit = "T"
+
+[[sensors]]
+channel = 2
+scale = { factor = 1.0 }
+label = "V"
+unit = "V"
+
+[pulse]
+background_before = { start = -1e-3, end = -0.2e-3 }
+background_after = { start = 8e-3, end = 9e-3 }
+
+[reference]
+channel = 3
+fft_window = { start = 0.0, end = 8e-3 }
+stride_samples = 10000
+window_samples = 1000
+
+[lockin]
+signal_channels = [4]
+workers = 2
+stride_samples = 100
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+
+[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+
+[kerr]
+sensor = 1
+method = "standard"
+factor = 1.0
+
+[plot]
+mode = "off"
+"#
 }

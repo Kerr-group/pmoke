@@ -13,7 +13,8 @@ Select a workload size and save the machine-readable report:
 
 ```console
 cargo bench --locked --no-default-features --bench performance -- \
-  --samples 10000000 --channels 4 --iterations 5 --output results.json
+  --samples 10000000 --channels 4 --iterations 5 --end-to-end \
+  --output results.json
 ```
 
 For peak resident memory on Linux, wrap the command with `/usr/bin/time -v`.
@@ -24,7 +25,10 @@ self-hosted run.
 
 The benchmark contains deterministic RAW WORD decoding, sensor integration,
 `boxcar_legacy` lock-in with one and two workers, and Rust-to-NumPy copy
-workloads. Weekly CI runs both two- and four-channel RAW-to-CSV cases. The JSON
+workloads. `--channels` controls the RAW-to-CSV workload; weekly CI runs both
+two- and four-channel cases. The JSON
 report also records the bytes and cumulative time copied across the Python boundary.
+The weekly workflow additionally runs the complete `analyze` pipeline with plotting
+disabled; this requires NumPy, SciPy, lmfit, and gsplot.
 Expected numerical behavior remains in the regular golden and unit tests;
 benchmark timing alone never defines correctness.

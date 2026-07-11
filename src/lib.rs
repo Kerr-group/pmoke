@@ -25,6 +25,14 @@ pub fn run() -> Result<()> {
     run_with(Cli::parse())
 }
 
+#[doc(hidden)]
+pub fn run_analysis_pipeline(
+    cfg: &config::Config,
+    data: utils::waveform::WaveformData,
+) -> Result<()> {
+    commands::analyze::run_analyze(cfg, data)
+}
+
 fn run_with(args: Cli) -> Result<()> {
     if let Some(Command::Completions { shell }) = args.command.as_ref() {
         commands::completions::install_completion(*shell)?;
