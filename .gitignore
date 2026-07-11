@@ -1,6 +1,7 @@
 /target
 *.csv
 .jukit
+.gsplot/
 *.png
 __pycache__/
 *.py[cod]

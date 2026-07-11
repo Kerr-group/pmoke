@@ -22,6 +22,12 @@ WORD waveform captures, and reproducible TOML-based analysis.
 
 ## ⚡ Install
 
+Install the Python analysis dependencies:
+
+```sh
+python -m pip install -r requirements.txt
+```
+
 Hardware-enabled build:
 
 ```sh

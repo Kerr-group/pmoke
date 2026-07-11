@@ -68,6 +68,28 @@ class KerrHarmonicsAnalyserTests(unittest.TestCase):
 
         self.assertTrue(np.isnan(actual[0]))
 
+    def test_nonzero_over_zero_reaches_fold_boundary_without_warning(self):
+        with np.errstate(all="raise"):
+            actual = KerrHarmonicsAnalyser.get_kerr(
+                np.array([1.84, 1.84]),
+                np.array([0.0, 0.0]),
+                np.array([1.0, -1.0]),
+                np.array([0.0, 0.0]),
+            )
+
+        np.testing.assert_allclose(actual, [np.pi / 4, -np.pi / 4])
+
+    def test_negative_denominator_preserves_ratio_sign(self):
+        actual = KerrHarmonicsAnalyser.get_kerr(
+            np.array([1.84]),
+            np.array([-2.0]),
+            np.array([0.5]),
+            np.array([-1.0]),
+        )
+        expected = 0.5 * np.arctan(0.5 / ((-2.0 - 1.0) * 1.84 / 6))
+
+        self.assertAlmostEqual(actual[0], expected)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,7 +33,9 @@ class KerrStandardAnalyser:
     def calculate(a1: NDArray, a2: NDArray, phim=0.92) -> NDArray:
         frac_top = jn(2, 2 * phim) * a1
         frac_bottom = jn(1, 2 * phim) * a2
-        return (1 / 2) * np.arctan(frac_top / frac_bottom)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.divide(frac_top, frac_bottom)
+        return (1 / 2) * np.arctan(ratio)
 
     def analyse(
         self,
