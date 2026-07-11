@@ -3,6 +3,7 @@ pub mod phase_rotation_plot;
 pub mod rotator;
 pub mod save;
 
+use crate::analysis_results::parse_analysis_result_files;
 use crate::constants::{LI_HEADER, LI_ROTATED_HEADER, LI_ROTATED_NAME};
 use crate::phase::omega_t0_analysis::OT0Analyser;
 use crate::phase::phase_rotation_plot::PhaseRotationPlotter;
@@ -10,7 +11,7 @@ use crate::phase::rotator::rotate_phase;
 use crate::phase::save::{get_li_rotated_headers, write_li_rotated_results};
 use crate::{config::Config, constants::LI_RESULTS_NAME, utils::csv::read_csv};
 use crate::{plot, ui};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::f64::consts::PI;
 use std::time::Instant;
@@ -28,8 +29,6 @@ pub fn run(cfg: &Config) -> Result<()> {
         ui::skipped("phase analysis: no channels specified");
         return Ok(());
     }
-
-    let num_sensor_ch = cfg.roles.sensor_ch.len();
 
     let t0 = Instant::now();
     let pb = ui::spinner(format!("reading lock-in results for channels {:?}", ch));
@@ -52,22 +51,20 @@ pub fn run(cfg: &Config) -> Result<()> {
         ),
     );
 
-    let expected_columns = 1 + num_sensor_ch + num_sensor_ch + LI_HEADER.len();
-    validate_result_column_count(&all_data, expected_columns, "lock-in results")?;
+    let data = parse_analysis_result_files(
+        &all_data,
+        cfg.roles.sensor_ch.len(),
+        LI_HEADER.len(),
+        "lock-in results",
+    )?;
 
-    let t = all_data[0][0].clone(); // time column
-    let sensor_rate_ch = all_data[0][1..(1 + num_sensor_ch)].to_vec();
-    let sensor_integral_ch = all_data[0][(1 + num_sensor_ch)..(1 + num_sensor_ch * 2)].to_vec();
-    validate_context_columns_match(&all_data, 1 + num_sensor_ch * 2, "lock-in results")?;
-
-    let li_start = 1 + num_sensor_ch * 2;
-    let li_end = li_start + LI_HEADER.len();
-    let li_results: Vec<Vec<Vec<f64>>> = all_data
-        .iter()
-        .map(|read_data| read_data[li_start..li_end].to_vec())
-        .collect();
-
-    let _ = run_phase_analysis(cfg, &t, &sensor_rate_ch, &sensor_integral_ch, &li_results)?;
+    let _ = run_phase_analysis(
+        cfg,
+        &data.time,
+        &data.sensor_rate,
+        &data.sensor_integral,
+        &data.results,
+    )?;
     Ok(())
 }
 
@@ -143,40 +140,6 @@ pub fn run_phase_analysis(
         },
     )?;
     Ok(rotated_results)
-}
-
-fn validate_result_column_count(
-    all_data: &[Vec<Vec<f64>>],
-    expected_columns: usize,
-    label: &str,
-) -> Result<()> {
-    for (index, read_data) in all_data.iter().enumerate() {
-        if read_data.len() != expected_columns {
-            bail!(
-                "{label} file {index} has {} columns, expected {expected_columns}; old CSV layouts are not supported",
-                read_data.len()
-            );
-        }
-    }
-    Ok(())
-}
-
-fn validate_context_columns_match(
-    all_data: &[Vec<Vec<f64>>],
-    context_columns: usize,
-    label: &str,
-) -> Result<()> {
-    let Some(first) = all_data.first() else {
-        return Ok(());
-    };
-    for (file_index, read_data) in all_data.iter().enumerate().skip(1) {
-        for col_idx in 0..context_columns {
-            if read_data[col_idx] != first[col_idx] {
-                bail!("{label} file {file_index} context column {col_idx} differs from file 0");
-            }
-        }
-    }
-    Ok(())
 }
 
 pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnalysisOutput> {
@@ -294,34 +257,4 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
         omega_t0,
         deltas,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{validate_context_columns_match, validate_result_column_count};
-
-    #[test]
-    fn phase_rejects_old_lockin_result_layout_column_count() {
-        let old_layout = vec![vec![vec![0.0]; 1 + 2 + 12]];
-
-        let error = validate_result_column_count(&old_layout, 1 + 2 + 2 + 12, "lock-in results")
-            .unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("old CSV layouts are not supported")
-        );
-    }
-
-    #[test]
-    fn phase_rejects_mismatched_time_rate_or_integral_context() {
-        let first = vec![vec![0.0], vec![1.0], vec![2.0], vec![3.0], vec![4.0]];
-        let second = vec![vec![0.0], vec![1.5], vec![2.0], vec![3.0], vec![4.0]];
-
-        let error =
-            validate_context_columns_match(&[first, second], 3, "lock-in results").unwrap_err();
-
-        assert!(error.to_string().contains("context column 1"));
-    }
 }
