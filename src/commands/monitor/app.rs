@@ -6,7 +6,7 @@ pub(super) struct MonitorApp {
     pub(super) load: ConfigLoad,
     pub(super) started_at: Instant,
     pub(super) last_refresh: SystemTime,
-    pub(super) active_tab: usize,
+    pub(super) inspector_view: InspectorView,
     pub(super) focus: FocusPane,
     pub(super) selected_action: usize,
     pub(super) last_run: Option<RunRecord>,
@@ -37,7 +37,7 @@ impl MonitorApp {
             load,
             started_at: Instant::now(),
             last_refresh: SystemTime::now(),
-            active_tab: 0,
+            inspector_view: InspectorView::Summary,
             focus: FocusPane::Commands,
             selected_action: 0,
             last_run: None,
@@ -276,17 +276,15 @@ impl MonitorApp {
     }
 
     pub(super) fn focus_actions(&mut self) {
-        self.active_tab = 0;
+        self.output_mouse_drag_active = false;
         self.focus = FocusPane::Commands;
     }
 
     pub(super) fn focus_status(&mut self) {
-        self.active_tab = 0;
-        self.focus = FocusPane::Status;
+        self.focus_inspector();
     }
 
     pub(super) fn focus_output(&mut self) {
-        self.active_tab = 0;
         self.focus = FocusPane::Output;
         if self.output_selected.is_none() && !self.run_output.is_empty() {
             self.output_selected = last_renderable_output_index(&self.run_output);
@@ -298,13 +296,23 @@ impl MonitorApp {
     }
 
     pub(super) fn focus_messages(&mut self) {
-        self.active_tab = 2;
-        self.focus = FocusPane::Messages;
+        self.inspector_view = InspectorView::Diagnostics;
+        self.focus_inspector();
     }
 
     pub(super) fn focus_files(&mut self) {
-        self.active_tab = 3;
-        self.focus = FocusPane::Files;
+        self.inspector_view = InspectorView::Artifacts;
+        self.focus_inspector();
+    }
+
+    pub(super) fn focus_inspector(&mut self) {
+        self.output_mouse_drag_active = false;
+        self.focus = FocusPane::Inspector;
+    }
+
+    pub(super) fn cycle_inspector(&mut self) {
+        self.inspector_view = self.inspector_view.next();
+        self.focus_inspector();
     }
 
     pub(super) fn select_previous_output(&mut self, extend: bool) {

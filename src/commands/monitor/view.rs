@@ -9,12 +9,13 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &mut MonitorApp, effect_delta: 
         .constraints([
             Constraint::Length(2),
             Constraint::Min(10),
-            Constraint::Length(0),
+            Constraint::Length(1),
         ])
         .split(area);
 
     render_header(frame, app, outer[0]);
     render_body(frame, app, outer[1], effect_delta);
+    render_footer(frame, app, outer[2]);
 
     if app.show_help {
         render_help_overlay(frame, app, area);
@@ -182,49 +183,30 @@ pub(super) fn render_body(
     area: Rect,
     effect_delta: FxDuration,
 ) {
-    let (tabs, active_panel) = active_panel_layout(area);
-    render_tabs(frame, app, tabs);
-    match app.active_tab {
-        0 => render_actions(frame, app, active_panel, effect_delta),
-        1 => {
-            render_config(frame, app, active_panel);
-            process_event_feed_effects(app, effect_delta, frame.buffer_mut(), None);
-        }
-        2 => {
-            render_messages(frame, app, active_panel);
-            process_event_feed_effects(app, effect_delta, frame.buffer_mut(), None);
-        }
-        _ => {
-            render_files(frame, app, active_panel);
-            process_event_feed_effects(app, effect_delta, frame.buffer_mut(), None);
-        }
-    }
+    let layout = UiLayout::new(area);
+    render_command_palette(frame, app, layout.workflow);
+    render_inspector(frame, app, layout.inspector);
+    render_run_output(frame, app, layout.activity, effect_delta);
 }
 
-pub(super) fn render_tabs(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    let tabs = Tabs::new(TAB_TITLES)
-        .select(app.active_tab)
-        .style(Style::default().fg(Color::DarkGray))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .divider(symbols::line::VERTICAL);
-    frame.render_widget(tabs, area);
-}
-
-pub(super) fn render_actions(
-    frame: &mut Frame<'_>,
-    app: &mut MonitorApp,
-    area: Rect,
-    effect_delta: FxDuration,
-) {
-    let (command_palette, run_status, run_output) = actions_full_layout(area);
-    render_command_palette(frame, app, command_palette);
-    render_run_status(frame, app, run_status);
-    render_run_output(frame, app, run_output, effect_delta);
+pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    let focus = match app.focus {
+        FocusPane::Commands => "workflow",
+        FocusPane::Inspector => "inspector",
+        FocusPane::Output => "activity",
+    };
+    let line = Line::from(vec![
+        Span::styled(" Enter ", Style::default().fg(Color::Cyan)),
+        Span::raw("run  "),
+        Span::styled("Tab ", Style::default().fg(Color::Cyan)),
+        Span::raw("focus  "),
+        Span::styled("i ", Style::default().fg(Color::Cyan)),
+        Span::raw("inspect  "),
+        Span::styled("? ", Style::default().fg(Color::Cyan)),
+        Span::raw("help  "),
+        Span::styled(format!("[{focus}]"), Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 pub(super) fn process_event_feed_effects(
@@ -240,7 +222,7 @@ pub(super) fn process_event_feed_effects(
 }
 
 pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    let (list_area, description_area) = command_palette_layout(area);
+    let (list_area, description_area) = workflow_layout(area);
     let selected = app.selected_action;
     let actions = app.actions();
     let visible_rows = list_area.height.saturating_sub(2).max(1) as usize;
@@ -333,13 +315,70 @@ pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, ar
 
     frame.render_widget(
         List::new(items).block(
-            accent_panel(format!(" COMMANDS {:02}/{} ", selected + 1, actions.len())).border_style(
+            accent_panel(format!(" WORKFLOW {:02}/{} ", selected + 1, actions.len())).border_style(
                 focus_border_style(app, FocusPane::Commands, Color::DarkGray),
             ),
         ),
         list_area,
     );
     render_command_description(frame, app, description_area);
+}
+
+pub(super) fn render_inspector(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    match app.inspector_view {
+        InspectorView::Summary => render_inspector_summary(frame, app, area),
+        InspectorView::Config => render_config(frame, app, area),
+        InspectorView::Diagnostics => render_messages(frame, app, area),
+        InspectorView::Artifacts => render_files(frame, app, area),
+    }
+}
+
+fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    let action = app.selected_action();
+    let runnable = action_runnable(action, &app.load);
+    let state = if runnable { "READY" } else { "BLOCKED" };
+    let color = if runnable { Color::Green } else { Color::Red };
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!(" {state} "),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                action.label(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::styled(action.description(), Style::default().fg(Color::Gray)),
+        Line::from(vec![
+            Span::styled("command  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(
+                    "pmoke --config {} {}",
+                    app.config_path,
+                    action.command_name()
+                ),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                accent_panel(format!(" INSPECTOR · {} ", app.inspector_view.label())).border_style(
+                    focus_border_style(app, FocusPane::Inspector, Color::DarkGray),
+                ),
+            )
+            .wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
@@ -355,96 +394,6 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
             .wrap(Wrap { trim: true }),
         area,
     );
-}
-
-pub(super) fn render_run_status(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    let selected_action = app.selected_action();
-    let block = accent_panel(" STATUS ").border_style(focus_border_style(
-        app,
-        FocusPane::Status,
-        run_status_color(app),
-    ));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1)])
-        .split(inner);
-
-    let status_line = if let Some(run) = &app.active_run {
-        let status = if run.cancel_requested {
-            "STOPPING "
-        } else {
-            "RUN "
-        };
-        Line::from(vec![
-            Span::styled(
-                status,
-                Style::default()
-                    .fg(if run.cancel_requested {
-                        Color::LightRed
-                    } else {
-                        Color::Yellow
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                run.label,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!(
-                "  {}",
-                format_live_duration(run.started_at.elapsed())
-            )),
-        ])
-    } else if let Some(record) = &app.last_run {
-        Line::from(vec![
-            Span::styled("LAST ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                record.label,
-                Style::default()
-                    .fg(if record.ok { Color::Green } else { Color::Red })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("  {}", format_duration(record.elapsed))),
-            Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                record.result.clone(),
-                Style::default().fg(if record.ok { Color::Green } else { Color::Red }),
-            ),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled("IDLE ", Style::default().fg(Color::Gray)),
-            Span::styled("NEXT ", Style::default().fg(Color::DarkGray)),
-            Span::styled(selected_action.label(), Style::default().fg(Color::Cyan)),
-        ])
-    };
-    frame.render_widget(Paragraph::new(status_line), chunks[0]);
-
-    let runnable = action_runnable(selected_action, &app.load);
-    let next_line = if app.command_running() {
-        Line::from(vec![
-            Span::styled("NEXT ", Style::default().fg(Color::DarkGray)),
-            Span::styled(selected_action.label(), Style::default().fg(Color::Gray)),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(
-                "READY ",
-                Style::default().fg(if runnable { Color::Green } else { Color::Red }),
-            ),
-            Span::styled("next ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                selected_action.label(),
-                Style::default().fg(if runnable { Color::Cyan } else { Color::Red }),
-            ),
-        ])
-    };
-    frame.render_widget(Paragraph::new(next_line), chunks[1]);
 }
 
 pub(super) fn render_run_output(

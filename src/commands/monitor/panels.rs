@@ -208,7 +208,7 @@ pub(super) fn render_messages(frame: &mut Frame<'_>, app: &MonitorApp, area: Rec
     let paragraph = Paragraph::new(lines)
         .block(accent_panel(" MESSAGES ").border_style(focus_border_style(
             app,
-            FocusPane::Messages,
+            FocusPane::Inspector,
             Color::DarkGray,
         )))
         .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0));
@@ -255,8 +255,9 @@ pub(super) fn render_files(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) 
         ),
     )
     .block(
-        accent_panel(visible_range_title("FILES", start, end, total))
-            .border_style(focus_border_style(app, FocusPane::Files, Color::DarkGray)),
+        accent_panel(visible_range_title("FILES", start, end, total)).border_style(
+            focus_border_style(app, FocusPane::Inspector, Color::DarkGray),
+        ),
     );
     frame.render_widget(table, area);
 }
@@ -386,10 +387,11 @@ pub(super) fn run_label(app: &MonitorApp) -> String {
         )
     } else if let Some(record) = &app.last_run {
         format!(
-            "{} {} {}",
+            "{} {} {} {}",
             if record.ok { "DONE" } else { "FAIL" },
             record.label,
-            format_duration(record.elapsed)
+            format_duration(record.elapsed),
+            record.result
         )
     } else {
         "IDLE".to_string()

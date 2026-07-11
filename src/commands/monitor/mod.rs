@@ -20,10 +20,7 @@ use ratatui::{
     buffer::{Buffer, CellWidth},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::{Color, Line, Modifier, Span, Style},
-    symbols,
-    widgets::{
-        Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap,
-    },
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap},
 };
 use std::{
     env, fs,
@@ -57,10 +54,10 @@ use formatting::{
     format_duration, format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
 };
 #[cfg(test)]
-use layout::actions_panel_width;
+use layout::workflow_panel_width;
 use layout::{
-    UiLayout, actions_full_layout, active_panel_layout, command_palette_layout,
-    config_panel_layout, latest_event_feed_effect_area, output_inner_layout, output_visible_rows,
+    UiLayout, config_panel_layout, latest_event_feed_effect_area, output_inner_layout,
+    output_visible_rows, workflow_layout,
 };
 use output::*;
 use panels::*;
@@ -74,7 +71,6 @@ use view::*;
 
 const TUI_IDLE_TICK: Duration = Duration::from_millis(150);
 const TUI_ANIMATION_TICK: Duration = Duration::from_millis(16);
-const TAB_TITLES: [&str; 4] = [" ACTIONS ", " CONFIG ", " MESSAGES ", " FILES "];
 const CONTEXT_DETAILS_MIN_WIDTH: usize = 60;
 const OUTPUT_PREFIX_WIDTH: u16 = 12;
 const EVENT_BADGE_WIDTH: usize = 6;
@@ -147,11 +143,37 @@ impl CancelReason {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FocusPane {
     Commands,
-    Status,
+    Inspector,
     Output,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum InspectorView {
+    #[default]
+    Summary,
     Config,
-    Messages,
-    Files,
+    Diagnostics,
+    Artifacts,
+}
+
+impl InspectorView {
+    fn next(self) -> Self {
+        match self {
+            Self::Summary => Self::Config,
+            Self::Config => Self::Diagnostics,
+            Self::Diagnostics => Self::Artifacts,
+            Self::Artifacts => Self::Summary,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Summary => "SUMMARY",
+            Self::Config => "CONFIG",
+            Self::Diagnostics => "DIAGNOSTICS",
+            Self::Artifacts => "ARTIFACTS",
+        }
+    }
 }
 
 struct LogEntry {
@@ -235,20 +257,16 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
                         }
                         _ if app.show_help => {}
                         KeyCode::PageUp => {
-                            app.scroll_output_up(12);
-                            clamp_output_scroll(app, terminal.size()?.into());
+                            scroll_focused_up(app, terminal.size()?.into(), 12);
                         }
                         KeyCode::PageDown => {
-                            app.scroll_output_down(12);
-                            clamp_output_scroll(app, terminal.size()?.into());
+                            scroll_focused_down(app, terminal.size()?.into(), 12);
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.scroll_output_up(6);
-                            clamp_output_scroll(app, terminal.size()?.into());
+                            scroll_focused_up(app, terminal.size()?.into(), 6);
                         }
                         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.scroll_output_down(6);
-                            clamp_output_scroll(app, terminal.size()?.into());
+                            scroll_focused_down(app, terminal.size()?.into(), 6);
                         }
                         KeyCode::End => app.follow_output(),
                         KeyCode::Char('q') if app.command_running() => {
@@ -261,6 +279,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
                         KeyCode::Char('r') => app.refresh(),
                         KeyCode::Char('a') => app.focus_actions(),
                         KeyCode::Char('o') => app.focus_output(),
+                        KeyCode::Char('i') => app.cycle_inspector(),
                         KeyCode::Char('m') => app.focus_messages(),
                         KeyCode::Char('f') => app.focus_files(),
                         KeyCode::Char('s') => app.focus_status(),
@@ -304,14 +323,20 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
                             app.select_last_output(app.output_selection_anchor.is_some());
                             ensure_selected_output_visible(app, terminal.size()?.into());
                         }
+                        KeyCode::Up | KeyCode::Char('k') if app.focus == FocusPane::Inspector => {
+                            scroll_inspector_up(app, terminal.size()?.into(), 1)
+                        }
+                        KeyCode::Down | KeyCode::Char('j') if app.focus == FocusPane::Inspector => {
+                            scroll_inspector_down(app, terminal.size()?.into(), 1)
+                        }
                         KeyCode::Up | KeyCode::Char('k') => select_previous_action(app),
                         KeyCode::Down | KeyCode::Char('j') => select_next_action(app),
                         KeyCode::Char('g') => select_first_action(app),
                         KeyCode::Char('G') => select_last_action(app),
                         KeyCode::Left | KeyCode::BackTab | KeyCode::Char('h') => {
-                            select_previous_tab(app)
+                            focus_previous_pane(app)
                         }
-                        KeyCode::Right | KeyCode::Tab | KeyCode::Char('l') => select_next_tab(app),
+                        KeyCode::Right | KeyCode::Tab | KeyCode::Char('l') => focus_next_pane(app),
                         _ => {}
                     }
                 }
@@ -341,79 +366,75 @@ fn tui_frame_tick(app: &MonitorApp) -> Duration {
 fn select_previous_action(app: &mut MonitorApp) {
     app.focus_commands();
     app.selected_action = app.selected_action.saturating_sub(1);
-    app.active_tab = 0;
 }
 
 fn select_next_action(app: &mut MonitorApp) {
     app.focus_commands();
     let last = app.actions().len().saturating_sub(1);
     app.selected_action = (app.selected_action + 1).min(last);
-    app.active_tab = 0;
 }
 
 fn select_first_action(app: &mut MonitorApp) {
     app.focus_commands();
     app.selected_action = 0;
-    app.active_tab = 0;
 }
 
 fn select_last_action(app: &mut MonitorApp) {
     app.focus_commands();
     app.selected_action = app.actions().len().saturating_sub(1);
-    app.active_tab = 0;
 }
 
-fn select_previous_tab(app: &mut MonitorApp) {
-    let previous = app.active_tab.saturating_sub(1);
-    if previous != app.active_tab {
-        activate_tab(app, previous);
-    }
+fn focus_previous_pane(app: &mut MonitorApp) {
+    app.focus = match app.focus {
+        FocusPane::Commands => FocusPane::Output,
+        FocusPane::Inspector => FocusPane::Commands,
+        FocusPane::Output => FocusPane::Inspector,
+    };
 }
 
-fn select_next_tab(app: &mut MonitorApp) {
-    let next = (app.active_tab + 1).min(TAB_TITLES.len() - 1);
-    if next != app.active_tab {
-        activate_tab(app, next);
-    }
+fn focus_next_pane(app: &mut MonitorApp) {
+    app.focus = match app.focus {
+        FocusPane::Commands => FocusPane::Inspector,
+        FocusPane::Inspector => FocusPane::Output,
+        FocusPane::Output => FocusPane::Commands,
+    };
 }
 
 fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<()> {
-    let layout = UiLayout::new(area, app.active_tab);
+    let layout = dashboard_layout(area);
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
         app.output_mouse_drag_active = false;
     }
     match mouse.kind {
         MouseEventKind::ScrollUp => {
-            if contains(layout.run_output, mouse.column, mouse.row) {
+            if contains(layout.activity, mouse.column, mouse.row) {
                 app.scroll_output_up(4);
                 clamp_output_scroll(app, area);
-            } else if contains(layout.command_palette, mouse.column, mouse.row) {
+            } else if contains(layout.workflow, mouse.column, mouse.row) {
                 select_previous_action(app);
-            } else if contains(layout.active_panel, mouse.column, mouse.row) {
-                scroll_active_panel_up(app, layout.active_panel, 3);
+            } else if contains(layout.inspector, mouse.column, mouse.row) {
+                scroll_inspector_up(app, area, 3);
             }
         }
         MouseEventKind::ScrollDown => {
-            if contains(layout.run_output, mouse.column, mouse.row) {
+            if contains(layout.activity, mouse.column, mouse.row) {
                 app.scroll_output_down(4);
                 clamp_output_scroll(app, area);
-            } else if contains(layout.command_palette, mouse.column, mouse.row) {
+            } else if contains(layout.workflow, mouse.column, mouse.row) {
                 select_next_action(app);
-            } else if contains(layout.active_panel, mouse.column, mouse.row) {
-                scroll_active_panel_down(app, layout.active_panel, 3);
+            } else if contains(layout.inspector, mouse.column, mouse.row) {
+                scroll_inspector_down(app, area, 3);
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if contains(layout.tabs, mouse.column, mouse.row) {
-                select_tab_at(app, layout.tabs, mouse.column);
-            } else if contains(layout.command_palette, mouse.column, mouse.row) {
-                select_action_at(app, layout.command_palette, mouse.column, mouse.row);
-            } else if contains(layout.run_status, mouse.column, mouse.row) {
-                app.focus_status();
-            } else if contains(layout.run_output, mouse.column, mouse.row) {
+            if contains(layout.workflow, mouse.column, mouse.row) {
+                select_action_at(app, layout.workflow, mouse.column, mouse.row);
+            } else if contains(layout.inspector, mouse.column, mouse.row) {
+                app.focus_inspector();
+            } else if contains(layout.activity, mouse.column, mouse.row) {
                 app.output_mouse_drag_active = select_output_at(
                     app,
-                    layout.run_output,
+                    layout.activity,
                     mouse.column,
                     mouse.row,
                     mouse.modifiers.contains(KeyModifiers::SHIFT),
@@ -422,12 +443,12 @@ fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<(
         }
         MouseEventKind::Drag(MouseButton::Left)
             if app.output_mouse_drag_active
-                && contains(layout.run_output, mouse.column, mouse.row) =>
+                && contains(layout.activity, mouse.column, mouse.row) =>
         {
-            select_output_at(app, layout.run_output, mouse.column, mouse.row, true);
+            select_output_at(app, layout.activity, mouse.column, mouse.row, true);
         }
         MouseEventKind::Down(MouseButton::Right) | MouseEventKind::Down(MouseButton::Middle)
-            if contains(layout.run_output, mouse.column, mouse.row) =>
+            if contains(layout.activity, mouse.column, mouse.row) =>
         {
             app.follow_output();
         }
@@ -436,32 +457,77 @@ fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<(
     Ok(())
 }
 
-fn scroll_active_panel_up(app: &mut MonitorApp, area: Rect, lines: usize) {
-    match app.active_tab {
-        1 => app.config_scroll = app.config_scroll.saturating_sub(lines),
-        2 => app.messages_scroll = app.messages_scroll.saturating_sub(lines),
-        3 => app.files_scroll = app.files_scroll.saturating_sub(lines),
-        _ => {}
-    }
-    clamp_active_panel_scroll(app, area);
+fn dashboard_layout(area: Rect) -> UiLayout {
+    let body = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(4),
+            Constraint::Length(1),
+        ])
+        .split(area);
+    UiLayout::new(body[1])
 }
 
-fn scroll_active_panel_down(app: &mut MonitorApp, area: Rect, lines: usize) {
-    match app.active_tab {
-        1 => app.config_scroll = app.config_scroll.saturating_add(lines),
-        2 => app.messages_scroll = app.messages_scroll.saturating_add(lines),
-        3 => app.files_scroll = app.files_scroll.saturating_add(lines),
+fn scroll_focused_up(app: &mut MonitorApp, area: Rect, lines: usize) {
+    match app.focus {
+        FocusPane::Output => {
+            app.scroll_output_up(lines);
+            clamp_output_scroll(app, area);
+        }
+        FocusPane::Inspector => scroll_inspector_up(app, area, lines),
         _ => {}
     }
-    clamp_active_panel_scroll(app, area);
 }
 
-fn clamp_active_panel_scroll(app: &mut MonitorApp, area: Rect) {
-    match app.active_tab {
-        1 => app.config_scroll = app.config_scroll.min(config_scroll_max(app, area)),
-        2 => app.messages_scroll = app.messages_scroll.min(messages_scroll_max(app, area)),
-        3 => app.files_scroll = app.files_scroll.min(files_scroll_max(app, area)),
+fn scroll_focused_down(app: &mut MonitorApp, area: Rect, lines: usize) {
+    match app.focus {
+        FocusPane::Output => {
+            app.scroll_output_down(lines);
+            clamp_output_scroll(app, area);
+        }
+        FocusPane::Inspector => scroll_inspector_down(app, area, lines),
         _ => {}
+    }
+}
+
+fn scroll_inspector_up(app: &mut MonitorApp, area: Rect, lines: usize) {
+    match app.inspector_view {
+        InspectorView::Config => app.config_scroll = app.config_scroll.saturating_sub(lines),
+        InspectorView::Diagnostics => {
+            app.messages_scroll = app.messages_scroll.saturating_sub(lines)
+        }
+        InspectorView::Artifacts => app.files_scroll = app.files_scroll.saturating_sub(lines),
+        InspectorView::Summary => {}
+    }
+    clamp_inspector_scroll(app, area);
+}
+
+fn scroll_inspector_down(app: &mut MonitorApp, area: Rect, lines: usize) {
+    match app.inspector_view {
+        InspectorView::Config => app.config_scroll = app.config_scroll.saturating_add(lines),
+        InspectorView::Diagnostics => {
+            app.messages_scroll = app.messages_scroll.saturating_add(lines)
+        }
+        InspectorView::Artifacts => app.files_scroll = app.files_scroll.saturating_add(lines),
+        InspectorView::Summary => {}
+    }
+    clamp_inspector_scroll(app, area);
+}
+
+fn clamp_inspector_scroll(app: &mut MonitorApp, area: Rect) {
+    let inspector = dashboard_layout(area).inspector;
+    match app.inspector_view {
+        InspectorView::Config => {
+            app.config_scroll = app.config_scroll.min(config_scroll_max(app, inspector))
+        }
+        InspectorView::Diagnostics => {
+            app.messages_scroll = app.messages_scroll.min(messages_scroll_max(app, inspector))
+        }
+        InspectorView::Artifacts => {
+            app.files_scroll = app.files_scroll.min(files_scroll_max(app, inspector))
+        }
+        InspectorView::Summary => {}
     }
 }
 
@@ -503,12 +569,13 @@ fn select_action_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
     // The panel border/title is part of the focus target, but only an inner row
     // is allowed to change the selected command.
     app.focus_commands();
-    let inner = bordered_inner(area);
+    let (list_area, _) = workflow_layout(area);
+    let inner = bordered_inner(list_area);
     if !contains(inner, column, row) {
         return;
     }
     let selected = app.selected_action;
-    let visible_rows = area.height.saturating_sub(2).max(1) as usize;
+    let visible_rows = list_area.height.saturating_sub(2).max(1) as usize;
     let start = selected.saturating_sub(visible_rows / 2);
     let row_index = row.saturating_sub(inner.y) as usize;
     let actions_len = app.actions().len();
@@ -567,7 +634,7 @@ fn ensure_selected_output_visible(app: &mut MonitorApp, area: Rect) {
         return;
     }
 
-    let Some(log_content) = output_log_content_area(app, area) else {
+    let Some(log_content) = output_log_content_area(area) else {
         return;
     };
     let visible_rows = log_content.height.max(1) as usize;
@@ -605,7 +672,7 @@ fn effective_output_scroll(app: &MonitorApp, log_area: Rect, visual_line_count: 
 }
 
 fn max_output_scroll_for_area(app: &MonitorApp, area: Rect) -> Option<usize> {
-    let log_content = output_log_content_area(app, area)?;
+    let log_content = output_log_content_area(area)?;
     let visual_line_count =
         visual_output_line_count(&app.run_output, log_content.width.saturating_sub(1));
     Some(visual_line_count.saturating_sub(log_content.height.max(1) as usize))
@@ -622,8 +689,8 @@ fn clamp_output_scroll(app: &mut MonitorApp, area: Rect) {
     }
 }
 
-fn output_table_width_for_area(app: &MonitorApp, area: Rect) -> Option<u16> {
-    output_log_content_area(app, area).map(|log_content| {
+fn output_table_width_for_area(area: Rect) -> Option<u16> {
+    output_log_content_area(area).map(|log_content| {
         log_content
             .width
             .saturating_sub(OUTPUT_PREFIX_WIDTH + 1)
@@ -631,13 +698,13 @@ fn output_table_width_for_area(app: &MonitorApp, area: Rect) -> Option<u16> {
     })
 }
 
-fn output_log_content_area(app: &MonitorApp, area: Rect) -> Option<Rect> {
-    let layout = UiLayout::new(area, app.active_tab);
-    if layout.run_output.width == 0 || layout.run_output.height == 0 {
+fn output_log_content_area(area: Rect) -> Option<Rect> {
+    let layout = dashboard_layout(area);
+    if layout.activity.width == 0 || layout.activity.height == 0 {
         return None;
     }
 
-    let inner = bordered_inner(layout.run_output);
+    let inner = bordered_inner(layout.activity);
     let sections = output_inner_layout(inner);
     let log_area = sections.log;
     if log_area.height <= 1 || log_area.width == 0 {
@@ -693,45 +760,6 @@ fn output_selection_status(selected_visual_range: Option<(usize, usize)>) -> Str
         .unwrap_or_else(|| "select --".to_string())
 }
 
-fn select_tab_at(app: &mut MonitorApp, area: Rect, column: u16) {
-    if let Some(tab) = tab_index_at(area, column) {
-        activate_tab(app, tab);
-    }
-}
-
-fn tab_index_at(area: Rect, column: u16) -> Option<usize> {
-    let mut tab_x = area.x;
-    for (index, title) in TAB_TITLES.iter().enumerate() {
-        // Ratatui's Tabs adds one cell of padding on each side of every title.
-        let title_width = u16::try_from(title.width()).unwrap_or(u16::MAX);
-        let tab_end = tab_x
-            .saturating_add(title_width.saturating_add(2))
-            .min(area.right());
-        if (tab_x..tab_end).contains(&column) {
-            return Some(index);
-        }
-        if tab_end == area.right() {
-            break;
-        }
-        // The one-cell divider between tabs is deliberately not clickable.
-        tab_x = tab_end.saturating_add(1);
-    }
-    None
-}
-
-fn activate_tab(app: &mut MonitorApp, tab: usize) {
-    match tab {
-        0 => app.focus_actions(),
-        1 => {
-            app.active_tab = 1;
-            app.focus = FocusPane::Config;
-        }
-        2 => app.focus_messages(),
-        3 => app.focus_files(),
-        _ => {}
-    }
-}
-
 fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
     let action = app.selected_action();
     if app.command_running() {
@@ -760,8 +788,7 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
         return Ok(());
     }
 
-    app.active_tab = 0;
-    let table_width = output_table_width_for_area(app, area);
+    let table_width = output_table_width_for_area(area);
     let handle = spawn_command_runner(action, app.config_path.clone(), table_width)?;
     app.run_output.clear();
     app.last_stderr_kind = None;

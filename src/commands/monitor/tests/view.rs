@@ -12,19 +12,22 @@ fn header_omits_pipeline_counter() {
 }
 
 #[test]
-fn context_bar_shows_current_directory_on_every_tab() {
+fn context_bar_shows_current_directory_for_every_focus_pane() {
     let mut app = test_app();
     app.current_dir = "/workspace/pmoke".to_string();
 
-    for tab in 0..TAB_TITLES.len() {
-        app.active_tab = tab;
+    for focus in [FocusPane::Commands, FocusPane::Inspector, FocusPane::Output] {
+        app.focus = focus;
         let rendered = context_bar_spans(&app, 120)
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
 
-        assert!(rendered.contains("◆ cwd /workspace/pmoke"), "tab {tab}");
-        assert!(rendered.contains("config config.toml"), "tab {tab}");
+        assert!(
+            rendered.contains("◆ cwd /workspace/pmoke"),
+            "focus {focus:?}"
+        );
+        assert!(rendered.contains("config config.toml"), "focus {focus:?}");
     }
 }
 
