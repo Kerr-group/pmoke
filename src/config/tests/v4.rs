@@ -386,11 +386,11 @@ fn artifact_root_is_an_opt_in_override_for_relative_outputs() {
 
     assert_eq!(
         config.artifact_path("raw_waveform"),
-        PathBuf::from("shot_000123/raw_waveform")
+        PathBuf::from("shot_000123").join("raw_waveform")
     );
     assert_eq!(
-        config.plot.output_dir,
-        PathBuf::from("shot_000123/plots").to_string_lossy()
+        PathBuf::from(&config.plot.output_dir),
+        PathBuf::from("shot_000123").join("plots")
     );
 }
 

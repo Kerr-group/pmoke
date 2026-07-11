@@ -34,7 +34,7 @@ impl Drop for TempConfig {
 }
 
 fn v3_config() -> String {
-    include_str!("../../../tests/fixtures/config_v3.toml").to_string()
+    include_str!("../../../tests/fixtures/config_v3.toml").replace("\r\n", "\n")
 }
 
 #[test]
