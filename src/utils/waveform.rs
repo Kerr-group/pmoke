@@ -4,6 +4,7 @@ use crate::constants::{
     RAW_WAVEFORM_DIR,
 };
 use crate::utils::channels::build_channel_list;
+use crate::utils::checksum::{finalize_sha256_hex, sha256_hex};
 use crate::utils::csv::read_selected_columns;
 use crate::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use crate::utils::raw_data::{
@@ -296,7 +297,7 @@ fn raw_manifest_sha256(base_dir: &Path) -> Result<String> {
     }
     let contents = fs::read(&path)
         .with_context(|| format!("failed to read raw metadata: {}", path.display()))?;
-    Ok(format!("{:x}", Sha256::digest(contents)))
+    Ok(sha256_hex(&contents))
 }
 
 #[cfg(unix)]
@@ -478,7 +479,7 @@ fn validate_config_snapshot(
     }
     let contents = fs::read(&path)
         .with_context(|| format!("failed to read raw config snapshot: {}", path.display()))?;
-    let actual = format!("{:x}", Sha256::digest(&contents));
+    let actual = sha256_hex(&contents);
     if actual != expected {
         bail!("raw config snapshot checksum mismatch: expected {expected}, got {actual}");
     }
@@ -678,7 +679,7 @@ fn read_raw_channel_data_with_chunk_size(
     }
 
     if let (Some(hasher), Some(expected)) = (hasher, &spec.expected_sha256) {
-        let actual = format!("{:x}", hasher.finalize());
+        let actual = finalize_sha256_hex(hasher.finalize());
         if &actual != expected {
             bail!(
                 "raw channel checksum mismatch for {}: expected {expected}, got {actual}",
@@ -724,7 +725,7 @@ fn verify_raw_channel_checksum(spec: &RawChannelSpec) -> Result<()> {
     if file.read(&mut extra)? != 0 {
         bail!("raw channel file grew while verifying for {}", spec.key);
     }
-    let actual = format!("{:x}", hasher.finalize());
+    let actual = finalize_sha256_hex(hasher.finalize());
     if &actual != expected {
         bail!(
             "raw channel checksum mismatch for {}: expected {expected}, got {actual}",

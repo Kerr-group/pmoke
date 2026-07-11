@@ -9,6 +9,7 @@ use crate::constants::{
 };
 use crate::ui;
 use crate::utils::channels::build_channel_list;
+use crate::utils::checksum::{finalize_sha256_hex, sha256_hex};
 use crate::utils::csv::write_csv;
 use crate::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use crate::utils::raw_data::{
@@ -43,7 +44,7 @@ impl<W> HashingWriter<W> {
     }
 
     fn finish(self) -> (W, String) {
-        (self.inner, format!("{:x}", self.hasher.finalize()))
+        (self.inner, finalize_sha256_hex(self.hasher.finalize()))
     }
 }
 
@@ -646,10 +647,6 @@ fn idn_firmware(idn: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn write_synced_file(path: &Path, contents: &[u8]) -> Result<()> {

@@ -605,7 +605,7 @@ impl BenchmarkRawFixture {
             .collect::<Vec<_>>();
         let config = b"version = 4\n";
         fs::write(dir.join("config.source.toml"), config).expect("write benchmark source config");
-        let config_sha256 = format!("{:x}", Sha256::digest(config));
+        let config_sha256 = digest_hex(Sha256::digest(config));
         fs::write(
             dir.join("metadata.toml"),
             raw_metadata(sample_count, &files, &hashes, &config_sha256),
@@ -677,7 +677,18 @@ fn write_synthetic_raw_file(path: &std::path::Path, sample_count: usize) -> Stri
         sample_start += chunk_samples;
     }
     writer.flush().expect("flush benchmark RAW file");
-    format!("{:x}", hasher.finalize())
+    digest_hex(hasher.finalize())
+}
+
+fn digest_hex(digest: impl AsRef<[u8]>) -> String {
+    use std::fmt::Write as _;
+
+    let bytes = digest.as_ref();
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    output
 }
 
 fn raw_metadata(
