@@ -289,10 +289,12 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     guard.raw_mode = true;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    // Mark each transition before attempting it. If a write fails after the
+    // terminal consumed the escape sequence, rollback still sends its inverse.
     guard.alternate_screen = true;
-    execute!(stdout, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     guard.mouse_capture = true;
+    execute!(stdout, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let terminal = Terminal::with_options(
         backend,
