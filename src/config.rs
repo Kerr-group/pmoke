@@ -226,7 +226,19 @@ impl Default for Plot {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PlotDecimation {
+    None,
     Stride,
+    MinMax,
+}
+
+impl PlotDecimation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Stride => "stride",
+            Self::MinMax => "min_max",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

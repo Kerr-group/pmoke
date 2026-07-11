@@ -1,5 +1,5 @@
 use crate::config::Plot;
-use crate::plot::{decimate_1d, decimate_2d};
+use crate::plot::decimate_xy_2d;
 use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
@@ -30,8 +30,7 @@ impl SensorRawPlotter {
                 "sensor_raw_plot",
             )
             .context("failed to load sensor_raw_plot.py")?;
-            let t_plot = decimate_1d(plot, t);
-            let y_plot = decimate_2d(plot, &y);
+            let (t_plot, y_plot) = decimate_xy_2d(plot, t, &y);
             let t_obj = python::f64_array1(py, &t_plot);
             let y_obj = python::f64_array2(py, &y_plot)?;
             let c_bg_obj = python::f64_array1(py, c_bg_arr);

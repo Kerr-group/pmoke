@@ -56,6 +56,7 @@ impl KerrStandardAnalyser {
                         input.plot.interactive && input.plot.enabled,
                         &input.plot.output_dir,
                         input.plot.max_points,
+                        input.plot.decimation.as_str(),
                     ),
                 )
                 .context("python KerrStandardAnalyser.analyse(...) failed")?;

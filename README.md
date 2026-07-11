@@ -147,6 +147,7 @@ factor = -1.0
 
 [plot]
 mode = "save" # "off", "save", "interactive", or "both"
+decimation = "min_max" # "none", "stride", or "min_max"
 ```
 
 ## 📁 Data Layout

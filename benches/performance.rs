@@ -1,7 +1,8 @@
 use numpy::PyUntypedArrayMethods;
-use pmoke::config::{Lockin, LockinLpfKind};
+use pmoke::config::{Lockin, LockinLpfKind, Plot, PlotDecimation};
 use pmoke::lockin::lockin_core::LockinProcessor;
 use pmoke::lockin::sensor::pulse_calculator::PulseIntegralCalculator;
+use pmoke::plot::decimate_xy_2d;
 use pmoke::python;
 use pmoke::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use pmoke::utils::raw_data::RawTimeAxis;
@@ -62,6 +63,8 @@ enum BenchmarkCase {
     PythonCopy,
     RawToCsv,
     AnalysisPipeline,
+    PlotDecimateStride,
+    PlotDecimateMinMax,
 }
 
 impl BenchmarkCase {
@@ -76,6 +79,8 @@ impl BenchmarkCase {
             "python_copy" => Self::PythonCopy,
             "raw_to_csv" => Self::RawToCsv,
             "analysis_pipeline" => Self::AnalysisPipeline,
+            "plot_decimate_stride" => Self::PlotDecimateStride,
+            "plot_decimate_min_max" => Self::PlotDecimateMinMax,
             other => panic!("unknown benchmark case: {other}"),
         }
     }
@@ -91,6 +96,8 @@ impl BenchmarkCase {
             Self::PythonCopy => "python_copy",
             Self::RawToCsv => "raw_to_csv",
             Self::AnalysisPipeline => "analysis_pipeline",
+            Self::PlotDecimateStride => "plot_decimate_stride",
+            Self::PlotDecimateMinMax => "plot_decimate_min_max",
         }
     }
 
@@ -123,6 +130,13 @@ fn main() {
         .case
         .runs(BenchmarkCase::AnalysisPipeline)
         .then(|| AnalysisFixture::new(options.samples));
+    let plot_data = (options.case.runs(BenchmarkCase::PlotDecimateStride)
+        || options.case.runs(BenchmarkCase::PlotDecimateMinMax))
+    .then(|| {
+        let time = synthetic_times(options.samples);
+        let signal = synthetic_signal(&time);
+        (time, vec![signal])
+    });
 
     // One untimed run per selected case catches invalid inputs and reduces first-use noise.
     if options.case.runs(BenchmarkCase::RawWordDecode) {
@@ -169,6 +183,15 @@ fn main() {
     }
     if let Some(analysis) = &analysis {
         analysis.run();
+    }
+    for (case, decimation) in [
+        (BenchmarkCase::PlotDecimateStride, PlotDecimation::Stride),
+        (BenchmarkCase::PlotDecimateMinMax, PlotDecimation::MinMax),
+    ] {
+        if options.case.runs(case) {
+            let (time, values) = plot_data.as_ref().expect("plot data is available");
+            black_box(run_plot_decimation(time, values, decimation));
+        }
     }
     python::reset_transfer_stats();
 
@@ -268,6 +291,30 @@ fn main() {
                 options.samples
             },
         ));
+    }
+    for (case, name, decimation) in [
+        (
+            BenchmarkCase::PlotDecimateStride,
+            "plot_decimate_stride",
+            PlotDecimation::Stride,
+        ),
+        (
+            BenchmarkCase::PlotDecimateMinMax,
+            "plot_decimate_min_max",
+            PlotDecimation::MinMax,
+        ),
+    ] {
+        if options.case.runs(case) {
+            let (time, values) = plot_data.as_ref().expect("plot data is available");
+            results.push(measure(
+                name,
+                options.samples,
+                (time.len() + values.iter().map(Vec::len).sum::<usize>())
+                    * std::mem::size_of::<f64>(),
+                options.iterations,
+                || run_plot_decimation(black_box(time), black_box(values), decimation),
+            ));
+        }
     }
 
     let report = Report {
@@ -488,6 +535,16 @@ fn benchmark_lockin() -> Lockin {
         snr_background_window: None,
         snr_signal_window: None,
     }
+}
+
+fn run_plot_decimation(time: &[f64], values: &[Vec<f64>], decimation: PlotDecimation) -> usize {
+    let plot = Plot {
+        max_points: 10_000,
+        decimation,
+        ..Plot::default()
+    };
+    let (time, values) = decimate_xy_2d(&plot, time, values);
+    black_box(time.len() + values.iter().map(Vec::len).sum::<usize>())
 }
 
 fn command_output(program: &str, args: &[&str]) -> String {

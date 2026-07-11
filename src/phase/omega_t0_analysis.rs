@@ -49,6 +49,7 @@ impl OT0Analyser {
                         plot.interactive && plot.enabled,
                         &plot.output_dir,
                         plot.max_points,
+                        plot.decimation.as_str(),
                     ),
                 )
                 .context("python OT0Analyser.analyse(...) failed")?;

@@ -8,7 +8,7 @@ mod constants;
 mod kerr;
 pub mod lockin;
 mod phase;
-mod plot;
+pub mod plot;
 pub mod python;
 #[cfg(test)]
 mod test_support;

@@ -25,6 +25,35 @@ def finish_plot(fname: str, save: bool, interactive: bool, output_dir: str):
         gs.show(path, ft_list=["png"], show=False)
 
 
+def decimation_indices(values: NDArray, max_points: int, method: str) -> NDArray:
+    length = len(values)
+    if method == "none" or length <= max_points:
+        return np.arange(length)
+    if method == "stride":
+        stride = max(1, int(np.ceil(length / max_points)))
+        return np.arange(0, length, stride)
+    if method != "min_max":
+        raise ValueError(f"unknown plot decimation method: {method}")
+    if max_points == 1:
+        finite = np.flatnonzero(np.isfinite(values))
+        return np.array([0 if finite.size == 0 else finite[np.argmax(np.abs(values[finite]))]])
+    bins = max(1, max_points // 2)
+    indices = []
+    for bin_index in range(bins):
+        start = bin_index * length // bins
+        end = max(start + 1, (bin_index + 1) * length // bins)
+        finite = np.flatnonzero(np.isfinite(values[start:end]))
+        if finite.size == 0:
+            indices.append(start)
+            continue
+        local = values[start:end][finite]
+        indices.extend((start + finite[np.argmin(local)], start + finite[np.argmax(local)]))
+    unique = np.unique(indices)
+    if unique.size <= max_points:
+        return unique
+    return unique[np.linspace(0, unique.size - 1, max_points, dtype=int)]
+
+
 class KerrStandardAnalyser:
     def __init__(self):
         pass
@@ -49,6 +78,7 @@ class KerrStandardAnalyser:
         interactive: bool,
         output_dir: str,
         max_points: int,
+        decimation: str,
     ):
 
         li1_in, li1_out = ys[0], ys[1]
@@ -63,10 +93,10 @@ class KerrStandardAnalyser:
         plot_error = None
         if save or interactive:
             try:
-                stride = max(1, int(np.ceil(len(t) / max_points)))
-                t_plot = t[::stride]
-                x_plot = x[::stride]
-                kerr_plot = kerr[::stride]
+                indices = decimation_indices(kerr, max_points, decimation)
+                t_plot = t[indices]
+                x_plot = x[indices]
+                kerr_plot = kerr[indices]
 
                 axs = gs.axes(
                     True,
