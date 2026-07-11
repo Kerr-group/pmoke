@@ -28,11 +28,11 @@ pub fn analyze(cfg: &Config) -> Result<()> {
         bail!("Fetched data is empty, cannot extract channels.");
     }
 
-    run_analyze(cfg, data)?;
+    run_analyze(cfg, &data)?;
     Ok(())
 }
 
-pub fn run_analyze(cfg: &Config, data: WaveformData) -> Result<()> {
+pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
     let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results) =
         run_li(cfg, &data.t, &data.channels)?;
 

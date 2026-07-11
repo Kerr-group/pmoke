@@ -99,14 +99,19 @@ fn main() {
     let words = (options.case.runs(BenchmarkCase::RawWordDecode)
         || options.case.runs(BenchmarkCase::RawToCsv))
     .then(|| synthetic_words(options.samples));
-    let time_and_signal = (options.case.runs(BenchmarkCase::SensorIntegral)
-        || options.case.runs(BenchmarkCase::LockinWorker1)
-        || options.case.runs(BenchmarkCase::LockinWorker2)
-        || options.case.runs(BenchmarkCase::PythonCopy))
-    .then(|| {
+    let needs_lockin_input = options.case.runs(BenchmarkCase::LockinWorker1)
+        || options.case.runs(BenchmarkCase::LockinWorker2);
+    let time_and_signal = needs_lockin_input.then(|| {
         let times = synthetic_times(options.samples);
         let signal = synthetic_signal(&times);
         (times, signal)
+    });
+    let standalone_signal = (!needs_lockin_input
+        && (options.case.runs(BenchmarkCase::SensorIntegral)
+            || options.case.runs(BenchmarkCase::PythonCopy)))
+    .then(|| {
+        let times = synthetic_times(options.samples);
+        synthetic_signal(&times)
     });
     let raw_csv = options.case.runs(BenchmarkCase::RawToCsv).then(|| {
         BenchmarkRawCsv::new(
@@ -132,7 +137,7 @@ fn main() {
         );
     }
     if options.case.runs(BenchmarkCase::SensorIntegral) {
-        let signal = &time_and_signal.as_ref().expect("signal is available").1;
+        let signal = selected_signal(&time_and_signal, &standalone_signal);
         black_box(PulseIntegralCalculator::new(1.0e-7).integrate(signal, 0.125, -2.0));
     }
     for (case, workers) in [
@@ -145,7 +150,7 @@ fn main() {
         }
     }
     if options.case.runs(BenchmarkCase::PythonCopy) {
-        let signal = &time_and_signal.as_ref().expect("signal is available").1;
+        let signal = selected_signal(&time_and_signal, &standalone_signal);
         Python::attach(|py| black_box(python::f64_array1(py, signal).len()));
     }
     if let Some(raw_csv) = &raw_csv {
@@ -172,11 +177,11 @@ fn main() {
         ));
     }
     if options.case.runs(BenchmarkCase::SensorIntegral) {
-        let signal = &time_and_signal.as_ref().expect("signal is available").1;
+        let signal = selected_signal(&time_and_signal, &standalone_signal);
         results.push(measure(
             "sensor_integral",
             options.samples,
-            signal.len() * std::mem::size_of::<f64>(),
+            std::mem::size_of_val(signal),
             options.iterations,
             || {
                 PulseIntegralCalculator::new(1.0e-7)
@@ -209,11 +214,11 @@ fn main() {
         }
     }
     if options.case.runs(BenchmarkCase::PythonCopy) {
-        let signal = &time_and_signal.as_ref().expect("signal is available").1;
+        let signal = selected_signal(&time_and_signal, &standalone_signal);
         results.push(measure(
             "python_f64_array_copy",
             options.samples,
-            signal.len() * std::mem::size_of::<f64>(),
+            std::mem::size_of_val(signal),
             options.iterations,
             || Python::attach(|py| python::f64_array1(py, black_box(signal)).len()),
         ));
@@ -368,6 +373,17 @@ fn measure(
     }
 }
 
+fn selected_signal<'a>(
+    time_and_signal: &'a Option<(Vec<f64>, Vec<f64>)>,
+    standalone_signal: &'a Option<Vec<f64>>,
+) -> &'a [f64] {
+    time_and_signal
+        .as_ref()
+        .map(|(_, signal)| signal.as_slice())
+        .or(standalone_signal.as_deref())
+        .expect("signal is available")
+}
+
 fn median(values: &[Duration]) -> Duration {
     let middle = values.len() / 2;
     if values.len() % 2 == 1 {
@@ -516,8 +532,7 @@ impl Drop for BenchmarkRawCsv {
 struct AnalysisFixture {
     dir: PathBuf,
     config: pmoke::config::Config,
-    channels: Vec<Vec<f64>>,
-    time: RawTimeAxis,
+    data: WaveformData,
 }
 
 impl AnalysisFixture {
@@ -561,23 +576,21 @@ impl AnalysisFixture {
         Self {
             dir,
             config,
-            channels: vec![sensor1, sensor2, reference, signal],
-            time: RawTimeAxis {
-                sample_count: samples,
-                x_increment: dt,
-                x_origin: t0,
-                x_reference: 0.0,
+            data: WaveformData {
+                t: WaveformTime::Uniform(RawTimeAxis {
+                    sample_count: samples,
+                    x_increment: dt,
+                    x_origin: t0,
+                    x_reference: 0.0,
+                }),
+                channels: vec![sensor1, sensor2, reference, signal],
             },
         }
     }
 
     fn run(&self) {
         let _cwd = CurrentDirGuard::enter(&self.dir);
-        let data = WaveformData {
-            t: WaveformTime::Uniform(self.time),
-            channels: self.channels.clone(),
-        };
-        pmoke::run_analysis_pipeline(&self.config, data)
+        pmoke::run_analysis_pipeline(&self.config, &self.data)
             .expect("run end-to-end analysis benchmark");
     }
 }
