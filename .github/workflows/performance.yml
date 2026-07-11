@@ -59,9 +59,9 @@ jobs:
           benchmark="$(find target/release/deps -maxdepth 1 -type f -name 'performance-*' -perm -111 | head -n 1)"
           test -n "$benchmark"
           if [ "${{ matrix.channels }}" = "2" ]; then
-            cases=(raw_word_decode sensor_integral lockin_w1 lockin_w2 python_copy raw_to_csv analysis_pipeline)
+            cases=(raw_word_decode raw_waveform_read sensor_integral lockin_w1 lockin_w2 python_copy raw_to_csv analysis_pipeline)
           else
-            cases=(raw_to_csv)
+            cases=(raw_waveform_read raw_to_csv)
           fi
           for case_name in "${cases[@]}"; do
             /usr/bin/time -v -o "performance-results/resources-${case_name}.txt" \

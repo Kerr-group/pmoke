@@ -6,14 +6,15 @@ use pmoke::python;
 use pmoke::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use pmoke::utils::raw_data::RawTimeAxis;
 use pmoke::utils::time_axis::WaveformTime;
-use pmoke::utils::waveform::WaveformData;
 use pmoke::utils::waveform::convert_raw_word_to_voltages;
+use pmoke::utils::waveform::{WaveformData, read_raw_waveform_channels_from_dir};
 use pyo3::Python;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::hint::black_box;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -53,6 +54,7 @@ struct Options {
 enum BenchmarkCase {
     All,
     RawWordDecode,
+    RawWaveformRead,
     SensorIntegral,
     LockinWorker1,
     LockinWorker2,
@@ -66,6 +68,7 @@ impl BenchmarkCase {
         match value {
             "all" => Self::All,
             "raw_word_decode" => Self::RawWordDecode,
+            "raw_waveform_read" => Self::RawWaveformRead,
             "sensor_integral" => Self::SensorIntegral,
             "lockin_w1" => Self::LockinWorker1,
             "lockin_w2" => Self::LockinWorker2,
@@ -80,6 +83,7 @@ impl BenchmarkCase {
         match self {
             Self::All => "all",
             Self::RawWordDecode => "raw_word_decode",
+            Self::RawWaveformRead => "raw_waveform_read",
             Self::SensorIntegral => "sensor_integral",
             Self::LockinWorker1 => "lockin_w1",
             Self::LockinWorker2 => "lockin_w2",
@@ -96,9 +100,10 @@ impl BenchmarkCase {
 
 fn main() {
     let options = parse_options();
-    let words = (options.case.runs(BenchmarkCase::RawWordDecode)
-        || options.case.runs(BenchmarkCase::RawToCsv))
-    .then(|| synthetic_words(options.samples));
+    let words = options
+        .case
+        .runs(BenchmarkCase::RawWordDecode)
+        .then(|| synthetic_words(options.samples));
     let needs_lockin_input = options.case.runs(BenchmarkCase::LockinWorker1)
         || options.case.runs(BenchmarkCase::LockinWorker2);
     let time_and_signal = needs_lockin_input.then(|| {
@@ -109,16 +114,10 @@ fn main() {
     let standalone_signal = (!needs_lockin_input
         && (options.case.runs(BenchmarkCase::SensorIntegral)
             || options.case.runs(BenchmarkCase::PythonCopy)))
-    .then(|| {
-        let times = synthetic_times(options.samples);
-        synthetic_signal(&times)
-    });
-    let raw_csv = options.case.runs(BenchmarkCase::RawToCsv).then(|| {
-        BenchmarkRawCsv::new(
-            words.as_deref().expect("RAW words are available"),
-            options.channels,
-        )
-    });
+    .then(|| synthetic_signal_samples(options.samples));
+    let raw_fixture = (options.case.runs(BenchmarkCase::RawToCsv)
+        || options.case.runs(BenchmarkCase::RawWaveformRead))
+    .then(|| BenchmarkRawFixture::new(options.samples, options.channels));
     let analysis = options
         .case
         .runs(BenchmarkCase::AnalysisPipeline)
@@ -134,6 +133,14 @@ fn main() {
                 32_768.0,
             )
             .unwrap(),
+        );
+    }
+    if options.case.runs(BenchmarkCase::RawWaveformRead) {
+        black_box(
+            raw_fixture
+                .as_ref()
+                .expect("RAW fixture is available")
+                .read_waveform(),
         );
     }
     if options.case.runs(BenchmarkCase::SensorIntegral) {
@@ -153,8 +160,11 @@ fn main() {
         let signal = selected_signal(&time_and_signal, &standalone_signal);
         Python::attach(|py| black_box(python::f64_array1(py, signal).len()));
     }
-    if let Some(raw_csv) = &raw_csv {
-        raw_csv.write(options.samples);
+    if options.case.runs(BenchmarkCase::RawToCsv) {
+        raw_fixture
+            .as_ref()
+            .expect("RAW fixture is available")
+            .write_csv(options.samples);
     }
     if let Some(analysis) = &analysis {
         analysis.run();
@@ -174,6 +184,16 @@ fn main() {
                     .unwrap()
                     .len()
             },
+        ));
+    }
+    if options.case.runs(BenchmarkCase::RawWaveformRead) {
+        let raw_fixture = raw_fixture.as_ref().expect("RAW fixture is available");
+        results.push(measure(
+            "raw_waveform_read",
+            options.samples,
+            options.samples * options.channels * std::mem::size_of::<u16>(),
+            options.iterations,
+            || raw_fixture.read_waveform(),
         ));
     }
     if options.case.runs(BenchmarkCase::SensorIntegral) {
@@ -223,15 +243,15 @@ fn main() {
             || Python::attach(|py| python::f64_array1(py, black_box(signal)).len()),
         ));
     }
-    if let Some(raw_csv) = &raw_csv {
-        let words = words.as_deref().expect("RAW words are available");
+    if options.case.runs(BenchmarkCase::RawToCsv) {
+        let raw_fixture = raw_fixture.as_ref().expect("RAW fixture is available");
         results.push(measure(
             "raw_to_csv",
             options.samples,
-            words.len() * options.channels,
+            options.samples * options.channels * std::mem::size_of::<u16>(),
             options.iterations,
             || {
-                raw_csv.write(options.samples);
+                raw_fixture.write_csv(options.samples);
                 options.samples
             },
         ));
@@ -419,6 +439,18 @@ fn synthetic_signal(times: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+fn synthetic_signal_samples(samples: usize) -> Vec<f64> {
+    let dt = 1.0e-7;
+    let omega = 2.0 * std::f64::consts::PI * 10_000.0;
+    (0..samples)
+        .map(|index| {
+            let time = index as f64 * dt;
+            let noise = ((index.wrapping_mul(17) % 101) as f64 - 50.0) * 1.0e-4;
+            0.125 + 0.8 * (omega * time + 0.2).sin() + noise
+        })
+        .collect()
+}
+
 fn run_lockin_harmonics(times: &[f64], signal: &[f64], workers: usize) -> usize {
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
@@ -468,14 +500,14 @@ fn command_output(program: &str, args: &[&str]) -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-struct BenchmarkRawCsv {
+struct BenchmarkRawFixture {
     dir: PathBuf,
     output: PathBuf,
     files: Vec<String>,
 }
 
-impl BenchmarkRawCsv {
-    fn new(words: &[u8], channels: usize) -> Self {
+impl BenchmarkRawFixture {
+    fn new(sample_count: usize, channels: usize) -> Self {
         let unique = format!(
             "pmoke-performance-{}-{}",
             std::process::id(),
@@ -490,13 +522,18 @@ impl BenchmarkRawCsv {
             .map(|channel| format!("ch{channel}.u16le"))
             .collect::<Vec<_>>();
         for file in &files {
-            fs::write(dir.join(file), words).expect("write benchmark raw data");
+            write_synthetic_raw_file(&dir.join(file), sample_count);
         }
+        fs::write(
+            dir.join("metadata.toml"),
+            raw_metadata(sample_count, &files),
+        )
+        .expect("write benchmark RAW metadata");
         let output = dir.join("waveform.csv");
         Self { dir, output, files }
     }
 
-    fn write(&self, sample_count: usize) {
+    fn write_csv(&self, sample_count: usize) {
         if self.output.exists() {
             fs::remove_file(&self.output).expect("remove previous benchmark CSV");
         }
@@ -521,12 +558,54 @@ impl BenchmarkRawCsv {
         write_raw_csv(&self.output, &header_refs, &self.dir, &channels)
             .expect("write benchmark raw CSV");
     }
+
+    fn read_waveform(&self) -> usize {
+        let channels = (1..=self.files.len())
+            .map(|channel| u8::try_from(channel).expect("benchmark channel fits in u8"))
+            .collect::<Vec<_>>();
+        let waveform = read_raw_waveform_channels_from_dir(&self.dir, &channels)
+            .expect("read benchmark RAW waveform");
+        assert_eq!(waveform.t.len(), waveform.channels[0].len());
+        waveform.channels.iter().map(Vec::len).sum()
+    }
 }
 
-impl Drop for BenchmarkRawCsv {
+impl Drop for BenchmarkRawFixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
+}
+
+fn write_synthetic_raw_file(path: &std::path::Path, sample_count: usize) {
+    const CHUNK_SAMPLES: usize = 64 * 1024;
+    let file = fs::File::create(path).expect("create benchmark RAW file");
+    let mut writer = BufWriter::with_capacity(1024 * 1024, file);
+    let mut bytes = Vec::with_capacity(CHUNK_SAMPLES * std::mem::size_of::<u16>());
+    let mut sample_start = 0usize;
+    while sample_start < sample_count {
+        let chunk_samples = (sample_count - sample_start).min(CHUNK_SAMPLES);
+        bytes.clear();
+        for index in sample_start..sample_start + chunk_samples {
+            let word = ((index.wrapping_mul(4051).wrapping_add(7919)) & 0xffff) as u16;
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        writer.write_all(&bytes).expect("write benchmark RAW chunk");
+        sample_start += chunk_samples;
+    }
+    writer.flush().expect("flush benchmark RAW file");
+}
+
+fn raw_metadata(sample_count: usize, files: &[String]) -> String {
+    let mut metadata = String::from(
+        "version = 1\n\n[oscilloscope]\nwaveform_format = \"WORD\"\nbyte_order = \"little-endian\"\n",
+    );
+    for (index, file) in files.iter().enumerate() {
+        let channel = index + 1;
+        metadata.push_str(&format!(
+            "\n[channels.ch{channel}]\nfile = \"{file}\"\nsample_count = {sample_count}\nx_increment = 1e-7\nx_origin = -1e-3\nx_reference = 0.0\ny_increment = 2.5e-4\ny_origin = 0.0\ny_reference = 32768.0\n"
+        ));
+    }
+    metadata
 }
 
 struct AnalysisFixture {

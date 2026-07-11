@@ -17,9 +17,10 @@ cargo bench --locked --no-default-features --bench performance -- \
   --output results.json
 ```
 
-Available cases are `raw_word_decode`, `sensor_integral`, `lockin_w1`,
-`lockin_w2`, `python_copy`, `raw_to_csv`, and `analysis_pipeline`. Omitting
-`--case` runs all microbenchmarks except `analysis_pipeline`.
+Available cases are `raw_word_decode`, `raw_waveform_read`, `sensor_integral`,
+`lockin_w1`, `lockin_w2`, `python_copy`, `raw_to_csv`, and
+`analysis_pipeline`. Omitting `--case` runs all microbenchmarks except
+`analysis_pipeline`.
 
 For peak resident memory on Linux, run one case per process and wrap the
 command with `/usr/bin/time -v`.
