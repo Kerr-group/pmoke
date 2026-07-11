@@ -18,6 +18,7 @@ class Measurement:
     seconds: float
     samples_per_second: float
     max_rss_kib: int | None
+    commit: str = "unknown"
 
     @property
     def key(self) -> tuple[str, int, int]:
@@ -101,6 +102,7 @@ def load_measurements(root: Path) -> dict[tuple[str, int, int], Measurement]:
                     seconds=float(result["median_seconds"]),
                     samples_per_second=float(result["samples_per_second"]),
                     max_rss_kib=max_rss_kib,
+                    commit=str(report.get("commit", "unknown")),
                 )
             except (KeyError, TypeError, ValueError) as error:
                 print(f"::warning title=Performance result skipped::{path}: {error}")
@@ -139,6 +141,16 @@ def render_summary(
     if not current:
         lines.append("No completed performance reports were produced in this job.")
         return "\n".join(lines) + "\n"
+
+    current_commits = sorted({value.commit for value in current.values()})
+    previous_commits = sorted({value.commit for value in previous.values()})
+    lines.extend(
+        [
+            f"Current commit: `{', '.join(current_commits)}`",
+            f"Baseline commit: `{', '.join(previous_commits) if previous_commits else 'unavailable'}`",
+            "",
+        ]
+    )
 
     lines.extend(
         [

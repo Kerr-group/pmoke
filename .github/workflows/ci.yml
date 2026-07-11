@@ -81,3 +81,50 @@ jobs:
 
       - name: Lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+  analysis-portability:
+    name: Analysis-only (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.10"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: macos-14
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
+    env:
+      PYO3_PYTHON: python
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Check analysis-only targets
+        run: cargo check --locked -p pmoke --all-targets --no-default-features
+
+      - name: Test analysis-only build
+        run: cargo test --locked -p pmoke --all-targets --no-default-features
+
+      - name: Lint analysis-only build
+        run: cargo clippy --locked -p pmoke --all-targets --no-default-features -- -D warnings
