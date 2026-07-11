@@ -63,17 +63,29 @@ jobs:
           else
             cases=(raw_waveform_read raw_to_csv)
           fi
+          overall_status=0
           for case_name in "${cases[@]}"; do
+            set +e
             /usr/bin/time -v -o "performance-results/resources-${case_name}.txt" \
               "$benchmark" --bench \
                 --case "$case_name" \
                 --samples "${{ steps.workload.outputs.samples }}" \
                 --channels "${{ matrix.channels }}" \
-                --output "performance-results/results-${case_name}.json"
+                --output "performance-results/results-${case_name}.json" \
+                > "performance-results/output-${case_name}.log" 2>&1
+            case_status=$?
+            set -e
+            echo "$case_status" > "performance-results/status-${case_name}.txt"
+            if [ "$case_status" -ne 0 ]; then
+              overall_status=1
+            fi
           done
+          exit "$overall_status"
 
       - name: Record environment
+        if: always()
         run: |
+          mkdir -p performance-results
           {
             uname -a
             python --version
@@ -83,6 +95,7 @@ jobs:
           } > performance-results/environment.txt
 
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: performance-${{ matrix.channels }}ch-${{ github.sha }}
