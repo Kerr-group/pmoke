@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
@@ -218,6 +218,7 @@ pub fn verify_raw_waveform_dir(base_dir: &Path) -> Result<RawVerification> {
 }
 
 pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvExport> {
+    let manifest_before = raw_manifest_sha256(base_dir)?;
     let verification = verify_raw_waveform_dir(base_dir)?;
     ensure_export_path_available(output)?;
     let metadata = read_raw_metadata(base_dir)?;
@@ -255,13 +256,26 @@ pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvE
     ensure_export_path_available(&temporary)?;
     let result = (|| {
         write_raw_csv(&temporary, &header_refs, base_dir, &channels)?;
+        let after_export = verify_raw_waveform_dir(base_dir)
+            .context("RAW source verification failed after CSV conversion")?;
+        let manifest_after = raw_manifest_sha256(base_dir)?;
+        if after_export != verification || manifest_after != manifest_before {
+            bail!("RAW source manifest changed during CSV conversion");
+        }
+        OpenOptions::new()
+            .write(true)
+            .open(&temporary)
+            .with_context(|| format!("failed to reopen CSV export: {}", temporary.display()))?
+            .sync_all()
+            .with_context(|| format!("failed to sync CSV export: {}", temporary.display()))?;
         fs::rename(&temporary, output).with_context(|| {
             format!(
                 "failed to publish CSV export {} as {}",
                 temporary.display(),
                 output.display()
             )
-        })
+        })?;
+        sync_export_parent(output)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -271,6 +285,35 @@ pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvE
         channel_count: verification.channel_count,
         sample_count: verification.sample_count,
     })
+}
+
+fn raw_manifest_sha256(base_dir: &Path) -> Result<String> {
+    let path = base_dir.join(RAW_METADATA_FNAME);
+    let metadata = fs::symlink_metadata(&path)
+        .with_context(|| format!("raw metadata not found: {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!("raw metadata must be a regular file: {}", path.display());
+    }
+    let contents = fs::read(&path)
+        .with_context(|| format!("failed to read raw metadata: {}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(contents)))
+}
+
+#[cfg(unix)]
+fn sync_export_parent(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    File::open(parent)
+        .with_context(|| format!("failed to open CSV output parent: {}", parent.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync CSV output parent: {}", parent.display()))
+}
+
+#[cfg(not(unix))]
+fn sync_export_parent(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn declared_raw_channels(metadata: &RawWaveformMetadata) -> Result<Vec<u8>> {

@@ -22,7 +22,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -970,7 +970,15 @@ fn write_raw_csv_temp(
         .collect::<Result<Vec<_>>>()?;
 
     match write_raw_csv(&tmp_path, headers, raw_dir, &raw_csv_channels) {
-        Ok(()) => Ok(tmp_path),
+        Ok(()) => {
+            if let Err(error) = sync_file(&tmp_path) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(
+                    error.context(format!("failed to persist csv output: {}", out.display()))
+                );
+            }
+            Ok(tmp_path)
+        }
         Err(error) => {
             let _ = fs::remove_file(&tmp_path);
             Err(error.context(format!("failed to write csv output: {}", out.display())))
@@ -1039,7 +1047,15 @@ where
     ensure_path_not_exists(&tmp_path)?;
 
     match write_csv(&tmp_path, headers, data) {
-        Ok(()) => Ok(tmp_path),
+        Ok(()) => {
+            if let Err(error) = sync_file(&tmp_path) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(
+                    error.context(format!("failed to persist csv output: {}", out.display()))
+                );
+            }
+            Ok(tmp_path)
+        }
         Err(error) => {
             let _ = fs::remove_file(&tmp_path);
             Err(error.context(format!("failed to write csv output: {}", out.display())))
@@ -1055,7 +1071,17 @@ fn finalize_temp_file(tmp_path: &Path, out: &Path) -> Result<()> {
             tmp_path.display(),
             out.display()
         )
-    })
+    })?;
+    sync_parent_directory(out)
+}
+
+fn sync_file(path: &Path) -> Result<()> {
+    OpenOptions::new()
+        .write(true)
+        .open(path)
+        .with_context(|| format!("failed to open file for sync: {}", path.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync file: {}", path.display()))
 }
 
 fn finalize_temp_dir(tmp_dir: &Path, out: &Path) -> Result<()> {
