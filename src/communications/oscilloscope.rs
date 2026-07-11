@@ -1,8 +1,14 @@
 use crate::communications::validator::validate_oscilloscope;
 use crate::config::{Config, Connection};
 use anyhow::{Context, Result, anyhow};
-use instruments::rigol::{DHO5108, DhoHorizontalSettings, DhoRawWaveform, DhoRawWaveformWritten};
+use instruments::rigol::{
+    DHO5108, DhoHorizontalSettings, DhoRawWaveform, DhoRawWaveformWritten, DhoTriggerStatus,
+};
 use std::io::Write;
+use std::time::Duration;
+
+const SCOPE_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const SCOPE_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub enum Oscilloscope {
     DHO5108(DHO5108),
@@ -27,11 +33,16 @@ impl OscilloscopeHandler {
 
         let osc = match (model, connection) {
             ("DHO5108", Connection::Tcpip { ip, port }) => {
-                let dho = DHO5108::open(ip, *port, None)?;
+                let dho = DHO5108::open_with_timeouts(
+                    ip,
+                    *port,
+                    Some(SCOPE_CONNECT_TIMEOUT),
+                    Some(SCOPE_IO_TIMEOUT),
+                )?;
                 Oscilloscope::DHO5108(dho)
             }
             ("DHO5108", Connection::Usbtmc { resource }) => {
-                let dho = DHO5108::open_usbtmc(resource, None)?;
+                let dho = DHO5108::open_usbtmc(resource, Some(SCOPE_IO_TIMEOUT))?;
                 Oscilloscope::DHO5108(dho)
             }
             (other, _) => return Err(anyhow!("Unknown oscilloscope model: {other}")),
@@ -109,6 +120,12 @@ impl OscilloscopeHandler {
     pub fn stop(&mut self) -> Result<()> {
         match &mut self.inner {
             Oscilloscope::DHO5108(dev) => Ok(dev.stop()?),
+        }
+    }
+
+    pub fn query_trigger_status(&mut self) -> Result<DhoTriggerStatus> {
+        match &mut self.inner {
+            Oscilloscope::DHO5108(dev) => Ok(dev.query_trigger_status()?),
         }
     }
 
