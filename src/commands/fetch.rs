@@ -17,7 +17,7 @@ use crate::utils::raw_data::{
 use crate::utils::time_axis::WaveformTime;
 use crate::utils::waveform::{WaveformData, read_raw_waveform_channels_from_dir};
 use anyhow::{Context, Result, anyhow, bail};
-use instruments::rigol::{DhoHorizontalSettings, DhoRawWaveform};
+use instruments::rigol::{DhoHorizontalSettings, DhoRawWaveform, DhoTriggerStatus};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -86,6 +86,8 @@ struct RawOscilloscopeMetadata {
     waveform_mode: &'static str,
     waveform_format: &'static str,
     byte_order: &'static str,
+    byte_order_source: &'static str,
+    acquisition_state: &'static str,
     sample_count: usize,
     channels: Vec<u8>,
     horizontal_offset: f64,
@@ -467,6 +469,10 @@ fn fetch_raw_into_dir(
     let idn_raw = handler
         .identify()
         .context("failed to identify oscilloscope before raw fetch")?;
+    handler
+        .stop()
+        .context("failed to stop oscilloscope before raw fetch")?;
+    ensure_scope_stopped(handler, "before raw fetch")?;
     let depth = handler
         .query_memory_depth()
         .context("failed to query oscilloscope memory depth")?;
@@ -504,6 +510,13 @@ fn fetch_raw_into_dir(
             .channels
             .insert(format!("ch{ch}"), channel_metadata);
         pb.inc(1);
+    }
+    ensure_scope_stopped(handler, "after all channel transfers")?;
+    let final_depth = handler
+        .query_memory_depth()
+        .context("failed to re-query oscilloscope memory depth after raw fetch")?;
+    if final_depth != depth {
+        bail!("oscilloscope memory depth changed during raw fetch: {depth} -> {final_depth}");
     }
     let t_fetch_end = Instant::now();
 
@@ -559,7 +572,12 @@ fn build_raw_metadata(
             memory_depth,
             waveform_mode: "RAW",
             waveform_format: "WORD",
+            // The DHO/MHO5000 programming guide exposes WORD format but no
+            // waveform byte-order command. The DHO driver decodes its fixed
+            // WORD payload as least-significant byte first.
             byte_order: "little-endian",
+            byte_order_source: "DHO5000 WORD protocol",
+            acquisition_state: "STOP",
             sample_count: memory_depth,
             channels: channels.to_vec(),
             horizontal_offset: horizontal.offset,
@@ -567,6 +585,16 @@ fn build_raw_metadata(
         },
         channels: BTreeMap::new(),
     })
+}
+
+fn ensure_scope_stopped(handler: &mut OscilloscopeHandler, context: &str) -> Result<()> {
+    let status = handler
+        .query_trigger_status()
+        .with_context(|| format!("failed to query oscilloscope trigger status {context}"))?;
+    if status != DhoTriggerStatus::Stop {
+        bail!("oscilloscope must be STOP {context}, got {status:?}");
+    }
+    Ok(())
 }
 
 fn snapshot_source_config(cfg: &Config, dir: &Path) -> Result<String> {

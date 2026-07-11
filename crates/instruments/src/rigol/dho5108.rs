@@ -1,5 +1,5 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 enum DhoTransport {
@@ -43,12 +43,50 @@ pub struct DhoRawWaveformWritten {
     pub byte_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DhoTriggerStatus {
+    Triggered,
+    Wait,
+    Run,
+    Auto,
+    Stop,
+}
+
 #[allow(dead_code)]
 impl DHO5108 {
     pub fn open(ip: &str, port: u16, timeout: Option<Duration>) -> io::Result<Self> {
-        let stream = TcpStream::connect((ip, port))?;
-        stream.set_read_timeout(timeout)?;
-        stream.set_write_timeout(timeout)?;
+        Self::open_with_timeouts(ip, port, timeout, timeout)
+    }
+
+    pub fn open_with_timeouts(
+        ip: &str,
+        port: u16,
+        connect_timeout: Option<Duration>,
+        io_timeout: Option<Duration>,
+    ) -> io::Result<Self> {
+        let stream = if let Some(connect_timeout) = connect_timeout {
+            let addresses = (ip, port).to_socket_addrs()?.collect::<Vec<_>>();
+            let mut last_error = None;
+            let mut connected = None;
+            for address in addresses {
+                match TcpStream::connect_timeout(&address, connect_timeout) {
+                    Ok(stream) => {
+                        connected = Some(stream);
+                        break;
+                    }
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            connected.ok_or_else(|| {
+                last_error.unwrap_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "no socket address resolved")
+                })
+            })?
+        } else {
+            TcpStream::connect((ip, port))?
+        };
+        stream.set_read_timeout(io_timeout)?;
+        stream.set_write_timeout(io_timeout)?;
         stream.set_nodelay(true)?;
         let reader = BufReader::new(stream);
         Ok(DHO5108 {
@@ -239,6 +277,10 @@ impl DHO5108 {
         self.write_line(":STOP")
     }
 
+    pub fn query_trigger_status(&mut self) -> io::Result<DhoTriggerStatus> {
+        parse_trigger_status(&self.query(":TRIGger:STATus?")?)
+    }
+
     pub fn capture_display_png(&mut self) -> io::Result<Vec<u8>> {
         self.query_binary(":DISPlay:DATA? PNG")
     }
@@ -247,6 +289,26 @@ impl DHO5108 {
         // Send sequential setup commands in one write and synchronize once at the end.
         self.write_lines(&raw_word_setup_commands(ch, memory_depth))?;
         validate_opc_response(&self.read_line()?)?;
+        self.verify_raw_word_setup(ch, memory_depth)?;
+        Ok(())
+    }
+
+    fn verify_raw_word_setup(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {
+        ensure_response("trigger status", &self.query(":TRIGger:STATus?")?, "STOP")?;
+        ensure_response(
+            "waveform source",
+            &self.query(":WAVeform:SOURce?")?,
+            &format!("CHAN{ch}"),
+        )?;
+        ensure_response("waveform mode", &self.query(":WAVeform:MODE?")?, "RAW")?;
+        ensure_response("waveform format", &self.query(":WAVeform:FORMat?")?, "WORD")?;
+        let points = parse_memory_depth(&self.query(":WAVeform:POINts?")?)?;
+        if points != memory_depth {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("waveform points are {points}, expected {memory_depth}"),
+            ));
+        }
         Ok(())
     }
 
@@ -296,6 +358,7 @@ impl DHO5108 {
 
         let expected_length = expected_raw_word_bytes(memory_depth)?;
         let data = self.query_binary_with_expected_length("WAV:DATA?", Some(expected_length))?;
+        ensure_stopped(self.query_trigger_status()?)?;
 
         Ok(DhoRawWaveform { preamble, data })
     }
@@ -315,6 +378,7 @@ impl DHO5108 {
             writer,
             Some(expected_length),
         )?;
+        ensure_stopped(self.query_trigger_status()?)?;
 
         Ok(DhoRawWaveformWritten {
             preamble,
@@ -365,6 +429,41 @@ fn validate_opc_response(response: &str) -> io::Result<()> {
         io::ErrorKind::InvalidData,
         format!("invalid *OPC? response: {response:?}"),
     ))
+}
+
+fn ensure_response(name: &str, actual: &str, expected: &str) -> io::Result<()> {
+    if actual.trim().eq_ignore_ascii_case(expected) {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("unexpected {name}: {actual:?}, expected {expected:?}"),
+    ))
+}
+
+fn parse_trigger_status(value: &str) -> io::Result<DhoTriggerStatus> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "TD" => Ok(DhoTriggerStatus::Triggered),
+        "WAIT" => Ok(DhoTriggerStatus::Wait),
+        "RUN" => Ok(DhoTriggerStatus::Run),
+        "AUTO" => Ok(DhoTriggerStatus::Auto),
+        "STOP" => Ok(DhoTriggerStatus::Stop),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid trigger status: {other:?}"),
+        )),
+    }
+}
+
+fn ensure_stopped(status: DhoTriggerStatus) -> io::Result<()> {
+    if status == DhoTriggerStatus::Stop {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("oscilloscope acquisition changed during RAW transfer: {status:?}"),
+        ))
+    }
 }
 
 fn read_binary_block_length<R: BufRead>(reader: &mut R) -> io::Result<usize> {
@@ -579,6 +678,121 @@ mod tests {
         assert!(validate_opc_response("").is_err());
         assert!(validate_opc_response("0").is_err());
         assert!(validate_opc_response("ready").is_err());
+    }
+
+    #[test]
+    fn trigger_status_parser_accepts_documented_states() {
+        assert_eq!(
+            parse_trigger_status("TD").unwrap(),
+            DhoTriggerStatus::Triggered
+        );
+        assert_eq!(
+            parse_trigger_status("WAIT").unwrap(),
+            DhoTriggerStatus::Wait
+        );
+        assert_eq!(parse_trigger_status("RUN").unwrap(), DhoTriggerStatus::Run);
+        assert_eq!(
+            parse_trigger_status("AUTO").unwrap(),
+            DhoTriggerStatus::Auto
+        );
+        assert_eq!(
+            parse_trigger_status("STOP").unwrap(),
+            DhoTriggerStatus::Stop
+        );
+        assert!(parse_trigger_status("UNKNOWN").is_err());
+    }
+
+    #[test]
+    fn raw_fetch_verifies_state_and_accepts_fragmented_binary_block() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+
+            for expected in raw_word_setup_commands(1, 2) {
+                expect_command(&mut reader, &expected);
+            }
+            reply_line(&mut reader, "1");
+            for (command, response) in [
+                (":TRIGger:STATus?", "STOP"),
+                (":WAVeform:SOURce?", "CHAN1"),
+                (":WAVeform:MODE?", "RAW"),
+                (":WAVeform:FORMat?", "WORD"),
+                (":WAVeform:POINts?", "2"),
+                ("WAV:PRE?", "1,2,2,1,0.5,0,0,1,0,0"),
+                ("WAV:XINC?", "0.5"),
+                ("WAV:XOR?", "0"),
+                ("WAV:XREF?", "0"),
+                ("WAV:YINC?", "1"),
+                ("WAV:YOR?", "0"),
+                ("WAV:YREF?", "0"),
+                (":CHANnel1:OFFSet?", "0"),
+                (":CHANnel1:SCALe?", "1"),
+            ] {
+                expect_command(&mut reader, command);
+                reply_line(&mut reader, response);
+            }
+            expect_command(&mut reader, "WAV:DATA?");
+            for chunk in [b"#".as_slice(), b"1", b"4", b"\x01", b"\x00\x02", b"\x00\n"] {
+                reader.get_mut().write_all(chunk).unwrap();
+                reader.get_mut().flush().unwrap();
+            }
+            expect_command(&mut reader, ":TRIGger:STATus?");
+            reply_line(&mut reader, "STOP");
+        });
+
+        let mut dho = DHO5108::open_with_timeouts(
+            "127.0.0.1",
+            port,
+            Some(Duration::from_secs(1)),
+            Some(Duration::from_secs(1)),
+        )
+        .unwrap();
+        let mut output = Vec::new();
+        let result = dho.fetch_raw_word_into(1, 2, &mut output).unwrap();
+
+        assert_eq!(result.byte_count, 4);
+        assert_eq!(output, [1, 0, 2, 0]);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn tcp_query_respects_idle_timeout() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            expect_command(&mut reader, "*IDN?");
+            std::thread::sleep(Duration::from_millis(100));
+        });
+        let mut dho = DHO5108::open_with_timeouts(
+            "127.0.0.1",
+            port,
+            Some(Duration::from_secs(1)),
+            Some(Duration::from_millis(20)),
+        )
+        .unwrap();
+
+        let error = dho.identify().unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+        server.join().unwrap();
+    }
+
+    fn expect_command(reader: &mut BufReader<TcpStream>, expected: &str) {
+        let mut command = String::new();
+        reader.read_line(&mut command).unwrap();
+        assert_eq!(command.trim_end(), expected);
+    }
+
+    fn reply_line(reader: &mut BufReader<TcpStream>, response: &str) {
+        writeln!(reader.get_mut(), "{response}").unwrap();
+        reader.get_mut().flush().unwrap();
     }
 
     #[test]
