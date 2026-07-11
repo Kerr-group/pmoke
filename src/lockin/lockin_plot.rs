@@ -1,5 +1,5 @@
 use crate::config::Plot;
-use crate::plot::{decimate_1d, decimate_3d};
+use crate::plot::decimate_xy_3d;
 use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
@@ -30,8 +30,7 @@ impl LIPlotter {
                 "lockin_plot",
             )
             .context("failed to load lockin_plot.py")?;
-            let t_plot = decimate_1d(plot, t);
-            let y_plot = decimate_3d(plot, y);
+            let (t_plot, y_plot) = decimate_xy_3d(plot, t, y);
             let t_obj = python::f64_array1(py, &t_plot);
             let y_obj = python::f64_array3(py, &y_plot)?;
 

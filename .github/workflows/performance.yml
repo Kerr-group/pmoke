@@ -60,7 +60,7 @@ jobs:
           benchmark="$(find target/release/deps -maxdepth 1 -type f -name 'performance-*' -perm -111 | head -n 1)"
           test -n "$benchmark"
           if [ "${{ matrix.channels }}" = "2" ]; then
-            cases=(raw_word_decode raw_waveform_read sensor_integral lockin_w1 lockin_w2 python_copy raw_to_csv analysis_pipeline)
+            cases=(raw_word_decode raw_waveform_read sensor_integral lockin_w1 lockin_w2 python_copy raw_to_csv analysis_pipeline plot_decimate_stride plot_decimate_min_max)
           else
             cases=(raw_waveform_read raw_to_csv)
           fi

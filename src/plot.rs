@@ -48,13 +48,20 @@ pub fn run_plot(
     }
 }
 
+#[cfg(test)]
 pub fn stride_for_len(plot: &Plot, len: usize) -> usize {
     match plot.decimation {
+        PlotDecimation::None | PlotDecimation::MinMax => 1,
         PlotDecimation::Stride => len.div_ceil(plot.max_points).max(1),
     }
 }
 
+#[cfg(test)]
 pub fn decimate_1d(plot: &Plot, values: &[f64]) -> Vec<f64> {
+    if plot.decimation == PlotDecimation::MinMax && values.len() > plot.max_points {
+        let indices = min_max_indices(&[values], values.len(), plot.max_points);
+        return apply_indices(values, &indices);
+    }
     let stride = stride_for_len(plot, values.len());
     if stride == 1 {
         return values.to_vec();
@@ -62,31 +69,140 @@ pub fn decimate_1d(plot: &Plot, values: &[f64]) -> Vec<f64> {
     values.iter().step_by(stride).copied().collect()
 }
 
+#[cfg(test)]
 pub fn decimate_2d(plot: &Plot, values: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    let len = values.first().map(|row| row.len()).unwrap_or(0);
-    let stride = stride_for_len(plot, len);
-    values
+    let indices = decimation_indices(plot, values);
+    apply_indices_2d(values, &indices)
+}
+
+pub fn decimate_xy_2d(plot: &Plot, x: &[f64], values: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
+    let series = values.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    decimate_xy_slices(plot, x, &series)
+}
+
+pub fn decimate_xy_slices(plot: &Plot, x: &[f64], values: &[&[f64]]) -> (Vec<f64>, Vec<Vec<f64>>) {
+    let indices = decimation_indices_slices(plot, values);
+    (
+        apply_indices(x, &indices),
+        apply_indices_2d(values, &indices),
+    )
+}
+
+pub fn decimate_xy_3d(
+    plot: &Plot,
+    x: &[f64],
+    values: &[Vec<Vec<f64>>],
+) -> (Vec<f64>, Vec<Vec<Vec<f64>>>) {
+    let series = values
         .iter()
-        .map(|row| row.iter().step_by(stride).copied().collect())
+        .flat_map(|channel| channel.iter().map(Vec::as_slice))
+        .collect::<Vec<_>>();
+    let indices = decimation_indices_slices(plot, &series);
+    (
+        apply_indices(x, &indices),
+        apply_indices_3d(values, &indices),
+    )
+}
+
+fn apply_indices(values: &[f64], indices: &[usize]) -> Vec<f64> {
+    indices
+        .iter()
+        .filter_map(|&index| values.get(index).copied())
         .collect()
 }
 
-pub fn decimate_3d(plot: &Plot, values: &[Vec<Vec<f64>>]) -> Vec<Vec<Vec<f64>>> {
-    let len = values
-        .first()
-        .and_then(|channel| channel.first())
-        .map(|series| series.len())
-        .unwrap_or(0);
-    let stride = stride_for_len(plot, len);
+fn apply_indices_2d<T: AsRef<[f64]>>(values: &[T], indices: &[usize]) -> Vec<Vec<f64>> {
     values
         .iter()
-        .map(|channel| {
-            channel
-                .iter()
-                .map(|series| series.iter().step_by(stride).copied().collect())
-                .collect()
-        })
+        .map(|series| apply_indices(series.as_ref(), indices))
         .collect()
+}
+
+fn apply_indices_3d(values: &[Vec<Vec<f64>>], indices: &[usize]) -> Vec<Vec<Vec<f64>>> {
+    values
+        .iter()
+        .map(|channel| apply_indices_2d(channel, indices))
+        .collect()
+}
+
+#[cfg(test)]
+fn decimation_indices(plot: &Plot, values: &[Vec<f64>]) -> Vec<usize> {
+    let series = values.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    decimation_indices_slices(plot, &series)
+}
+
+fn decimation_indices_slices(plot: &Plot, values: &[&[f64]]) -> Vec<usize> {
+    let len = values.first().map_or(0, |series| series.len());
+    if len == 0 {
+        return Vec::new();
+    }
+    match plot.decimation {
+        PlotDecimation::None => (0..len).collect(),
+        PlotDecimation::Stride => {
+            let stride = len.div_ceil(plot.max_points).max(1);
+            (0..len).step_by(stride).collect()
+        }
+        PlotDecimation::MinMax if len <= plot.max_points => (0..len).collect(),
+        PlotDecimation::MinMax => min_max_indices(values, len, plot.max_points),
+    }
+}
+
+fn min_max_indices(values: &[&[f64]], len: usize, max_points: usize) -> Vec<usize> {
+    if max_points == 1 {
+        return vec![global_extreme_index(values, len)];
+    }
+    let aligned = values
+        .iter()
+        .copied()
+        .filter(|series| series.len() == len)
+        .collect::<Vec<_>>();
+    if aligned.is_empty() {
+        return (0..len).step_by(len.div_ceil(max_points)).collect();
+    }
+    let extrema_per_bin = aligned.len().saturating_mul(2).max(1);
+    let bin_count = (max_points / extrema_per_bin).max(1).min(len);
+    let mut indices = Vec::with_capacity(bin_count.saturating_mul(extrema_per_bin));
+    for bin in 0..bin_count {
+        let start = bin * len / bin_count;
+        let end = ((bin + 1) * len / bin_count).max(start + 1);
+        for series in &aligned {
+            let mut minimum = None;
+            let mut maximum = None;
+            for index in start..end {
+                let value = series[index];
+                if !value.is_finite() {
+                    continue;
+                }
+                if minimum.is_none_or(|current: usize| value < series[current]) {
+                    minimum = Some(index);
+                }
+                if maximum.is_none_or(|current: usize| value > series[current]) {
+                    maximum = Some(index);
+                }
+            }
+            indices.push(minimum.unwrap_or(start));
+            indices.push(maximum.unwrap_or(start));
+        }
+    }
+    indices.sort_unstable();
+    indices.dedup();
+    if indices.len() <= max_points {
+        return indices;
+    }
+    let stride = indices.len().div_ceil(max_points);
+    indices.into_iter().step_by(stride).collect()
+}
+
+fn global_extreme_index(values: &[&[f64]], len: usize) -> usize {
+    let mut best = (0, f64::NEG_INFINITY);
+    for series in values.iter().filter(|series| series.len() == len) {
+        for (index, value) in series.iter().copied().enumerate() {
+            if value.is_finite() && value.abs() > best.1 {
+                best = (index, value.abs());
+            }
+        }
+    }
+    best.0
 }
 
 #[cfg(test)]
@@ -120,5 +236,45 @@ mod tests {
             decimate_2d(&plot, &values),
             vec![vec![0.0, 2.0, 4.0], vec![10.0, 12.0, 14.0]]
         );
+    }
+
+    #[test]
+    fn min_max_decimation_preserves_a_narrow_spike_and_alignment() {
+        let mut plot = plot(6);
+        plot.decimation = PlotDecimation::MinMax;
+        let time = (0..100).map(|index| index as f64).collect::<Vec<_>>();
+        let mut signal = vec![0.0; 100];
+        signal[47] = 100.0;
+        let context = time.iter().map(|value| value + 1_000.0).collect::<Vec<_>>();
+
+        let (time_plot, values_plot) = decimate_xy_2d(&plot, &time, &[signal, context]);
+
+        let spike_position = time_plot.iter().position(|value| *value == 47.0).unwrap();
+        assert_eq!(values_plot[0][spike_position], 100.0);
+        assert_eq!(values_plot[1][spike_position], 1_047.0);
+        assert!(time_plot.len() <= plot.max_points);
+        assert!(
+            values_plot
+                .iter()
+                .all(|series| series.len() == time_plot.len())
+        );
+    }
+
+    #[test]
+    fn no_decimation_ignores_the_display_point_limit() {
+        let mut plot = plot(2);
+        plot.decimation = PlotDecimation::None;
+        let values = vec![0.0, 1.0, 2.0, 3.0];
+
+        assert_eq!(decimate_1d(&plot, &values), values);
+    }
+
+    #[test]
+    fn min_max_decimation_ignores_nan_when_finite_extrema_exist() {
+        let mut plot = plot(2);
+        plot.decimation = PlotDecimation::MinMax;
+        let values = vec![f64::NAN, -2.0, 5.0, f64::NAN];
+
+        assert_eq!(decimate_1d(&plot, &values), vec![-2.0, 5.0]);
     }
 }

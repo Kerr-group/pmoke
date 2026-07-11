@@ -357,3 +357,21 @@ fn v4_plot_modes_map_to_consistent_flags() {
         );
     }
 }
+
+#[test]
+fn v4_plot_decimation_modes_are_explicit() {
+    for (name, expected) in [
+        ("none", PlotDecimation::None),
+        ("stride", PlotDecimation::Stride),
+        ("min_max", PlotDecimation::MinMax),
+    ] {
+        let text = v4_base().replace(
+            "mode = \"both\"",
+            &format!("mode = \"both\"\ndecimation = \"{name}\""),
+        );
+        let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+            panic!("expected ready plot decimation {name}");
+        };
+        assert_eq!(config.plot.decimation, expected);
+    }
+}
