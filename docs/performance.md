@@ -23,6 +23,7 @@ artifact. The 50-million-sample workload is reserved for a manual or
 self-hosted run.
 
 The benchmark contains deterministic RAW WORD decoding, sensor integration,
-and `boxcar_legacy` lock-in workloads. Expected numerical behavior remains in
-the regular golden and unit tests; benchmark timing alone never defines
-correctness.
+`boxcar_legacy` lock-in, and Rust-to-NumPy copy workloads. The JSON report also
+records the bytes and cumulative time copied across the Python boundary.
+Expected numerical behavior remains in the regular golden and unit tests;
+benchmark timing alone never defines correctness.

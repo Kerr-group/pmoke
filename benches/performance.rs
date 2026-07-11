@@ -1,7 +1,11 @@
+use numpy::PyUntypedArrayMethods;
 use pmoke::config::{Lockin, LockinLpfKind};
 use pmoke::lockin::lockin_core::LockinProcessor;
 use pmoke::lockin::sensor::pulse_calculator::PulseIntegralCalculator;
+use pmoke::python;
+use pmoke::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use pmoke::utils::waveform::convert_raw_word_to_voltages;
+use pyo3::Python;
 use serde::Serialize;
 use std::env;
 use std::fs;
@@ -19,6 +23,7 @@ struct Report {
     samples: usize,
     iterations: usize,
     results: Vec<Measurement>,
+    python_transfer: python::PythonTransferStats,
 }
 
 #[derive(Serialize)]
@@ -26,6 +31,7 @@ struct Measurement {
     name: &'static str,
     median_seconds: f64,
     samples_per_second: f64,
+    input_bytes: usize,
     output_values: usize,
 }
 
@@ -40,16 +46,21 @@ fn main() {
     let words = synthetic_words(options.samples);
     let times = synthetic_times(options.samples);
     let signal = synthetic_signal(&times);
+    let raw_csv = BenchmarkRawCsv::new(&words);
 
     // One untimed run catches invalid inputs and reduces first-use noise.
     black_box(convert_raw_word_to_voltages(&words, 2.5e-4, 0.0, 32_768.0).unwrap());
     black_box(PulseIntegralCalculator::new(1.0e-7).integrate(&signal, 0.125, -2.0));
     black_box(run_lockin(&times, &signal));
+    Python::attach(|py| black_box(python::f64_array1(py, &signal).len()));
+    raw_csv.write(options.samples);
+    python::reset_transfer_stats();
 
     let results = vec![
         measure(
             "raw_word_decode",
             options.samples,
+            words.len(),
             options.iterations,
             || {
                 convert_raw_word_to_voltages(black_box(&words), 2.5e-4, 0.0, 32_768.0)
@@ -60,6 +71,7 @@ fn main() {
         measure(
             "sensor_integral",
             options.samples,
+            signal.len() * std::mem::size_of::<f64>(),
             options.iterations,
             || {
                 PulseIntegralCalculator::new(1.0e-7)
@@ -67,13 +79,34 @@ fn main() {
                     .len()
             },
         ),
-        measure("boxcar_legacy", options.samples, options.iterations, || {
-            run_lockin(black_box(&times), black_box(&signal))
-        }),
+        measure(
+            "boxcar_legacy",
+            options.samples,
+            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
+            options.iterations,
+            || run_lockin(black_box(&times), black_box(&signal)),
+        ),
+        measure(
+            "python_f64_array_copy",
+            options.samples,
+            signal.len() * std::mem::size_of::<f64>(),
+            options.iterations,
+            || Python::attach(|py| python::f64_array1(py, black_box(&signal)).len()),
+        ),
+        measure(
+            "raw_to_csv",
+            options.samples,
+            words.len() * 2,
+            options.iterations,
+            || {
+                raw_csv.write(options.samples);
+                options.samples
+            },
+        ),
     ];
 
     let report = Report {
-        schema_version: 1,
+        schema_version: 2,
         commit: command_output("git", &["rev-parse", "HEAD"]),
         rustc: command_output("rustc", &["--version"]),
         os: env::consts::OS,
@@ -81,6 +114,7 @@ fn main() {
         samples: options.samples,
         iterations: options.iterations,
         results,
+        python_transfer: python::transfer_stats(),
     };
     let json = serde_json::to_string_pretty(&report).expect("serialize benchmark report");
     println!("{json}");
@@ -151,6 +185,7 @@ fn parse_options() -> Options {
 fn measure(
     name: &'static str,
     samples: usize,
+    input_bytes: usize,
     iterations: usize,
     mut operation: impl FnMut() -> usize,
 ) -> Measurement {
@@ -167,6 +202,7 @@ fn measure(
         name,
         median_seconds: median,
         samples_per_second: samples as f64 / median,
+        input_bytes,
         output_values,
     }
 }
@@ -238,4 +274,57 @@ fn command_output(program: &str, args: &[&str]) -> String {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|output| output.trim().to_owned())
         .unwrap_or_else(|| "unknown".to_owned())
+}
+
+struct BenchmarkRawCsv {
+    dir: PathBuf,
+    output: PathBuf,
+}
+
+impl BenchmarkRawCsv {
+    fn new(words: &[u8]) -> Self {
+        let unique = format!(
+            "pmoke-performance-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before Unix epoch")
+                .as_nanos()
+        );
+        let dir = env::temp_dir().join(unique);
+        fs::create_dir(&dir).expect("create benchmark directory");
+        fs::write(dir.join("ch1.u16le"), words).expect("write benchmark ch1 raw data");
+        fs::write(dir.join("ch2.u16le"), words).expect("write benchmark ch2 raw data");
+        let output = dir.join("waveform.csv");
+        Self { dir, output }
+    }
+
+    fn write(&self, sample_count: usize) {
+        if self.output.exists() {
+            fs::remove_file(&self.output).expect("remove previous benchmark CSV");
+        }
+        let channel = |file| RawCsvChannel {
+            file,
+            sample_count,
+            x_increment: 1.0e-7,
+            x_origin: -0.001,
+            x_reference: 0.0,
+            y_increment: 2.5e-4,
+            y_origin: 0.0,
+            y_reference: 32_768.0,
+        };
+        write_raw_csv(
+            &self.output,
+            &["time", "ch1", "ch2"],
+            &self.dir,
+            &[channel("ch1.u16le"), channel("ch2.u16le")],
+        )
+        .expect("write benchmark raw CSV");
+    }
+}
+
+impl Drop for BenchmarkRawCsv {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
 }

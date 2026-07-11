@@ -13,13 +13,12 @@ class PreciseFFT:
     5) Compute the DC component
     """
 
-    def __init__(self, time: NDArray, y: NDArray, pad_factor: int = 5):
-        self.time = time
+    def __init__(self, dt: float, y: NDArray, pad_factor: int = 5):
         self.y = y
         self.pad_factor = pad_factor
 
         self.N = len(y)
-        self.dt = time[1] - time[0]
+        self.dt = dt
         self.fs = 1 / self.dt  # Sampling frequency
 
         self.apply_hann_window()
@@ -116,8 +115,8 @@ class ReferenceFFT:
     def __init__(self):
         pass
 
-    def fft(self, t: NDArray, y: NDArray, pad_factor: int = 3):
-        fft = PreciseFFT(t, y, pad_factor=pad_factor)
+    def fft(self, dt: float, y: NDArray, pad_factor: int = 3):
+        fft = PreciseFFT(dt, y, pad_factor=pad_factor)
         omega, fft_data = fft.get_data()
         freq = omega / (2 * np.pi)
 

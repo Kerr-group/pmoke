@@ -82,9 +82,12 @@ pub fn run_fit_ref_core<'a>(
 
     let (idx_start, idx_end) = get_range_indices(t, fft_t_start, fft_t_end)?;
 
-    let fft_t = t.values(idx_start..idx_end);
     let fft_ref_data = &ref_data[idx_start..idx_end];
-    let fft_results = fft_ref(&fft_t, fft_ref_data).context("failed to fft reference signal")?;
+    if fft_ref_data.len() < 2 {
+        bail!("reference FFT window must contain at least two samples");
+    }
+    let fft_dt = t.value_at(idx_start + 1) - t.value_at(idx_start);
+    let fft_results = fft_ref(fft_dt, fft_ref_data).context("failed to fft reference signal")?;
 
     ui::info(format!(
         "reference FFT: f_ref = {:.6} MHz, A_ref = {:.6}, omega_tref = {:.6} rad",
@@ -116,22 +119,17 @@ pub fn run_fit_ref_core<'a>(
     Ok(results)
 }
 
-fn fft_ref(t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
-    if t.len() != ref_data.len() {
-        bail!(
-            "time length ({}) and reference length ({}) differ",
-            t.len(),
-            ref_data.len()
-        );
+fn fft_ref(dt: f64, ref_data: &[f64]) -> Result<RefFitParams> {
+    if ref_data.len() < 2 {
+        ui::skipped("reference FFT: fewer than two data points");
+        bail!("reference FFT requires at least two data points");
     }
-
-    if t.is_empty() {
-        ui::skipped("reference FFT: time and reference data are empty");
-        bail!("Cannot fft empty data.");
+    if !dt.is_finite() || dt <= 0.0 {
+        bail!("reference FFT dt must be positive and finite (got {dt})");
     }
 
     let results = ReferenceFFT {}
-        .fft(t, ref_data)
+        .fft(dt, ref_data)
         .context("failed to fft reference signal")?;
 
     Ok(results)
