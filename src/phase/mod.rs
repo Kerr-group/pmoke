@@ -11,11 +11,12 @@ use crate::phase::rotator::rotate_phase;
 use crate::phase::save::{get_li_rotated_headers, write_li_rotated_results};
 use crate::{config::Config, constants::LI_RESULTS_NAME, utils::csv::read_csv};
 use crate::{plot, ui};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 use std::f64::consts::PI;
 use std::time::Instant;
 
+#[derive(Debug)]
 pub struct PhaseAnalysisOutput {
     pub rotated_result: Vec<Vec<f64>>,
     pub omega_t0: f64,
@@ -143,6 +144,12 @@ pub fn run_phase_analysis(
 }
 
 pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnalysisOutput> {
+    if li_result.len() < 12 {
+        bail!(
+            "phase analysis requires 12 lock-in columns (six x/y pairs), got {}",
+            li_result.len()
+        );
+    }
     let pairs: Vec<_> = li_result.chunks_exact(2).collect();
 
     let [
@@ -155,10 +162,7 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
         ..,
     ] = pairs.as_slice()
     else {
-        panic!(
-            "Expected at least 6 pairs (12 elements), but got {}",
-            li_result.len()
-        );
+        unreachable!("lock-in column count was validated above");
     };
     let theta_1: Vec<f64> = li1y
         .iter()
@@ -257,4 +261,16 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
         omega_t0,
         deltas,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::phase_analysis;
+
+    #[test]
+    fn phase_analysis_rejects_incomplete_harmonic_columns() {
+        let cfg = crate::test_support::test_config(vec![1], vec![2]);
+        let error = phase_analysis(&cfg, &vec![vec![0.0]; 10]).unwrap_err();
+        assert!(error.to_string().contains("requires 12 lock-in columns"));
+    }
 }

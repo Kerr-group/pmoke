@@ -1136,6 +1136,10 @@ fn enbw_hz(weights: &[f64], sample_rate: f64) -> f64 {
     }
 }
 
+pub(crate) fn legacy_boxcar_enbw_hz(params: LockinParams) -> f64 {
+    enbw_hz(&legacy_boxcar_weights(params), params.sample_rate)
+}
+
 fn legacy_boxcar_weights(params: LockinParams) -> Vec<f64> {
     let n = params.n_half;
     let len = 2 * n + 3;

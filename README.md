@@ -22,6 +22,12 @@ WORD waveform captures, and reproducible TOML-based analysis.
 
 ## ⚡ Install
 
+Install the Python analysis dependencies:
+
+```sh
+python -m pip install -r requirements.txt
+```
+
 Hardware-enabled build:
 
 ```sh
@@ -158,6 +164,7 @@ screenshot/
 lockin_results_ch3.csv
 lockin_rotated_ch3.csv
 kerr_results.csv
+analysis_metadata.toml
 plots/
 ```
 
@@ -173,6 +180,10 @@ New acquisitions use RAW metadata version 2 with SHA-256 checksums. Analysis
 verifies those checksums while reading the waveform. Metadata version 1 remains
 readable for existing measurements and can be checked for shape and file size
 with `pmoke raw verify`.
+
+`analysis_metadata.toml` records the resolved reference frequency, sample and
+output rates, lock-in window, ENBW estimate, cutoff, and edge trimming used for
+the result files. This records runtime values rather than future config defaults.
 
 ## 🎛️ Lock-In Notes
 
