@@ -1,0 +1,67 @@
+name: Performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Number of samples in the synthetic workload
+        required: false
+        default: "1000000"
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: Synthetic benchmark
+    runs-on: ubuntu-latest
+    env:
+      PYO3_PYTHON: python
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Select workload size
+        id: workload
+        env:
+          REQUESTED_SAMPLES: ${{ inputs.samples }}
+        run: echo "samples=${REQUESTED_SAMPLES:-1000000}" >> "$GITHUB_OUTPUT"
+
+      - name: Run benchmark
+        run: |
+          mkdir -p performance-results
+          /usr/bin/time -v -o performance-results/resources.txt \
+            cargo bench --locked --no-default-features --bench performance -- \
+              --samples "${{ steps.workload.outputs.samples }}" \
+              --output performance-results/results.json
+
+      - name: Record environment
+        run: |
+          {
+            uname -a
+            rustc --version --verbose
+            lscpu
+          } > performance-results/environment.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-${{ github.sha }}
+          path: performance-results
+          if-no-files-found: error
+          retention-days: 90

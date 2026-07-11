@@ -48,3 +48,7 @@ hw = ["dep:gpib-rs", "dep:instruments"]
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+
+[[bench]]
+name = "performance"
+harness = false

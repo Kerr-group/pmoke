@@ -73,5 +73,8 @@ jobs:
       - name: Test
         run: cargo test --locked --workspace --all-targets --all-features
 
+      - name: Performance smoke test
+        run: cargo bench --locked --no-default-features --bench performance -- --smoke
+
       - name: Lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings

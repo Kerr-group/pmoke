@@ -301,7 +301,8 @@ fn validate_raw_channel_file_size(spec: &RawChannelSpec) -> Result<()> {
     Ok(())
 }
 
-fn convert_raw_word_to_voltages(
+#[doc(hidden)]
+pub fn convert_raw_word_to_voltages(
     data: &[u8],
     y_increment: f64,
     y_origin: f64,
