@@ -24,6 +24,8 @@ pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
         config.source_path = path.to_path_buf();
         config.source_text = Some(text);
         if config.version >= 4 {
+            let output_dir = PathBuf::from(&config.plot.output_dir);
+            config.plot_output_relative = (!output_dir.is_absolute()).then_some(output_dir);
             config.plot.output_dir = config
                 .artifact_path(&config.plot.output_dir)
                 .to_string_lossy()
@@ -243,6 +245,8 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
         plot: Plot::default(),
         source_path: PathBuf::from("config.toml"),
         source_text: None,
+        artifact_root: None,
+        plot_output_relative: None,
         legacy_timebase: Some(raw.timebase.into()),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -306,6 +310,8 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         plot: raw.plot.into(),
         source_path: PathBuf::from("config.toml"),
         source_text: None,
+        artifact_root: None,
+        plot_output_relative: None,
         legacy_timebase: Some(legacy_timebase),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -366,6 +372,8 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
         plot: raw.plot.into(),
         source_path: PathBuf::from("config.toml"),
         source_text: None,
+        artifact_root: None,
+        plot_output_relative: None,
         legacy_timebase: None,
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -557,6 +565,8 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         plot: raw.plot.into(),
         source_path: PathBuf::from("config.toml"),
         source_text: None,
+        artifact_root: None,
+        plot_output_relative: None,
         legacy_timebase: None,
         roles: Roles {
             sensor_ch,

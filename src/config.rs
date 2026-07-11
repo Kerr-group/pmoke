@@ -132,6 +132,10 @@ pub struct Config {
     #[serde(skip_serializing)]
     pub source_text: Option<String>,
     #[serde(skip_serializing)]
+    pub artifact_root: Option<PathBuf>,
+    #[serde(skip_serializing)]
+    pub plot_output_relative: Option<PathBuf>,
+    #[serde(skip_serializing)]
     pub legacy_timebase: Option<Timebase>,
     pub roles: Roles,
     pub channels: Vec<Channel>,
@@ -154,7 +158,13 @@ impl Config {
 
     pub fn artifact_path(&self, path: impl AsRef<Path>) -> PathBuf {
         let path = path.as_ref();
-        if self.version < 4 || path.is_absolute() {
+        if path.is_absolute() {
+            return path.to_path_buf();
+        }
+        if let Some(root) = &self.artifact_root {
+            return root.join(path);
+        }
+        if self.version < 4 {
             return path.to_path_buf();
         }
         self.source_path
@@ -162,6 +172,18 @@ impl Config {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."))
             .join(path)
+    }
+
+    pub fn set_artifact_root(&mut self, root: PathBuf) {
+        let plot_path = PathBuf::from(&self.plot.output_dir);
+        let relative = self
+            .plot_output_relative
+            .clone()
+            .or_else(|| (!plot_path.is_absolute()).then_some(plot_path));
+        if let Some(relative) = relative {
+            self.plot.output_dir = root.join(relative).to_string_lossy().into_owned();
+        }
+        self.artifact_root = Some(root);
     }
 }
 

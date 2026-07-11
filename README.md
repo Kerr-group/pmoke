@@ -65,6 +65,16 @@ pmoke --config config.toml auto       # single + trigger + fetch + analyze
 
 If no command is provided, `pmoke` opens `monitor`.
 
+Use `--run-dir` to isolate one shot without changing config schema v4:
+
+```sh
+pmoke --config config.toml --run-dir shot_000123 auto
+```
+
+The directory receives immutable `config.source.toml` and
+`config.resolved.toml` snapshots. Reusing it with different config contents is
+rejected, preventing artifacts from different shots from being mixed.
+
 `doctor` only observes acquisition state by default. Add `--probe-fetch` to
 allow the preflight check to stop the oscilloscope before verifying its state.
 Use `--json` for a machine-readable report.

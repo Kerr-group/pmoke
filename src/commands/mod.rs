@@ -19,6 +19,7 @@ pub mod phase;
 pub mod process;
 pub mod raw;
 pub mod reference;
+pub mod run_dir;
 #[cfg(feature = "hw")]
 pub mod screenshot;
 pub mod sensor;

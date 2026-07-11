@@ -33,6 +33,8 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                 plot: Plot::default(),
                 source_path: "config.toml".into(),
                 source_text: None,
+                artifact_root: None,
+                plot_output_relative: None,
                 legacy_timebase: None,
                 roles: Roles {
                     sensor_ch: vec![1],

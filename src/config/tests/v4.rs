@@ -1,4 +1,5 @@
 use super::*;
+use std::path::PathBuf;
 
 fn v4_base() -> String {
     r#"
@@ -374,4 +375,39 @@ fn v4_plot_decimation_modes_are_explicit() {
         };
         assert_eq!(config.plot.decimation, expected);
     }
+}
+
+#[test]
+fn artifact_root_is_an_opt_in_override_for_relative_outputs() {
+    let ConfigLoad::Ready { mut config, .. } = load_from_str(&v4_base()) else {
+        panic!("expected ready v4 config");
+    };
+    config.set_artifact_root(PathBuf::from("shot_000123"));
+
+    assert_eq!(
+        config.artifact_path("raw_waveform"),
+        PathBuf::from("shot_000123/raw_waveform")
+    );
+    assert_eq!(
+        config.plot.output_dir,
+        PathBuf::from("shot_000123/plots").to_string_lossy()
+    );
+}
+
+#[test]
+fn artifact_root_does_not_rewrite_an_absolute_plot_directory() {
+    let absolute = std::env::temp_dir().join("pmoke-absolute-plots");
+    let text = v4_base().replace(
+        "mode = \"both\"",
+        &format!(
+            "mode = \"both\"\noutput_dir = {:?}",
+            absolute.to_string_lossy()
+        ),
+    );
+    let ConfigLoad::Ready { mut config, .. } = load_from_str(&text) else {
+        panic!("expected ready v4 config");
+    };
+    config.set_artifact_root(PathBuf::from("shot_000123"));
+
+    assert_eq!(PathBuf::from(config.plot.output_dir), absolute);
 }
