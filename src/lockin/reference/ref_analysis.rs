@@ -19,7 +19,7 @@ pub struct RefFitParams {
 pub struct ReferenceFFT {}
 
 impl ReferenceFFT {
-    pub fn fft(&self, t: &[f64], y: &[f64]) -> Result<RefFitParams> {
+    pub fn fft(&self, dt: f64, y: &[f64]) -> Result<RefFitParams> {
         Python::attach(|py| {
             let fit_mod = python::cached_module(
                 py,
@@ -29,7 +29,6 @@ impl ReferenceFFT {
                 "ref_analysis",
             )
             .context("failed to load ref_analysis.py")?;
-            let t_obj = python::f64_array1(py, t);
             let y_obj = python::f64_array1(py, y);
 
             let fitter = fit_mod
@@ -38,7 +37,7 @@ impl ReferenceFFT {
                 .context("failed to create ReferenceFFT instance")?;
 
             let res = fitter
-                .call_method1("fft", (t_obj, y_obj))
+                .call_method1("fft", (dt, y_obj))
                 .context("python ReferenceFFT.fft(...) failed")?;
 
             let f_ref: f64 = res.get_item("f_ref")?.extract()?;
@@ -107,15 +106,14 @@ mod tests {
         let sample_count = 4_096usize;
         let frequency = 50.0 * sample_rate / sample_count as f64;
         let amplitude = 1.75;
-        let t: Vec<f64> = (0..sample_count)
-            .map(|index| index as f64 / sample_rate)
-            .collect();
+        let dt = 1.0 / sample_rate;
+        let t: Vec<f64> = (0..sample_count).map(|index| index as f64 * dt).collect();
         let y: Vec<f64> = t
             .iter()
             .map(|&time| amplitude * (2.0 * PI * frequency * time).sin())
             .collect();
 
-        let result = ReferenceFFT {}.fft(&t, &y).unwrap();
+        let result = ReferenceFFT {}.fft(dt, &y).unwrap();
         assert!((result.f_ref - frequency).abs() < 1.0e-6);
         assert!(
             (result.a_ref - amplitude).abs() < 1.0e-7,

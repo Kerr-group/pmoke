@@ -129,6 +129,18 @@ impl LockinParams {
         let dt = t[1] - t[0];
         let length = t.len();
 
+        Self::from_geometry(length, dt, f_ref, lockin)
+    }
+
+    pub(crate) fn from_geometry(
+        length: usize,
+        dt: f64,
+        f_ref: f64,
+        lockin: &Lockin,
+    ) -> Result<Self> {
+        if length < 2 {
+            return Err(anyhow!("Time axis must have at least 2 elements"));
+        }
         Self::init(dt, length, f_ref, lockin)
     }
 }

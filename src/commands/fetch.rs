@@ -14,6 +14,7 @@ use crate::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use crate::utils::raw_data::{
     RawTimeAxis, RawVoltageScale, TimeAxisError, TimeAxisMismatch, VoltageScaleError,
 };
+use crate::utils::time_axis::WaveformTime;
 use crate::utils::waveform::{WaveformData, read_raw_waveform_channels_from_dir};
 use anyhow::{Context, Result, anyhow, bail};
 use instruments::rigol::{DhoHorizontalSettings, DhoRawWaveform};
@@ -401,7 +402,8 @@ fn write_fetched_csv(cfg: &Config, out: &Path, data: &WaveformData) -> Result<()
     let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
 
     let t_write_start = Instant::now();
-    let csv_columns = csv_columns_with_time(data);
+    let time = data.t.to_vec();
+    let csv_columns = csv_columns_with_time(&time, data);
     write_csv_atomic(out, &header_refs, &csv_columns)?;
     let t_write_end = Instant::now();
 
@@ -744,8 +746,8 @@ fn validate_fetch_voltage_range(
     }
 }
 
-fn csv_columns_with_time(data: &WaveformData) -> Vec<&[f64]> {
-    std::iter::once(data.t.as_slice())
+fn csv_columns_with_time<'a>(time: &'a [f64], data: &'a WaveformData) -> Vec<&'a [f64]> {
+    std::iter::once(time)
         .chain(data.channels.iter().map(Vec::as_slice))
         .collect()
 }
@@ -945,9 +947,9 @@ pub fn fetch_all_channels(
         progress.inc(1);
     }
 
-    let t = time_axis
-        .ok_or_else(|| anyhow!("no waveform time axis was collected"))?
-        .build();
+    let t = WaveformTime::Uniform(
+        time_axis.ok_or_else(|| anyhow!("no waveform time axis was collected"))?,
+    );
     Ok(WaveformData { t, channels: data })
 }
 

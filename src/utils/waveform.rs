@@ -5,6 +5,7 @@ use crate::utils::csv::read_selected_columns;
 use crate::utils::raw_data::{
     RawTimeAxis, RawVoltageScale, TimeAxisError, TimeAxisMismatch, VoltageScaleError,
 };
+use crate::utils::time_axis::WaveformTime;
 use anyhow::{Context, Result, anyhow, bail};
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -12,6 +13,8 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+
+const RAW_READ_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 
 struct CsvColumns {
     time_index: Option<usize>,
@@ -46,7 +49,7 @@ struct RawChannelMetadata {
 
 #[derive(Debug)]
 pub struct WaveformData {
-    pub t: Vec<f64>,
+    pub t: WaveformTime,
     pub channels: Vec<Vec<f64>>,
 }
 
@@ -81,16 +84,15 @@ fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
     })?;
 
     let t = if time_index.is_some() {
-        columns.remove(0)
+        WaveformTime::Explicit(columns.remove(0))
     } else if let Some(timebase) = &cfg.legacy_timebase {
         let sample_count = columns.first().map_or(0, Vec::len);
-        RawTimeAxis {
+        WaveformTime::Uniform(RawTimeAxis {
             sample_count,
             x_increment: timebase.dt,
             x_origin: timebase.t0,
             x_reference: 0.0,
-        }
-        .build()
+        })
     } else {
         bail!(
             "{} has no time column; fetch again with the current version or use raw_waveform metadata",
@@ -135,9 +137,7 @@ pub fn read_raw_waveform_channels_from_dir(
         .iter()
         .map(read_raw_channel_data)
         .collect::<Result<Vec<_>>>()?;
-    let t = time_axis
-        .ok_or_else(|| anyhow!("no raw channels requested"))?
-        .build();
+    let t = WaveformTime::Uniform(time_axis.ok_or_else(|| anyhow!("no raw channels requested"))?);
 
     Ok(WaveformData { t, channels })
 }
@@ -245,6 +245,16 @@ fn raw_channel_spec(
 }
 
 fn read_raw_channel_data(spec: &RawChannelSpec) -> Result<Vec<f64>> {
+    read_raw_channel_data_with_chunk_size(spec, RAW_READ_CHUNK_BYTES)
+}
+
+fn read_raw_channel_data_with_chunk_size(
+    spec: &RawChannelSpec,
+    chunk_bytes: usize,
+) -> Result<Vec<f64>> {
+    if chunk_bytes == 0 || !chunk_bytes.is_multiple_of(2) {
+        bail!("raw read chunk size must be a positive even number: {chunk_bytes}");
+    }
     validate_raw_channel_file_size(spec)?;
 
     let mut file = File::open(&spec.path)
@@ -262,9 +272,40 @@ fn read_raw_channel_data(spec: &RawChannelSpec) -> Result<Vec<f64>> {
         );
     }
 
-    let mut data = vec![0_u8; spec.expected_bytes];
-    file.read_exact(&mut data)
-        .with_context(|| format!("failed to read raw channel file: {}", spec.path.display()))?;
+    let sample_count = spec.expected_bytes / 2;
+    let mut voltages = Vec::new();
+    voltages.try_reserve_exact(sample_count).with_context(|| {
+        format!(
+            "failed to allocate {sample_count} voltage samples for {}",
+            spec.key
+        )
+    })?;
+    voltages.resize(sample_count, 0.0);
+
+    let scale = RawVoltageScale {
+        y_increment: spec.y_increment,
+        y_origin: spec.y_origin,
+        y_reference: spec.y_reference,
+    };
+    let mut buffer = vec![0_u8; chunk_bytes.min(spec.expected_bytes)];
+    let mut byte_offset = 0;
+    while byte_offset < spec.expected_bytes {
+        let bytes_to_read = buffer.len().min(spec.expected_bytes - byte_offset);
+        let chunk = &mut buffer[..bytes_to_read];
+        file.read_exact(chunk).with_context(|| {
+            format!(
+                "failed to read raw channel file {} at byte {byte_offset}",
+                spec.path.display()
+            )
+        })?;
+        let sample_offset = byte_offset / 2;
+        decode_raw_word_chunk_into(
+            chunk,
+            &mut voltages[sample_offset..sample_offset + bytes_to_read / 2],
+            scale,
+        );
+        byte_offset += bytes_to_read;
+    }
     let mut extra = [0_u8; 1];
     if file.read(&mut extra).with_context(|| {
         format!(
@@ -280,12 +321,7 @@ fn read_raw_channel_data(spec: &RawChannelSpec) -> Result<Vec<f64>> {
         );
     }
 
-    Ok(convert_raw_word_to_voltages(
-        &data,
-        spec.y_increment,
-        spec.y_origin,
-        spec.y_reference,
-    ))
+    Ok(voltages)
 }
 
 fn validate_raw_channel_file_size(spec: &RawChannelSpec) -> Result<()> {
@@ -301,23 +337,38 @@ fn validate_raw_channel_file_size(spec: &RawChannelSpec) -> Result<()> {
     Ok(())
 }
 
-fn convert_raw_word_to_voltages(
+#[doc(hidden)]
+pub fn convert_raw_word_to_voltages(
     data: &[u8],
     y_increment: f64,
     y_origin: f64,
     y_reference: f64,
-) -> Vec<f64> {
+) -> Result<Vec<f64>> {
     let scale = RawVoltageScale {
         y_increment,
         y_origin,
         y_reference,
     };
-    data.par_chunks_exact(2)
-        .map(|chunk| {
+    if !data.len().is_multiple_of(2) {
+        bail!(
+            "raw WORD data has an incomplete final sample: {} bytes",
+            data.len()
+        );
+    }
+    let mut output = vec![0.0; data.len() / 2];
+    decode_raw_word_chunk_into(data, &mut output, scale);
+    Ok(output)
+}
+
+fn decode_raw_word_chunk_into(data: &[u8], output: &mut [f64], scale: RawVoltageScale) {
+    debug_assert_eq!(data.len(), output.len() * 2);
+    output
+        .par_iter_mut()
+        .zip(data.par_chunks_exact(2))
+        .for_each(|(output, chunk)| {
             let word = u16::from_le_bytes([chunk[0], chunk[1]]);
-            scale.value_at(word)
-        })
-        .collect()
+            *output = scale.value_at(word);
+        });
 }
 
 fn validate_raw_time_axis(axis: RawTimeAxis, key: &str) -> Result<()> {

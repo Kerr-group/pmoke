@@ -33,6 +33,64 @@ fn legacy_boxcar_weights_have_unit_dc_gain() {
 }
 
 #[test]
+fn legacy_boxcar_recovers_known_fundamental_amplitude_and_phase() {
+    let lockin = Lockin {
+        workers: 1,
+        stride_samples: 37,
+        lpf_kind: LockinLpfKind::BoxcarLegacy,
+        lpf_half_window_cycles: 1.0,
+        lpf_cutoff_hz: None,
+        lpf_cutoff_ref_ratio: None,
+        lpf_stopband_atten_db: 60.0,
+        lpf_sync_average_cycles: 1.0,
+        lpf_iir_order: 2,
+        lpf_debug_output: false,
+        lpf_debug_label: None,
+        lpf_debug_overwrite: false,
+        snr_background_window: None,
+        snr_signal_window: None,
+    };
+    let dt = 1.0e-5;
+    let f_ref = 1_000.0;
+    let amplitude = 0.8;
+    let signal_phase = 0.3;
+    let reference_phase = 0.2;
+    let t = (0..20_000)
+        .map(|index| index as f64 * dt)
+        .collect::<Vec<_>>();
+    let data = t
+        .iter()
+        .map(|&time| amplitude * (2.0 * PI * f_ref * time + signal_phase).sin())
+        .collect::<Vec<_>>();
+
+    let processor = LockinProcessor::new(&t, &data, f_ref, reference_phase, &lockin).unwrap();
+    let result = processor.compute_harmonic_detailed(1, false);
+    let uniform_time =
+        crate::utils::time_axis::WaveformTime::Uniform(crate::utils::raw_data::RawTimeAxis {
+            sample_count: t.len(),
+            x_increment: dt,
+            x_origin: 0.0,
+            x_reference: 0.0,
+        });
+    let uniform_result =
+        LockinProcessor::new(&uniform_time, &data, f_ref, reference_phase, &lockin)
+            .unwrap()
+            .compute_harmonic_detailed(1, false);
+    let expected_phase = signal_phase + reference_phase;
+    let expected_x = 0.5 * amplitude * expected_phase.cos();
+    let expected_y = 0.5 * amplitude * expected_phase.sin();
+
+    assert!(!result.li_x.is_empty());
+    assert_eq!(result.li_x.len(), result.li_y.len());
+    assert_eq!(result.li_x, uniform_result.li_x);
+    assert_eq!(result.li_y, uniform_result.li_y);
+    for (&actual_x, &actual_y) in result.li_x.iter().zip(&result.li_y) {
+        assert!((actual_x - expected_x).abs() < 1.0e-12, "x={actual_x}");
+        assert!((actual_y - expected_y).abs() < 1.0e-12, "y={actual_y}");
+    }
+}
+
+#[test]
 fn fir_boxcar_enbw_search_matches_reachable_target() {
     let params = test_params();
     let beta = kaiser_beta(params.lpf_stopband_atten_db);
@@ -470,7 +528,7 @@ fn direct_legacy_lockin(
         .t
         .iter()
         .zip(processor.data.iter())
-        .map(|(&t, &data)| data * processor.ref_signal(t, harmonic, ref_type))
+        .map(|(t, &data)| data * processor.ref_signal(t, harmonic, ref_type))
         .collect();
 
     let i_start = processor.params.i_start;

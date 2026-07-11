@@ -1,0 +1,81 @@
+name: Performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Number of samples in the synthetic workload
+        required: false
+        default: "1000000"
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: Synthetic benchmark (${{ matrix.channels }} RAW CSV channels)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channels: [2, 4]
+    env:
+      PYO3_PYTHON: python
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: python -m pip install numpy scipy lmfit gsplot
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Select workload size
+        id: workload
+        env:
+          REQUESTED_SAMPLES: ${{ inputs.samples }}
+        run: echo "samples=${REQUESTED_SAMPLES:-1000000}" >> "$GITHUB_OUTPUT"
+
+      - name: Build benchmark
+        run: cargo bench --locked --no-default-features --bench performance --no-run
+
+      - name: Run benchmark
+        run: |
+          mkdir -p performance-results
+          benchmark="$(find target/release/deps -maxdepth 1 -type f -name 'performance-*' -perm -111 | head -n 1)"
+          test -n "$benchmark"
+          /usr/bin/time -v -o performance-results/resources.txt \
+            "$benchmark" --bench \
+              --samples "${{ steps.workload.outputs.samples }}" \
+              --channels "${{ matrix.channels }}" \
+              --end-to-end \
+              --output performance-results/results.json
+
+      - name: Record environment
+        run: |
+          {
+            uname -a
+            rustc --version --verbose
+            lscpu
+          } > performance-results/environment.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-${{ matrix.channels }}ch-${{ github.sha }}
+          path: performance-results
+          if-no-files-found: error
+          retention-days: 90

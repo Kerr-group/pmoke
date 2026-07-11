@@ -4,6 +4,38 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::ffi::CString;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
+
+static RUST_TO_PYTHON_BYTES: AtomicU64 = AtomicU64::new(0);
+static RUST_TO_PYTHON_NANOS: AtomicU64 = AtomicU64::new(0);
+static PYTHON_TO_RUST_BYTES: AtomicU64 = AtomicU64::new(0);
+static PYTHON_TO_RUST_NANOS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct PythonTransferStats {
+    pub rust_to_python_bytes: u64,
+    pub rust_to_python_nanoseconds: u64,
+    pub python_to_rust_bytes: u64,
+    pub python_to_rust_nanoseconds: u64,
+}
+
+pub fn transfer_stats() -> PythonTransferStats {
+    PythonTransferStats {
+        rust_to_python_bytes: RUST_TO_PYTHON_BYTES.load(Ordering::Relaxed),
+        rust_to_python_nanoseconds: RUST_TO_PYTHON_NANOS.load(Ordering::Relaxed),
+        python_to_rust_bytes: PYTHON_TO_RUST_BYTES.load(Ordering::Relaxed),
+        python_to_rust_nanoseconds: PYTHON_TO_RUST_NANOS.load(Ordering::Relaxed),
+    }
+}
+
+#[doc(hidden)]
+pub fn reset_transfer_stats() {
+    RUST_TO_PYTHON_BYTES.store(0, Ordering::Relaxed);
+    RUST_TO_PYTHON_NANOS.store(0, Ordering::Relaxed);
+    PYTHON_TO_RUST_BYTES.store(0, Ordering::Relaxed);
+    PYTHON_TO_RUST_NANOS.store(0, Ordering::Relaxed);
+}
 
 pub fn cached_module<'py>(
     py: Python<'py>,
@@ -37,20 +69,39 @@ pub fn cached_module<'py>(
 }
 
 pub fn f64_array1<'py>(py: Python<'py>, values: &[f64]) -> Bound<'py, PyArray1<f64>> {
-    PyArray1::from_slice(py, values)
+    let start = Instant::now();
+    let array = PyArray1::from_slice(py, values);
+    record_transfer(&RUST_TO_PYTHON_BYTES, values.len());
+    record_elapsed(&RUST_TO_PYTHON_NANOS, start);
+    array
 }
 
 pub fn f64_array2<'py>(py: Python<'py>, rows: &[Vec<f64>]) -> Result<Bound<'py, PyArray2<f64>>> {
-    PyArray2::from_vec2(py, rows)
-        .map_err(|error| anyhow::anyhow!("invalid 2D float array: {error}"))
+    let start = Instant::now();
+    let array = PyArray2::from_vec2(py, rows)
+        .map_err(|error| anyhow::anyhow!("invalid 2D float array: {error}"))?;
+    let value_count = rows
+        .iter()
+        .fold(0usize, |count, row| count.saturating_add(row.len()));
+    record_transfer(&RUST_TO_PYTHON_BYTES, value_count);
+    record_elapsed(&RUST_TO_PYTHON_NANOS, start);
+    Ok(array)
 }
 
 pub fn f64_array3<'py>(
     py: Python<'py>,
     values: &[Vec<Vec<f64>>],
 ) -> Result<Bound<'py, PyArray3<f64>>> {
-    PyArray3::from_vec3(py, values)
-        .map_err(|error| anyhow::anyhow!("invalid 3D float array: {error}"))
+    let start = Instant::now();
+    let array = PyArray3::from_vec3(py, values)
+        .map_err(|error| anyhow::anyhow!("invalid 3D float array: {error}"))?;
+    let value_count = values
+        .iter()
+        .flat_map(|channels| channels.iter())
+        .fold(0usize, |count, row| count.saturating_add(row.len()));
+    record_transfer(&RUST_TO_PYTHON_BYTES, value_count);
+    record_elapsed(&RUST_TO_PYTHON_NANOS, start);
+    Ok(array)
 }
 
 pub fn extract_f64_array1(value: &Bound<'_, PyAny>) -> Result<Vec<f64>> {
@@ -61,7 +112,26 @@ pub fn extract_f64_array1(value: &Bound<'_, PyAny>) -> Result<Vec<f64>> {
     let values = readonly
         .as_slice()
         .context("expected a contiguous NumPy float64 array")?;
-    Ok(values.to_vec())
+    let start = Instant::now();
+    let output = values.to_vec();
+    record_transfer(&PYTHON_TO_RUST_BYTES, output.len());
+    record_elapsed(&PYTHON_TO_RUST_NANOS, start);
+    Ok(output)
+}
+
+fn record_transfer(bytes: &AtomicU64, values: usize) {
+    let byte_count = values.saturating_mul(std::mem::size_of::<f64>());
+    bytes.fetch_add(
+        u64::try_from(byte_count).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
+}
+
+fn record_elapsed(nanoseconds: &AtomicU64, start: Instant) {
+    nanoseconds.fetch_add(
+        u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
 }
 
 #[cfg(test)]
