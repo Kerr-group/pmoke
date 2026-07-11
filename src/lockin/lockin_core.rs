@@ -1,6 +1,7 @@
 use crate::config::{Lockin, LockinLpfKind};
 use crate::lockin::lockin_params::LockinParams;
 use crate::ui;
+use crate::utils::time_axis::TimeAxisRef;
 use anyhow::{Result, anyhow};
 use num_complex::Complex64;
 use std::collections::VecDeque;
@@ -17,7 +18,7 @@ pub enum RefType {
 }
 
 pub struct LockinProcessor<'a> {
-    t: &'a [f64],
+    t: TimeAxisRef<'a>,
     data: &'a [f64],
     omega_tref: f64,
     params: LockinParams,
@@ -77,16 +78,22 @@ impl HarmonicLockinResult {
 
 impl<'a> LockinProcessor<'a> {
     pub fn new(
-        t: &'a [f64],
+        t: impl Into<TimeAxisRef<'a>>,
         data: &'a [f64],
         f_ref: f64,
         omega_tref: f64,
         lockin: &Lockin,
     ) -> Result<Self> {
+        let t = t.into();
         assert!(t.len() >= 2);
         assert_eq!(t.len(), data.len());
 
-        let params = LockinParams::from_slice(t, f_ref, lockin)?;
+        let params = LockinParams::from_geometry(
+            t.len(),
+            t.dt().expect("time axis has at least two samples"),
+            f_ref,
+            lockin,
+        )?;
         let filter = match params.lpf_kind {
             LockinLpfKind::FirZeroPhase
             | LockinLpfKind::FirBoxcarEnbw
@@ -132,7 +139,7 @@ impl<'a> LockinProcessor<'a> {
     pub fn output_times(&self) -> Vec<f64> {
         let (i_start, i_end) = self.output_index_range();
         (i_start..=i_end)
-            .map(|i_idx| self.t[i_idx * self.params.stride])
+            .map(|i_idx| self.t.value_at(i_idx * self.params.stride))
             .collect()
     }
 
@@ -308,7 +315,8 @@ impl<'a> LockinProcessor<'a> {
         let step_phase = -harmonic * self.params.omega * self.params.dt;
         let step = Complex64::from_polar(1.0, step_phase);
         let anchor = start - (start % PHASE_RESYNC_INTERVAL);
-        let anchor_phase = -harmonic * (self.params.omega * self.t[anchor] - self.omega_tref);
+        let anchor_phase =
+            -harmonic * (self.params.omega * self.t.value_at(anchor) - self.omega_tref);
         let mut osc = Complex64::from_polar(1.0, anchor_phase);
         for _ in anchor..start {
             osc *= step;
@@ -318,7 +326,8 @@ impl<'a> LockinProcessor<'a> {
         for (idx, &sample) in self.data[start..end].iter().enumerate() {
             let raw_idx = start + idx;
             if idx > 0 && raw_idx.is_multiple_of(PHASE_RESYNC_INTERVAL) {
-                let phase = -harmonic * (self.params.omega * self.t[raw_idx] - self.omega_tref);
+                let phase =
+                    -harmonic * (self.params.omega * self.t.value_at(raw_idx) - self.omega_tref);
                 osc = Complex64::from_polar(1.0, phase);
             }
 
@@ -331,7 +340,7 @@ impl<'a> LockinProcessor<'a> {
 
     fn compute_real_imag_mixed_signal(&self, harmonic: usize) -> (Vec<f64>, Vec<f64>) {
         let harmonic = harmonic as f64;
-        let phase0 = harmonic * (self.params.omega * self.t[0] - self.omega_tref);
+        let phase0 = harmonic * (self.params.omega * self.t.value_at(0) - self.omega_tref);
         let step_phase = -harmonic * self.params.omega * self.params.dt;
         let step = Complex64::from_polar(1.0, step_phase);
         let mut osc = Complex64::from_polar(1.0, -phase0);
@@ -359,7 +368,7 @@ impl<'a> LockinProcessor<'a> {
         end: usize,
     ) -> (Vec<f64>, Vec<f64>) {
         let harmonic = harmonic as f64;
-        let phase0 = harmonic * (self.params.omega * self.t[0] - self.omega_tref);
+        let phase0 = harmonic * (self.params.omega * self.t.value_at(0) - self.omega_tref);
         let step_phase = -harmonic * self.params.omega * self.params.dt;
         let step = Complex64::from_polar(1.0, step_phase);
         let anchor = start - (start % PHASE_RESYNC_INTERVAL);
@@ -399,7 +408,7 @@ impl<'a> LockinProcessor<'a> {
         let harmonic = harmonic as f64;
         let step_phase = -harmonic * self.params.omega * self.params.dt;
         let step = Complex64::from_polar(1.0, step_phase);
-        let phase0 = harmonic * (self.params.omega * self.t[0] - self.omega_tref);
+        let phase0 = harmonic * (self.params.omega * self.t.value_at(0) - self.omega_tref);
         let mut osc = Complex64::from_polar(1.0, -phase0);
 
         let left = (sync_len - 1) / 2;
@@ -424,7 +433,8 @@ impl<'a> LockinProcessor<'a> {
             }
             while end < desired_end {
                 if end > 0 && end.is_multiple_of(PHASE_RESYNC_INTERVAL) {
-                    let phase = -harmonic * (self.params.omega * self.t[end] - self.omega_tref);
+                    let phase =
+                        -harmonic * (self.params.omega * self.t.value_at(end) - self.omega_tref);
                     osc = Complex64::from_polar(1.0, phase);
                 }
                 let sample = self.data[end];

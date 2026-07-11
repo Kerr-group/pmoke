@@ -14,6 +14,7 @@ use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
 use crate::lockin::sensor::{SensorOutput, run_sensor};
+use crate::utils::time_axis::TimeAxisRef;
 use crate::utils::waveform::read_all_fetched_waveforms;
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
@@ -52,7 +53,12 @@ pub fn run(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOutput> {
+pub fn run_li<'a>(
+    cfg: &Config,
+    t: impl Into<TimeAxisRef<'a>>,
+    data: &[Vec<f64>],
+) -> Result<LockinRunOutput> {
+    let t = t.into();
     let (sensor_ch, sensor_idx) = resolve::sensor_column_indices(cfg)?;
     let (_, ref_idx) = resolve::reference_column_index(cfg)?;
     let (signal_ch, signal_idx) = resolve::signal_column_indices(cfg)?;
@@ -147,13 +153,14 @@ pub fn run_li(cfg: &Config, t: &[f64], data: &[Vec<f64>]) -> Result<LockinRunOut
     ))
 }
 
-pub fn li_process(
+pub fn li_process<'a>(
     cfg: &Config,
-    t: &[f64],
+    t: impl Into<TimeAxisRef<'a>>,
     signal_ch: &[u8],
     signal_data: &[&[f64]],
     ref_fit_params: RefFitParams,
 ) -> Result<LockinProcessOutput> {
+    let t = t.into();
     let f_ref: f64 = ref_fit_params.f_ref;
     let omega_tref: f64 = ref_fit_params.omega_tref;
     let workers: usize = cfg.lockin.workers;
@@ -175,6 +182,7 @@ pub fn li_process(
     let mut printed_lockin_summary = false;
     let mut base_index_range = None;
     let mut output_index_range = None;
+    let debug_time = cfg.lockin.lpf_debug_output.then(|| t.values(0..t.len()));
 
     for (&sig_ch, signal) in signal_ch.iter().zip(signal_data.iter()) {
         pb.set_message(format!("lock-in ch{sig_ch}"));
@@ -232,7 +240,16 @@ pub fn li_process(
                 let result = li_processor.compute_harmonic_detailed(harmonic, include_debug);
                 if include_debug {
                     debug::write_harmonic_debug(
-                        cfg, sig_ch, harmonic, params, filter, t, &t_output, &result,
+                        cfg,
+                        sig_ch,
+                        harmonic,
+                        params,
+                        filter,
+                        debug_time
+                            .as_deref()
+                            .expect("debug time is available when debug output is enabled"),
+                        &t_output,
+                        &result,
                     )
                     .with_context(|| {
                         format!("failed to write lock-in debug output for ch{sig_ch} h{harmonic}")

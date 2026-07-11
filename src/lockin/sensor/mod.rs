@@ -5,7 +5,8 @@ pub mod sensor_raw_plot;
 use crate::config::{Channel, Config};
 use crate::constants::FETCHED_FNAME;
 use crate::lockin::reference::run_fit_ref;
-use crate::lockin::stride::{li_stride_1d, li_stride_2d};
+use crate::lockin::stride::{li_stride_2d, li_stride_time};
+use crate::utils::time_axis::TimeAxisRef;
 use crate::utils::waveform::read_waveform_channels;
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
@@ -62,13 +63,14 @@ pub fn run(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn run_sensor(
+pub fn run_sensor<'a>(
     cfg: &Config,
-    t: &[f64],
+    t: impl Into<TimeAxisRef<'a>>,
     s_cols: &[&[f64]],
     sensor_ch: &[u8],
     f_ref: f64,
 ) -> Result<SensorOutput> {
+    let t = t.into();
     if s_cols.is_empty() {
         bail!("No sensor data columns were read from {}", FETCHED_FNAME);
     }
@@ -95,7 +97,7 @@ pub fn run_sensor(
         ),
     );
 
-    let t_stride = li_stride_1d(cfg, t, t, f_ref)?;
+    let t_stride = li_stride_time(cfg, t, f_ref)?;
 
     plot::run_plot(
         &cfg.plot,
@@ -113,9 +115,7 @@ pub fn run_sensor(
     let start = std::time::Instant::now();
 
     let dt = t
-        .windows(2)
-        .next()
-        .map(|w| w[1] - w[0])
+        .dt()
         .ok_or_else(|| anyhow::anyhow!("time axis must contain at least two samples"))?;
     let sensor_series = s_cols
         .iter()
@@ -247,11 +247,12 @@ fn validate_sensor_channel_alignment(
     Ok(())
 }
 
-fn maximum_absolute_integral(
-    t: &[f64],
+fn maximum_absolute_integral<'a>(
+    t: impl Into<TimeAxisRef<'a>>,
     integral: &[f64],
     sensor_ch: u8,
 ) -> Result<SensorIntegralMaximum> {
+    let t = t.into();
     if integral.is_empty() {
         bail!("sensor ch{sensor_ch} integral is empty");
     }
@@ -264,7 +265,7 @@ fn maximum_absolute_integral(
     }
 
     let mut maximum = None;
-    for (index, (&time, &value)) in t.iter().zip(integral.iter()).enumerate() {
+    for (index, (time, &value)) in t.iter().zip(integral.iter()).enumerate() {
         if !time.is_finite() {
             bail!("sensor ch{sensor_ch} time at index {index} is not finite");
         }
@@ -338,7 +339,8 @@ fn sensor_scale_from_channel(channel: &Channel) -> Result<SensorScale> {
     }
 }
 
-fn validate_sensor_lengths(t: &[f64], s_cols: &[&[f64]]) -> Result<()> {
+fn validate_sensor_lengths<'a>(t: impl Into<TimeAxisRef<'a>>, s_cols: &[&[f64]]) -> Result<()> {
+    let t = t.into();
     for (column_index, column) in s_cols.iter().enumerate() {
         if t.len() != column.len() {
             bail!(
@@ -352,13 +354,17 @@ fn validate_sensor_lengths(t: &[f64], s_cols: &[&[f64]]) -> Result<()> {
     Ok(())
 }
 
-fn calculate_background_averages(cfg: &Config, t: &[f64], s_cols: &[&[f64]]) -> Result<Vec<f64>> {
+fn calculate_background_averages(
+    cfg: &Config,
+    t: TimeAxisRef<'_>,
+    s_cols: &[&[f64]],
+) -> Result<Vec<f64>> {
     let bg_window_before = &cfg.pulse.bg_window_before;
     let bg_window_after = &cfg.pulse.bg_window_after;
 
-    let is_in_bg = |ti: &f64| {
-        (ti >= &bg_window_before.start && ti <= &bg_window_before.end)
-            || (ti >= &bg_window_after.start && ti <= &bg_window_after.end)
+    let is_in_bg = |ti: f64| {
+        (ti >= bg_window_before.start && ti <= bg_window_before.end)
+            || (ti >= bg_window_after.start && ti <= bg_window_after.end)
     };
 
     if !t.iter().any(is_in_bg) {

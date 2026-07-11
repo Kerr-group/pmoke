@@ -5,6 +5,7 @@ use std::f64::consts::PI;
 
 use crate::config::Config;
 use crate::lockin::reference::ref_analysis::{RefFitParams, ReferenceFFT, ReferenceFitter};
+use crate::utils::time_axis::TimeAxisRef;
 use crate::utils::waveform::read_waveform_channels;
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
@@ -40,7 +41,7 @@ pub fn run_fit_ref(cfg: &Config) -> Result<RefFitParams> {
     Ok(results)
 }
 
-fn stride_samples(cfg: &Config, t: &[f64], ref_data: &[f64]) -> (Vec<f64>, Vec<f64>) {
+fn stride_samples(cfg: &Config, t: TimeAxisRef<'_>, ref_data: &[f64]) -> (Vec<f64>, Vec<f64>) {
     let stride_samples = cfg.reference.stride_samples;
     let window_samples = cfg.reference.window_samples;
 
@@ -54,7 +55,7 @@ fn stride_samples(cfg: &Config, t: &[f64], ref_data: &[f64]) -> (Vec<f64>, Vec<f
     while i < t.len() {
         let end = (i + block_len).min(t.len());
 
-        fit_t.extend_from_slice(&t[i..end]);
+        fit_t.extend((i..end).map(|index| t.value_at(index)));
         fit_ref_data.extend_from_slice(&ref_data[i..end]);
 
         i += stride_samples;
@@ -63,15 +64,27 @@ fn stride_samples(cfg: &Config, t: &[f64], ref_data: &[f64]) -> (Vec<f64>, Vec<f
     (fit_t, fit_ref_data)
 }
 
-pub fn run_fit_ref_core(cfg: &Config, t: &[f64], ref_data: &[f64]) -> Result<RefFitParams> {
+pub fn run_fit_ref_core<'a>(
+    cfg: &Config,
+    t: impl Into<TimeAxisRef<'a>>,
+    ref_data: &[f64],
+) -> Result<RefFitParams> {
+    let t = t.into();
+    if t.len() != ref_data.len() {
+        bail!(
+            "time length ({}) and reference length ({}) differ",
+            t.len(),
+            ref_data.len()
+        );
+    }
     let fft_t_start = cfg.reference.fft_window.start;
     let fft_t_end = cfg.reference.fft_window.end;
 
     let (idx_start, idx_end) = get_range_indices(t, fft_t_start, fft_t_end)?;
 
-    let fft_t = &t[idx_start..idx_end];
+    let fft_t = t.values(idx_start..idx_end);
     let fft_ref_data = &ref_data[idx_start..idx_end];
-    let fft_results = fft_ref(fft_t, fft_ref_data).context("failed to fft reference signal")?;
+    let fft_results = fft_ref(&fft_t, fft_ref_data).context("failed to fft reference signal")?;
 
     ui::info(format!(
         "reference FFT: f_ref = {:.6} MHz, A_ref = {:.6}, omega_tref = {:.6} rad",
@@ -145,9 +158,9 @@ fn fit_ref(t: &[f64], ref_data: &[f64], params: RefFitParams) -> Result<RefFitPa
     Ok(results)
 }
 
-fn get_range_indices(t: &[f64], start: f64, end: f64) -> Result<(usize, usize)> {
-    let idx_start = t.partition_point(|&x| x < start);
-    let idx_end = t.partition_point(|&x| x <= end);
+fn get_range_indices(t: TimeAxisRef<'_>, start: f64, end: f64) -> Result<(usize, usize)> {
+    let idx_start = t.partition_point(|x| x < start);
+    let idx_end = t.partition_point(|x| x <= end);
 
     if idx_start >= idx_end {
         bail!(
@@ -188,7 +201,7 @@ fn plot_fit_results(
             let t_start_plot = t_start_data;
             let t_end_plot = t_start_data + 3.0 * t_period;
 
-            let (idx_start, idx_end) = get_range_indices(t, t_start_plot, t_end_plot)?;
+            let (idx_start, idx_end) = get_range_indices(t.into(), t_start_plot, t_end_plot)?;
 
             let t_plot = &t[idx_start..idx_end];
             let ref_plot = &ref_data[idx_start..idx_end];

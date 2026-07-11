@@ -65,12 +65,25 @@ fn legacy_boxcar_recovers_known_fundamental_amplitude_and_phase() {
 
     let processor = LockinProcessor::new(&t, &data, f_ref, reference_phase, &lockin).unwrap();
     let result = processor.compute_harmonic_detailed(1, false);
+    let uniform_time =
+        crate::utils::time_axis::WaveformTime::Uniform(crate::utils::raw_data::RawTimeAxis {
+            sample_count: t.len(),
+            x_increment: dt,
+            x_origin: 0.0,
+            x_reference: 0.0,
+        });
+    let uniform_result =
+        LockinProcessor::new(&uniform_time, &data, f_ref, reference_phase, &lockin)
+            .unwrap()
+            .compute_harmonic_detailed(1, false);
     let expected_phase = signal_phase + reference_phase;
     let expected_x = 0.5 * amplitude * expected_phase.cos();
     let expected_y = 0.5 * amplitude * expected_phase.sin();
 
     assert!(!result.li_x.is_empty());
     assert_eq!(result.li_x.len(), result.li_y.len());
+    assert_eq!(result.li_x, uniform_result.li_x);
+    assert_eq!(result.li_y, uniform_result.li_y);
     for (&actual_x, &actual_y) in result.li_x.iter().zip(&result.li_y) {
         assert!((actual_x - expected_x).abs() < 1.0e-12, "x={actual_x}");
         assert!((actual_y - expected_y).abs() < 1.0e-12, "y={actual_y}");
@@ -515,7 +528,7 @@ fn direct_legacy_lockin(
         .t
         .iter()
         .zip(processor.data.iter())
-        .map(|(&t, &data)| data * processor.ref_signal(t, harmonic, ref_type))
+        .map(|(t, &data)| data * processor.ref_signal(t, harmonic, ref_type))
         .collect();
 
     let i_start = processor.params.i_start;

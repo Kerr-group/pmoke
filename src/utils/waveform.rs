@@ -5,6 +5,7 @@ use crate::utils::csv::read_selected_columns;
 use crate::utils::raw_data::{
     RawTimeAxis, RawVoltageScale, TimeAxisError, TimeAxisMismatch, VoltageScaleError,
 };
+use crate::utils::time_axis::WaveformTime;
 use anyhow::{Context, Result, anyhow, bail};
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -48,7 +49,7 @@ struct RawChannelMetadata {
 
 #[derive(Debug)]
 pub struct WaveformData {
-    pub t: Vec<f64>,
+    pub t: WaveformTime,
     pub channels: Vec<Vec<f64>>,
 }
 
@@ -83,16 +84,15 @@ fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
     })?;
 
     let t = if time_index.is_some() {
-        columns.remove(0)
+        WaveformTime::Explicit(columns.remove(0))
     } else if let Some(timebase) = &cfg.legacy_timebase {
         let sample_count = columns.first().map_or(0, Vec::len);
-        RawTimeAxis {
+        WaveformTime::Uniform(RawTimeAxis {
             sample_count,
             x_increment: timebase.dt,
             x_origin: timebase.t0,
             x_reference: 0.0,
-        }
-        .build()
+        })
     } else {
         bail!(
             "{} has no time column; fetch again with the current version or use raw_waveform metadata",
@@ -137,9 +137,7 @@ pub fn read_raw_waveform_channels_from_dir(
         .iter()
         .map(read_raw_channel_data)
         .collect::<Result<Vec<_>>>()?;
-    let t = time_axis
-        .ok_or_else(|| anyhow!("no raw channels requested"))?
-        .build();
+    let t = WaveformTime::Uniform(time_axis.ok_or_else(|| anyhow!("no raw channels requested"))?);
 
     Ok(WaveformData { t, channels })
 }

@@ -515,7 +515,8 @@ y_reference = 0.0
 
     let waveform = read_raw_waveform_channels_from_dir(&dir, &[2, 1]).unwrap();
 
-    assert_eq!(waveform.t, vec![-2.0, -1.5]);
+    assert!(matches!(waveform.t, WaveformTime::Uniform(_)));
+    assert_eq!(waveform.t.to_vec(), vec![-2.0, -1.5]);
     assert_eq!(waveform.channels, vec![vec![20.0, 22.0], vec![0.0, 1.0]]);
     fs::remove_dir_all(dir).unwrap();
 }
