@@ -157,6 +157,12 @@ pub enum ExportCommand {
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
+    /// Convert analysis result CSV files to NumPy tables
+    Npy {
+        /// Destination directory (defaults to analysis_npy)
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
 }
 
 #[cfg(feature = "hw")]
@@ -283,5 +289,17 @@ mod config_command_tests {
 
         let cli = Cli::try_parse_from(["pmoke", "analyze", "--run-dir", "shot_000124"]).unwrap();
         assert_eq!(cli.run_dir, Some(PathBuf::from("shot_000124")));
+    }
+
+    #[test]
+    fn parses_analysis_npy_export() {
+        let cli =
+            Cli::try_parse_from(["pmoke", "export", "npy", "--output", "shot/analysis"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Export {
+                command: ExportCommand::Npy { output: Some(_) }
+            })
+        ));
     }
 }

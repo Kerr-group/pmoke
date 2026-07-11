@@ -57,6 +57,7 @@ pmoke --config config.toml monitor    # terminal dashboard
 pmoke --config config.toml fetch      # fetch waveforms
 pmoke --config config.toml raw verify # verify stored RAW data
 pmoke --config config.toml export csv # explicitly convert verified RAW to CSV
+pmoke --config config.toml export npy # export analysis tables for NumPy
 pmoke --config config.toml doctor     # check storage, Python, and hardware
 pmoke --config config.toml analyze    # analyze existing data
 pmoke --config config.toml process    # fetch + analyze
@@ -189,6 +190,10 @@ WORD payload and avoids huge CSV files in the hot path.
 Keep acquisition on the RAW path for production runs. Convert later with
 `pmoke export csv`; the command verifies the manifest and checksums before it
 creates a new CSV and refuses to overwrite an existing destination.
+
+After analysis, `pmoke export npy` writes C-order little-endian f64 NumPy
+tables plus `analysis_npy/metadata.toml`. The metadata preserves every column
+name and source CSV; the export never replaces the primary RAW acquisition.
 
 Use `data.input = "raw"` for strict raw analysis, or `"auto"` while
 migrating existing data directories.

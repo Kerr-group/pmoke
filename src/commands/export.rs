@@ -5,6 +5,8 @@ use crate::ui;
 use crate::utils::waveform::export_raw_waveform_csv;
 use anyhow::Result;
 
+mod npy;
+
 pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
     match command {
         ExportCommand::Csv { input, output } => {
@@ -13,6 +15,10 @@ pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
             let input = input.as_deref().unwrap_or(&default_input);
             let output = output.as_deref().unwrap_or(&default_output);
             csv(input, output)
+        }
+        ExportCommand::Npy { output } => {
+            let default_output = cfg.artifact_path("analysis_npy");
+            npy::export(cfg, output.as_deref().unwrap_or(&default_output))
         }
     }
 }
