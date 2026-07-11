@@ -1,3 +1,4 @@
+mod analysis_results;
 mod cli;
 mod commands;
 #[cfg(feature = "hw")]

@@ -13,10 +13,12 @@ pub fn install_completion(shell: Shell) -> Result<()> {
 
     match shell {
         Shell::Fish => {
-            let dest = dirs::home_dir()
-                .unwrap()
-                .join(".config/fish/completions/pmoke.fish");
-            fs::create_dir_all(dest.parent().unwrap())?;
+            let home = dirs::home_dir().context("could not determine home directory")?;
+            let dest = home.join(".config/fish/completions/pmoke.fish");
+            let parent = dest
+                .parent()
+                .context("fish completion destination has no parent directory")?;
+            fs::create_dir_all(parent)?;
             fs::write(&dest, buffer)
                 .with_context(|| format!("failed to write completion to {:?}", dest))?;
             ui::success(format!("installed fish completion at {}", dest.display()));

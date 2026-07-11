@@ -2,4 +2,6 @@
 *.csv
 .jukit
 *.png
+__pycache__/
+*.py[cod]
 target/

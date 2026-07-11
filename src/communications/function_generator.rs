@@ -1,6 +1,6 @@
 use crate::communications::validator::validate_fg;
 use crate::config::{Config, Connection};
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use instruments::nf::WF1946B;
 
 pub enum FG {
@@ -18,10 +18,10 @@ impl FGHandler {
         let fg_cfg = cfg
             .instruments
             .as_ref()
-            .unwrap()
+            .context("instrument configuration is missing")?
             .function_generator
             .as_ref()
-            .unwrap();
+            .context("function generator configuration is missing")?;
 
         let model = fg_cfg.model.as_str();
         let connection = &fg_cfg.connection;
@@ -31,7 +31,7 @@ impl FGHandler {
                 let wf = WF1946B::open(*address as i32)?;
                 FG::WF1946B(wf)
             }
-            (other, _) => return Err(anyhow!("Unknown oscilloscope model: {other}")),
+            (other, _) => return Err(anyhow!("unknown function generator model: {other}")),
         };
 
         Ok(Self { inner: fg })

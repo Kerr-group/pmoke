@@ -1,6 +1,6 @@
 use crate::communications::validator::validate_oscilloscope;
 use crate::config::{Config, Connection};
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use instruments::rigol::{DHO5108, DhoHorizontalSettings, DhoRawWaveform, DhoRawWaveformWritten};
 use std::io::Write;
 
@@ -16,7 +16,11 @@ impl OscilloscopeHandler {
     pub fn initialize(cfg: &Config) -> Result<Self> {
         validate_oscilloscope(cfg)?;
 
-        let osc_cfg = &cfg.instruments.as_ref().unwrap().oscilloscope;
+        let osc_cfg = &cfg
+            .instruments
+            .as_ref()
+            .context("oscilloscope configuration is missing")?
+            .oscilloscope;
 
         let model = osc_cfg.model.as_str();
         let connection = &osc_cfg.connection;
