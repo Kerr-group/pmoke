@@ -121,6 +121,21 @@ fn replace_file(source: &Path, destination: &Path) -> Result<()> {
     })
 }
 
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> Result<()> {
+    if destination.exists() {
+        fs::remove_file(destination)
+            .with_context(|| format!("failed to remove {}", destination.display()))?;
+    }
+    fs::rename(source, destination).with_context(|| {
+        format!(
+            "failed to replace {} with {}",
+            destination.display(),
+            source.display()
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,19 +186,4 @@ mod tests {
             ))
         );
     }
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> Result<()> {
-    if destination.exists() {
-        fs::remove_file(destination)
-            .with_context(|| format!("failed to remove {}", destination.display()))?;
-    }
-    fs::rename(source, destination).with_context(|| {
-        format!(
-            "failed to replace {} with {}",
-            destination.display(),
-            source.display()
-        )
-    })
 }
