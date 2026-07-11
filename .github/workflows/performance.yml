@@ -101,6 +101,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p previous-performance
+          list_error="$(mktemp)"
+          set +e
           previous_run="$(
             gh run list \
               --workflow performance.yml \
@@ -108,10 +110,20 @@ jobs:
               --status success \
               --limit 1 \
               --json databaseId \
-              --jq '.[0].databaseId' 2>/dev/null || true
+              --jq '.[0].databaseId' 2>"$list_error"
           )"
+          list_status=$?
+          set -e
+          if [ "$list_status" -ne 0 ]; then
+            echo "::warning title=Previous performance run unavailable::gh run list failed with status $list_status"
+            sed 's/^/gh: /' "$list_error"
+            previous_run=""
+          fi
+          rm -f "$list_error"
           if [ -n "$previous_run" ]; then
-            gh run download "$previous_run" --dir previous-performance || true
+            if ! gh run download "$previous_run" --dir previous-performance; then
+              echo "::warning title=Previous performance artifacts unavailable::failed to download artifacts from run $previous_run"
+            fi
           fi
           python scripts/compare_performance.py \
             --current performance-results \

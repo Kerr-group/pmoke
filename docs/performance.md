@@ -34,6 +34,11 @@ JSON report, resource usage, commit, toolchain, CPU, OS, and architecture as an
 artifact. The 50-million-sample workload is reserved for a manual or
 self-hosted run.
 
+The workflow compares median time and peak RSS with the previous successful
+run when the case, sample count, and RAW channel count match. Changes above 30%
+are reported as informational warnings; shared-runner measurements do not gate
+the workflow.
+
 The benchmark contains deterministic RAW WORD decoding, sensor integration,
 `boxcar_legacy` lock-in with one and two workers, and Rust-to-NumPy copy
 workloads. `--channels` controls the RAW-to-CSV workload; weekly CI runs both
