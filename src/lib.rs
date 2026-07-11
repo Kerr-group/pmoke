@@ -28,7 +28,7 @@ pub fn run() -> Result<()> {
 #[doc(hidden)]
 pub fn run_analysis_pipeline(
     cfg: &config::Config,
-    data: utils::waveform::WaveformData,
+    data: &utils::waveform::WaveformData,
 ) -> Result<()> {
     commands::analyze::run_analyze(cfg, data)
 }

@@ -33,6 +33,56 @@ fn legacy_boxcar_weights_have_unit_dc_gain() {
 }
 
 #[test]
+fn legacy_boxcar_low_stride_fallback_matches_direct_integration() {
+    for stride_samples in 1..LEGACY_EDGE_BUFFER_MIN_STRIDE {
+        let lockin = Lockin {
+            workers: 1,
+            stride_samples,
+            lpf_kind: LockinLpfKind::BoxcarLegacy,
+            lpf_half_window_cycles: 1.25,
+            lpf_cutoff_hz: None,
+            lpf_cutoff_ref_ratio: None,
+            lpf_stopband_atten_db: 60.0,
+            lpf_sync_average_cycles: 1.0,
+            lpf_iir_order: 2,
+            lpf_debug_output: false,
+            lpf_debug_label: None,
+            lpf_debug_overwrite: false,
+            snr_background_window: None,
+            snr_signal_window: None,
+        };
+        let dt = 1.0e-4;
+        let f_ref = 100.0;
+        let t = (0..2_000)
+            .map(|index| index as f64 * dt)
+            .collect::<Vec<_>>();
+        let data = t
+            .iter()
+            .map(|&time| {
+                0.7 * (2.0 * PI * f_ref * time + 0.3).sin()
+                    + 0.1 * (4.0 * PI * f_ref * time - 0.2).cos()
+            })
+            .collect::<Vec<_>>();
+        let processor = LockinProcessor::new(&t, &data, f_ref, 0.17, &lockin).unwrap();
+        let actual = processor.compute_harmonic_detailed(1, false);
+        let expected_x = direct_legacy_lockin(&processor, 1, RefType::Sin);
+        let expected_y = direct_legacy_lockin(&processor, 1, RefType::Cos);
+
+        assert_eq!(actual.li_x.len(), expected_x.len());
+        assert_eq!(actual.li_y.len(), expected_y.len());
+        for ((&actual_x, &expected_x), (&actual_y, &expected_y)) in actual
+            .li_x
+            .iter()
+            .zip(&expected_x)
+            .zip(actual.li_y.iter().zip(&expected_y))
+        {
+            assert!((actual_x - expected_x).abs() < 1.0e-12);
+            assert!((actual_y - expected_y).abs() < 1.0e-12);
+        }
+    }
+}
+
+#[test]
 fn legacy_boxcar_recovers_known_fundamental_amplitude_and_phase() {
     let lockin = Lockin {
         workers: 1,

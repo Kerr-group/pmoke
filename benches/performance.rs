@@ -6,20 +6,22 @@ use pmoke::python;
 use pmoke::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use pmoke::utils::raw_data::RawTimeAxis;
 use pmoke::utils::time_axis::WaveformTime;
-use pmoke::utils::waveform::WaveformData;
 use pmoke::utils::waveform::convert_raw_word_to_voltages;
+use pmoke::utils::waveform::{WaveformData, read_raw_waveform_channels_from_dir};
 use pyo3::Python;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::hint::black_box;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[derive(Serialize)]
 struct Report {
     schema_version: u32,
+    case: &'static str,
     commit: String,
     rustc: String,
     os: &'static str,
@@ -41,93 +43,222 @@ struct Measurement {
 }
 
 struct Options {
+    case: BenchmarkCase,
     samples: usize,
     channels: usize,
     iterations: usize,
     output: Option<PathBuf>,
-    end_to_end: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BenchmarkCase {
+    All,
+    RawWordDecode,
+    RawWaveformRead,
+    SensorIntegral,
+    LockinWorker1,
+    LockinWorker2,
+    PythonCopy,
+    RawToCsv,
+    AnalysisPipeline,
+}
+
+impl BenchmarkCase {
+    fn parse(value: &str) -> Self {
+        match value {
+            "all" => Self::All,
+            "raw_word_decode" => Self::RawWordDecode,
+            "raw_waveform_read" => Self::RawWaveformRead,
+            "sensor_integral" => Self::SensorIntegral,
+            "lockin_w1" => Self::LockinWorker1,
+            "lockin_w2" => Self::LockinWorker2,
+            "python_copy" => Self::PythonCopy,
+            "raw_to_csv" => Self::RawToCsv,
+            "analysis_pipeline" => Self::AnalysisPipeline,
+            other => panic!("unknown benchmark case: {other}"),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::RawWordDecode => "raw_word_decode",
+            Self::RawWaveformRead => "raw_waveform_read",
+            Self::SensorIntegral => "sensor_integral",
+            Self::LockinWorker1 => "lockin_w1",
+            Self::LockinWorker2 => "lockin_w2",
+            Self::PythonCopy => "python_copy",
+            Self::RawToCsv => "raw_to_csv",
+            Self::AnalysisPipeline => "analysis_pipeline",
+        }
+    }
+
+    fn runs(self, target: Self) -> bool {
+        self == target || (self == Self::All && target != Self::AnalysisPipeline)
+    }
 }
 
 fn main() {
     let options = parse_options();
-    let words = synthetic_words(options.samples);
-    let times = synthetic_times(options.samples);
-    let signal = synthetic_signal(&times);
-    let raw_csv = BenchmarkRawCsv::new(&words, options.channels);
+    let words = options
+        .case
+        .runs(BenchmarkCase::RawWordDecode)
+        .then(|| synthetic_words(options.samples));
+    let needs_lockin_input = options.case.runs(BenchmarkCase::LockinWorker1)
+        || options.case.runs(BenchmarkCase::LockinWorker2);
+    let time_and_signal = needs_lockin_input.then(|| {
+        let times = synthetic_times(options.samples);
+        let signal = synthetic_signal(&times);
+        (times, signal)
+    });
+    let standalone_signal = (!needs_lockin_input
+        && (options.case.runs(BenchmarkCase::SensorIntegral)
+            || options.case.runs(BenchmarkCase::PythonCopy)))
+    .then(|| synthetic_signal_samples(options.samples));
+    let raw_fixture = (options.case.runs(BenchmarkCase::RawToCsv)
+        || options.case.runs(BenchmarkCase::RawWaveformRead))
+    .then(|| BenchmarkRawFixture::new(options.samples, options.channels));
     let analysis = options
-        .end_to_end
+        .case
+        .runs(BenchmarkCase::AnalysisPipeline)
         .then(|| AnalysisFixture::new(options.samples));
 
-    // One untimed run catches invalid inputs and reduces first-use noise.
-    black_box(convert_raw_word_to_voltages(&words, 2.5e-4, 0.0, 32_768.0).unwrap());
-    black_box(PulseIntegralCalculator::new(1.0e-7).integrate(&signal, 0.125, -2.0));
-    black_box(run_lockin(&times, &signal));
-    black_box(run_lockin_harmonics(&times, &signal, 1));
-    Python::attach(|py| black_box(python::f64_array1(py, &signal).len()));
-    raw_csv.write(options.samples);
+    // One untimed run per selected case catches invalid inputs and reduces first-use noise.
+    if options.case.runs(BenchmarkCase::RawWordDecode) {
+        black_box(
+            convert_raw_word_to_voltages(
+                words.as_deref().expect("RAW words are available"),
+                2.5e-4,
+                0.0,
+                32_768.0,
+            )
+            .unwrap(),
+        );
+    }
+    if options.case.runs(BenchmarkCase::RawWaveformRead) {
+        black_box(
+            raw_fixture
+                .as_ref()
+                .expect("RAW fixture is available")
+                .read_waveform(),
+        );
+    }
+    if options.case.runs(BenchmarkCase::SensorIntegral) {
+        let signal = selected_signal(&time_and_signal, &standalone_signal);
+        black_box(PulseIntegralCalculator::new(1.0e-7).integrate(signal, 0.125, -2.0));
+    }
+    for (case, workers) in [
+        (BenchmarkCase::LockinWorker1, 1),
+        (BenchmarkCase::LockinWorker2, 2),
+    ] {
+        if options.case.runs(case) {
+            let (times, signal) = time_and_signal.as_ref().expect("signal is available");
+            black_box(run_lockin_harmonics(times, signal, workers));
+        }
+    }
+    if options.case.runs(BenchmarkCase::PythonCopy) {
+        let signal = selected_signal(&time_and_signal, &standalone_signal);
+        Python::attach(|py| black_box(python::f64_array1(py, signal).len()));
+    }
+    if options.case.runs(BenchmarkCase::RawToCsv) {
+        raw_fixture
+            .as_ref()
+            .expect("RAW fixture is available")
+            .write_csv(options.samples);
+    }
     if let Some(analysis) = &analysis {
         analysis.run();
     }
     python::reset_transfer_stats();
 
-    let mut results = vec![
-        measure(
+    let mut results = Vec::new();
+    if options.case.runs(BenchmarkCase::RawWordDecode) {
+        let words = words.as_deref().expect("RAW words are available");
+        results.push(measure(
             "raw_word_decode",
             options.samples,
             words.len(),
             options.iterations,
             || {
-                convert_raw_word_to_voltages(black_box(&words), 2.5e-4, 0.0, 32_768.0)
+                convert_raw_word_to_voltages(black_box(words), 2.5e-4, 0.0, 32_768.0)
                     .unwrap()
                     .len()
             },
-        ),
-        measure(
+        ));
+    }
+    if options.case.runs(BenchmarkCase::RawWaveformRead) {
+        let raw_fixture = raw_fixture.as_ref().expect("RAW fixture is available");
+        results.push(measure(
+            "raw_waveform_read",
+            options.samples,
+            options.samples * options.channels * std::mem::size_of::<u16>(),
+            options.iterations,
+            || raw_fixture.read_waveform(),
+        ));
+    }
+    if options.case.runs(BenchmarkCase::SensorIntegral) {
+        let signal = selected_signal(&time_and_signal, &standalone_signal);
+        results.push(measure(
             "sensor_integral",
             options.samples,
-            signal.len() * std::mem::size_of::<f64>(),
+            std::mem::size_of_val(signal),
             options.iterations,
             || {
                 PulseIntegralCalculator::new(1.0e-7)
-                    .integrate(black_box(&signal), 0.125, -2.0)
+                    .integrate(black_box(signal), 0.125, -2.0)
                     .len()
             },
-        ),
-        measure(
+        ));
+    }
+    for (case, name, workers) in [
+        (
+            BenchmarkCase::LockinWorker1,
             "boxcar_legacy_harmonics_w1",
-            options.samples,
-            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
-            options.iterations,
-            || run_lockin_harmonics(black_box(&times), black_box(&signal), 1),
+            1,
         ),
-        measure(
+        (
+            BenchmarkCase::LockinWorker2,
             "boxcar_legacy_harmonics_w2",
-            options.samples,
-            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
-            options.iterations,
-            || run_lockin_harmonics(black_box(&times), black_box(&signal), 2),
+            2,
         ),
-        measure(
+    ] {
+        if options.case.runs(case) {
+            let (times, signal) = time_and_signal.as_ref().expect("signal is available");
+            results.push(measure(
+                name,
+                options.samples,
+                (times.len() + signal.len()) * std::mem::size_of::<f64>(),
+                options.iterations,
+                || run_lockin_harmonics(black_box(times), black_box(signal), workers),
+            ));
+        }
+    }
+    if options.case.runs(BenchmarkCase::PythonCopy) {
+        let signal = selected_signal(&time_and_signal, &standalone_signal);
+        results.push(measure(
             "python_f64_array_copy",
             options.samples,
-            signal.len() * std::mem::size_of::<f64>(),
+            std::mem::size_of_val(signal),
             options.iterations,
-            || Python::attach(|py| python::f64_array1(py, black_box(&signal)).len()),
-        ),
-        measure(
+            || Python::attach(|py| python::f64_array1(py, black_box(signal)).len()),
+        ));
+    }
+    if options.case.runs(BenchmarkCase::RawToCsv) {
+        let raw_fixture = raw_fixture.as_ref().expect("RAW fixture is available");
+        results.push(measure(
             "raw_to_csv",
             options.samples,
-            words.len() * options.channels,
+            options.samples * options.channels * std::mem::size_of::<u16>(),
             options.iterations,
             || {
-                raw_csv.write(options.samples);
+                raw_fixture.write_csv(options.samples);
                 options.samples
             },
-        ),
-    ];
+        ));
+    }
     if let Some(analysis) = &analysis {
         results.push(measure(
-            "analyze_end_to_end",
+            "analysis_pipeline",
             options.samples,
             options.samples * 4 * std::mem::size_of::<f64>(),
             options.iterations,
@@ -139,7 +270,8 @@ fn main() {
     }
 
     let report = Report {
-        schema_version: 4,
+        schema_version: 5,
+        case: options.case.name(),
         commit: command_output("git", &["rev-parse", "HEAD"]),
         rustc: command_output("rustc", &["--version"]),
         os: env::consts::OS,
@@ -163,13 +295,13 @@ fn parse_options() -> Options {
     // implicit invocation tiny; `cargo bench` supplies `--bench` and receives
     // the representative defaults below.
     let mut samples = 100_000;
+    let mut case = BenchmarkCase::All;
     let mut channels = 2;
     let mut iterations = 1;
     let mut cargo_bench = false;
     let mut samples_explicit = false;
     let mut iterations_explicit = false;
     let mut output = None;
-    let mut end_to_end = false;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -189,6 +321,9 @@ fn parse_options() -> Options {
                     .parse()
                     .expect("--samples must be a positive integer");
             }
+            "--case" => {
+                case = BenchmarkCase::parse(&args.next().expect("--case requires a value"));
+            }
             "--iterations" => {
                 iterations_explicit = true;
                 iterations = args
@@ -205,7 +340,7 @@ fn parse_options() -> Options {
                     .expect("--channels must be 2 or 4");
             }
             "--output" => output = Some(args.next().expect("--output requires a path").into()),
-            "--end-to-end" => end_to_end = true,
+            "--end-to-end" => case = BenchmarkCase::AnalysisPipeline,
             other => panic!("unknown benchmark option: {other}"),
         }
     }
@@ -221,15 +356,15 @@ fn parse_options() -> Options {
     assert!(iterations > 0, "iterations must be positive");
     assert!(matches!(channels, 2 | 4), "channels must be 2 or 4");
     assert!(
-        !end_to_end || samples >= 100_000,
-        "--end-to-end requires at least 100000 samples"
+        case != BenchmarkCase::AnalysisPipeline || samples >= 100_000,
+        "analysis_pipeline requires at least 100000 samples"
     );
     Options {
+        case,
         samples,
         channels,
         iterations,
         output,
-        end_to_end,
     }
 }
 
@@ -256,6 +391,17 @@ fn measure(
         input_bytes,
         output_values,
     }
+}
+
+fn selected_signal<'a>(
+    time_and_signal: &'a Option<(Vec<f64>, Vec<f64>)>,
+    standalone_signal: &'a Option<Vec<f64>>,
+) -> &'a [f64] {
+    time_and_signal
+        .as_ref()
+        .map(|(_, signal)| signal.as_slice())
+        .or(standalone_signal.as_deref())
+        .expect("signal is available")
 }
 
 fn median(values: &[Duration]) -> Duration {
@@ -293,12 +439,16 @@ fn synthetic_signal(times: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-fn run_lockin(times: &[f64], signal: &[f64]) -> usize {
-    let lockin = benchmark_lockin();
-    let processor = LockinProcessor::new(times, signal, 10_000.0, 0.2, &lockin)
-        .expect("valid benchmark lock-in configuration");
-    let result = processor.compute_harmonic_detailed(1, false);
-    black_box(result.li_x.len() + result.li_y.len())
+fn synthetic_signal_samples(samples: usize) -> Vec<f64> {
+    let dt = 1.0e-7;
+    let omega = 2.0 * std::f64::consts::PI * 10_000.0;
+    (0..samples)
+        .map(|index| {
+            let time = index as f64 * dt;
+            let noise = ((index.wrapping_mul(17) % 101) as f64 - 50.0) * 1.0e-4;
+            0.125 + 0.8 * (omega * time + 0.2).sin() + noise
+        })
+        .collect()
 }
 
 fn run_lockin_harmonics(times: &[f64], signal: &[f64], workers: usize) -> usize {
@@ -350,14 +500,14 @@ fn command_output(program: &str, args: &[&str]) -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-struct BenchmarkRawCsv {
+struct BenchmarkRawFixture {
     dir: PathBuf,
     output: PathBuf,
     files: Vec<String>,
 }
 
-impl BenchmarkRawCsv {
-    fn new(words: &[u8], channels: usize) -> Self {
+impl BenchmarkRawFixture {
+    fn new(sample_count: usize, channels: usize) -> Self {
         let unique = format!(
             "pmoke-performance-{}-{}",
             std::process::id(),
@@ -372,13 +522,18 @@ impl BenchmarkRawCsv {
             .map(|channel| format!("ch{channel}.u16le"))
             .collect::<Vec<_>>();
         for file in &files {
-            fs::write(dir.join(file), words).expect("write benchmark raw data");
+            write_synthetic_raw_file(&dir.join(file), sample_count);
         }
+        fs::write(
+            dir.join("metadata.toml"),
+            raw_metadata(sample_count, &files),
+        )
+        .expect("write benchmark RAW metadata");
         let output = dir.join("waveform.csv");
         Self { dir, output, files }
     }
 
-    fn write(&self, sample_count: usize) {
+    fn write_csv(&self, sample_count: usize) {
         if self.output.exists() {
             fs::remove_file(&self.output).expect("remove previous benchmark CSV");
         }
@@ -403,19 +558,60 @@ impl BenchmarkRawCsv {
         write_raw_csv(&self.output, &header_refs, &self.dir, &channels)
             .expect("write benchmark raw CSV");
     }
+
+    fn read_waveform(&self) -> usize {
+        let channels = (1..=self.files.len())
+            .map(|channel| u8::try_from(channel).expect("benchmark channel fits in u8"))
+            .collect::<Vec<_>>();
+        let waveform = read_raw_waveform_channels_from_dir(&self.dir, &channels)
+            .expect("read benchmark RAW waveform");
+        assert_eq!(waveform.t.len(), waveform.channels[0].len());
+        waveform.channels.iter().map(Vec::len).sum()
+    }
 }
 
-impl Drop for BenchmarkRawCsv {
+impl Drop for BenchmarkRawFixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
+fn write_synthetic_raw_file(path: &std::path::Path, sample_count: usize) {
+    const CHUNK_SAMPLES: usize = 64 * 1024;
+    let file = fs::File::create(path).expect("create benchmark RAW file");
+    let mut writer = BufWriter::with_capacity(1024 * 1024, file);
+    let mut bytes = Vec::with_capacity(CHUNK_SAMPLES * std::mem::size_of::<u16>());
+    let mut sample_start = 0usize;
+    while sample_start < sample_count {
+        let chunk_samples = (sample_count - sample_start).min(CHUNK_SAMPLES);
+        bytes.clear();
+        for index in sample_start..sample_start + chunk_samples {
+            let word = ((index.wrapping_mul(4051).wrapping_add(7919)) & 0xffff) as u16;
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        writer.write_all(&bytes).expect("write benchmark RAW chunk");
+        sample_start += chunk_samples;
+    }
+    writer.flush().expect("flush benchmark RAW file");
+}
+
+fn raw_metadata(sample_count: usize, files: &[String]) -> String {
+    let mut metadata = String::from(
+        "version = 1\n\n[oscilloscope]\nwaveform_format = \"WORD\"\nbyte_order = \"little-endian\"\n",
+    );
+    for (index, file) in files.iter().enumerate() {
+        let channel = index + 1;
+        metadata.push_str(&format!(
+            "\n[channels.ch{channel}]\nfile = \"{file}\"\nsample_count = {sample_count}\nx_increment = 1e-7\nx_origin = -1e-3\nx_reference = 0.0\ny_increment = 2.5e-4\ny_origin = 0.0\ny_reference = 32768.0\n"
+        ));
+    }
+    metadata
+}
+
 struct AnalysisFixture {
     dir: PathBuf,
     config: pmoke::config::Config,
-    channels: Vec<Vec<f64>>,
-    time: RawTimeAxis,
+    data: WaveformData,
 }
 
 impl AnalysisFixture {
@@ -459,23 +655,21 @@ impl AnalysisFixture {
         Self {
             dir,
             config,
-            channels: vec![sensor1, sensor2, reference, signal],
-            time: RawTimeAxis {
-                sample_count: samples,
-                x_increment: dt,
-                x_origin: t0,
-                x_reference: 0.0,
+            data: WaveformData {
+                t: WaveformTime::Uniform(RawTimeAxis {
+                    sample_count: samples,
+                    x_increment: dt,
+                    x_origin: t0,
+                    x_reference: 0.0,
+                }),
+                channels: vec![sensor1, sensor2, reference, signal],
             },
         }
     }
 
     fn run(&self) {
         let _cwd = CurrentDirGuard::enter(&self.dir);
-        let data = WaveformData {
-            t: WaveformTime::Uniform(self.time),
-            channels: self.channels.clone(),
-        };
-        pmoke::run_analysis_pipeline(&self.config, data)
+        pmoke::run_analysis_pipeline(&self.config, &self.data)
             .expect("run end-to-end analysis benchmark");
     }
 }

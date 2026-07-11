@@ -6,7 +6,7 @@ use anyhow::Result;
 pub fn process(cfg: &Config) -> Result<()> {
     let data = run_fetch_for_process(cfg)?;
 
-    run_analyze(cfg, data)?;
+    run_analyze(cfg, &data)?;
 
     Ok(())
 }

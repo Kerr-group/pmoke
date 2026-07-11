@@ -11,6 +11,7 @@ on:
     - cron: "17 3 * * 1"
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -38,6 +39,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python dependencies
+        if: matrix.channels == 2
         run: python -m pip install numpy scipy lmfit gsplot
 
       - name: Install Rust
@@ -57,22 +59,79 @@ jobs:
           mkdir -p performance-results
           benchmark="$(find target/release/deps -maxdepth 1 -type f -name 'performance-*' -perm -111 | head -n 1)"
           test -n "$benchmark"
-          /usr/bin/time -v -o performance-results/resources.txt \
-            "$benchmark" --bench \
-              --samples "${{ steps.workload.outputs.samples }}" \
-              --channels "${{ matrix.channels }}" \
-              --end-to-end \
-              --output performance-results/results.json
+          if [ "${{ matrix.channels }}" = "2" ]; then
+            cases=(raw_word_decode raw_waveform_read sensor_integral lockin_w1 lockin_w2 python_copy raw_to_csv analysis_pipeline)
+          else
+            cases=(raw_waveform_read raw_to_csv)
+          fi
+          overall_status=0
+          for case_name in "${cases[@]}"; do
+            set +e
+            /usr/bin/time -v -o "performance-results/resources-${case_name}.txt" \
+              "$benchmark" --bench \
+                --case "$case_name" \
+                --samples "${{ steps.workload.outputs.samples }}" \
+                --channels "${{ matrix.channels }}" \
+                --output "performance-results/results-${case_name}.json" \
+                > "performance-results/output-${case_name}.log" 2>&1
+            case_status=$?
+            set -e
+            echo "$case_status" > "performance-results/status-${case_name}.txt"
+            if [ "$case_status" -ne 0 ]; then
+              overall_status=1
+            fi
+          done
+          exit "$overall_status"
 
       - name: Record environment
+        if: always()
         run: |
+          mkdir -p performance-results
           {
             uname -a
+            python --version
+            python -m pip freeze
             rustc --version --verbose
             lscpu
           } > performance-results/environment.txt
 
+      - name: Compare with previous successful run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p previous-performance
+          list_error="$(mktemp)"
+          set +e
+          previous_run="$(
+            gh run list \
+              --workflow performance.yml \
+              --branch "$GITHUB_REF_NAME" \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId' 2>"$list_error"
+          )"
+          list_status=$?
+          set -e
+          if [ "$list_status" -ne 0 ]; then
+            echo "::warning title=Previous performance run unavailable::gh run list failed with status $list_status"
+            sed 's/^/gh: /' "$list_error"
+            previous_run=""
+          fi
+          rm -f "$list_error"
+          if [ -n "$previous_run" ]; then
+            if ! gh run download "$previous_run" --dir previous-performance; then
+              echo "::warning title=Previous performance artifacts unavailable::failed to download artifacts from run $previous_run"
+            fi
+          fi
+          python scripts/compare_performance.py \
+            --current performance-results \
+            --previous previous-performance \
+            --summary "$GITHUB_STEP_SUMMARY"
+
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: performance-${{ matrix.channels }}ch-${{ github.sha }}
