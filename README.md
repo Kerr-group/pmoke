@@ -56,6 +56,7 @@ pmoke --config config.toml config migrate # preview a config migration
 pmoke --config config.toml monitor    # terminal dashboard
 pmoke --config config.toml fetch      # fetch waveforms
 pmoke --config config.toml raw verify # verify stored RAW data
+pmoke --config config.toml export csv # explicitly convert verified RAW to CSV
 pmoke --config config.toml doctor     # check storage, Python, and hardware
 pmoke --config config.toml analyze    # analyze existing data
 pmoke --config config.toml process    # fetch + analyze
@@ -172,6 +173,10 @@ With v4, relative data and plot paths are resolved from the config directory.
 
 Use `data.output = "raw"` for large DHO captures. It preserves the original
 WORD payload and avoids huge CSV files in the hot path.
+
+Keep acquisition on the RAW path for production runs. Convert later with
+`pmoke export csv`; the command verifies the manifest and checksums before it
+creates a new CSV and refuses to overwrite an existing destination.
 
 Use `data.input = "raw"` for strict raw analysis, or `"auto"` while
 migrating existing data directories.

@@ -8,6 +8,7 @@ pub mod autoshot;
 pub mod completions;
 pub mod config;
 pub mod doctor;
+pub mod export;
 #[cfg(feature = "hw")]
 pub mod fetch;
 pub mod kerr;

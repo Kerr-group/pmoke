@@ -17,7 +17,7 @@ pub mod utils;
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use cli::{Cli, Command, ConfigCommand, RawCommand};
+use cli::{Cli, Command, ConfigCommand, ExportCommand, RawCommand};
 use config::{ConfigLoad, ValidationTarget};
 
 /// Parses command-line arguments and runs pmoke.
@@ -59,6 +59,17 @@ fn run_with(args: Cli) -> Result<()> {
         return commands::raw::verify(input);
     }
 
+    if let Some(Command::Export {
+        command:
+            ExportCommand::Csv {
+                input: Some(input),
+                output: Some(output),
+            },
+    }) = args.command.as_ref()
+    {
+        return commands::export::csv(input, output);
+    }
+
     let load = config::load_from_path(&args.config);
 
     match args.command.as_ref() {
@@ -84,6 +95,10 @@ fn run_with(args: Cli) -> Result<()> {
         commands::show::print_warnings(&warnings);
         return commands::raw::run(&cfg, command);
     }
+    if let Some(Command::Export { command }) = args.command.as_ref() {
+        commands::show::print_warnings(&warnings);
+        return commands::export::run(&cfg, command);
+    }
     if let Some(Command::Doctor { json, probe_fetch }) = args.command.as_ref() {
         return commands::doctor::run(&cfg, &warnings, *json, *probe_fetch);
     }
@@ -97,6 +112,7 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Monitor
                 | Command::Config { .. }
                 | Command::Raw { .. }
+                | Command::Export { .. }
                 | Command::Doctor { .. },
             ) => unreachable!(),
             Some(Command::Single) => {
@@ -161,6 +177,7 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Monitor
                 | Command::Config { .. }
                 | Command::Raw { .. }
+                | Command::Export { .. }
                 | Command::Doctor { .. },
             ) => unreachable!(),
             Some(Command::Reference) => run_validated(

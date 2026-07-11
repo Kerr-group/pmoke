@@ -5,6 +5,7 @@ use crate::constants::{
 };
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::read_selected_columns;
+use crate::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use crate::utils::raw_data::{
     RawTimeAxis, RawVoltageScale, TimeAxisError, TimeAxisMismatch, VoltageScaleError,
 };
@@ -75,6 +76,12 @@ pub struct RawVerification {
     pub sample_count: usize,
     pub total_bytes: u64,
     pub checksums_verified: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawCsvExport {
+    pub channel_count: usize,
+    pub sample_count: usize,
 }
 
 pub fn read_all_fetched_waveforms(cfg: &Config) -> Result<WaveformData> {
@@ -172,16 +179,7 @@ pub fn verify_raw_waveform_dir(base_dir: &Path) -> Result<RawVerification> {
     validate_raw_format(&metadata)?;
     validate_manifest_config(base_dir, &metadata)?;
 
-    let declared_channels = metadata
-        .channels
-        .keys()
-        .map(|key| {
-            key.strip_prefix("ch")
-                .ok_or_else(|| anyhow!("raw channel metadata key must start with ch: {key}"))?
-                .parse::<u8>()
-                .with_context(|| format!("invalid raw channel metadata key: {key}"))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let declared_channels = declared_raw_channels(&metadata)?;
     if declared_channels.is_empty() {
         bail!("raw metadata contains no channels");
     }
@@ -215,6 +213,98 @@ pub fn verify_raw_waveform_dir(base_dir: &Path) -> Result<RawVerification> {
         total_bytes,
         checksums_verified: metadata.version == RAW_METADATA_VERSION,
     })
+}
+
+pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvExport> {
+    let verification = verify_raw_waveform_dir(base_dir)?;
+    ensure_export_path_available(output)?;
+    let metadata = read_raw_metadata(base_dir)?;
+    let mut declared_channels = declared_raw_channels(&metadata)?;
+    declared_channels.sort_unstable();
+    let channels = declared_channels
+        .iter()
+        .map(|channel| {
+            let key = format!("ch{channel}");
+            let metadata = metadata
+                .channels
+                .get(&key)
+                .ok_or_else(|| anyhow!("raw channel missing in metadata: {key}"))?;
+            Ok(RawCsvChannel {
+                file: &metadata.file,
+                sample_count: metadata.sample_count,
+                x_increment: metadata.x_increment,
+                x_origin: metadata.x_origin,
+                x_reference: metadata.x_reference,
+                y_increment: metadata.y_increment,
+                y_origin: metadata.y_origin,
+                y_reference: metadata.y_reference,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let headers = std::iter::once("time (s)".to_string())
+        .chain(
+            declared_channels
+                .iter()
+                .map(|channel| format!("ch{channel}")),
+        )
+        .collect::<Vec<_>>();
+    let header_refs = headers.iter().map(String::as_str).collect::<Vec<_>>();
+    let temporary = export_temporary_path(output);
+    ensure_export_path_available(&temporary)?;
+    let result = (|| {
+        write_raw_csv(&temporary, &header_refs, base_dir, &channels)?;
+        fs::rename(&temporary, output).with_context(|| {
+            format!(
+                "failed to publish CSV export {} as {}",
+                temporary.display(),
+                output.display()
+            )
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result?;
+    Ok(RawCsvExport {
+        channel_count: verification.channel_count,
+        sample_count: verification.sample_count,
+    })
+}
+
+fn declared_raw_channels(metadata: &RawWaveformMetadata) -> Result<Vec<u8>> {
+    metadata
+        .channels
+        .keys()
+        .map(|key| {
+            key.strip_prefix("ch")
+                .ok_or_else(|| anyhow!("raw channel metadata key must start with ch: {key}"))?
+                .parse::<u8>()
+                .with_context(|| format!("invalid raw channel metadata key: {key}"))
+        })
+        .collect()
+}
+
+fn ensure_export_path_available(path: &Path) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create CSV output parent: {}", parent.display()))?;
+    }
+    match fs::symlink_metadata(path) {
+        Ok(_) => bail!("CSV output already exists: {}", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to inspect CSV output: {}", path.display()))
+        }
+    }
+}
+
+fn export_temporary_path(output: &Path) -> PathBuf {
+    let mut name = output.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.tmp", std::process::id()));
+    output.with_file_name(name)
 }
 
 fn read_raw_metadata(base_dir: &Path) -> Result<RawWaveformMetadata> {

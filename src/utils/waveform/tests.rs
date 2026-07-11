@@ -690,6 +690,58 @@ y_reference = 0.0
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn raw_csv_export_verifies_and_preserves_numeric_channel_order() {
+    let dir = unique_test_dir("raw_csv_export");
+    let output = unique_test_path("raw_csv_export.csv");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("ch1.u16le"), [0_u8, 0, 2, 0]).unwrap();
+    fs::write(dir.join("ch2.u16le"), [1_u8, 0, 3, 0]).unwrap();
+    fs::write(
+        dir.join(RAW_METADATA_FNAME),
+        r#"
+version = 1
+
+[oscilloscope]
+waveform_format = "WORD"
+byte_order = "little-endian"
+
+[channels.ch2]
+file = "ch2.u16le"
+sample_count = 2
+x_increment = 0.5
+x_origin = 1.0
+x_reference = 0.0
+y_increment = 1.0
+y_origin = 0.0
+y_reference = 0.0
+
+[channels.ch1]
+file = "ch1.u16le"
+sample_count = 2
+x_increment = 0.5
+x_origin = 1.0
+x_reference = 0.0
+y_increment = 1.0
+y_origin = 0.0
+y_reference = 0.0
+"#,
+    )
+    .unwrap();
+
+    let report = export_raw_waveform_csv(&dir, &output).unwrap();
+    let csv = fs::read_to_string(&output).unwrap();
+
+    assert_eq!(report.channel_count, 2);
+    assert_eq!(report.sample_count, 2);
+    assert_eq!(csv, "time (s),ch1,ch2\n1,0,1\n1.5,2,3\n");
+    let error = export_raw_waveform_csv(&dir, &output).unwrap_err();
+    assert!(error.to_string().contains("already exists"));
+    assert_eq!(fs::read_to_string(&output).unwrap(), csv);
+    fs::remove_file(output).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn raw_metadata_with_channel(
     ch: u8,
     file: impl Into<String>,
