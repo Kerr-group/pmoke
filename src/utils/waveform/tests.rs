@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::checksum::sha256_hex;
 use std::path::PathBuf;
 
 #[test]
@@ -532,9 +533,9 @@ fn read_raw_waveform_v2_verifies_config_and_channel_checksums() {
     fs::write(dir.join("config.source.toml"), config).unwrap();
     fs::write(dir.join("config.resolved.toml"), resolved_config).unwrap();
     fs::write(dir.join("ch1.u16le"), raw).unwrap();
-    let config_sha = format!("{:x}", Sha256::digest(config));
-    let resolved_config_sha = format!("{:x}", Sha256::digest(resolved_config));
-    let raw_sha = format!("{:x}", Sha256::digest(raw));
+    let config_sha = sha256_hex(config);
+    let resolved_config_sha = sha256_hex(resolved_config);
+    let raw_sha = sha256_hex(&raw);
     fs::write(
         dir.join(RAW_METADATA_FNAME),
         format!(
