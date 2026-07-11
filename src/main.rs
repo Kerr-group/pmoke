@@ -17,7 +17,7 @@ mod utils;
 use anyhow::Result;
 use anyhow::bail;
 use clap::Parser;
-use cli::{Cli, Command};
+use cli::{Cli, Command, ConfigCommand};
 use config::{ConfigLoad, ValidationTarget};
 
 fn main() -> Result<()> {
@@ -26,6 +26,19 @@ fn main() -> Result<()> {
     if let Some(Command::Completions { shell }) = args.command.as_ref() {
         commands::completions::install_completion(*shell)?;
         return Ok(());
+    }
+
+    if let Some(Command::Config { command }) = args.command.as_ref() {
+        let check = matches!(command, ConfigCommand::Migrate { check: true, .. });
+        match commands::config::run(&args.config, command) {
+            Ok(outcome) if outcome.exit_code == 0 => return Ok(()),
+            Ok(outcome) => std::process::exit(i32::from(outcome.exit_code)),
+            Err(error) if check => {
+                eprintln!("Config migration blocked: {error:#}");
+                std::process::exit(2);
+            }
+            Err(error) => return Err(error),
+        }
     }
 
     let load = config::load_from_path(&args.config);
@@ -49,6 +62,7 @@ fn main() -> Result<()> {
         match args.command.as_ref() {
             Some(Command::Show) => unreachable!(),
             Some(Command::Monitor) => unreachable!(),
+            Some(Command::Config { .. }) => unreachable!(),
             Some(Command::Single) => {
                 config::validate_for_target(&cfg, ValidationTarget::Single)?;
                 commands::single::single(&cfg)
@@ -115,6 +129,7 @@ fn main() -> Result<()> {
         match args.command.as_ref() {
             Some(Command::Show) => unreachable!(),
             Some(Command::Monitor) => unreachable!(),
+            Some(Command::Config { .. }) => unreachable!(),
             Some(Command::Reference) => {
                 config::validate_for_target(&cfg, ValidationTarget::Reference)?;
                 commands::reference::reference(&cfg)

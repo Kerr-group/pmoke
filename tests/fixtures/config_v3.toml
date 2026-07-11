@@ -1,0 +1,45 @@
+version = 3
+
+[instruments.oscilloscope]
+connection = { protocol = "tcpip", ip = "192.168.10.100", port = 55255 }
+model = "DHO5108"
+
+[roles]
+sensor_ch = [1]
+reference_ch = 2
+signal_ch = [3]
+
+[[channels]]
+index = 1
+scale_to_abs_max = -55.0
+label = "$B$"
+unit_out = "T"
+
+[[channels]]
+index = 2
+
+[[channels]]
+index = 3
+
+[pulse]
+bg_window_before = { start = -5e-3, end = -0.1e-3 }
+bg_window_after = { start = 4.2e-3, end = 15e-3 }
+
+[reference]
+fft_window = { start = 0.0, end = 15e-3 }
+stride_samples = 10_000
+window_samples = 1_000
+
+[lockin]
+workers = 2
+stride_samples = 100
+lpf_kind = "boxcar_legacy"
+lpf_half_window_cycles = 1.0
+
+[phase]
+m_omega_t0_offset = [0, 0, 0, 0, 0, 0]
+
+[kerr]
+use_sensor_ch = 1
+kerr_type = "standard"
+factor = 1.0

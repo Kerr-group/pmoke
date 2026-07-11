@@ -1,4 +1,3 @@
-#[cfg(feature = "hw")]
 use std::path::PathBuf;
 
 #[cfg(feature = "hw")]
@@ -32,6 +31,11 @@ pub enum Command {
     Show,
     /// Open a live terminal dashboard for configuration and analysis artifacts
     Monitor,
+    /// Inspect and migrate configuration files
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
     /// Set single mode to the oscilloscope
     #[cfg(feature = "hw")]
     Single,
@@ -83,6 +87,32 @@ pub enum Command {
     },
 }
 
+#[derive(Subcommand, Debug)]
+pub enum ConfigCommand {
+    /// Migrate the config to the latest executable schema
+    Migrate {
+        /// Write the migrated TOML to FILE; use '-' for standard output
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["in_place", "check"])]
+        output: Option<PathBuf>,
+
+        /// Atomically replace the source config after creating a versioned backup
+        #[arg(long, conflicts_with_all = ["output", "check"])]
+        in_place: bool,
+
+        /// Only report whether a migration is required
+        #[arg(long, conflicts_with_all = ["output", "in_place"])]
+        check: bool,
+
+        /// Accept migration steps that can change legacy behavior
+        #[arg(long)]
+        accept_lossy: bool,
+
+        /// Require a specific target version instead of the latest executable version
+        #[arg(long, value_name = "VERSION")]
+        to: Option<u32>,
+    },
+}
+
 #[cfg(feature = "hw")]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum FetchFormat {
@@ -100,5 +130,55 @@ mod tests {
         let cli = Cli::try_parse_from(["pmoke", "screenshot"]).unwrap();
         assert!(matches!(cli.command, Some(Command::Screenshot)));
         assert!(Cli::try_parse_from(["pmoke", "image"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod config_command_tests {
+    use super::*;
+
+    #[test]
+    fn parses_config_migrate_options_without_hardware_feature() {
+        let cli = Cli::try_parse_from([
+            "pmoke",
+            "--config",
+            "old.toml",
+            "config",
+            "migrate",
+            "--output",
+            "new.toml",
+            "--accept-lossy",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Config {
+                command: ConfigCommand::Migrate {
+                    output: Some(_),
+                    accept_lossy: true,
+                    ..
+                }
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_conflicting_migration_destinations() {
+        assert!(
+            Cli::try_parse_from([
+                "pmoke",
+                "config",
+                "migrate",
+                "--output",
+                "new.toml",
+                "--in-place",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_unpublished_upgrade_command_name() {
+        assert!(Cli::try_parse_from(["pmoke", "config", "upgrade"]).is_err());
     }
 }

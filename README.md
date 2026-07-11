@@ -46,6 +46,7 @@ cargo run --release --no-default-features -- --config config.toml analyze
 
 ```text
 pmoke --config config.toml show       # validate config
+pmoke --config config.toml config migrate # preview a config migration
 pmoke --config config.toml monitor    # terminal dashboard
 pmoke --config config.toml fetch      # fetch waveforms
 pmoke --config config.toml analyze    # analyze existing data
@@ -54,6 +55,28 @@ pmoke --config config.toml auto       # single + trigger + fetch + analyze
 ```
 
 If no command is provided, `pmoke` opens `monitor`.
+
+### Migrate Legacy Configs
+
+Preview the migration to the latest executable config version:
+
+```sh
+pmoke --config config.toml config migrate
+```
+
+The preview does not modify files. Write to a new file with `--output`, or use
+`--in-place` to create a versioned backup and atomically replace the source:
+
+```sh
+pmoke --config config.toml config migrate --output config.migrated.toml
+pmoke --config config.toml config migrate --in-place
+```
+
+If a v1/v2 CSV has no time column, migration preserves `[timebase]`: v1 advances
+only to v2, and v2 remains v2. An explicit `--to 4` is blocked in that case.
+Other potential behavior changes, such as removing unused metadata or changing
+the artifact base directory, require `--accept-lossy`. Existing output and
+backup files are never overwritten.
 
 ## ⚙️ Example Config
 
@@ -73,10 +96,6 @@ output = "raw"       # "csv", "raw", or "both"
 input = "raw"        # "csv", "raw", or "auto"
 screenshot = true
 
-[channels]
-reference = 2
-signals = [3]
-
 [[sensors]]
 channel = 1
 scale = { max_abs = 55.0, polarity = -1 }
@@ -94,11 +113,13 @@ background_before = { start = -5e-3, end = -0.1e-3 }
 background_after  = { start = 43e-3, end = 46e-3 }
 
 [reference]
+channel = 2
 fft_window = { start = 0e-3, end = 15e-3 }
 stride_samples = 10_000
 window_samples = 1_000
 
 [lockin]
+signal_channels = [3]
 workers = 2
 stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
@@ -171,7 +192,7 @@ cutoff_hz < 0.45 * output_rate
 
 ## ✅ Config Rules
 
-- `channels.reference` is one channel; `channels.signals` is an array.
+- `reference.channel` is the reference input; `lockin.signal_channels` lists the demodulated inputs.
 - Each sensor defines exactly one scale: `{ factor = ... }` or `{ max_abs = ..., polarity = -1|1 }`.
 - `max_abs` scales the background-subtracted sensor integral to the requested maximum absolute value.
 - `kerr.sensor` must refer to a channel in `sensors`.
