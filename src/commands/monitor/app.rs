@@ -13,6 +13,8 @@ pub(super) struct MonitorApp {
     pub(super) action_query: String,
     pub(super) search_mode: bool,
     pub(super) last_run: Option<RunRecord>,
+    pub(super) run_history: std::collections::VecDeque<RunSnapshot>,
+    pub(super) history_view: Option<usize>,
     pub(super) active_run: Option<ActiveRun>,
     pub(super) run_output: Vec<LogEntry>,
     pub(super) last_stderr_kind: Option<LogKind>,
@@ -49,6 +51,8 @@ impl MonitorApp {
             action_query: String::new(),
             search_mode: false,
             last_run: None,
+            run_history: std::collections::VecDeque::new(),
+            history_view: None,
             active_run: None,
             run_output: Vec::new(),
             last_stderr_kind: None,
@@ -230,6 +234,60 @@ impl MonitorApp {
         self.active_run.is_some()
     }
 
+    pub(super) fn visible_output(&self) -> &[LogEntry] {
+        self.history_view
+            .and_then(|index| self.run_history.get(index))
+            .map(|snapshot| snapshot.output.as_slice())
+            .unwrap_or(&self.run_output)
+    }
+
+    pub(super) fn visible_run_record(&self) -> Option<&RunRecord> {
+        self.history_view
+            .and_then(|index| self.run_history.get(index))
+            .map(|snapshot| &snapshot.record)
+            .or(self.last_run.as_ref())
+    }
+
+    pub(super) fn history_position(&self) -> Option<(usize, usize)> {
+        self.history_view
+            .map(|index| (index + 1, self.run_history.len()))
+    }
+
+    pub(super) fn show_previous_run(&mut self) {
+        // While idle, the newest snapshot is also the live output and must be
+        // skipped. During a run, every completed snapshot is historical.
+        let live_is_latest_snapshot = !self.command_running();
+        let required = if live_is_latest_snapshot { 2 } else { 1 };
+        if self.run_history.len() < required {
+            return;
+        }
+        self.history_view = Some(match self.history_view {
+            Some(index) => index.saturating_sub(1),
+            None => self.run_history.len() - if live_is_latest_snapshot { 2 } else { 1 },
+        });
+        self.reset_output_view();
+    }
+
+    pub(super) fn show_next_run(&mut self) {
+        let Some(index) = self.history_view else {
+            return;
+        };
+        let next_is_history = if self.command_running() {
+            index + 1 < self.run_history.len()
+        } else {
+            index + 2 < self.run_history.len()
+        };
+        self.history_view = next_is_history.then_some(index + 1);
+        self.reset_output_view();
+    }
+
+    fn reset_output_view(&mut self) {
+        self.run_output_scroll = 0;
+        self.output_selection_anchor = None;
+        self.output_mouse_drag_active = false;
+        self.output_selected = last_renderable_output_index(self.visible_output());
+    }
+
     pub(super) fn cancel_command(&mut self, reason: CancelReason) {
         let Some(run) = &mut self.active_run else {
             return;
@@ -309,17 +367,19 @@ impl MonitorApp {
                 .push(LogEntry::with_kind(line.to_string(), kind));
             appended += 1;
         }
-        if self.run_output_scroll > 0 {
+        if self.history_view.is_none() && self.run_output_scroll > 0 {
             self.run_output_scroll += appended;
         }
-        const MAX_LOG_LINES: usize = 600;
+        const MAX_LOG_LINES: usize = 1_000;
         if self.run_output.len() > MAX_LOG_LINES {
             let extra = self.run_output.len() - MAX_LOG_LINES;
             self.run_output.drain(0..extra);
-            self.run_output_scroll = self.run_output_scroll.saturating_sub(extra);
-            self.output_selected = shift_log_index_after_drain(self.output_selected, extra);
-            self.output_selection_anchor =
-                shift_log_index_after_drain(self.output_selection_anchor, extra);
+            if self.history_view.is_none() {
+                self.run_output_scroll = self.run_output_scroll.saturating_sub(extra);
+                self.output_selected = shift_log_index_after_drain(self.output_selected, extra);
+                self.output_selection_anchor =
+                    shift_log_index_after_drain(self.output_selection_anchor, extra);
+            }
         }
         if self.run_output.is_empty() {
             self.output_selected = None;
@@ -380,8 +440,8 @@ impl MonitorApp {
 
     pub(super) fn focus_output(&mut self) {
         self.focus = FocusPane::Output;
-        if self.output_selected.is_none() && !self.run_output.is_empty() {
-            self.output_selected = last_renderable_output_index(&self.run_output);
+        if self.output_selected.is_none() && !self.visible_output().is_empty() {
+            self.output_selected = last_renderable_output_index(self.visible_output());
         }
     }
 
@@ -414,7 +474,7 @@ impl MonitorApp {
         let Some(selected) = self.output_selected else {
             return;
         };
-        if let Some(index) = previous_renderable_output_index(&self.run_output, selected) {
+        if let Some(index) = previous_renderable_output_index(self.visible_output(), selected) {
             self.set_output_selection(index, extend);
         }
     }
@@ -424,27 +484,27 @@ impl MonitorApp {
         let Some(selected) = self.output_selected else {
             return;
         };
-        if let Some(index) = next_renderable_output_index(&self.run_output, selected) {
+        if let Some(index) = next_renderable_output_index(self.visible_output(), selected) {
             self.set_output_selection(index, extend);
         }
     }
 
     pub(super) fn select_first_output(&mut self, extend: bool) {
         self.focus_output();
-        if self.run_output.is_empty() {
+        if self.visible_output().is_empty() {
             return;
         }
-        if let Some(index) = first_renderable_output_index(&self.run_output) {
+        if let Some(index) = first_renderable_output_index(self.visible_output()) {
             self.set_output_selection(index, extend);
         }
     }
 
     pub(super) fn select_last_output(&mut self, extend: bool) {
         self.focus_output();
-        if self.run_output.is_empty() {
+        if self.visible_output().is_empty() {
             return;
         }
-        if let Some(index) = last_renderable_output_index(&self.run_output) {
+        if let Some(index) = last_renderable_output_index(self.visible_output()) {
             self.set_output_selection(index, extend);
             self.follow_output();
         }
@@ -467,7 +527,7 @@ impl MonitorApp {
         } else {
             self.output_selection_anchor = None;
         }
-        self.output_selected = nearest_renderable_output_index(&self.run_output, index);
+        self.output_selected = nearest_renderable_output_index(self.visible_output(), index);
     }
 
     pub(super) fn selected_output_text(&self) -> Option<String> {
@@ -488,7 +548,7 @@ impl MonitorApp {
     pub(super) fn selected_output_entries(&self) -> Option<Vec<&LogEntry>> {
         let (start, end) = self.output_selection_range()?;
         Some(
-            self.run_output
+            self.visible_output()
                 .get(start..=end)?
                 .iter()
                 .filter(|entry| is_renderable_output_entry(entry))
@@ -552,7 +612,23 @@ impl MonitorApp {
             result,
             ok,
         });
+        self.archive_last_run();
         self.refresh();
+    }
+
+    pub(super) fn archive_last_run(&mut self) {
+        let Some(record) = self.last_run.clone() else {
+            return;
+        };
+        const MAX_RUN_HISTORY: usize = 10;
+        self.run_history.push_back(RunSnapshot {
+            record,
+            output: self.run_output.clone(),
+        });
+        while self.run_history.len() > MAX_RUN_HISTORY {
+            self.run_history.pop_front();
+        }
+        self.history_view = None;
     }
 }
 

@@ -35,7 +35,7 @@ impl UiLayout {
             };
         }
 
-        let inspector_height = if area.height >= 22 {
+        let inspector_height = if area.height >= 19 {
             COMPACT_INSPECTOR_HEIGHT
         } else {
             0
@@ -59,14 +59,12 @@ impl UiLayout {
 pub(super) fn workflow_panel_width(available_width: u16) -> u16 {
     let content_width = monitor_actions()
         .iter()
-        .enumerate()
-        .map(|(idx, action)| {
-            display_width(&format!(
-                "▌ {:02} ●  {} STP",
-                idx + 1,
-                action.command_name()
-            ))
-        })
+        .map(|action| display_width(&format!("▌   ●  {} STP", action.command_name())))
+        .chain(
+            super::actions::ActionGroup::ALL
+                .iter()
+                .map(|group| display_width(&format!("▌ ▾ {}", group.label()))),
+        )
         .max()
         .unwrap_or(WORKFLOW_MIN_WIDTH);
     let panel_width = content_width.saturating_add(2);

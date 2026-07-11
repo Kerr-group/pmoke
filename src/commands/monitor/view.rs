@@ -202,6 +202,8 @@ pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
         Span::raw("focus  "),
         Span::styled("i ", Style::default().fg(Color::Cyan)),
         Span::raw("inspect  "),
+        Span::styled("[ ] ", Style::default().fg(Color::Cyan)),
+        Span::raw("history  "),
         Span::styled("? ", Style::default().fg(Color::Cyan)),
         Span::raw("help  "),
         Span::styled(format!("[{focus}]"), Style::default().fg(Color::DarkGray)),
@@ -519,6 +521,7 @@ pub(super) fn render_run_output(
     area: Rect,
     effect_delta: FxDuration,
 ) {
+    let output = app.visible_output();
     let block_base = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -531,18 +534,20 @@ pub(super) fn render_run_output(
     let output_sections = output_inner_layout(inner);
     let log_area = output_sections.log;
     let log_width = log_area.width.saturating_sub(1);
-    let visual_lines_for_layout = if app.run_output.is_empty() {
+    let visual_lines_for_layout = if output.is_empty() {
         Vec::new()
     } else {
-        visual_output_lines(&app.run_output, log_width, None, None)
+        visual_output_lines(output, log_width, None, None)
     };
     let visual_line_count = visual_lines_for_layout.len();
     let selected_visual_range =
         visual_selection_range(&visual_lines_for_layout, app.output_selection_range());
     let visible_rows = output_visible_rows(log_area);
     let effective_scroll = effective_output_scroll(app, log_area, visual_line_count);
-    let title = if app.run_output.is_empty() {
+    let title = if output.is_empty() {
         " OUTPUT ".to_string()
+    } else if let Some((index, total)) = app.history_position() {
+        format!(" OUTPUT history {index}/{total} · {visual_line_count} lines ")
     } else if effective_scroll == 0 {
         format!(" OUTPUT latest · {visual_line_count} lines ")
     } else {
@@ -567,18 +572,18 @@ pub(super) fn render_run_output(
         return;
     }
 
-    let lines = if app.run_output.is_empty() {
+    let lines = if output.is_empty() {
         vec![Line::styled(
             "  ready",
             Style::default().fg(Color::DarkGray),
         )]
     } else {
         let visual_lines = visual_output_lines_with_motion(
-            &app.run_output,
+            output,
             log_width,
             app.output_selection_range(),
             app.output_selected,
-            app.command_running(),
+            app.command_running() && app.history_view.is_none(),
             timeline_motion_frame(app),
         );
         let end = visual_lines.len().saturating_sub(effective_scroll);
@@ -597,7 +602,7 @@ pub(super) fn render_run_output(
     frame.render_widget(
         output_header(
             log_chunks[0].width,
-            app.command_running(),
+            app.command_running() && app.history_view.is_none(),
             timeline_motion_frame(app),
         ),
         log_chunks[0],

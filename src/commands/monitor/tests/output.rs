@@ -160,7 +160,7 @@ fn stream_reader_frames_records_across_short_reads() {
         position: 0,
         chunk_size: 3,
     };
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = std::sync::mpsc::sync_channel(8);
     let handle = spawn_stream_reader(reader, OutputStream::Stderr, tx);
     handle.join().unwrap();
 

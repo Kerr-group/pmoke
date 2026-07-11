@@ -26,7 +26,7 @@ use std::{
     env, fs,
     io::{self, Read, Stdout},
     process::{Child, Command as ProcessCommand, ExitStatus, Stdio},
-    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -79,19 +79,86 @@ const EVENT_BADGE_WIDTH: usize = 6;
 const TIMELINE_BADGE_WIDTH: usize = 5;
 const EVENT_FEED_EFFECT_MS: u32 = 520;
 
-struct TerminalGuard<'a>(&'a mut Terminal<CrosstermBackend<Stdout>>);
+struct TerminalGuard<'a> {
+    terminal: &'a mut Terminal<CrosstermBackend<Stdout>>,
+    armed: bool,
+}
+
+impl<'a> TerminalGuard<'a> {
+    fn new(terminal: &'a mut Terminal<CrosstermBackend<Stdout>>) -> Self {
+        Self {
+            terminal,
+            armed: true,
+        }
+    }
+
+    fn terminal(&mut self) -> &mut Terminal<CrosstermBackend<Stdout>> {
+        self.terminal
+    }
+
+    fn restore(mut self) -> Result<()> {
+        self.armed = false;
+        restore_terminal(self.terminal)
+    }
+}
 
 impl Drop for TerminalGuard<'_> {
     fn drop(&mut self) {
-        let _ = restore_terminal(self.0);
+        if self.armed {
+            let _ = restore_terminal(self.terminal);
+        }
+    }
+}
+
+#[derive(Default)]
+struct TerminalSetupGuard {
+    raw_mode: bool,
+    alternate_screen: bool,
+    mouse_capture: bool,
+    armed: bool,
+}
+
+impl TerminalSetupGuard {
+    fn new() -> Self {
+        Self {
+            armed: true,
+            ..Self::default()
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TerminalSetupGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut stdout = io::stdout();
+        if self.mouse_capture {
+            let _ = execute!(stdout, DisableMouseCapture);
+        }
+        if self.alternate_screen {
+            let _ = execute!(stdout, LeaveAlternateScreen);
+        }
+        if self.raw_mode {
+            let _ = disable_raw_mode();
+        }
     }
 }
 
 pub fn monitor(config_path: &str, load: ConfigLoad) -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let guard = TerminalGuard(&mut terminal);
+    let mut guard = TerminalGuard::new(&mut terminal);
     let mut app = MonitorApp::new(config_path.to_string(), load);
-    run(guard.0, &mut app)
+    let run_result = run(guard.terminal(), &mut app);
+    let restore_result = guard.restore();
+    match run_result {
+        Err(error) => Err(error),
+        Ok(()) => restore_result,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -105,12 +172,19 @@ fn fx_duration(elapsed: Duration) -> FxDuration {
     FxDuration::from_millis(millis)
 }
 
+#[derive(Clone)]
 struct RunRecord {
     action: MonitorAction,
     label: &'static str,
     elapsed: Duration,
     result: String,
     ok: bool,
+}
+
+#[derive(Clone)]
+struct RunSnapshot {
+    record: RunRecord,
+    output: Vec<LogEntry>,
 }
 
 struct ActiveRun {
@@ -178,6 +252,7 @@ impl InspectorView {
     }
 }
 
+#[derive(Clone)]
 struct LogEntry {
     text: String,
     kind: LogKind,
@@ -210,9 +285,14 @@ enum OutputStream {
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+    let mut guard = TerminalSetupGuard::new();
     enable_raw_mode()?;
+    guard.raw_mode = true;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
+    guard.alternate_screen = true;
+    execute!(stdout, EnableMouseCapture)?;
+    guard.mouse_capture = true;
     let backend = CrosstermBackend::new(stdout);
     let terminal = Terminal::with_options(
         backend,
@@ -220,18 +300,22 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
             viewport: Viewport::Fullscreen,
         },
     )?;
+    guard.disarm();
     Ok(terminal)
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-    Ok(())
+    let mut first_error = disable_raw_mode().err().map(anyhow::Error::from);
+    if let Err(error) = execute!(terminal.backend_mut(), DisableMouseCapture) {
+        first_error.get_or_insert_with(|| error.into());
+    }
+    if let Err(error) = execute!(terminal.backend_mut(), LeaveAlternateScreen) {
+        first_error.get_or_insert_with(|| error.into());
+    }
+    if let Err(error) = terminal.show_cursor() {
+        first_error.get_or_insert_with(|| error.into());
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) -> Result<()> {
@@ -286,6 +370,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
                         }
                         KeyCode::Char('q') => return Ok(()),
                         KeyCode::Char('r') => app.refresh(),
+                        KeyCode::Char('[') => app.show_previous_run(),
+                        KeyCode::Char(']') => app.show_next_run(),
                         KeyCode::Char('a') => app.focus_actions(),
                         KeyCode::Char('o') => app.focus_output(),
                         KeyCode::Char('i') => app.cycle_inspector(),
@@ -595,7 +681,7 @@ fn select_action_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
 
 fn select_output_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16, extend: bool) -> bool {
     app.focus_output();
-    if app.run_output.is_empty() {
+    if app.visible_output().is_empty() {
         return false;
     }
 
@@ -607,7 +693,7 @@ fn select_output_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16, ext
     }
 
     let visible_rows = log_content.height.max(1) as usize;
-    let visual_lines = visual_output_lines(&app.run_output, log_content.width, None, None);
+    let visual_lines = visual_output_lines(app.visible_output(), log_content.width, None, None);
     let max_scroll = visual_lines.len().saturating_sub(visible_rows);
     let scroll = app.run_output_scroll.min(max_scroll);
     let end = visual_lines.len().saturating_sub(scroll);
@@ -639,7 +725,7 @@ fn ensure_selected_output_visible(app: &mut MonitorApp, area: Rect) {
     let Some(selected) = app.output_selected else {
         return;
     };
-    if app.run_output.is_empty() {
+    if app.visible_output().is_empty() {
         return;
     }
 
@@ -648,7 +734,7 @@ fn ensure_selected_output_visible(app: &mut MonitorApp, area: Rect) {
     };
     let visible_rows = log_content.height.max(1) as usize;
     let visual_lines = visual_output_lines(
-        &app.run_output,
+        app.visible_output(),
         log_content.width.saturating_sub(1),
         None,
         None,
@@ -683,12 +769,12 @@ fn effective_output_scroll(app: &MonitorApp, log_area: Rect, visual_line_count: 
 fn max_output_scroll_for_area(app: &MonitorApp, area: Rect) -> Option<usize> {
     let log_content = output_log_content_area(area)?;
     let visual_line_count =
-        visual_output_line_count(&app.run_output, log_content.width.saturating_sub(1));
+        visual_output_line_count(app.visible_output(), log_content.width.saturating_sub(1));
     Some(visual_line_count.saturating_sub(log_content.height.max(1) as usize))
 }
 
 fn clamp_output_scroll(app: &mut MonitorApp, area: Rect) {
-    if app.run_output.is_empty() {
+    if app.visible_output().is_empty() {
         app.run_output_scroll = 0;
         return;
     }
@@ -793,6 +879,11 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
     }
 
     if let Err(reason) = action_readiness(action, &app.load) {
+        app.history_view = None;
+        app.run_output.clear();
+        app.output_selected = None;
+        app.output_selection_anchor = None;
+        app.run_output_scroll = 0;
         app.last_run = Some(RunRecord {
             action,
             label: action.label(),
@@ -804,11 +895,13 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
             OutputStream::Stderr,
             &format!("{} is blocked: {reason}", action.label()),
         );
+        app.archive_last_run();
         return Ok(());
     }
 
     let table_width = output_table_width_for_area(area);
     let handle = spawn_command_runner(action, app.config_path.clone(), table_width)?;
+    app.history_view = None;
     app.run_output.clear();
     app.last_stderr_kind = None;
     app.output_selected = None;
@@ -843,7 +936,9 @@ fn spawn_command_runner(
 ) -> Result<RunHandle> {
     let exe = std::env::current_exe()?;
     let command_args = action.command_args();
-    let (tx, rx) = mpsc::channel();
+    // Keep verbose child output from growing without bound if rendering is
+    // briefly delayed. Readers naturally apply backpressure at this boundary.
+    let (tx, rx) = mpsc::sync_channel(512);
     let (cancel_tx, cancel_rx) = mpsc::channel();
 
     thread::spawn(move || {
@@ -932,7 +1027,7 @@ fn spawn_command_runner(
 fn stop_child(
     child: &mut Child,
     reason: CancelReason,
-    tx: &Sender<RunEvent>,
+    tx: &SyncSender<RunEvent>,
 ) -> io::Result<ExitStatus> {
     if let Err(err) = interrupt_child(child) {
         let _ = tx.send(RunEvent::Output(
@@ -985,7 +1080,7 @@ fn interrupt_child(child: &mut Child) -> io::Result<()> {
 fn spawn_stream_reader<R: Read + Send + 'static>(
     mut stream: R,
     kind: OutputStream,
-    tx: Sender<RunEvent>,
+    tx: SyncSender<RunEvent>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut read_buf = [0_u8; 4096];

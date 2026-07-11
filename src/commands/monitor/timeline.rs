@@ -408,10 +408,12 @@ pub(super) struct RunTimeline {
 }
 
 fn run_timeline(app: &MonitorApp) -> Option<RunTimeline> {
-    if let Some(run) = &app.active_run {
+    if app.history_view.is_none()
+        && let Some(run) = &app.active_run
+    {
         return timeline_for_action(
             run.action,
-            &app.run_output,
+            app.visible_output(),
             if run.cancel_requested {
                 StageProgressState::Stopping
             } else {
@@ -420,11 +422,19 @@ fn run_timeline(app: &MonitorApp) -> Option<RunTimeline> {
         );
     }
 
-    let record = app.last_run.as_ref()?;
+    let record = app.visible_run_record()?;
     if record.ok {
-        return timeline_for_action(record.action, &app.run_output, StageProgressState::Complete);
+        return timeline_for_action(
+            record.action,
+            app.visible_output(),
+            StageProgressState::Complete,
+        );
     }
-    timeline_for_action(record.action, &app.run_output, StageProgressState::Failed)
+    timeline_for_action(
+        record.action,
+        app.visible_output(),
+        StageProgressState::Failed,
+    )
 }
 
 pub(super) fn timeline_for_action(

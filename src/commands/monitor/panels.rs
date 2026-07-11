@@ -219,9 +219,11 @@ pub(super) fn render_files(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) 
     let artifacts = artifact_rows(app.ready_config().map(|(cfg, _)| cfg));
     let visible_rows = table_visible_rows(area);
     let inner_width = area.width.saturating_sub(6) as usize;
-    let name_width = percent_width(inner_width, 28);
-    let path_width = percent_width(inner_width, 42);
-    let modified_width = percent_width(inner_width, 30);
+    let name_width = percent_width(inner_width, 22);
+    let path_width = percent_width(inner_width, 38);
+    let size_width = percent_width(inner_width, 14);
+    let modified_width = percent_width(inner_width, 14);
+    let state_width = percent_width(inner_width, 12);
     let total = artifacts.len();
     let start = app.files_scroll.min(total.saturating_sub(visible_rows));
     let end = (start + visible_rows).min(total);
@@ -233,7 +235,9 @@ pub(super) fn render_files(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) 
             Row::new(vec![
                 fit_text(&artifact.name, name_width),
                 fit_path(&artifact.path, path_width),
+                fit_text(&artifact.size, size_width),
                 fit_text(&artifact.modified, modified_width),
+                fit_text(artifact.state, state_width),
             ])
             .style(Style::default().fg(artifact.color))
         })
@@ -242,13 +246,15 @@ pub(super) fn render_files(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) 
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(28),
-            Constraint::Percentage(42),
-            Constraint::Percentage(30),
+            Constraint::Percentage(22),
+            Constraint::Percentage(38),
+            Constraint::Percentage(14),
+            Constraint::Percentage(14),
+            Constraint::Percentage(12),
         ],
     )
     .header(
-        Row::new(vec!["Artifact", "Path", "Modified"]).style(
+        Row::new(vec!["Artifact", "Path", "Size", "Modified", "State"]).style(
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -311,7 +317,15 @@ pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area:
         ]),
         Line::from(vec![
             Span::styled("a/o/m/f/s", Style::default().fg(Color::Cyan)),
-            Span::raw(" focus actions/output/messages/files/status"),
+            Span::raw(" focus workflow/output or inspector views"),
+        ]),
+        Line::from(vec![
+            Span::styled("/", Style::default().fg(Color::Cyan)),
+            Span::raw(" search workflow actions"),
+        ]),
+        Line::from(vec![
+            Span::styled("[ / ]", Style::default().fg(Color::Cyan)),
+            Span::raw(" browse older runs / return toward live output"),
         ]),
         Line::from(vec![
             Span::styled(
@@ -374,7 +388,17 @@ pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area:
 }
 
 pub(super) fn run_label(app: &MonitorApp) -> String {
-    if let Some(run) = &app.active_run {
+    if app.history_view.is_some()
+        && let Some(record) = app.visible_run_record()
+    {
+        format!(
+            "HISTORY {} {} {} {}",
+            if record.ok { "DONE" } else { "FAIL" },
+            record.label,
+            format_duration(record.elapsed),
+            record.result
+        )
+    } else if let Some(run) = &app.active_run {
         format!(
             "{} {} {}",
             if run.cancel_requested {
@@ -385,7 +409,7 @@ pub(super) fn run_label(app: &MonitorApp) -> String {
             run.label,
             format_live_duration(run.started_at.elapsed())
         )
-    } else if let Some(record) = &app.last_run {
+    } else if let Some(record) = app.visible_run_record() {
         format!(
             "{} {} {} {}",
             if record.ok { "DONE" } else { "FAIL" },
@@ -401,7 +425,9 @@ pub(super) fn run_label(app: &MonitorApp) -> String {
 pub(super) struct ArtifactRow {
     name: String,
     path: String,
+    size: String,
     modified: String,
+    state: &'static str,
     color: Color,
 }
 
@@ -442,7 +468,9 @@ pub(super) fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
             ArtifactRow {
                 name,
                 path,
+                size: status.size,
                 modified: status.modified,
+                state: status.state,
                 color: status.color,
             }
         })
@@ -458,6 +486,8 @@ pub(super) fn uses_raw_waveform_artifact(cfg: &Config) -> bool {
 }
 
 pub(super) struct FileStatus {
+    state: &'static str,
+    size: String,
     modified: String,
     color: Color,
 }
@@ -465,6 +495,12 @@ pub(super) struct FileStatus {
 pub(super) fn file_status(path: &str) -> FileStatus {
     match fs::metadata(path) {
         Ok(meta) => FileStatus {
+            state: "ready",
+            size: if meta.is_file() {
+                format_file_size(meta.len())
+            } else {
+                "dir".to_string()
+            },
             modified: meta
                 .modified()
                 .ok()
@@ -474,9 +510,26 @@ pub(super) fn file_status(path: &str) -> FileStatus {
             color: Color::Green,
         },
         Err(_) => FileStatus {
+            state: "missing",
+            size: "-".to_string(),
             modified: "-".to_string(),
             color: Color::DarkGray,
         },
+    }
+}
+
+fn format_file_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
     }
 }
 

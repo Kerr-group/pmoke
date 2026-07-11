@@ -401,8 +401,7 @@ pub(super) fn run_status_color(app: &MonitorApp) -> Color {
     } else if app.command_running() {
         Color::Yellow
     } else if app
-        .last_run
-        .as_ref()
+        .visible_run_record()
         .map(|record| record.ok)
         .unwrap_or(true)
     {
