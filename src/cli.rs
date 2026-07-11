@@ -23,6 +23,10 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "DIR")]
     pub run_dir: Option<PathBuf>,
 
+    /// Overwrite existing run artifacts without error
+    #[arg(short, long, global = true)]
+    pub force: bool,
+
     /// Subcommands for the tool
     #[command(subcommand)]
     pub command: Option<Command>,

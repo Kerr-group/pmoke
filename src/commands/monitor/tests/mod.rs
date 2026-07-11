@@ -36,6 +36,8 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                 artifact_root: None,
                 plot_output_relative: None,
                 legacy_timebase: None,
+                force: false,
+                staging_active: false,
                 roles: Roles {
                     sensor_ch: vec![1],
                     reference_ch: 1,

@@ -98,8 +98,8 @@ pub fn read_waveform_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformD
 }
 
 fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
-    let paths = cfg.paths();
-    let csv_path = paths.waveform_csv();
+    let resolver = cfg.resolver();
+    let csv_path = resolver.waveform_csv();
     let (time_index, column_indices) = csv_column_indices(&csv_path, channels)?;
     let mut read_indices =
         Vec::with_capacity(column_indices.len() + usize::from(time_index.is_some()));
@@ -147,8 +147,10 @@ fn read_auto_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
 }
 
 fn read_raw_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
-    let paths = cfg.paths();
-    read_raw_waveform_channels_from_dir(&paths.acquisition_dir(), channels)
+    let resolver = cfg.resolver();
+    let manifest = resolver.acquisition_manifest();
+    let base_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
+    read_raw_waveform_channels_from_dir(base_dir, channels)
 }
 
 pub fn read_raw_waveform_channels_from_dir(
@@ -843,9 +845,13 @@ fn validate_voltage_range(
 
 fn resolve_raw_channel_path(base_dir: &Path, file: &str, key: &str) -> Result<PathBuf> {
     let relative = Path::new(file);
-    let mut components = relative.components();
-    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+    if relative.is_absolute() {
         bail!("raw channel file must be a plain file name for {key}: {file}");
+    }
+    for component in relative.components() {
+        if !matches!(component, Component::Normal(_)) {
+            bail!("raw channel file must be a plain file name for {key}: {file}");
+        }
     }
     Ok(base_dir.join(relative))
 }
@@ -869,8 +875,10 @@ enum RawStatus {
 }
 
 fn raw_status(cfg: &Config, channels: &[u8]) -> Result<RawStatus> {
-    let paths = cfg.paths();
-    raw_status_in_dir(&paths.acquisition_dir(), channels)
+    let resolver = cfg.resolver();
+    let manifest = resolver.acquisition_manifest();
+    let base_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
+    raw_status_in_dir(base_dir, channels)
 }
 
 fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {

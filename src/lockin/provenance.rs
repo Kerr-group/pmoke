@@ -65,6 +65,9 @@ struct AnalysisMetadata<'a> {
 
 pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Result<()> {
     let path = cfg.paths().analysis_manifest();
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).context("failed to create directory for analysis manifest")?;
+    }
     let metadata = AnalysisMetadata {
         schema_version: 1,
         pmoke_version: env!("CARGO_PKG_VERSION"),

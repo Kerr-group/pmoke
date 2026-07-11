@@ -66,9 +66,14 @@ where
     P: AsRef<Path>,
     C: AsRef<[f64]>,
 {
+    let path_ref = path.as_ref();
+    if let Some(parent) = path_ref.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).context("failed to create directory for csv output")?;
+    }
+
     let ncols = columns.len();
     if ncols == 0 {
-        File::create(path.as_ref())?;
+        File::create(path_ref)?;
         return Ok(());
     }
 

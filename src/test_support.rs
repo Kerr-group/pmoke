@@ -29,6 +29,8 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
         artifact_root: None,
         plot_output_relative: None,
         legacy_timebase: None,
+        force: false,
+        staging_active: false,
         roles: Roles {
             sensor_ch,
             reference_ch: 1,

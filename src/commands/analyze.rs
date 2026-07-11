@@ -6,9 +6,62 @@ use crate::{
     ui,
     utils::waveform::{WaveformData, read_all_fetched_waveforms},
 };
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
+
+fn check_analysis_exists(cfg: &Config) -> Result<()> {
+    if cfg.force {
+        return Ok(());
+    }
+    let paths = cfg.paths();
+    if paths.analysis_dir().exists() {
+        bail!(
+            "analysis directory already exists: {} (use --force to overwrite)",
+            paths.analysis_dir().display()
+        );
+    }
+    let legacy_metadata = paths.run_dir.join("analysis_metadata.toml");
+    if legacy_metadata.exists() {
+        bail!(
+            "legacy analysis_metadata.toml already exists: {} (use --force to overwrite)",
+            legacy_metadata.display()
+        );
+    }
+    let legacy_kerr = paths.run_dir.join("kerr_results.csv");
+    if legacy_kerr.exists() {
+        bail!(
+            "legacy kerr_results.csv already exists: {} (use --force to overwrite)",
+            legacy_kerr.display()
+        );
+    }
+    for ch in cfg.phase_signal_ch() {
+        let legacy_li = paths.run_dir.join(format!("lockin_results_ch{ch}.csv"));
+        if legacy_li.exists() {
+            bail!(
+                "legacy lockin results already exist: {} (use --force to overwrite)",
+                legacy_li.display()
+            );
+        }
+        let legacy_rotated = paths.run_dir.join(format!("lockin_rotated_ch{ch}.csv"));
+        if legacy_rotated.exists() {
+            bail!(
+                "legacy lockin rotated results already exist: {} (use --force to overwrite)",
+                legacy_rotated.display()
+            );
+        }
+    }
+    let legacy_npy = paths.run_dir.join("analysis_npy");
+    if legacy_npy.exists() {
+        bail!(
+            "legacy analysis_npy directory already exists: {} (use --force to overwrite)",
+            legacy_npy.display()
+        );
+    }
+    Ok(())
+}
 
 pub fn analyze(cfg: &Config) -> Result<()> {
+    check_analysis_exists(cfg)?;
+
     let pb = ui::spinner("reading fetched waveform data");
     let t0 = std::time::Instant::now();
     let data = read_all_fetched_waveforms(cfg)?;
@@ -33,19 +86,30 @@ pub fn analyze(cfg: &Config) -> Result<()> {
 }
 
 pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
+    check_analysis_exists(cfg)?;
+
+    let mut cfg_staging = cfg.clone();
+    cfg_staging.staging_active = true;
+
+    let staging_analysis = cfg_staging.paths().analysis_dir();
+    if staging_analysis.exists() {
+        std::fs::remove_dir_all(&staging_analysis)
+            .context("failed to clean up previous incomplete staging directory")?;
+    }
+
     validate_waveform_data(data)?;
     let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results) =
-        run_li(cfg, &data.t, &data.channels)?;
+        run_li(&cfg_staging, &data.t, &data.channels)?;
 
     // run phase analysis here
-    let ch = cfg.phase_signal_ch();
+    let ch = cfg_staging.phase_signal_ch();
 
     if ch.is_empty() {
         ui::skipped("phase analysis: no channels specified");
         return Ok(());
     }
     let li_rotated_results = run_phase_analysis(
-        cfg,
+        &cfg_staging,
         &t_stride,
         &sensor_rate_stride,
         &sensor_integral_stride,
@@ -55,12 +119,26 @@ pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
 
     // run Kerr analysis here
     run_kerr_analysis(
-        cfg,
+        &cfg_staging,
         &t_stride,
         &sensor_rate_stride,
         &sensor_integral_stride,
         &li_rotated_results,
     )?;
+
+    let canonical_analysis = cfg.paths().analysis_dir();
+    if canonical_analysis.exists() {
+        if cfg.force {
+            std::fs::remove_dir_all(&canonical_analysis)?;
+        } else {
+            bail!(
+                "analysis directory already exists: {}",
+                canonical_analysis.display()
+            );
+        }
+    }
+    std::fs::rename(&staging_analysis, &canonical_analysis)
+        .context("failed to rename staging directory to canonical analysis directory")?;
 
     Ok(())
 }
@@ -280,7 +358,7 @@ mod tests {
 
         run_analyze(&cfg, &data).unwrap();
 
-        let columns = read_csv(directory.0.join("kerr_results.csv")).unwrap();
+        let columns = read_csv(cfg.paths().kerr_csv()).unwrap();
         let kerr = columns.last().unwrap();
         assert!(!kerr.is_empty());
         let expected = 0.5 * (2.0 * theta).tan().atan();
@@ -292,6 +370,112 @@ mod tests {
             maximum_error < 2.0e-4,
             "expected {expected}, maximum error was {maximum_error}"
         );
-        assert!(directory.0.join("analysis_metadata.toml").is_file());
+        assert!(cfg.paths().analysis_manifest().is_file());
+    }
+
+    #[test]
+    fn run_analyze_prevents_overwrite_and_supports_force() {
+        let directory = TemporaryDirectory::new();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
+        cfg.version = 4;
+        cfg.source_path = directory.0.join("config.toml");
+        cfg.roles.reference_ch = 2;
+        cfg.reference.fft_window = Window {
+            start: 0.0,
+            end: 0.097_3,
+        };
+        cfg.reference.stride_samples = 1_000;
+        cfg.reference.window_samples = 100;
+        cfg.pulse.bg_window_before = Window {
+            start: 0.0,
+            end: 0.01,
+        };
+        cfg.pulse.bg_window_after = Window {
+            start: 0.18,
+            end: 0.199,
+        };
+        cfg.lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
+        cfg.lockin.stride_samples = 20;
+        cfg.lockin.lpf_half_window_cycles = 1.0;
+        cfg.lockin.lpf_cutoff_hz = None;
+        cfg.phase.m_omega_t0_offset = vec![0.0; 6];
+        cfg.kerr.kerr_type = KerrType::Harmonics;
+
+        let sample_count = 20_000;
+        let dt = 1.0e-5;
+        let frequency = 1_000.0;
+        let theta = 0.01_f64;
+        let bessel = [
+            0.581_864_936_842_083_3,
+            0.315_745_306_087_972_3,
+            0.104_537_902_479_595_42,
+            0.025_139_158_519_404_087,
+            0.004_762_786_735_204_94,
+            0.000_745_551_998_014_054_3,
+        ];
+        let time = (0..sample_count)
+            .map(|index| index as f64 * dt)
+            .collect::<Vec<_>>();
+        let sensor = time
+            .iter()
+            .map(|value| {
+                if (0.03..0.15).contains(value) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect::<Vec<_>>();
+        let reference = time
+            .iter()
+            .map(|value| {
+                let amplitude_drift = 1.0 + 0.01 * (2.0 * PI * 3.0 * value).sin();
+                0.02 + 0.01 * value + amplitude_drift * (2.0 * PI * frequency * value).sin()
+            })
+            .collect::<Vec<_>>();
+        let signal = time
+            .iter()
+            .map(|value| {
+                let harmonics = bessel
+                    .iter()
+                    .enumerate()
+                    .map(|(index, coefficient)| {
+                        let harmonic = index + 1;
+                        let amplitude = if harmonic % 2 == 0 {
+                            (2.0 * theta).cos() * coefficient
+                        } else {
+                            (2.0 * theta).sin() * coefficient
+                        };
+                        let phase = if harmonic % 2 == 0 { PI / 2.0 } else { PI };
+                        2.0 * amplitude
+                            * (harmonic as f64 * 2.0 * PI * frequency * value + phase).sin()
+                    })
+                    .sum::<f64>();
+                let deterministic_noise = 1.0e-5 * (2.0 * PI * 12_345.0 * value + 0.4).sin();
+                0.01 + 0.002 * value + harmonics + deterministic_noise
+            })
+            .collect::<Vec<_>>();
+        let data = WaveformData {
+            t: time.into(),
+            channels: vec![sensor, reference, signal],
+        };
+
+        // First run succeeds
+        run_analyze(&cfg, &data).unwrap();
+        assert!(cfg.paths().analysis_manifest().is_file());
+
+        // Second run without force fails
+        let result = run_analyze(&cfg, &data);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("analysis directory already exists")
+                || err_msg.contains("already exists")
+        );
+
+        // Third run with force succeeds
+        cfg.force = true;
+        run_analyze(&cfg, &data).unwrap();
+        assert!(cfg.paths().analysis_manifest().is_file());
     }
 }

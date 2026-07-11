@@ -118,28 +118,69 @@ pub fn fetch(cfg: &Config) -> Result<()> {
     fetch_with_options(cfg, None, None)
 }
 
+fn check_acquisition_exists(cfg: &Config) -> Result<()> {
+    if cfg.force {
+        return Ok(());
+    }
+    let paths = cfg.paths();
+    if paths.acquisition_dir().exists() {
+        bail!(
+            "acquisition directory already exists: {} (use --force to overwrite)",
+            paths.acquisition_dir().display()
+        );
+    }
+    let legacy_raw = paths.run_dir.join("raw_waveform");
+    if legacy_raw.exists() {
+        bail!(
+            "legacy raw_waveform directory already exists: {} (use --force to overwrite)",
+            legacy_raw.display()
+        );
+    }
+    let legacy_csv = paths.run_dir.join("raw.csv");
+    if legacy_csv.exists() {
+        bail!(
+            "legacy raw.csv already exists: {} (use --force to overwrite)",
+            legacy_csv.display()
+        );
+    }
+    Ok(())
+}
+
 pub fn fetch_with_options(
     cfg: &Config,
     format: Option<FetchFormat>,
     out: Option<&Path>,
 ) -> Result<()> {
-    let output = format.map(FetchOutput::from).unwrap_or(cfg.fetch.output);
-    let paths = cfg.paths();
+    check_acquisition_exists(cfg)?;
+
+    let mut cfg_staging = cfg.clone();
+    cfg_staging.staging_active = true;
+
+    let staging_acquisition = cfg_staging.paths().acquisition_dir();
+    if staging_acquisition.exists() {
+        std::fs::remove_dir_all(&staging_acquisition)
+            .context("failed to clean up previous incomplete staging directory")?;
+    }
+
+    let output = format
+        .map(FetchOutput::from)
+        .unwrap_or(cfg_staging.fetch.output);
+    let paths = cfg_staging.paths();
     let default_csv = paths.waveform_csv();
     let default_raw = paths.acquisition_dir();
-    match format {
-        Some(FetchFormat::Csv) => fetch_csv(cfg, out.unwrap_or(&default_csv)),
-        Some(FetchFormat::Raw) => fetch_raw(cfg, out.unwrap_or(&default_raw)),
+    let result = match format {
+        Some(FetchFormat::Csv) => fetch_csv(&cfg_staging, out.unwrap_or(&default_csv)),
+        Some(FetchFormat::Raw) => fetch_raw(&cfg_staging, out.unwrap_or(&default_raw)),
         Some(FetchFormat::CsvAndRaw) if out.is_some() => {
             bail!(
                 "--out cannot be used with --format csv-and-raw; use the default raw.csv and raw_waveform outputs"
             )
         }
         _ => match (output, out) {
-            (FetchOutput::Csv, out) => fetch_csv(cfg, out.unwrap_or(&default_csv)),
-            (FetchOutput::Raw, out) => fetch_raw(cfg, out.unwrap_or(&default_raw)),
+            (FetchOutput::Csv, out) => fetch_csv(&cfg_staging, out.unwrap_or(&default_csv)),
+            (FetchOutput::Raw, out) => fetch_raw(&cfg_staging, out.unwrap_or(&default_raw)),
             (FetchOutput::CsvAndRaw, Some(_)) => {
-                let setting = if cfg.version >= 4 {
+                let setting = if cfg_staging.version >= 4 {
                     "data.output = \"both\""
                 } else {
                     "fetch.output = \"csv_and_raw\""
@@ -148,9 +189,29 @@ pub fn fetch_with_options(
                     "--out cannot be used with {setting}; use the default raw.csv and raw_waveform outputs"
                 )
             }
-            (FetchOutput::CsvAndRaw, None) => fetch_csv_and_raw(cfg, &default_csv, &default_raw),
+            (FetchOutput::CsvAndRaw, None) => {
+                fetch_csv_and_raw(&cfg_staging, &default_csv, &default_raw)
+            }
         },
+    };
+
+    result?;
+
+    let canonical_acquisition = cfg.paths().acquisition_dir();
+    if canonical_acquisition.exists() {
+        if cfg.force {
+            std::fs::remove_dir_all(&canonical_acquisition)?;
+        } else {
+            bail!(
+                "acquisition directory already exists: {}",
+                canonical_acquisition.display()
+            );
+        }
     }
+    std::fs::rename(&staging_acquisition, &canonical_acquisition)
+        .context("failed to rename staging directory to canonical acquisition directory")?;
+
+    Ok(())
 }
 
 impl From<FetchFormat> for FetchOutput {
@@ -194,19 +255,45 @@ fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
 }
 
 pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
-    let paths = cfg.paths();
+    check_acquisition_exists(cfg)?;
+
+    let mut cfg_staging = cfg.clone();
+    cfg_staging.staging_active = true;
+
+    let staging_acquisition = cfg_staging.paths().acquisition_dir();
+    if staging_acquisition.exists() {
+        std::fs::remove_dir_all(&staging_acquisition)?;
+    }
+
+    let paths = cfg_staging.paths();
     let csv_out = paths.waveform_csv();
     let raw_out = paths.acquisition_dir();
-    match cfg.fetch.output {
+    let data = match cfg_staging.fetch.output {
         FetchOutput::Csv => {
             ensure_output_parent(&csv_out)?;
-            let data = run_fetch_to_csv_path(cfg, &csv_out)?;
-            write_fetched_csv(cfg, &csv_out, &data)?;
-            Ok(data)
+            let data = run_fetch_to_csv_path(&cfg_staging, &csv_out)?;
+            write_fetched_csv(&cfg_staging, &csv_out, &data)?;
+            data
         }
-        FetchOutput::Raw => fetch_raw_collect(cfg, &raw_out),
-        FetchOutput::CsvAndRaw => fetch_csv_and_raw_collect(cfg, &csv_out, &raw_out),
+        FetchOutput::Raw => fetch_raw_collect(&cfg_staging, &raw_out)?,
+        FetchOutput::CsvAndRaw => fetch_csv_and_raw_collect(&cfg_staging, &csv_out, &raw_out)?,
+    };
+
+    let canonical_acquisition = cfg.paths().acquisition_dir();
+    if canonical_acquisition.exists() {
+        if cfg.force {
+            std::fs::remove_dir_all(&canonical_acquisition)?;
+        } else {
+            bail!(
+                "acquisition directory already exists: {}",
+                canonical_acquisition.display()
+            );
+        }
     }
+    std::fs::rename(&staging_acquisition, &canonical_acquisition)
+        .context("failed to rename staging directory to canonical acquisition directory")?;
+
+    Ok(data)
 }
 
 fn run_fetch_to_csv_path(cfg: &Config, out: &Path) -> Result<WaveformData> {

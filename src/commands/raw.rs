@@ -9,8 +9,9 @@ use std::path::Path;
 pub fn run(cfg: &Config, command: &RawCommand) -> Result<()> {
     match command {
         RawCommand::Verify { input } => {
-            let default_path = cfg.paths().acquisition_dir();
-            verify(input.as_deref().unwrap_or(&default_path))
+            let manifest = cfg.resolver().acquisition_manifest();
+            let default_path = manifest.parent().unwrap_or_else(|| Path::new("."));
+            verify(input.as_deref().unwrap_or(default_path))
         }
     }
 }

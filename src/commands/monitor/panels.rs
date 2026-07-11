@@ -435,28 +435,31 @@ pub(super) fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
     let mut files: Vec<(String, String)> = Vec::new();
 
     if let Some(cfg) = cfg {
-        let paths = cfg.paths();
+        let resolver = cfg.resolver();
         files.push((
             "raw".to_string(),
-            paths.waveform_csv().display().to_string(),
+            resolver.waveform_csv().display().to_string(),
         ));
         if uses_raw_waveform_artifact(cfg) {
             files.push((
                 "raw word".to_string(),
-                paths.acquisition_manifest().display().to_string(),
+                resolver.acquisition_manifest().display().to_string(),
             ));
         }
         for &ch in cfg.phase_signal_ch() {
             files.push((
                 format!("li ch{ch}"),
-                paths.lockin_xy_csv(ch).display().to_string(),
+                resolver.lockin_xy_csv(ch).display().to_string(),
             ));
             files.push((
                 format!("rotated ch{ch}"),
-                paths.lockin_rotated_csv(ch).display().to_string(),
+                resolver.lockin_rotated_csv(ch).display().to_string(),
             ));
         }
-        files.push(("kerr".to_string(), paths.kerr_csv().display().to_string()));
+        files.push((
+            "kerr".to_string(),
+            resolver.kerr_csv().display().to_string(),
+        ));
     }
 
     files

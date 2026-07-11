@@ -71,8 +71,11 @@ fn run_with(args: Cli) -> Result<()> {
     }
 
     let mut load = config::load_from_path(&args.config);
-    if let (Some(run_dir), ConfigLoad::Ready { config, .. }) = (&args.run_dir, &mut load) {
-        config.set_artifact_root(run_dir.clone());
+    if let ConfigLoad::Ready { config, .. } = &mut load {
+        config.force = args.force;
+        if let Some(run_dir) = &args.run_dir {
+            config.set_artifact_root(run_dir.clone());
+        }
     }
 
     match args.command.as_ref() {
