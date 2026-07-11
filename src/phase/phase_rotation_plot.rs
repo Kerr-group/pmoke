@@ -30,7 +30,7 @@ impl PhaseRotationPlotter {
                 "phase_rotation_plot",
             )
             .context("failed to load phase_rotation_plot.py")?;
-            let (t_plot, y_plot) = decimate_xy_3d(plot, t, y);
+            let (t_plot, y_plot) = decimate_xy_3d(plot, t, y)?;
             let t_obj = python::f64_array1(py, &t_plot);
             let y_obj = python::f64_array3(py, &y_plot)?;
 

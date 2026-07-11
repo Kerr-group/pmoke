@@ -1,7 +1,10 @@
 use crate::config::{Plot, PlotDecimation};
 use crate::ui;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::fs;
+
+pub type DecimatedSeries2d = (Vec<f64>, Vec<Vec<f64>>);
+pub type DecimatedSeries3d = (Vec<f64>, Vec<Vec<Vec<f64>>>);
 
 pub fn run_plot(
     plot: &Plot,
@@ -75,33 +78,54 @@ pub fn decimate_2d(plot: &Plot, values: &[Vec<f64>]) -> Vec<Vec<f64>> {
     apply_indices_2d(values, &indices)
 }
 
-pub fn decimate_xy_2d(plot: &Plot, x: &[f64], values: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
+pub fn decimate_xy_2d(plot: &Plot, x: &[f64], values: &[Vec<f64>]) -> Result<DecimatedSeries2d> {
     let series = values.iter().map(Vec::as_slice).collect::<Vec<_>>();
     decimate_xy_slices(plot, x, &series)
 }
 
-pub fn decimate_xy_slices(plot: &Plot, x: &[f64], values: &[&[f64]]) -> (Vec<f64>, Vec<Vec<f64>>) {
+pub fn decimate_xy_slices(plot: &Plot, x: &[f64], values: &[&[f64]]) -> Result<DecimatedSeries2d> {
+    validate_decimation_input(plot, x, values)?;
     let indices = decimation_indices_slices(plot, values);
-    (
+    Ok((
         apply_indices(x, &indices),
         apply_indices_2d(values, &indices),
-    )
+    ))
 }
 
 pub fn decimate_xy_3d(
     plot: &Plot,
     x: &[f64],
     values: &[Vec<Vec<f64>>],
-) -> (Vec<f64>, Vec<Vec<Vec<f64>>>) {
+) -> Result<DecimatedSeries3d> {
     let series = values
         .iter()
         .flat_map(|channel| channel.iter().map(Vec::as_slice))
         .collect::<Vec<_>>();
+    validate_decimation_input(plot, x, &series)?;
     let indices = decimation_indices_slices(plot, &series);
-    (
+    Ok((
         apply_indices(x, &indices),
         apply_indices_3d(values, &indices),
-    )
+    ))
+}
+
+fn validate_decimation_input(plot: &Plot, x: &[f64], values: &[&[f64]]) -> Result<()> {
+    if plot.max_points == 0 {
+        bail!("plot max_points must be positive");
+    }
+    if values.is_empty() {
+        bail!("plot decimation requires at least one data series");
+    }
+    for (index, values) in values.iter().enumerate() {
+        if values.len() != x.len() {
+            bail!(
+                "plot series {index} has {} points, expected {} to match the x axis",
+                values.len(),
+                x.len()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn apply_indices(values: &[f64], indices: &[usize]) -> Vec<f64> {
@@ -247,7 +271,7 @@ mod tests {
         signal[47] = 100.0;
         let context = time.iter().map(|value| value + 1_000.0).collect::<Vec<_>>();
 
-        let (time_plot, values_plot) = decimate_xy_2d(&plot, &time, &[signal, context]);
+        let (time_plot, values_plot) = decimate_xy_2d(&plot, &time, &[signal, context]).unwrap();
 
         let spike_position = time_plot.iter().position(|value| *value == 47.0).unwrap();
         assert_eq!(values_plot[0][spike_position], 100.0);
@@ -276,5 +300,16 @@ mod tests {
         let values = vec![f64::NAN, -2.0, 5.0, f64::NAN];
 
         assert_eq!(decimate_1d(&plot, &values), vec![-2.0, 5.0]);
+    }
+
+    #[test]
+    fn aligned_decimation_rejects_ragged_series_and_zero_limit() {
+        let mut plot = plot(10);
+        let error = decimate_xy_2d(&plot, &[0.0, 1.0], &[vec![1.0]]).unwrap_err();
+        assert!(error.to_string().contains("expected 2"));
+
+        plot.max_points = 0;
+        let error = decimate_xy_2d(&plot, &[0.0], &[vec![1.0]]).unwrap_err();
+        assert!(error.to_string().contains("must be positive"));
     }
 }

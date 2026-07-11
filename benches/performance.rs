@@ -563,7 +563,7 @@ fn run_plot_decimation(time: &[f64], values: &[Vec<f64>], decimation: PlotDecima
         decimation,
         ..Plot::default()
     };
-    let (time, values) = decimate_xy_2d(&plot, time, values);
+    let (time, values) = decimate_xy_2d(&plot, time, values).expect("aligned plot benchmark data");
     black_box(time.len() + values.iter().map(Vec::len).sum::<usize>())
 }
 
