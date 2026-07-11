@@ -165,6 +165,16 @@ pub fn li_process<'a>(
     ref_fit_params: RefFitParams,
 ) -> Result<LockinProcessOutput> {
     let t = t.into();
+    if signal_ch.len() != signal_data.len() {
+        bail!(
+            "signal channel count ({}) and signal data column count ({}) differ",
+            signal_ch.len(),
+            signal_data.len()
+        );
+    }
+    if signal_data.is_empty() {
+        bail!("no signal channels were available for lock-in processing");
+    }
     let f_ref: f64 = ref_fit_params.f_ref;
     let omega_tref: f64 = ref_fit_params.omega_tref;
     let workers: usize = cfg.lockin.workers;

@@ -26,6 +26,7 @@ struct ArrayMetadata {
     order: &'static str,
 }
 
+#[derive(Debug)]
 struct CsvTable {
     headers: Vec<String>,
     columns: Vec<Vec<f64>>,
@@ -148,6 +149,9 @@ fn read_csv_table(path: &Path) -> Result<CsvTable> {
             })?);
         }
         rows += 1;
+    }
+    if rows == 0 {
+        bail!("analysis CSV has no data rows: {}", path.display());
     }
     Ok(CsvTable {
         headers,
@@ -277,6 +281,17 @@ mod tests {
             .map(|chunk| f64::from_le_bytes(chunk.try_into().unwrap()))
             .collect::<Vec<_>>();
         assert_eq!(values, vec![1.0, 3.0, 2.0, 4.0]);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn csv_table_rejects_header_only_analysis_output() {
+        let path = temporary_file().with_extension("csv");
+        fs::write(&path, "time (s),Kerr angle (rad)\n").unwrap();
+
+        let error = read_csv_table(&path).unwrap_err();
+
+        assert!(error.to_string().contains("no data rows"));
         fs::remove_file(path).unwrap();
     }
 }

@@ -2,7 +2,7 @@ use crate::config::{Lockin, LockinLpfKind};
 use crate::lockin::lockin_params::LockinParams;
 use crate::ui;
 use crate::utils::time_axis::TimeAxisRef;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use num_complex::Complex64;
 use std::collections::VecDeque;
 use std::f64::consts::PI;
@@ -86,12 +86,21 @@ impl<'a> LockinProcessor<'a> {
         lockin: &Lockin,
     ) -> Result<Self> {
         let t = t.into();
-        assert!(t.len() >= 2);
-        assert_eq!(t.len(), data.len());
+        if t.len() < 2 {
+            bail!("lock-in time axis must contain at least two samples");
+        }
+        if t.len() != data.len() {
+            bail!(
+                "lock-in time length ({}) and signal length ({}) differ",
+                t.len(),
+                data.len()
+            );
+        }
 
         let params = LockinParams::from_geometry(
             t.len(),
-            t.dt().expect("time axis has at least two samples"),
+            t.dt()
+                .ok_or_else(|| anyhow!("lock-in time axis must contain at least two samples"))?,
             f_ref,
             lockin,
         )?;

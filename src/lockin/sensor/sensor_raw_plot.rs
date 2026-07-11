@@ -30,7 +30,7 @@ impl SensorRawPlotter {
                 "sensor_raw_plot",
             )
             .context("failed to load sensor_raw_plot.py")?;
-            let (t_plot, y_plot) = decimate_xy_2d(plot, t, &y);
+            let (t_plot, y_plot) = decimate_xy_2d(plot, t, &y)?;
             let t_obj = python::f64_array1(py, &t_plot);
             let y_obj = python::f64_array2(py, &y_plot)?;
             let c_bg_obj = python::f64_array1(py, c_bg_arr);

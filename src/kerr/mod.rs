@@ -77,7 +77,9 @@ pub fn run_kerr_analysis(
         .channels
         .iter()
         .find(|ch| ch.index == kerr_sensor_ch_index)
-        .unwrap();
+        .with_context(|| {
+            format!("Kerr sensor channel {kerr_sensor_ch_index} is missing from channels")
+        })?;
 
     let label = ch_conf.label.as_ref().with_context(|| {
         format!(

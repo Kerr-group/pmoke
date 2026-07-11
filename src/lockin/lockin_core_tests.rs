@@ -721,6 +721,36 @@ fn rejects_empty_output_range_after_iir_settling_trim() {
 }
 
 #[test]
+fn rejects_short_or_misaligned_input_without_panicking() {
+    let lockin = Lockin {
+        workers: 1,
+        stride_samples: 1,
+        lpf_kind: LockinLpfKind::BoxcarLegacy,
+        lpf_half_window_cycles: 1.0,
+        lpf_cutoff_hz: None,
+        lpf_cutoff_ref_ratio: None,
+        lpf_stopband_atten_db: 60.0,
+        lpf_sync_average_cycles: 1.0,
+        lpf_iir_order: 2,
+        lpf_debug_output: false,
+        lpf_debug_label: None,
+        lpf_debug_overwrite: false,
+        snr_background_window: None,
+        snr_signal_window: None,
+    };
+
+    let short = LockinProcessor::new(&[0.0], &[1.0], 1_000.0, 0.0, &lockin)
+        .err()
+        .expect("one-sample input must be rejected");
+    assert!(short.to_string().contains("at least two samples"));
+
+    let misaligned = LockinProcessor::new(&[0.0, 1.0e-4], &[1.0], 1_000.0, 0.0, &lockin)
+        .err()
+        .expect("misaligned input must be rejected");
+    assert!(misaligned.to_string().contains("signal length"));
+}
+
+#[test]
 fn narrow_iir_filtfilt_preserves_constant_signal() {
     let sos = design_butterworth_lowpass_sos(4, 20_000.0, 2.0e9).unwrap();
     let mut values = vec![Complex64::new(1.25, -0.5); 10_000];

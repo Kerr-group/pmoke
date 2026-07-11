@@ -18,7 +18,7 @@ impl ReferencePlotter {
             let plot_mod =
                 python::cached_module(py, &REF_PLOT_MODULE, REF_PLOT_PY, "ref_plot.py", "ref_plot")
                     .context("failed to load ref_plot.py")?;
-            let (t_plot, mut series_plot) = decimate_xy_slices(plot, t, &[y, fit]);
+            let (t_plot, mut series_plot) = decimate_xy_slices(plot, t, &[y, fit])?;
             let fit_plot = series_plot.pop().unwrap_or_default();
             let y_plot = series_plot.pop().unwrap_or_default();
             let t_obj = python::f64_array1(py, &t_plot);
