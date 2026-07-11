@@ -83,6 +83,15 @@ jobs:
           done
           exit "$overall_status"
 
+      - name: Record matplotlib rendering benchmark
+        if: matrix.channels == 2
+        run: |
+          python scripts/benchmark_plot.py \
+            --samples 100000,1000000 \
+            --iterations 3 \
+            --output performance-results/matplotlib.json \
+            > performance-results/matplotlib.log
+
       - name: Record environment
         if: always()
         run: |

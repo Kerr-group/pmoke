@@ -46,6 +46,7 @@ Development commands:
 cargo run -- --config config.toml show
 cargo run --release -- --config config.toml process
 cargo run --release --no-default-features -- --config config.toml analyze
+python scripts/benchmark_plot.py # informational Agg draw/update/blit timings
 ```
 
 ## 🚀 Commands
