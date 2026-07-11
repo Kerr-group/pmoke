@@ -15,6 +15,7 @@ pub mod monitor;
 pub mod phase;
 #[cfg(feature = "hw")]
 pub mod process;
+pub mod raw;
 pub mod reference;
 #[cfg(feature = "hw")]
 pub mod screenshot;

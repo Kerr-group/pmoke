@@ -17,7 +17,7 @@ pub mod utils;
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use cli::{Cli, Command, ConfigCommand};
+use cli::{Cli, Command, ConfigCommand, RawCommand};
 use config::{ConfigLoad, ValidationTarget};
 
 /// Parses command-line arguments and runs pmoke.
@@ -52,6 +52,13 @@ fn run_with(args: Cli) -> Result<()> {
         }
     }
 
+    if let Some(Command::Raw {
+        command: RawCommand::Verify { input: Some(input) },
+    }) = args.command.as_ref()
+    {
+        return commands::raw::verify(input);
+    }
+
     let load = config::load_from_path(&args.config);
 
     match args.command.as_ref() {
@@ -68,10 +75,16 @@ fn run_with(args: Cli) -> Result<()> {
     let (cfg, warnings) = load.into_ready()?;
     commands::show::print_warnings(&warnings);
 
+    if let Some(Command::Raw { command }) = args.command.as_ref() {
+        return commands::raw::run(&cfg, command);
+    }
+
     #[cfg(feature = "hw")]
     {
         match args.command.as_ref() {
-            Some(Command::Show | Command::Monitor | Command::Config { .. }) => unreachable!(),
+            Some(
+                Command::Show | Command::Monitor | Command::Config { .. } | Command::Raw { .. },
+            ) => unreachable!(),
             Some(Command::Single) => {
                 run_validated(&cfg, ValidationTarget::Single, commands::single::single)
             }
@@ -129,7 +142,9 @@ fn run_with(args: Cli) -> Result<()> {
     #[cfg(not(feature = "hw"))]
     {
         match args.command.as_ref() {
-            Some(Command::Show | Command::Monitor | Command::Config { .. }) => unreachable!(),
+            Some(
+                Command::Show | Command::Monitor | Command::Config { .. } | Command::Raw { .. },
+            ) => unreachable!(),
             Some(Command::Reference) => run_validated(
                 &cfg,
                 ValidationTarget::Reference,

@@ -130,6 +130,8 @@ pub struct Config {
     #[serde(skip_serializing)]
     pub source_path: PathBuf,
     #[serde(skip_serializing)]
+    pub source_text: Option<String>,
+    #[serde(skip_serializing)]
     pub legacy_timebase: Option<Timebase>,
     pub roles: Roles,
     pub channels: Vec<Channel>,

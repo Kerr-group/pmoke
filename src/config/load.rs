@@ -22,6 +22,7 @@ pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
     let mut load = load_from_str(&text);
     if let ConfigLoad::Ready { config, .. } = &mut load {
         config.source_path = path.to_path_buf();
+        config.source_text = Some(text);
         if config.version >= 4 {
             config.plot.output_dir = config
                 .artifact_path(&config.plot.output_dir)
@@ -241,6 +242,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
         screenshot: raw.screenshot.into(),
         plot: Plot::default(),
         source_path: PathBuf::from("config.toml"),
+        source_text: None,
         legacy_timebase: Some(raw.timebase.into()),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -303,6 +305,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         screenshot: raw.screenshot.into(),
         plot: raw.plot.into(),
         source_path: PathBuf::from("config.toml"),
+        source_text: None,
         legacy_timebase: Some(legacy_timebase),
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -362,6 +365,7 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
         screenshot: raw.screenshot.into(),
         plot: raw.plot.into(),
         source_path: PathBuf::from("config.toml"),
+        source_text: None,
         legacy_timebase: None,
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
@@ -552,6 +556,7 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         },
         plot: raw.plot.into(),
         source_path: PathBuf::from("config.toml"),
+        source_text: None,
         legacy_timebase: None,
         roles: Roles {
             sensor_ch,

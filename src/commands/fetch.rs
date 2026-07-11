@@ -19,26 +19,67 @@ use crate::utils::waveform::{WaveformData, read_raw_waveform_channels_from_dir};
 use anyhow::{Context, Result, anyhow, bail};
 use instruments::rigol::{DhoHorizontalSettings, DhoRawWaveform};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const RAW_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
+struct HashingWriter<W> {
+    inner: W,
+    hasher: Sha256,
+}
+
+impl<W> HashingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+
+    fn finish(self) -> (W, String) {
+        (self.inner, format!("{:x}", self.hasher.finalize()))
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(buffer)?;
+        self.hasher.update(&buffer[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct RawFetchMetadata {
     version: u32,
+    status: &'static str,
+    pmoke_version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    git_commit: Option<&'static str>,
+    created_at: String,
     created_at_unix_seconds: u64,
     config_version: u32,
+    config_file: &'static str,
+    config_sha256: String,
     oscilloscope: RawOscilloscopeMetadata,
     channels: BTreeMap<String, RawChannelMetadata>,
 }
 
 #[derive(Debug, Serialize)]
 struct RawOscilloscopeMetadata {
+    idn_raw: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    firmware: Option<String>,
     model: String,
     connection: Connection,
     memory_depth: usize,
@@ -54,6 +95,8 @@ struct RawOscilloscopeMetadata {
 #[derive(Debug, Serialize)]
 struct RawChannelMetadata {
     file: String,
+    bytes: usize,
+    sha256: String,
     sample_count: usize,
     preamble_raw: String,
     x_increment: f64,
@@ -420,6 +463,10 @@ fn fetch_raw_into_dir(
     dir: &Path,
     handler: &mut OscilloscopeHandler,
 ) -> Result<(Vec<u8>, RawFetchMetadata)> {
+    let config_sha256 = snapshot_source_config(cfg, dir)?;
+    let idn_raw = handler
+        .identify()
+        .context("failed to identify oscilloscope before raw fetch")?;
     let depth = handler
         .query_memory_depth()
         .context("failed to query oscilloscope memory depth")?;
@@ -430,7 +477,8 @@ fn fetch_raw_into_dir(
     let horizontal = handler
         .query_horizontal_settings()
         .context("failed to query oscilloscope horizontal settings")?;
-    let mut metadata = build_raw_metadata(cfg, &channels, depth, horizontal)?;
+    let mut metadata =
+        build_raw_metadata(cfg, &channels, depth, horizontal, idn_raw, config_sha256)?;
     let mut time_axis = None;
 
     let pb = ui::progress(
@@ -479,6 +527,8 @@ fn build_raw_metadata(
     channels: &[u8],
     memory_depth: usize,
     horizontal: DhoHorizontalSettings,
+    idn_raw: String,
+    config_sha256: String,
 ) -> Result<RawFetchMetadata> {
     let osc_cfg = &cfg
         .instruments
@@ -493,9 +543,17 @@ fn build_raw_metadata(
 
     Ok(RawFetchMetadata {
         version: RAW_METADATA_VERSION,
+        status: "complete",
+        pmoke_version: env!("CARGO_PKG_VERSION"),
+        git_commit: option_env!("PMOKE_GIT_COMMIT"),
+        created_at: jiff::Timestamp::now().to_string(),
         created_at_unix_seconds,
         config_version: cfg.version,
+        config_file: "config.source.toml",
+        config_sha256,
         oscilloscope: RawOscilloscopeMetadata {
+            firmware: idn_firmware(&idn_raw),
+            idn_raw,
             model: osc_cfg.model.clone(),
             connection: osc_cfg.connection.clone(),
             memory_depth,
@@ -509,6 +567,59 @@ fn build_raw_metadata(
         },
         channels: BTreeMap::new(),
     })
+}
+
+fn snapshot_source_config(cfg: &Config, dir: &Path) -> Result<String> {
+    let contents = match &cfg.source_text {
+        Some(source) => source.as_bytes().to_vec(),
+        None => fs::read(&cfg.source_path).with_context(|| {
+            format!(
+                "failed to read source config: {}",
+                cfg.source_path.display()
+            )
+        })?,
+    };
+    let final_path = dir.join("config.source.toml");
+    let tmp_path = dir.join("config.source.toml.tmp");
+    write_synced_file(&tmp_path, &contents)?;
+    fs::rename(&tmp_path, &final_path).with_context(|| {
+        format!(
+            "failed to rename {} to {}",
+            tmp_path.display(),
+            final_path.display()
+        )
+    })?;
+    Ok(sha256_hex(&contents))
+}
+
+fn idn_firmware(idn: &str) -> Option<String> {
+    idn.split(',')
+        .nth(3)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn write_synced_file(path: &Path, contents: &[u8]) -> Result<()> {
+    let file =
+        File::create(path).with_context(|| format!("failed to create file: {}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+    writer
+        .write_all(contents)
+        .with_context(|| format!("failed to write file: {}", path.display()))?;
+    writer
+        .flush()
+        .with_context(|| format!("failed to flush file: {}", path.display()))?;
+    let file = writer
+        .into_inner()
+        .map_err(|error| error.into_error())
+        .with_context(|| format!("failed to finalize file: {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync file: {}", path.display()))
 }
 
 #[cfg(test)]
@@ -534,7 +645,19 @@ fn write_raw_channel(
     writer
         .flush()
         .with_context(|| format!("failed to flush raw channel file: {}", tmp_path.display()))?;
-    drop(writer);
+    let file = writer
+        .into_inner()
+        .map_err(|error| error.into_error())
+        .with_context(|| {
+            format!(
+                "failed to finalize raw channel file: {}",
+                tmp_path.display()
+            )
+        })?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync raw channel file: {}", tmp_path.display()))?;
+
+    let sha256 = sha256_hex(&raw.data);
 
     fs::rename(&tmp_path, &final_path).with_context(|| {
         format!(
@@ -546,6 +669,8 @@ fn write_raw_channel(
 
     Ok(RawChannelMetadata {
         file: fname,
+        bytes: raw.data.len(),
+        sha256,
         sample_count,
         preamble_raw: raw.preamble.raw,
         x_increment: raw.preamble.x_increment,
@@ -571,14 +696,26 @@ fn write_raw_channel_streamed(
 
     let file = File::create(&tmp_path)
         .with_context(|| format!("failed to create raw channel file: {}", tmp_path.display()))?;
-    let mut writer = BufWriter::with_capacity(RAW_WRITE_BUFFER_BYTES, file);
+    let buffered = BufWriter::with_capacity(RAW_WRITE_BUFFER_BYTES, file);
+    let mut writer = HashingWriter::new(buffered);
     let written = handler
         .fetch_raw_word_into(ch, expected_depth, &mut writer)
         .with_context(|| format!("failed to fetch channel {ch} raw WORD"))?;
     writer
         .flush()
         .with_context(|| format!("failed to flush raw channel file: {}", tmp_path.display()))?;
-    drop(writer);
+    let (buffered, sha256) = writer.finish();
+    let file = buffered
+        .into_inner()
+        .map_err(|error| error.into_error())
+        .with_context(|| {
+            format!(
+                "failed to finalize raw channel file: {}",
+                tmp_path.display()
+            )
+        })?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync raw channel file: {}", tmp_path.display()))?;
 
     validate_raw_word_byte_count(ch, written.byte_count, expected_depth)?;
     let sample_count = expected_depth;
@@ -593,6 +730,8 @@ fn write_raw_channel_streamed(
 
     Ok(RawChannelMetadata {
         file: fname,
+        bytes: written.byte_count,
+        sha256,
         sample_count,
         preamble_raw: written.preamble.raw,
         x_increment: written.preamble.x_increment,
@@ -796,16 +935,8 @@ fn write_raw_metadata(dir: &Path, metadata: &RawFetchMetadata) -> Result<()> {
     let tmp_path = dir.join(format!("{RAW_METADATA_FNAME}.tmp"));
     let encoded = toml::to_string_pretty(metadata).context("failed to encode raw metadata")?;
 
-    let file = File::create(&tmp_path)
-        .with_context(|| format!("failed to create metadata file: {}", tmp_path.display()))?;
-    let mut writer = BufWriter::new(file);
-    writer
-        .write_all(encoded.as_bytes())
+    write_synced_file(&tmp_path, encoded.as_bytes())
         .with_context(|| format!("failed to write metadata file: {}", tmp_path.display()))?;
-    writer
-        .flush()
-        .with_context(|| format!("failed to flush metadata file: {}", tmp_path.display()))?;
-    drop(writer);
 
     fs::rename(&tmp_path, &final_path).with_context(|| {
         format!(
@@ -881,13 +1012,36 @@ fn finalize_temp_file(tmp_path: &Path, out: &Path) -> Result<()> {
 
 fn finalize_temp_dir(tmp_dir: &Path, out: &Path) -> Result<()> {
     ensure_path_not_exists(out)?;
+    sync_directory(tmp_dir)?;
     fs::rename(tmp_dir, out).with_context(|| {
         format!(
             "failed to rename {} to {}",
             tmp_dir.display(),
             out.display()
         )
-    })
+    })?;
+    sync_parent_directory(out)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<()> {
+    File::open(path)
+        .with_context(|| format!("failed to open directory for sync: {}", path.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync directory: {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn sync_parent_directory(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    sync_directory(parent)
 }
 
 fn output_temp_file(out: &Path) -> Result<PathBuf> {

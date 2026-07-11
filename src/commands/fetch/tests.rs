@@ -59,6 +59,8 @@ fn write_raw_channel_preserves_saturated_constant_word_bytes() {
     let metadata = write_raw_channel(&dir, 1, 2, raw).unwrap();
 
     assert_eq!(metadata.file, "ch1.u16le");
+    assert_eq!(metadata.bytes, raw_bytes.len());
+    assert_eq!(metadata.sha256, sha256_hex(&raw_bytes));
     assert_eq!(metadata.sample_count, 2);
     assert_eq!(metadata.y_reference, 32768.0);
     assert_eq!(fs::read(dir.join("ch1.u16le")).unwrap(), raw_bytes);
@@ -76,6 +78,22 @@ fn raw_word_byte_count_requires_exact_word_payload() {
 
     let short = validate_raw_word_byte_count(2, 2, 2).unwrap_err();
     assert!(short.to_string().contains("expected 4 bytes"));
+}
+
+#[test]
+fn source_config_snapshot_uses_the_text_that_was_loaded() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+    let mut config = crate::test_support::test_config(vec![1], vec![3]);
+    config.source_path = dir.join("missing-config.toml");
+    config.source_text = Some("version = 4\n# loaded snapshot\n".to_string());
+
+    let checksum = snapshot_source_config(&config, &dir).unwrap();
+
+    let contents = fs::read(dir.join("config.source.toml")).unwrap();
+    assert_eq!(contents, b"version = 4\n# loaded snapshot\n");
+    assert_eq!(checksum, sha256_hex(&contents));
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -154,9 +172,17 @@ fn fetch_scaling_rejects_invalid_time_and_degenerate_voltage_mapping() {
 fn raw_metadata_serializes_horizontal_settings() {
     let mut metadata = RawFetchMetadata {
         version: RAW_METADATA_VERSION,
+        status: "complete",
+        pmoke_version: "test",
+        git_commit: None,
+        created_at: "1970-01-01T00:00:00Z".to_string(),
         created_at_unix_seconds: 0,
         config_version: 3,
+        config_file: "config.source.toml",
+        config_sha256: "0".repeat(64),
         oscilloscope: RawOscilloscopeMetadata {
+            idn_raw: "RIGOL,DHO5108,serial,firmware".to_string(),
+            firmware: Some("firmware".to_string()),
             model: "DHO5108".to_string(),
             connection: Connection::Tcpip {
                 ip: "192.168.10.100".to_string(),
@@ -177,6 +203,8 @@ fn raw_metadata_serializes_horizontal_settings() {
         "ch1".to_string(),
         RawChannelMetadata {
             file: "ch1.u16le".to_string(),
+            bytes: 400_000_000,
+            sha256: "0".repeat(64),
             sample_count: 200_000_000,
             preamble_raw: "1,2,200000000,1,5.0E-10,-3.0E-02,0,0.000027,9600,32768".to_string(),
             x_increment: 5.0e-10,
@@ -452,6 +480,8 @@ fn single_channel_raw_metadata(file: &str, sample_count: usize) -> RawFetchMetad
         "ch1".to_string(),
         RawChannelMetadata {
             file: file.to_string(),
+            bytes: sample_count * 2,
+            sha256: "0".repeat(64),
             sample_count,
             preamble_raw: "preamble ch1".to_string(),
             x_increment: 0.5,
@@ -466,9 +496,17 @@ fn single_channel_raw_metadata(file: &str, sample_count: usize) -> RawFetchMetad
     )]);
     RawFetchMetadata {
         version: RAW_METADATA_VERSION,
+        status: "complete",
+        pmoke_version: "test",
+        git_commit: None,
+        created_at: "1970-01-01T00:00:00Z".to_string(),
         created_at_unix_seconds: 0,
         config_version: 3,
+        config_file: "config.source.toml",
+        config_sha256: "0".repeat(64),
         oscilloscope: RawOscilloscopeMetadata {
+            idn_raw: "RIGOL,DHO5108,serial,firmware".to_string(),
+            firmware: Some("firmware".to_string()),
             model: "DHO5108".to_string(),
             connection: Connection::Tcpip {
                 ip: "192.168.10.100".to_string(),

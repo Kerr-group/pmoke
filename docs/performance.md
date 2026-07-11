@@ -25,7 +25,8 @@ Available cases are `raw_word_decode`, `raw_waveform_read`, `sensor_integral`,
 Each case performs one untimed validation run before measurement. RAW read
 timings therefore use a warmed filesystem page cache and are intended to track
 metadata validation, decoding, allocation, and cached-I/O regressions rather
-than physical cold-storage throughput.
+than physical cold-storage throughput. The RAW fixture uses metadata version 2,
+so `raw_waveform_read` includes SHA-256 integrity verification.
 
 For peak resident memory on Linux, run one case per process and wrap the
 command with `/usr/bin/time -v`.

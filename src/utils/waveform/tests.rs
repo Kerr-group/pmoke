@@ -110,6 +110,7 @@ fn read_raw_channel_matches_conversion_across_chunks() {
         key: "ch1".to_owned(),
         path,
         expected_bytes: bytes.len(),
+        expected_sha256: None,
         y_increment: 0.25,
         y_origin: 2.0,
         y_reference: 32_768.0,
@@ -455,7 +456,7 @@ fn raw_status_rejects_unsupported_metadata_version() {
     fs::write(
         dir.join(RAW_METADATA_FNAME),
         r#"
-version = 2
+version = 3
 
 [oscilloscope]
 waveform_format = "WORD"
@@ -470,7 +471,7 @@ byte_order = "little-endian"
 
     assert!(matches!(
         status,
-        RawStatus::Invalid(message) if message.contains("unsupported raw metadata version: 2")
+        RawStatus::Invalid(message) if message.contains("unsupported raw metadata version: 3")
     ));
     fs::remove_dir_all(dir).unwrap();
 }
@@ -519,6 +520,90 @@ y_reference = 0.0
     assert_eq!(waveform.t.to_vec(), vec![-2.0, -1.5]);
     assert_eq!(waveform.channels, vec![vec![20.0, 22.0], vec![0.0, 1.0]]);
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn read_raw_waveform_v2_verifies_config_and_channel_checksums() {
+    let dir = unique_test_dir("raw_v2_checksums");
+    fs::create_dir(&dir).unwrap();
+    let config = b"version = 4\n";
+    let raw = [0_u8, 0, 1, 0];
+    fs::write(dir.join("config.source.toml"), config).unwrap();
+    fs::write(dir.join("ch1.u16le"), raw).unwrap();
+    let config_sha = format!("{:x}", Sha256::digest(config));
+    let raw_sha = format!("{:x}", Sha256::digest(raw));
+    fs::write(
+        dir.join(RAW_METADATA_FNAME),
+        format!(
+            r#"version = 2
+status = "complete"
+pmoke_version = "0.2.0"
+created_at = "2026-07-11T00:00:00Z"
+config_file = "config.source.toml"
+config_sha256 = "{config_sha}"
+
+[oscilloscope]
+idn_raw = "RIGOL,DHO5108,serial,firmware"
+waveform_format = "WORD"
+byte_order = "little-endian"
+memory_depth = 2
+sample_count = 2
+channels = [1]
+
+[channels.ch1]
+file = "ch1.u16le"
+bytes = 4
+sha256 = "{raw_sha}"
+sample_count = 2
+x_increment = 0.5
+x_origin = 0.0
+x_reference = 0.0
+y_increment = 1.0
+y_origin = 0.0
+y_reference = 0.0
+"#
+        ),
+    )
+    .unwrap();
+
+    let waveform = read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap();
+    assert_eq!(waveform.channels, vec![vec![0.0, 1.0]]);
+    assert_eq!(
+        verify_raw_waveform_dir(&dir).unwrap(),
+        RawVerification {
+            metadata_version: 2,
+            channel_count: 1,
+            sample_count: 2,
+            total_bytes: 4,
+            checksums_verified: true,
+        }
+    );
+
+    fs::write(dir.join("ch1.u16le"), [0_u8, 0, 2, 0]).unwrap();
+    let error = read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap_err();
+    assert!(error.to_string().contains("checksum mismatch"), "{error:#}");
+
+    fs::write(dir.join("ch1.u16le"), raw).unwrap();
+    fs::write(dir.join("config.source.toml"), b"version = 3\n").unwrap();
+    let error = read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("config snapshot checksum mismatch"),
+        "{error:#}"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn raw_metadata_v2_rejects_incomplete_status() {
+    let mut metadata = raw_metadata_with_channel(1, "ch1.u16le", 1);
+    metadata.version = RAW_METADATA_VERSION;
+    metadata.status = Some("writing".to_string());
+
+    let error = validate_raw_format(&metadata).unwrap_err();
+
+    assert!(error.to_string().contains("status = \"complete\""));
 }
 
 #[cfg(unix)]
@@ -622,6 +707,8 @@ fn raw_metadata_with_channels<const N: usize>(
             format!("ch{ch}"),
             RawChannelMetadata {
                 file: file.into(),
+                bytes: None,
+                sha256: None,
                 sample_count,
                 x_increment,
                 x_origin: 1.0,
@@ -634,10 +721,19 @@ fn raw_metadata_with_channels<const N: usize>(
     }
 
     RawWaveformMetadata {
-        version: RAW_METADATA_VERSION,
+        version: RAW_METADATA_LEGACY_VERSION,
+        status: None,
+        pmoke_version: None,
+        created_at: None,
+        config_file: None,
+        config_sha256: None,
         oscilloscope: RawOscilloscopeMetadata {
+            idn_raw: None,
             waveform_format: "WORD".to_string(),
             byte_order: "little-endian".to_string(),
+            memory_depth: None,
+            sample_count: None,
+            channels: None,
         },
         channels,
     }

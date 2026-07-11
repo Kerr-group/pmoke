@@ -1,5 +1,8 @@
 use crate::config::{Config, FetchAnalysisInput};
-use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_METADATA_VERSION, RAW_WAVEFORM_DIR};
+use crate::constants::{
+    FETCHED_FNAME, RAW_METADATA_FNAME, RAW_METADATA_LEGACY_VERSION, RAW_METADATA_VERSION,
+    RAW_WAVEFORM_DIR,
+};
 use crate::utils::channels::build_channel_list;
 use crate::utils::csv::read_selected_columns;
 use crate::utils::raw_data::{
@@ -9,6 +12,7 @@ use crate::utils::time_axis::WaveformTime;
 use anyhow::{Context, Result, anyhow, bail};
 use rayon::prelude::*;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Read;
@@ -25,19 +29,30 @@ struct CsvColumns {
 #[derive(Debug, Deserialize)]
 struct RawWaveformMetadata {
     version: u32,
+    status: Option<String>,
+    pmoke_version: Option<String>,
+    created_at: Option<String>,
+    config_file: Option<String>,
+    config_sha256: Option<String>,
     oscilloscope: RawOscilloscopeMetadata,
     channels: BTreeMap<String, RawChannelMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawOscilloscopeMetadata {
+    idn_raw: Option<String>,
     waveform_format: String,
     byte_order: String,
+    memory_depth: Option<usize>,
+    sample_count: Option<usize>,
+    channels: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawChannelMetadata {
     file: String,
+    bytes: Option<usize>,
+    sha256: Option<String>,
     sample_count: usize,
     x_increment: f64,
     x_origin: f64,
@@ -51,6 +66,15 @@ struct RawChannelMetadata {
 pub struct WaveformData {
     pub t: WaveformTime,
     pub channels: Vec<Vec<f64>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawVerification {
+    pub metadata_version: u32,
+    pub channel_count: usize,
+    pub sample_count: usize,
+    pub total_bytes: u64,
+    pub checksums_verified: bool,
 }
 
 pub fn read_all_fetched_waveforms(cfg: &Config) -> Result<WaveformData> {
@@ -124,6 +148,7 @@ pub fn read_raw_waveform_channels_from_dir(
 ) -> Result<WaveformData> {
     let metadata = read_raw_metadata(base_dir)?;
     validate_raw_format(&metadata)?;
+    validate_manifest_config(base_dir, &metadata)?;
 
     let mut time_axis = None;
     let specs = channels
@@ -140,6 +165,56 @@ pub fn read_raw_waveform_channels_from_dir(
     let t = WaveformTime::Uniform(time_axis.ok_or_else(|| anyhow!("no raw channels requested"))?);
 
     Ok(WaveformData { t, channels })
+}
+
+pub fn verify_raw_waveform_dir(base_dir: &Path) -> Result<RawVerification> {
+    let metadata = read_raw_metadata(base_dir)?;
+    validate_raw_format(&metadata)?;
+    validate_manifest_config(base_dir, &metadata)?;
+
+    let declared_channels = metadata
+        .channels
+        .keys()
+        .map(|key| {
+            key.strip_prefix("ch")
+                .ok_or_else(|| anyhow!("raw channel metadata key must start with ch: {key}"))?
+                .parse::<u8>()
+                .with_context(|| format!("invalid raw channel metadata key: {key}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if declared_channels.is_empty() {
+        bail!("raw metadata contains no channels");
+    }
+    if metadata.version == RAW_METADATA_VERSION
+        && metadata.oscilloscope.channels.as_deref() != Some(declared_channels.as_slice())
+    {
+        bail!("raw metadata channel list does not match channel entries");
+    }
+
+    let mut time_axis = None;
+    let specs = declared_channels
+        .iter()
+        .map(|&channel| raw_channel_spec(base_dir, &metadata, channel, &mut time_axis))
+        .collect::<Result<Vec<_>>>()?;
+    let mut total_bytes = 0u64;
+    for spec in &specs {
+        validate_raw_channel_file_size(spec)?;
+        verify_raw_channel_checksum(spec)?;
+        total_bytes = total_bytes
+            .checked_add(spec.expected_bytes as u64)
+            .ok_or_else(|| anyhow!("raw verification total byte count overflows"))?;
+    }
+    let sample_count = time_axis
+        .ok_or_else(|| anyhow!("raw metadata contains no channel time axis"))?
+        .sample_count;
+
+    Ok(RawVerification {
+        metadata_version: metadata.version,
+        channel_count: specs.len(),
+        sample_count,
+        total_bytes,
+        checksums_verified: metadata.version == RAW_METADATA_VERSION,
+    })
 }
 
 fn read_raw_metadata(base_dir: &Path) -> Result<RawWaveformMetadata> {
@@ -159,12 +234,54 @@ fn read_raw_metadata(base_dir: &Path) -> Result<RawWaveformMetadata> {
 }
 
 fn validate_raw_format(metadata: &RawWaveformMetadata) -> Result<()> {
-    if metadata.version != RAW_METADATA_VERSION {
+    if !matches!(
+        metadata.version,
+        RAW_METADATA_LEGACY_VERSION | RAW_METADATA_VERSION
+    ) {
         bail!(
-            "unsupported raw metadata version: {} (expected {})",
+            "unsupported raw metadata version: {} (supported: {} and {})",
             metadata.version,
+            RAW_METADATA_LEGACY_VERSION,
             RAW_METADATA_VERSION
         );
+    }
+    if metadata.version == RAW_METADATA_VERSION && metadata.status.as_deref() != Some("complete") {
+        bail!("raw metadata version 2 requires status = \"complete\"");
+    }
+    if metadata.version == RAW_METADATA_VERSION {
+        for (name, value) in [
+            ("pmoke_version", metadata.pmoke_version.as_deref()),
+            ("created_at", metadata.created_at.as_deref()),
+            (
+                "oscilloscope.idn_raw",
+                metadata.oscilloscope.idn_raw.as_deref(),
+            ),
+        ] {
+            if value.is_none_or(|value| value.trim().is_empty()) {
+                bail!("raw metadata version 2 requires non-empty {name}");
+            }
+        }
+        let memory_depth = metadata
+            .oscilloscope
+            .memory_depth
+            .ok_or_else(|| anyhow!("raw metadata version 2 requires oscilloscope.memory_depth"))?;
+        let sample_count = metadata
+            .oscilloscope
+            .sample_count
+            .ok_or_else(|| anyhow!("raw metadata version 2 requires oscilloscope.sample_count"))?;
+        if memory_depth == 0 || sample_count == 0 || memory_depth != sample_count {
+            bail!(
+                "raw metadata oscilloscope memory_depth/sample_count mismatch: {memory_depth} != {sample_count}"
+            );
+        }
+        if metadata
+            .oscilloscope
+            .channels
+            .as_ref()
+            .is_none_or(Vec::is_empty)
+        {
+            bail!("raw metadata version 2 requires oscilloscope.channels");
+        }
     }
     if metadata.oscilloscope.waveform_format != "WORD" {
         bail!(
@@ -181,11 +298,53 @@ fn validate_raw_format(metadata: &RawWaveformMetadata) -> Result<()> {
     Ok(())
 }
 
+fn validate_manifest_config(base_dir: &Path, metadata: &RawWaveformMetadata) -> Result<()> {
+    if metadata.version != RAW_METADATA_VERSION {
+        return Ok(());
+    }
+    let file = metadata
+        .config_file
+        .as_deref()
+        .ok_or_else(|| anyhow!("raw metadata version 2 requires config_file"))?;
+    let expected = metadata
+        .config_sha256
+        .as_deref()
+        .ok_or_else(|| anyhow!("raw metadata version 2 requires config_sha256"))?;
+    validate_sha256(expected, "config.source.toml")?;
+    let path = resolve_raw_channel_path(base_dir, file, "config.source.toml")?;
+    let file_type = fs::symlink_metadata(&path)
+        .with_context(|| format!("raw config snapshot not found: {}", path.display()))?;
+    if !file_type.file_type().is_file() {
+        bail!(
+            "raw config snapshot must be a regular file: {}",
+            path.display()
+        );
+    }
+    let contents = fs::read(&path)
+        .with_context(|| format!("failed to read raw config snapshot: {}", path.display()))?;
+    let actual = format!("{:x}", Sha256::digest(&contents));
+    if actual != expected {
+        bail!("raw config snapshot checksum mismatch: expected {expected}, got {actual}");
+    }
+    Ok(())
+}
+
+fn validate_sha256(value: &str, label: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("raw metadata sha256 must be 64 hexadecimal characters for {label}");
+    }
+    if value.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        bail!("raw metadata sha256 must use lowercase hexadecimal for {label}");
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 struct RawChannelSpec {
     key: String,
     path: PathBuf,
     expected_bytes: usize,
+    expected_sha256: Option<String>,
     y_increment: f64,
     y_origin: f64,
     y_reference: f64,
@@ -198,6 +357,15 @@ fn raw_channel_spec(
     time_axis: &mut Option<RawTimeAxis>,
 ) -> Result<RawChannelSpec> {
     let key = format!("ch{ch}");
+    if metadata.version == RAW_METADATA_VERSION
+        && !metadata
+            .oscilloscope
+            .channels
+            .as_ref()
+            .is_some_and(|channels| channels.contains(&ch))
+    {
+        bail!("raw channel {ch} is not declared in oscilloscope.channels");
+    }
     let channel = metadata
         .channels
         .get(&key)
@@ -221,6 +389,33 @@ fn raw_channel_spec(
         .sample_count
         .checked_mul(2)
         .ok_or_else(|| anyhow!("raw channel sample count overflows for {key}"))?;
+    if metadata.version == RAW_METADATA_VERSION
+        && metadata.oscilloscope.sample_count != Some(channel.sample_count)
+    {
+        bail!(
+            "raw channel sample_count mismatch for {key}: {} != {}",
+            channel.sample_count,
+            metadata.oscilloscope.sample_count.unwrap_or_default()
+        );
+    }
+    let expected_sha256 = if metadata.version == RAW_METADATA_VERSION {
+        let declared_bytes = channel
+            .bytes
+            .ok_or_else(|| anyhow!("raw metadata bytes missing for {key}"))?;
+        if declared_bytes != expected_bytes {
+            bail!(
+                "raw metadata byte count mismatch for {key}: {declared_bytes} != {expected_bytes}"
+            );
+        }
+        let checksum = channel
+            .sha256
+            .as_deref()
+            .ok_or_else(|| anyhow!("raw metadata sha256 missing for {key}"))?;
+        validate_sha256(checksum, &key)?;
+        Some(checksum.to_owned())
+    } else {
+        None
+    };
 
     let channel_axis = RawTimeAxis {
         sample_count: channel.sample_count,
@@ -238,6 +433,7 @@ fn raw_channel_spec(
         key,
         path,
         expected_bytes,
+        expected_sha256,
         y_increment: channel.y_increment,
         y_origin: channel.y_origin,
         y_reference: channel.y_reference,
@@ -288,6 +484,7 @@ fn read_raw_channel_data_with_chunk_size(
         y_reference: spec.y_reference,
     };
     let mut buffer = vec![0_u8; chunk_bytes.min(spec.expected_bytes)];
+    let mut hasher = spec.expected_sha256.as_ref().map(|_| Sha256::new());
     let mut byte_offset = 0;
     while byte_offset < spec.expected_bytes {
         let bytes_to_read = buffer.len().min(spec.expected_bytes - byte_offset);
@@ -298,6 +495,9 @@ fn read_raw_channel_data_with_chunk_size(
                 spec.path.display()
             )
         })?;
+        if let Some(hasher) = &mut hasher {
+            hasher.update(&*chunk);
+        }
         let sample_offset = byte_offset / 2;
         decode_raw_word_chunk_into(
             chunk,
@@ -321,6 +521,16 @@ fn read_raw_channel_data_with_chunk_size(
         );
     }
 
+    if let (Some(hasher), Some(expected)) = (hasher, &spec.expected_sha256) {
+        let actual = format!("{:x}", hasher.finalize());
+        if &actual != expected {
+            bail!(
+                "raw channel checksum mismatch for {}: expected {expected}, got {actual}",
+                spec.key
+            );
+        }
+    }
+
     Ok(voltages)
 }
 
@@ -332,6 +542,37 @@ fn validate_raw_channel_file_size(spec: &RawChannelSpec) -> Result<()> {
             spec.key,
             spec.expected_bytes,
             actual_bytes
+        );
+    }
+    Ok(())
+}
+
+fn verify_raw_channel_checksum(spec: &RawChannelSpec) -> Result<()> {
+    let Some(expected) = &spec.expected_sha256 else {
+        return Ok(());
+    };
+    let mut file = File::open(&spec.path)
+        .with_context(|| format!("failed to open raw channel file: {}", spec.path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; RAW_READ_CHUNK_BYTES.min(spec.expected_bytes)];
+    let mut remaining = spec.expected_bytes;
+    while remaining > 0 {
+        let read_len = remaining.min(buffer.len());
+        file.read_exact(&mut buffer[..read_len]).with_context(|| {
+            format!("failed to verify raw channel file: {}", spec.path.display())
+        })?;
+        hasher.update(&buffer[..read_len]);
+        remaining -= read_len;
+    }
+    let mut extra = [0_u8; 1];
+    if file.read(&mut extra)? != 0 {
+        bail!("raw channel file grew while verifying for {}", spec.key);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if &actual != expected {
+        bail!(
+            "raw channel checksum mismatch for {}: expected {expected}, got {actual}",
+            spec.key
         );
     }
     Ok(())
@@ -493,6 +734,9 @@ fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
         Err(error) => return Ok(RawStatus::Invalid(error.to_string())),
     };
     if let Err(error) = validate_raw_format(&metadata) {
+        return Ok(RawStatus::Invalid(error.to_string()));
+    }
+    if let Err(error) = validate_manifest_config(base_dir, &metadata) {
         return Ok(RawStatus::Invalid(error.to_string()));
     }
 
