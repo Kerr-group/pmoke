@@ -38,6 +38,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python dependencies
+        if: matrix.channels == 2
         run: python -m pip install numpy scipy lmfit gsplot
 
       - name: Install Rust
@@ -57,17 +58,26 @@ jobs:
           mkdir -p performance-results
           benchmark="$(find target/release/deps -maxdepth 1 -type f -name 'performance-*' -perm -111 | head -n 1)"
           test -n "$benchmark"
-          /usr/bin/time -v -o performance-results/resources.txt \
-            "$benchmark" --bench \
-              --samples "${{ steps.workload.outputs.samples }}" \
-              --channels "${{ matrix.channels }}" \
-              --end-to-end \
-              --output performance-results/results.json
+          if [ "${{ matrix.channels }}" = "2" ]; then
+            cases=(raw_word_decode sensor_integral lockin_w1 lockin_w2 python_copy raw_to_csv analysis_pipeline)
+          else
+            cases=(raw_to_csv)
+          fi
+          for case_name in "${cases[@]}"; do
+            /usr/bin/time -v -o "performance-results/resources-${case_name}.txt" \
+              "$benchmark" --bench \
+                --case "$case_name" \
+                --samples "${{ steps.workload.outputs.samples }}" \
+                --channels "${{ matrix.channels }}" \
+                --output "performance-results/results-${case_name}.json"
+          done
 
       - name: Record environment
         run: |
           {
             uname -a
+            python --version
+            python -m pip freeze
             rustc --version --verbose
             lscpu
           } > performance-results/environment.txt

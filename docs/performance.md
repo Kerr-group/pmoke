@@ -13,11 +13,16 @@ Select a workload size and save the machine-readable report:
 
 ```console
 cargo bench --locked --no-default-features --bench performance -- \
-  --samples 10000000 --channels 4 --iterations 5 --end-to-end \
+  --case raw_to_csv --samples 10000000 --channels 4 --iterations 5 \
   --output results.json
 ```
 
-For peak resident memory on Linux, wrap the command with `/usr/bin/time -v`.
+Available cases are `raw_word_decode`, `sensor_integral`, `lockin_w1`,
+`lockin_w2`, `python_copy`, `raw_to_csv`, and `analysis_pipeline`. Omitting
+`--case` runs all microbenchmarks except `analysis_pipeline`.
+
+For peak resident memory on Linux, run one case per process and wrap the
+command with `/usr/bin/time -v`.
 On macOS, use `/usr/bin/time -l`. The weekly `Performance` workflow stores the
 JSON report, resource usage, commit, toolchain, CPU, OS, and architecture as an
 artifact. The 50-million-sample workload is reserved for a manual or
@@ -26,9 +31,12 @@ self-hosted run.
 The benchmark contains deterministic RAW WORD decoding, sensor integration,
 `boxcar_legacy` lock-in with one and two workers, and Rust-to-NumPy copy
 workloads. `--channels` controls the RAW-to-CSV workload; weekly CI runs both
-two- and four-channel cases. The JSON
-report also records the bytes and cumulative time copied across the Python boundary.
-The weekly workflow additionally runs the complete `analyze` pipeline with plotting
-disabled; this requires NumPy, SciPy, lmfit, and gsplot.
+two- and four-channel cases. The JSON report also records the bytes and
+cumulative time copied across the Python boundary.
+The weekly workflow additionally runs the in-memory analysis pipeline from
+reference fitting through Kerr with plotting disabled. It intentionally
+excludes CLI startup, config parsing, RAW file I/O, and WORD decoding; those
+boundaries are measured separately. This case requires NumPy, SciPy, lmfit,
+and gsplot.
 Expected numerical behavior remains in the regular golden and unit tests;
 benchmark timing alone never defines correctness.
