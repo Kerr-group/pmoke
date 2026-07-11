@@ -6,6 +6,7 @@ use pmoke::python;
 use pmoke::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use pmoke::utils::waveform::convert_raw_word_to_voltages;
 use pyo3::Python;
+use rayon::prelude::*;
 use serde::Serialize;
 use std::env;
 use std::fs;
@@ -21,6 +22,7 @@ struct Report {
     os: &'static str,
     arch: &'static str,
     samples: usize,
+    channels: usize,
     iterations: usize,
     results: Vec<Measurement>,
     python_transfer: python::PythonTransferStats,
@@ -37,6 +39,7 @@ struct Measurement {
 
 struct Options {
     samples: usize,
+    channels: usize,
     iterations: usize,
     output: Option<PathBuf>,
 }
@@ -46,12 +49,13 @@ fn main() {
     let words = synthetic_words(options.samples);
     let times = synthetic_times(options.samples);
     let signal = synthetic_signal(&times);
-    let raw_csv = BenchmarkRawCsv::new(&words);
+    let raw_csv = BenchmarkRawCsv::new(&words, options.channels);
 
     // One untimed run catches invalid inputs and reduces first-use noise.
     black_box(convert_raw_word_to_voltages(&words, 2.5e-4, 0.0, 32_768.0).unwrap());
     black_box(PulseIntegralCalculator::new(1.0e-7).integrate(&signal, 0.125, -2.0));
     black_box(run_lockin(&times, &signal));
+    black_box(run_lockin_harmonics(&times, &signal, 1));
     Python::attach(|py| black_box(python::f64_array1(py, &signal).len()));
     raw_csv.write(options.samples);
     python::reset_transfer_stats();
@@ -80,11 +84,18 @@ fn main() {
             },
         ),
         measure(
-            "boxcar_legacy",
+            "boxcar_legacy_harmonics_w1",
             options.samples,
             (times.len() + signal.len()) * std::mem::size_of::<f64>(),
             options.iterations,
-            || run_lockin(black_box(&times), black_box(&signal)),
+            || run_lockin_harmonics(black_box(&times), black_box(&signal), 1),
+        ),
+        measure(
+            "boxcar_legacy_harmonics_w2",
+            options.samples,
+            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
+            options.iterations,
+            || run_lockin_harmonics(black_box(&times), black_box(&signal), 2),
         ),
         measure(
             "python_f64_array_copy",
@@ -96,7 +107,7 @@ fn main() {
         measure(
             "raw_to_csv",
             options.samples,
-            words.len() * 2,
+            words.len() * options.channels,
             options.iterations,
             || {
                 raw_csv.write(options.samples);
@@ -106,12 +117,13 @@ fn main() {
     ];
 
     let report = Report {
-        schema_version: 2,
+        schema_version: 3,
         commit: command_output("git", &["rev-parse", "HEAD"]),
         rustc: command_output("rustc", &["--version"]),
         os: env::consts::OS,
         arch: env::consts::ARCH,
         samples: options.samples,
+        channels: options.channels,
         iterations: options.iterations,
         results,
         python_transfer: python::transfer_stats(),
@@ -129,6 +141,7 @@ fn parse_options() -> Options {
     // implicit invocation tiny; `cargo bench` supplies `--bench` and receives
     // the representative defaults below.
     let mut samples = 100_000;
+    let mut channels = 2;
     let mut iterations = 1;
     let mut cargo_bench = false;
     let mut samples_explicit = false;
@@ -161,6 +174,13 @@ fn parse_options() -> Options {
                     .parse()
                     .expect("--iterations must be a positive integer");
             }
+            "--channels" => {
+                channels = args
+                    .next()
+                    .expect("--channels requires a value")
+                    .parse()
+                    .expect("--channels must be 2 or 4");
+            }
             "--output" => output = Some(args.next().expect("--output requires a path").into()),
             other => panic!("unknown benchmark option: {other}"),
         }
@@ -175,8 +195,10 @@ fn parse_options() -> Options {
     }
     assert!(samples >= 1_000, "samples must be at least 1000");
     assert!(iterations > 0, "iterations must be positive");
+    assert!(matches!(channels, 2 | 4), "channels must be 2 or 4");
     Options {
         samples,
+        channels,
         iterations,
         output,
     }
@@ -243,7 +265,34 @@ fn synthetic_signal(times: &[f64]) -> Vec<f64> {
 }
 
 fn run_lockin(times: &[f64], signal: &[f64]) -> usize {
-    let lockin = Lockin {
+    let lockin = benchmark_lockin();
+    let processor = LockinProcessor::new(times, signal, 10_000.0, 0.2, &lockin)
+        .expect("valid benchmark lock-in configuration");
+    let result = processor.compute_harmonic_detailed(1, false);
+    black_box(result.li_x.len() + result.li_y.len())
+}
+
+fn run_lockin_harmonics(times: &[f64], signal: &[f64], workers: usize) -> usize {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .expect("create benchmark thread pool")
+        .install(|| {
+            (1..=6)
+                .into_par_iter()
+                .map(|harmonic| {
+                    let lockin = benchmark_lockin();
+                    let processor = LockinProcessor::new(times, signal, 10_000.0, 0.2, &lockin)
+                        .expect("valid benchmark lock-in configuration");
+                    let result = processor.compute_harmonic_detailed(harmonic, false);
+                    result.li_x.len() + result.li_y.len()
+                })
+                .sum()
+        })
+}
+
+fn benchmark_lockin() -> Lockin {
+    Lockin {
         workers: 1,
         stride_samples: 100,
         lpf_kind: LockinLpfKind::BoxcarLegacy,
@@ -258,11 +307,7 @@ fn run_lockin(times: &[f64], signal: &[f64]) -> usize {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
-    };
-    let processor = LockinProcessor::new(times, signal, 10_000.0, 0.2, &lockin)
-        .expect("valid benchmark lock-in configuration");
-    let result = processor.compute_harmonic_detailed(1, false);
-    black_box(result.li_x.len() + result.li_y.len())
+    }
 }
 
 fn command_output(program: &str, args: &[&str]) -> String {
@@ -279,10 +324,11 @@ fn command_output(program: &str, args: &[&str]) -> String {
 struct BenchmarkRawCsv {
     dir: PathBuf,
     output: PathBuf,
+    files: Vec<String>,
 }
 
 impl BenchmarkRawCsv {
-    fn new(words: &[u8]) -> Self {
+    fn new(words: &[u8], channels: usize) -> Self {
         let unique = format!(
             "pmoke-performance-{}-{}",
             std::process::id(),
@@ -293,33 +339,40 @@ impl BenchmarkRawCsv {
         );
         let dir = env::temp_dir().join(unique);
         fs::create_dir(&dir).expect("create benchmark directory");
-        fs::write(dir.join("ch1.u16le"), words).expect("write benchmark ch1 raw data");
-        fs::write(dir.join("ch2.u16le"), words).expect("write benchmark ch2 raw data");
+        let files = (1..=channels)
+            .map(|channel| format!("ch{channel}.u16le"))
+            .collect::<Vec<_>>();
+        for file in &files {
+            fs::write(dir.join(file), words).expect("write benchmark raw data");
+        }
         let output = dir.join("waveform.csv");
-        Self { dir, output }
+        Self { dir, output, files }
     }
 
     fn write(&self, sample_count: usize) {
         if self.output.exists() {
             fs::remove_file(&self.output).expect("remove previous benchmark CSV");
         }
-        let channel = |file| RawCsvChannel {
-            file,
-            sample_count,
-            x_increment: 1.0e-7,
-            x_origin: -0.001,
-            x_reference: 0.0,
-            y_increment: 2.5e-4,
-            y_origin: 0.0,
-            y_reference: 32_768.0,
-        };
-        write_raw_csv(
-            &self.output,
-            &["time", "ch1", "ch2"],
-            &self.dir,
-            &[channel("ch1.u16le"), channel("ch2.u16le")],
-        )
-        .expect("write benchmark raw CSV");
+        let channels = self
+            .files
+            .iter()
+            .map(|file| RawCsvChannel {
+                file,
+                sample_count,
+                x_increment: 1.0e-7,
+                x_origin: -0.001,
+                x_reference: 0.0,
+                y_increment: 2.5e-4,
+                y_origin: 0.0,
+                y_reference: 32_768.0,
+            })
+            .collect::<Vec<_>>();
+        let headers = std::iter::once("time".to_owned())
+            .chain((1..=self.files.len()).map(|channel| format!("ch{channel}")))
+            .collect::<Vec<_>>();
+        let header_refs = headers.iter().map(String::as_str).collect::<Vec<_>>();
+        write_raw_csv(&self.output, &header_refs, &self.dir, &channels)
+            .expect("write benchmark raw CSV");
     }
 }
 

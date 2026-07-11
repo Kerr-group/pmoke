@@ -19,8 +19,12 @@ concurrency:
 
 jobs:
   benchmark:
-    name: Synthetic benchmark
+    name: Synthetic benchmark (${{ matrix.channels }} channels)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channels: [2, 4]
     env:
       PYO3_PYTHON: python
 
@@ -45,12 +49,18 @@ jobs:
           REQUESTED_SAMPLES: ${{ inputs.samples }}
         run: echo "samples=${REQUESTED_SAMPLES:-1000000}" >> "$GITHUB_OUTPUT"
 
+      - name: Build benchmark
+        run: cargo bench --locked --no-default-features --bench performance --no-run
+
       - name: Run benchmark
         run: |
           mkdir -p performance-results
+          benchmark="$(find target/release/deps -maxdepth 1 -type f -name 'performance-*' -perm -111 | head -n 1)"
+          test -n "$benchmark"
           /usr/bin/time -v -o performance-results/resources.txt \
-            cargo bench --locked --no-default-features --bench performance -- \
+            "$benchmark" --bench \
               --samples "${{ steps.workload.outputs.samples }}" \
+              --channels "${{ matrix.channels }}" \
               --output performance-results/results.json
 
       - name: Record environment
@@ -64,7 +74,7 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: performance-${{ github.sha }}
+          name: performance-${{ matrix.channels }}ch-${{ github.sha }}
           path: performance-results
           if-no-files-found: error
           retention-days: 90
