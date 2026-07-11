@@ -41,6 +41,11 @@ pub enum Command {
         #[command(subcommand)]
         command: RawCommand,
     },
+    /// Export stored data to interchange formats
+    Export {
+        #[command(subcommand)]
+        command: ExportCommand,
+    },
     /// Diagnose config, storage, Python, and connected instruments
     Doctor {
         /// Emit a machine-readable JSON report
@@ -137,6 +142,19 @@ pub enum RawCommand {
     },
 }
 
+#[derive(Subcommand, Debug)]
+pub enum ExportCommand {
+    /// Convert a verified RAW waveform directory to CSV
+    Csv {
+        /// RAW waveform directory (defaults to the configured raw_waveform artifact)
+        #[arg(long, value_name = "DIR")]
+        input: Option<PathBuf>,
+        /// CSV destination (defaults to the configured raw.csv artifact)
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
+}
+
 #[cfg(feature = "hw")]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum FetchFormat {
@@ -226,6 +244,29 @@ mod config_command_tests {
             Some(Command::Doctor {
                 json: true,
                 probe_fetch: true,
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_explicit_raw_csv_export() {
+        let cli = Cli::try_parse_from([
+            "pmoke",
+            "export",
+            "csv",
+            "--input",
+            "shot/raw_waveform",
+            "--output",
+            "shot/raw.csv",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Export {
+                command: ExportCommand::Csv {
+                    input: Some(_),
+                    output: Some(_),
+                }
             })
         ));
     }
