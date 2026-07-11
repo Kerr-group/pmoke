@@ -187,8 +187,8 @@ fn min_max_indices(values: &[&[f64]], len: usize, max_points: usize) -> Vec<usiz
     let bin_count = (max_points / extrema_per_bin).max(1).min(len);
     let mut indices = Vec::with_capacity(bin_count.saturating_mul(extrema_per_bin));
     for bin in 0..bin_count {
-        let start = bin * len / bin_count;
-        let end = ((bin + 1) * len / bin_count).max(start + 1);
+        let start = partition_boundary(bin, len, bin_count);
+        let end = partition_boundary(bin + 1, len, bin_count).max(start + 1);
         for series in &aligned {
             let mut minimum = None;
             let mut maximum = None;
@@ -215,6 +215,14 @@ fn min_max_indices(values: &[&[f64]], len: usize, max_points: usize) -> Vec<usiz
     }
     let stride = indices.len().div_ceil(max_points);
     indices.into_iter().step_by(stride).collect()
+}
+
+fn partition_boundary(position: usize, len: usize, partition_count: usize) -> usize {
+    debug_assert!(partition_count > 0);
+    debug_assert!(position <= partition_count);
+    // usize is at most 64 bits on supported Rust targets, so the full product
+    // fits in u128 even when both operands are usize::MAX.
+    ((position as u128) * (len as u128) / (partition_count as u128)) as usize
 }
 
 fn global_extreme_index(values: &[&[f64]], len: usize) -> usize {
@@ -311,5 +319,15 @@ mod tests {
         plot.max_points = 0;
         let error = decimate_xy_2d(&plot, &[0.0], &[vec![1.0]]).unwrap_err();
         assert!(error.to_string().contains("must be positive"));
+    }
+
+    #[test]
+    fn partition_boundaries_do_not_overflow_at_usize_limits() {
+        let len = usize::MAX;
+
+        assert_eq!(partition_boundary(0, len, 3), 0);
+        assert_eq!(partition_boundary(1, len, 3), len / 3);
+        assert_eq!(partition_boundary(2, len, 3), len - len.div_ceil(3));
+        assert_eq!(partition_boundary(3, len, 3), len);
     }
 }
