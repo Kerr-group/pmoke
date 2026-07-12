@@ -574,15 +574,10 @@ mod tests {
     fn temporary_metadata_is_a_process_specific_sibling() {
         let output = Path::new("run/analysis_metadata.toml");
         let temp = crate::commands::run_dir::unique_temporary_path(output).unwrap();
-        assert!(
-            temp.to_string_lossy()
-                .starts_with("run/analysis_metadata.toml.")
-        );
-        assert!(temp.to_string_lossy().ends_with(".replace"));
-        assert!(
-            temp.to_string_lossy()
-                .contains(&std::process::id().to_string())
-        );
+        let temp_str = temp.to_string_lossy().replace('\\', "/");
+        assert!(temp_str.starts_with("run/analysis_metadata.toml."));
+        assert!(temp_str.ends_with(".replace"));
+        assert!(temp_str.contains(&std::process::id().to_string()));
     }
 
     #[test]
