@@ -201,6 +201,15 @@ mod tests {
 #[cfg(test)]
 mod config_command_tests {
     use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_version_matches_the_package_version() {
+        assert_eq!(
+            Cli::command().get_version(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+    }
 
     #[test]
     fn parses_config_migrate_options_without_hardware_feature() {
