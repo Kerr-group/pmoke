@@ -3,6 +3,7 @@ use crate::config::{Config, LockinLpfKind};
 use crate::lockin::lockin_core::{LockinProcessor, legacy_boxcar_enbw_hz};
 use anyhow::{Context, Result};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -61,6 +62,26 @@ struct OutputFileInfo {
     sha256: String,
 }
 
+#[derive(Serialize, PartialEq, Eq)]
+struct ColumnSet {
+    names: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct AnalysisArtifact {
+    kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channel: Option<u8>,
+    csv: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    npy: Option<String>,
+    column_set: String,
+    rows: usize,
+    columns: usize,
+    dtype: &'static str,
+    order: &'static str,
+}
+
 #[derive(Serialize)]
 struct AnalysisMetadata<'a> {
     schema_version: u32,
@@ -69,6 +90,8 @@ struct AnalysisMetadata<'a> {
     source_acquisition: &'static str,
     source_config: &'static str,
     lockin: &'a LockinProvenance,
+    column_sets: BTreeMap<String, ColumnSet>,
+    artifacts: Vec<AnalysisArtifact>,
     outputs: Vec<OutputFileInfo>,
 }
 
@@ -115,6 +138,108 @@ fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
     Ok(outputs)
 }
 
+fn describe_analysis_artifacts(
+    dir: &Path,
+) -> Result<(BTreeMap<String, ColumnSet>, Vec<AnalysisArtifact>)> {
+    let mut column_sets = BTreeMap::new();
+    let mut artifacts = Vec::new();
+    for entry in [dir.join("lockin"), dir.join("kerr")] {
+        if !entry.exists() {
+            continue;
+        }
+        for file in fs::read_dir(&entry)? {
+            let path = file?.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("csv") {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(dir)
+                .context("failed to relativize analysis CSV")?;
+            let relative_string = relative.to_string_lossy().replace('\\', "/");
+            let (kind, channel) = analysis_artifact_identity(relative)?;
+            let (names, rows) = inspect_csv_shape(&path)?;
+            let columns = names.len();
+            let candidate = ColumnSet { names };
+            if let Some(existing) = column_sets.get(&kind) {
+                if existing != &candidate {
+                    anyhow::bail!("column set differs between {kind} artifacts");
+                }
+            } else {
+                column_sets.insert(kind.clone(), candidate);
+            }
+            let npy_path = path.with_extension("npy");
+            let npy = npy_path.exists().then(|| {
+                npy_path
+                    .strip_prefix(dir)
+                    .unwrap_or(&npy_path)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            });
+            artifacts.push(AnalysisArtifact {
+                kind: kind.clone(),
+                channel,
+                csv: relative_string,
+                npy,
+                column_set: kind,
+                rows,
+                columns,
+                dtype: "<f8",
+                order: "C",
+            });
+        }
+    }
+    artifacts.sort_by(|left, right| left.csv.cmp(&right.csv));
+    Ok((column_sets, artifacts))
+}
+
+fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!("analysis artifact has no UTF-8 stem: {}", path.display())
+        })?;
+    if stem == "kerr" {
+        return Ok(("kerr".to_string(), None));
+    }
+    let channel = stem
+        .strip_prefix("ch")
+        .and_then(|value| value.split('_').next())
+        .and_then(|value| value.parse::<u8>().ok())
+        .ok_or_else(|| anyhow::anyhow!("invalid analysis artifact name: {}", path.display()))?;
+    let kind = if stem.ends_with("_xy") {
+        "lockin_xy"
+    } else if stem.ends_with("_rotated") {
+        "lockin_rotated"
+    } else {
+        return Err(anyhow::anyhow!(
+            "unknown analysis artifact name: {}",
+            path.display()
+        ));
+    };
+    Ok((kind.to_string(), Some(channel)))
+}
+
+fn inspect_csv_shape(path: &Path) -> Result<(Vec<String>, usize)> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_path(path)
+        .with_context(|| format!("failed to inspect analysis CSV: {}", path.display()))?;
+    let names = reader
+        .headers()?
+        .iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut rows = 0usize;
+    for record in reader.records() {
+        record.with_context(|| format!("failed to inspect analysis CSV: {}", path.display()))?;
+        rows = rows
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("analysis CSV row count overflows"))?;
+    }
+    Ok((names, rows))
+}
+
 pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Result<()> {
     let path = cfg.paths().analysis_manifest();
     let parent = path
@@ -125,6 +250,7 @@ pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Resul
     }
 
     let outputs = scan_outputs(parent)?;
+    let (column_sets, artifacts) = describe_analysis_artifacts(parent)?;
 
     let metadata = AnalysisMetadata {
         schema_version: 1,
@@ -133,6 +259,8 @@ pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Resul
         source_acquisition: "../acquisition/manifest.toml",
         source_config: "../config.resolved.toml",
         lockin,
+        column_sets,
+        artifacts,
         outputs,
     };
     let encoded =
@@ -150,8 +278,22 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config) -> Result<()> {
     let mut manifest: toml::Value =
         toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))?;
     let outputs = scan_outputs(parent)?;
-    manifest["outputs"] =
-        toml::Value::try_from(outputs).context("failed to encode analysis output entries")?;
+    let (column_sets, artifacts) = describe_analysis_artifacts(parent)?;
+    let table = manifest
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("analysis manifest root must be a table"))?;
+    table.insert(
+        "outputs".to_string(),
+        toml::Value::try_from(outputs).context("failed to encode analysis output entries")?,
+    );
+    table.insert(
+        "column_sets".to_string(),
+        toml::Value::try_from(column_sets).context("failed to encode analysis column sets")?,
+    );
+    table.insert(
+        "artifacts".to_string(),
+        toml::Value::try_from(artifacts).context("failed to encode analysis artifacts")?,
+    );
     let encoded =
         toml::to_string_pretty(&manifest).context("failed to encode updated analysis manifest")?;
     write_atomic(&path, encoded.as_bytes())

@@ -497,6 +497,15 @@ mod tests {
         assert_eq!(manifest["schema_version"].as_integer().unwrap(), 1);
         assert!(manifest["timestamp"].as_str().is_some());
         assert!(manifest["lockin"].as_table().is_some());
+        let artifacts = manifest["artifacts"].as_array().unwrap();
+        let kerr_artifact = artifacts
+            .iter()
+            .find(|artifact| artifact["kind"].as_str() == Some("kerr"))
+            .unwrap();
+        assert!(kerr_artifact["rows"].as_integer().unwrap() > 0);
+        assert!(kerr_artifact["columns"].as_integer().unwrap() > 0);
+        assert_eq!(kerr_artifact["dtype"].as_str(), Some("<f8"));
+        assert_eq!(kerr_artifact["order"].as_str(), Some("C"));
 
         let outputs = manifest["outputs"].as_array().unwrap();
         assert!(
