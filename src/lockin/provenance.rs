@@ -131,6 +131,8 @@ struct AnalysisMetadata<'a> {
     source_waveform: Option<String>,
     config_source: &'static str,
     config_resolved: &'static str,
+    config_source_sha256: String,
+    config_resolved_sha256: String,
     config_sha256: String,
     published_through: &'static str,
     reference: ReferenceProvenance,
@@ -569,6 +571,7 @@ fn analysis_channels(cfg: &Config) -> Vec<&crate::config::Channel> {
 }
 
 pub fn validate_upstream_stage_config(cfg: &Config, stage: &str) -> Result<()> {
+    crate::commands::run_dir::verify_analysis_config_snapshots(cfg)?;
     let manifest = cfg.resolver().analysis_manifest();
     let contents = fs::read_to_string(&manifest)
         .with_context(|| format!("failed to read analysis manifest: {}", manifest.display()))?;
@@ -682,7 +685,9 @@ pub fn write_analysis_metadata(
         .is_file()
         .then(|| crate::utils::checksum::file_sha256(&source_resolver.acquisition_manifest()))
         .transpose()?;
-    let config_sha256 =
+    let config_source_sha256 =
+        crate::utils::checksum::file_sha256(&output_paths.analysis_source_config())?;
+    let config_resolved_sha256 =
         crate::utils::checksum::file_sha256(&output_paths.analysis_resolved_config())?;
     let li_config_sha256 = stage_config_fingerprint(cfg, "li")?;
 
@@ -739,7 +744,9 @@ pub fn write_analysis_metadata(
         source_waveform,
         config_source: "config.source.toml",
         config_resolved: "config.resolved.toml",
-        config_sha256,
+        config_source_sha256,
+        config_sha256: config_resolved_sha256.clone(),
+        config_resolved_sha256,
         published_through: if has_kerr {
             "kerr"
         } else if has_phase {
@@ -863,6 +870,19 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
             &cfg.paths().analysis_resolved_config(),
         )?),
     );
+    table.insert(
+        "config_source_sha256".to_string(),
+        toml::Value::String(crate::utils::checksum::file_sha256(
+            &cfg.paths().analysis_source_config(),
+        )?),
+    );
+    table.insert(
+        "config_resolved_sha256".to_string(),
+        toml::Value::String(crate::utils::checksum::file_sha256(
+            &cfg.paths().analysis_resolved_config(),
+        )?),
+    );
+    table.remove("source_config");
     let (source_acquisition, source_waveform) =
         analysis_sources(&cfg.paths().run_dir, &cfg.resolver())?;
     table.remove("source_acquisition");
@@ -951,10 +971,29 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
             );
         } else if matches!(stage, "reference" | "sensor") {
             stage_prov.insert(
-                "config_sha256".to_string(),
+                "config_source".to_string(),
+                toml::Value::String(format!("diagnostics/{stage}/config.source.toml")),
+            );
+            stage_prov.insert(
+                "config_resolved".to_string(),
+                toml::Value::String(format!("diagnostics/{stage}/config.resolved.toml")),
+            );
+            stage_prov.insert(
+                "config_source_sha256".to_string(),
                 toml::Value::String(crate::utils::checksum::file_sha256(
-                    &cfg.paths().analysis_resolved_config(),
+                    &cfg.paths().diagnostic_source_config(stage),
                 )?),
+            );
+            let resolved_sha256 = crate::utils::checksum::file_sha256(
+                &cfg.paths().diagnostic_resolved_config(stage),
+            )?;
+            stage_prov.insert(
+                "config_resolved_sha256".to_string(),
+                toml::Value::String(resolved_sha256.clone()),
+            );
+            stage_prov.insert(
+                "config_sha256".to_string(),
+                toml::Value::String(resolved_sha256),
             );
         }
         if let Some(git) = option_env!("PMOKE_GIT_COMMIT") {

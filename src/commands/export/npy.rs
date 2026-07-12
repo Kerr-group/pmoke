@@ -77,13 +77,31 @@ pub fn export(cfg: &Config, output: &Path) -> Result<()> {
 }
 
 pub fn export_canonical(cfg: &Config) -> Result<()> {
+    crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
     let _lock =
         crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "export_npy")?;
+    crate::commands::run_dir::prepare_analysis_run(cfg)?;
+    let result = export_canonical_locked(cfg);
+    match &result {
+        Ok(()) => crate::commands::run_dir::write_run_state(
+            cfg,
+            "published",
+            "export_npy_complete",
+            None,
+        )?,
+        Err(error) => {
+            crate::commands::run_dir::write_run_state(cfg, "failed", "export_npy", Some(error))?
+        }
+    }
+    result
+}
+
+fn export_canonical_locked(cfg: &Config) -> Result<()> {
     let staging_cfg = crate::commands::run_dir::prepare_analysis_staging(
         cfg,
         crate::commands::run_dir::AnalysisStage::ExportNpy,
     )?;
-    crate::commands::run_dir::write_analysis_config_snapshots(&staging_cfg)?;
+    crate::commands::run_dir::ensure_analysis_config_snapshots(&staging_cfg)?;
     export_canonical_inner(&staging_cfg)?;
     crate::commands::run_dir::publish_analysis_staging(cfg, &staging_cfg)?;
     ui::success("analysis NumPy export completed");
@@ -391,8 +409,32 @@ mod tests {
         let manifest = fs::read_to_string(paths.analysis_manifest()).unwrap();
         assert!(manifest.contains("lockin/ch2_xy.npy"));
         assert!(manifest.contains("kerr/kerr.npy"));
+        let analysis_source = fs::read(paths.analysis_source_config()).unwrap();
 
+        cfg.source_text = Some("version = 3\n# export-only change\n".to_string());
         export_canonical(&cfg).unwrap();
+        assert_eq!(
+            fs::read(paths.analysis_source_config()).unwrap(),
+            analysis_source
+        );
+        let manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(paths.analysis_manifest()).unwrap()).unwrap();
+        let run: toml::Value =
+            toml::from_str(&fs::read_to_string(paths.run_manifest()).unwrap()).unwrap();
+        assert_eq!(
+            run["analysis"]["published_generation"].as_integer(),
+            manifest["generation"].as_integer()
+        );
+        assert_eq!(
+            run["analysis"]["last_attempt"]["command"].as_str(),
+            Some("export_npy")
+        );
+        assert_eq!(run["status"].as_str(), Some("complete"));
+
+        fs::write(paths.analysis_source_config(), b"tampered\n").unwrap();
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("checksum mismatch"));
+        fs::write(paths.analysis_source_config(), &analysis_source).unwrap();
 
         cfg.force = true;
         fs::write(paths.lockin_xy_csv(2), "time (s),value\n0,3\n1,4\n").unwrap();

@@ -14,28 +14,31 @@ pub fn analyze(cfg: &Config) -> Result<()> {
         crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "analyze")?;
     crate::config::validate_for_target(cfg, crate::config::ValidationTarget::Analyze)?;
     crate::commands::run_dir::prepare_analysis_run(cfg)?;
+    crate::plot::warn_canonical_plot_layout(cfg);
+    crate::commands::run_dir::write_run_state(cfg, "analyzing", "analysis", None)?;
+    let result = (|| {
+        let pb = ui::spinner("reading fetched waveform data");
+        let t0 = std::time::Instant::now();
+        let data = read_all_fetched_waveforms(cfg)?;
+        let elapsed_read = t0.elapsed();
 
-    let pb = ui::spinner("reading fetched waveform data");
-    let t0 = std::time::Instant::now();
-    let data = read_all_fetched_waveforms(cfg)?;
-    let elapsed_read = t0.elapsed();
+        ui::finish_read(
+            pb,
+            format!(
+                "fetched data: {} channels, {} samples ({})",
+                data.channels.len(),
+                data.channels.first().map_or(0, Vec::len),
+                ui::fmt_duration(elapsed_read)
+            ),
+        );
 
-    ui::finish_read(
-        pb,
-        format!(
-            "fetched data: {} channels, {} samples ({})",
-            data.channels.len(),
-            data.channels.first().map_or(0, Vec::len),
-            ui::fmt_duration(elapsed_read)
-        ),
-    );
-
-    if data.channels.is_empty() {
-        bail!("Fetched data is empty, cannot extract channels.");
-    }
-
-    run_analyze_locked(cfg, &data)?;
-    Ok(())
+        if data.channels.is_empty() {
+            bail!("Fetched data is empty, cannot extract channels.");
+        }
+        run_analyze_inner(cfg, &data)
+    })();
+    record_analysis_result(cfg, &result)?;
+    result
 }
 
 pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
@@ -49,13 +52,18 @@ pub fn run_analyze_locked(cfg: &Config, data: &WaveformData) -> Result<()> {
     crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "analysis", None)?;
     let result = run_analyze_inner(cfg, data);
+    record_analysis_result(cfg, &result)?;
+    result
+}
+
+fn record_analysis_result(cfg: &Config, result: &Result<()>) -> Result<()> {
     match &result {
         Ok(()) => crate::commands::run_dir::write_run_state(cfg, "complete", "analysis", None)?,
         Err(error) => {
             crate::commands::run_dir::write_run_state(cfg, "failed", "analysis", Some(error))?
         }
     }
-    result
+    Ok(())
 }
 
 fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
@@ -174,7 +182,7 @@ pub(crate) fn validate_waveform_data(data: &WaveformData) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_analyze, validate_waveform_data};
+    use super::{analyze, run_analyze, validate_waveform_data};
     use crate::config::{KerrType, LockinLpfKind, Window};
     use crate::utils::csv::read_csv;
     use crate::utils::waveform::WaveformData;
@@ -232,6 +240,37 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("expected 3")
+        );
+    }
+
+    #[test]
+    fn waveform_read_failure_is_recorded_as_an_analysis_attempt() {
+        let directory = TemporaryDirectory::new();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
+        cfg.roles.reference_ch = 2;
+        cfg.set_artifact_root(directory.0.clone());
+        cfg.instruments = Some(crate::config::Instruments {
+            function_generator: None,
+            oscilloscope: crate::config::Oscilloscope {
+                connection: crate::config::Connection::Tcpip {
+                    ip: "127.0.0.1".to_string(),
+                    port: 55255,
+                },
+                model: "DHO5108".to_string(),
+            },
+        });
+        std::fs::write(directory.0.join("raw.csv"), b"ch1,ch2,ch3\n0,0,0\n").unwrap();
+
+        analyze(&cfg).unwrap_err();
+        let run: toml::Value =
+            toml::from_str(&std::fs::read_to_string(cfg.paths().run_manifest()).unwrap()).unwrap();
+        assert_eq!(
+            run["analysis"]["last_attempt"]["command"].as_str(),
+            Some("analysis")
+        );
+        assert_eq!(
+            run["analysis"]["last_attempt"]["status"].as_str(),
+            Some("failed")
         );
     }
 
@@ -730,6 +769,9 @@ kind = "kerr"
 csv = "kerr/kerr.csv"
 "#;
         std::fs::write(&manifest_path, initial_manifest).unwrap();
+        let diagnostic_config = paths.diagnostic_source_config("reference");
+        std::fs::create_dir_all(diagnostic_config.parent().unwrap()).unwrap();
+        std::fs::write(&diagnostic_config, b"version = 3\n").unwrap();
 
         // 2. Re-run phase staging
         let phase_cfg = crate::commands::run_dir::prepare_analysis_staging(
@@ -737,6 +779,10 @@ csv = "kerr/kerr.csv"
             crate::commands::run_dir::AnalysisStage::Phase,
         )
         .unwrap();
+        assert_eq!(
+            std::fs::read(phase_cfg.paths().diagnostic_source_config("reference")).unwrap(),
+            b"version = 3\n"
+        );
         crate::commands::run_dir::write_analysis_config_snapshots(&phase_cfg).unwrap();
         crate::lockin::provenance::refresh_analysis_manifest_outputs(&phase_cfg, "phase").unwrap();
 
@@ -744,6 +790,9 @@ csv = "kerr/kerr.csv"
         let manifest_content =
             std::fs::read_to_string(phase_cfg.paths().analysis_manifest()).unwrap();
         let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
+        assert!(manifest.get("source_config").is_none());
+        assert!(manifest["config_source_sha256"].is_str());
+        assert!(manifest["config_resolved_sha256"].is_str());
         let stages = manifest["stages"].as_table().unwrap();
         assert!(stages.contains_key("li"));
         assert!(stages.contains_key("phase"));

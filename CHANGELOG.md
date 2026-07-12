@@ -12,6 +12,8 @@
 
 ### Fixes
 
+- Diagnostic and NPY generations now keep `run.toml` synchronized with the published analysis generation; diagnostic configs are stored separately without replacing numerical-analysis provenance.
+- Analysis attempts that fail while reading waveform input are recorded, and both source and resolved analysis configs are checksum-protected.
 - Reanalysis continues with a warning when only an acquisition config snapshot checksum is stale; RAW channel sizes and checksums remain mandatory, while `raw verify` stays strict.
 - Standalone `reference` and `sensor` diagnostic plots no longer require `li` to have created an analysis manifest first.
 

@@ -203,6 +203,9 @@ shot_000123/
     │   └── ch3_rotated.csv
     ├── kerr/
     │   └── kerr.csv
+    ├── diagnostics/
+    │   ├── reference/
+    │   └── sensor/
     ├── plots/
     └── debug/
 ```
@@ -223,7 +226,7 @@ The run-root configuration snapshots are immutable acquisition provenance. Every
 
 The standalone `pmoke screenshot` command only adds a screenshot to an existing completed canonical acquisition. To capture a display during acquisition, enable screenshots in the config and run `fetch`, `process`, or `auto`. The acquisition `manifest.toml` serves specifically as an inventory of the acquired waveform data (CSV or RAW binary waveforms) and its metadata; screenshots are stored under `acquisition/screenshots/` but are not registered in the `manifest.toml` file.
 
-Standalone `reference` and `sensor` runs update their plot trees transactionally under `analysis/plots/`; they preserve unrelated analysis artifacts. Canonical `export csv` output is serialized with other run mutations, while a custom output outside the canonical layout remains an independent export.
+Standalone `reference` and `sensor` runs update their plot trees transactionally under `analysis/plots/`; they preserve unrelated analysis artifacts and the numerical-analysis config snapshots. Their invocation configs are recorded separately under `analysis/diagnostics/`. Canonical `export csv` output is serialized with other run mutations, while a custom output outside the canonical layout remains an independent export.
 
 The `analyze`, `li`, `phase`, and `kerr` commands are rerunnable without `--force`. Each writes a new generation to `analysis.incomplete/` and publishes it atomically. A changed analysis config is accepted by full `analyze`; staged commands verify that their upstream result was produced with compatible settings. If it is stale, pmoke reports which upstream command must be rerun. A failed attempt leaves the previously published analysis generation intact.
 
