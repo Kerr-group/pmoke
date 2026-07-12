@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixes
+
+- Reanalysis continues with a warning when only an acquisition config snapshot checksum is stale; RAW channel sizes and checksums remain mandatory, while `raw verify` stays strict.
+- Standalone `reference` and `sensor` diagnostic plots no longer require `li` to have created an analysis manifest first.
+
 ## v0.3.0 — 2026-07-13
 
 ### Breaking changes

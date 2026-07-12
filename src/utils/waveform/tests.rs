@@ -541,7 +541,7 @@ y_reference = 0.0
 }
 
 #[test]
-fn read_raw_waveform_v2_verifies_config_and_channel_checksums() {
+fn raw_read_tolerates_stale_config_snapshots_but_verifies_payload() {
     let dir = unique_test_dir("raw_v2_checksums");
     fs::create_dir(&dir).unwrap();
     let config = b"version = 4\n";
@@ -608,7 +608,12 @@ y_reference = 0.0
 
     fs::write(dir.join("ch1.u16le"), raw).unwrap();
     fs::write(dir.join("config.source.toml"), b"version = 3\n").unwrap();
-    let error = read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap_err();
+    assert!(matches!(
+        raw_status_in_dir(&dir, &[1]).unwrap(),
+        RawStatus::Complete
+    ));
+    read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap();
+    let error = verify_raw_waveform_dir(&dir).unwrap_err();
     assert!(
         error
             .to_string()
@@ -621,7 +626,8 @@ y_reference = 0.0
         b"version = 4\n# changed\n",
     )
     .unwrap();
-    let error = read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap_err();
+    read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap();
+    let error = verify_raw_waveform_dir(&dir).unwrap_err();
     assert!(
         error
             .to_string()
