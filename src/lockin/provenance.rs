@@ -73,14 +73,26 @@ struct AnalysisArtifact {
     kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     channel: Option<u8>,
-    csv: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    csv: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     npy: Option<String>,
-    column_set: String,
-    rows: usize,
-    columns: usize,
-    dtype: &'static str,
-    order: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    column_set: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rows: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    columns: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dtype: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    depends_on: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -95,7 +107,10 @@ struct ReferenceProvenance {
 struct AnalysisMetadata<'a> {
     schema_version: u32,
     pmoke_version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    git_commit: Option<&'static str>,
     timestamp: String,
+    analyzed_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_acquisition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -191,18 +206,134 @@ fn describe_analysis_artifacts(
             artifacts.push(AnalysisArtifact {
                 kind: kind.clone(),
                 channel,
-                csv: relative_string,
+                csv: Some(relative_string),
+                file: None,
                 npy,
-                column_set: kind,
-                rows,
-                columns,
-                dtype: "<f8",
-                order: "C",
+                column_set: Some(kind),
+                rows: Some(rows),
+                columns: Some(columns),
+                dtype: Some("<f8"),
+                order: Some("C"),
+                depends_on: None,
+                format: None,
             });
         }
     }
-    artifacts.sort_by(|left, right| left.csv.cmp(&right.csv));
+    artifacts.extend(describe_plot_artifacts(dir)?);
+    artifacts.sort_by(|left, right| {
+        left.csv
+            .as_deref()
+            .or(left.file.as_deref())
+            .cmp(&right.csv.as_deref().or(right.file.as_deref()))
+    });
     Ok((column_sets, artifacts))
+}
+
+fn describe_plot_artifacts(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
+    let plot_dir = dir.join("plots");
+    if !plot_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut paths = Vec::new();
+    collect_plot_files(&plot_dir, &mut paths)?;
+    let mut artifacts = Vec::with_capacity(paths.len());
+    for path in paths {
+        crate::plot::validate_plot_file(&path)?;
+        let relative = path.strip_prefix(dir)?;
+        let file = relative.to_string_lossy().replace('\\', "/");
+        let stage = relative
+            .components()
+            .nth(1)
+            .and_then(|component| component.as_os_str().to_str())
+            .ok_or_else(|| anyhow::anyhow!("invalid plot artifact path: {}", path.display()))?;
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let channel = stem
+            .strip_prefix("ch")
+            .and_then(|value| value.split('_').next())
+            .and_then(|value| value.parse::<u8>().ok());
+        let kind = match (stage, stem) {
+            ("reference", _) => "reference_plot",
+            ("sensor", _) => "sensor_plot",
+            ("lockin", _) => "lockin_xy_plot",
+            ("phase", "omega_t0") => "phase_offset_plot",
+            ("phase", _) => "phase_rotated_plot",
+            ("kerr", _) => "kerr_plot",
+            _ => return Err(anyhow::anyhow!("unknown plot stage: {stage}")),
+        };
+        let depends_on = match (stage, stem) {
+            ("lockin", _) => Some(match channel {
+                Some(channel) => vec![format!("lockin/ch{channel}_xy.csv")],
+                None => matching_analysis_csvs(dir, "_xy.csv")?,
+            }),
+            ("phase", "omega_t0") => Some(matching_analysis_csvs(dir, "_xy.csv")?),
+            ("phase", _) => Some(match channel {
+                Some(channel) => vec![format!("lockin/ch{channel}_rotated.csv")],
+                None => matching_analysis_csvs(dir, "_rotated.csv")?,
+            }),
+            ("kerr", _) => Some(vec!["kerr/kerr.csv".to_string()]),
+            _ => None,
+        };
+        artifacts.push(AnalysisArtifact {
+            kind: kind.to_string(),
+            channel,
+            csv: None,
+            file: Some(file),
+            npy: None,
+            column_set: None,
+            rows: None,
+            columns: None,
+            dtype: None,
+            order: None,
+            depends_on,
+            format: path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(str::to_ascii_lowercase),
+        });
+    }
+    Ok(artifacts)
+}
+
+fn matching_analysis_csvs(dir: &Path, suffix: &str) -> Result<Vec<String>> {
+    let lockin = dir.join("lockin");
+    if !lockin.exists() {
+        return Ok(Vec::new());
+    }
+    let mut matches = fs::read_dir(lockin)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.ends_with(suffix))
+        })
+        .map(|path| {
+            path.strip_prefix(dir)
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .map_err(anyhow::Error::from)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    matches.sort();
+    Ok(matches)
+}
+
+fn collect_plot_files(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_dir() {
+            collect_plot_files(&path, paths)?;
+        } else if metadata.file_type().is_file() {
+            paths.push(path);
+        } else {
+            anyhow::bail!("plot artifact is a symbolic link: {}", path.display());
+        }
+    }
+    paths.sort();
+    Ok(())
 }
 
 fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
@@ -273,10 +404,13 @@ pub fn write_analysis_metadata(
     let (source_acquisition, source_waveform) =
         analysis_sources(&output_paths.run_dir, source_resolver)?;
 
+    let now = jiff::Timestamp::now().to_string();
     let metadata = AnalysisMetadata {
         schema_version: 1,
         pmoke_version: env!("CARGO_PKG_VERSION"),
-        timestamp: jiff::Timestamp::now().to_string(),
+        git_commit: option_env!("PMOKE_GIT_COMMIT"),
+        timestamp: now.clone(),
+        analyzed_at: now,
         source_acquisition,
         source_waveform,
         source_config: "../config.resolved.toml",
@@ -359,13 +493,17 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config) -> Result<()> {
         "artifacts".to_string(),
         toml::Value::try_from(artifacts).context("failed to encode analysis artifacts")?,
     );
+    table.insert(
+        "analyzed_at".to_string(),
+        toml::Value::String(jiff::Timestamp::now().to_string()),
+    );
     let encoded =
         toml::to_string_pretty(&manifest).context("failed to encode updated analysis manifest")?;
     write_atomic(&path, encoded.as_bytes())
 }
 
 fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
-    let temporary = temporary_path(path);
+    let temporary = crate::commands::run_dir::unique_temporary_path(path)?;
     let result = (|| {
         let file = OpenOptions::new()
             .write(true)
@@ -390,12 +528,6 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&temporary);
     }
     result
-}
-
-fn temporary_path(path: &Path) -> PathBuf {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{}.tmp", std::process::id()));
-    path.with_file_name(name)
 }
 
 #[cfg(test)]
@@ -441,12 +573,15 @@ mod tests {
     #[test]
     fn temporary_metadata_is_a_process_specific_sibling() {
         let output = Path::new("run/analysis_metadata.toml");
-        assert_eq!(
-            temporary_path(output),
-            PathBuf::from(format!(
-                "run/analysis_metadata.toml.{}.tmp",
-                std::process::id()
-            ))
+        let temp = crate::commands::run_dir::unique_temporary_path(output).unwrap();
+        assert!(
+            temp.to_string_lossy()
+                .starts_with("run/analysis_metadata.toml.")
+        );
+        assert!(temp.to_string_lossy().ends_with(".replace"));
+        assert!(
+            temp.to_string_lossy()
+                .contains(&std::process::id().to_string())
         );
     }
 
@@ -491,6 +626,40 @@ mod tests {
             sources,
             (Some("../acquisition/manifest.toml".to_string()), None)
         );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn manifest_describes_only_valid_canonical_plot_files() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "pmoke-plot-manifest-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(directory.join("kerr")).unwrap();
+        fs::create_dir_all(directory.join("plots/kerr")).unwrap();
+        fs::write(
+            directory.join("kerr/kerr.csv"),
+            b"time (s),Kerr angle (rad)\n0,0\n",
+        )
+        .unwrap();
+        fs::write(directory.join("plots/kerr/kerr.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+
+        let (_, artifacts) = describe_analysis_artifacts(&directory).unwrap();
+        let plot = artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "kerr_plot")
+            .unwrap();
+        assert_eq!(plot.file.as_deref(), Some("plots/kerr/kerr.png"));
+        assert_eq!(
+            plot.depends_on.as_deref(),
+            Some(&["kerr/kerr.csv".to_string()][..])
+        );
+        assert_eq!(plot.format.as_deref(), Some("png"));
 
         fs::remove_dir_all(directory).unwrap();
     }

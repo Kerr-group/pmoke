@@ -183,9 +183,10 @@ fn plot_fit_results(
 
     plot::run_plot(
         &cfg.plot,
+        &cfg.paths().reference_fit_plot(),
         "plotting reference fit",
         "reference plot completed",
-        || {
+        |output| {
             let f = results.f_ref;
             let a = results.a_ref;
             let omegat = results.omega_tref;
@@ -210,7 +211,7 @@ fn plot_fit_results(
                 .collect();
 
             ref_plot::ReferencePlotter {}
-                .plot(&cfg.plot, t_plot, ref_plot, &fit_plot)
+                .plot(&cfg.plot, output, t_plot, ref_plot, &fit_plot)
                 .context("failed to plot reference signal")
         },
     )?;

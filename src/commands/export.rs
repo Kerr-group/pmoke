@@ -40,10 +40,7 @@ pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Re
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let temporary = forced_export_path(output);
-    if temporary.exists() {
-        std::fs::remove_file(&temporary)?;
-    }
+    let temporary = crate::commands::run_dir::unique_temporary_path(output)?;
     let report = match export_raw_waveform_csv(input, &temporary) {
         Ok(rep) => rep,
         Err(error) => {
@@ -69,12 +66,6 @@ pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Re
     );
     ui::success("RAW waveform CSV export completed");
     Ok(())
-}
-
-fn forced_export_path(output: &std::path::Path) -> std::path::PathBuf {
-    let mut name = output.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{}.replace", std::process::id()));
-    output.with_file_name(name)
 }
 
 fn validate_replaceable_file(path: &std::path::Path) -> Result<()> {

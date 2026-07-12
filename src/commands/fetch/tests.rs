@@ -575,6 +575,14 @@ fn test_fetch_out_denied_and_export_properties() {
     let u16le_bytes = b"\x00\x00";
     let mut metadata = single_channel_raw_metadata("waveforms/ch1.u16le", 1);
     metadata.channels[0].sha256 = sha256_hex(u16le_bytes);
+    let source_config = b"version = 4\n";
+    let resolved_config = b"version = 4\n";
+    fs::write(dir.join("config.source.toml"), source_config).unwrap();
+    fs::write(dir.join("config.resolved.toml"), resolved_config).unwrap();
+    metadata.config_file = "../config.source.toml";
+    metadata.sha256 = sha256_hex(source_config);
+    metadata.resolved_config_file = "../config.resolved.toml";
+    metadata.resolved_config_sha256 = sha256_hex(resolved_config);
     let toml_str = toml::to_string_pretty(&metadata).unwrap();
     fs::write(acq_dir.join("manifest.toml"), toml_str).unwrap();
     fs::write(acq_dir.join("waveforms/ch1.u16le"), u16le_bytes).unwrap();

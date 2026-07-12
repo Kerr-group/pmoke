@@ -108,6 +108,11 @@ pub fn run_kerr_analysis(
     for (ch_i, li_rotated_result) in ch.iter().zip(li_rotated_results.iter()) {
         pb.set_message(format!("Kerr analysis ch{ch_i}"));
         let fig_name = format!("{}_ch{}", KERR_NAME, ch_i);
+        let output_path = if ch.len() == 1 {
+            paths.kerr_plot()
+        } else {
+            paths.kerr_channel_plot(*ch_i)
+        };
 
         let kerr_i = match kerr_type {
             KerrType::Standard => KerrStandardAnalyser {}
@@ -119,6 +124,7 @@ pub fn run_kerr_analysis(
                     factor,
                     xlabel: &concat_label,
                     fig_name,
+                    output_path: &output_path,
                 })
                 .context("failed to run Kerr analysis")?,
             KerrType::Harmonics => KerrHarmonicsAnalyser {}
@@ -130,6 +136,7 @@ pub fn run_kerr_analysis(
                     factor,
                     xlabel: &concat_label,
                     fig_name,
+                    output_path: &output_path,
                 })
                 .context("failed to run Kerr harmonics analysis")?,
         };

@@ -101,12 +101,13 @@ pub fn run_sensor<'a>(
 
     plot::run_plot(
         &cfg.plot,
+        &cfg.paths().sensor_raw_combined_plot(),
         "plotting sensor raw data",
         "sensor raw plot completed",
-        || {
+        |output| {
             let s_stride = li_stride_2d(cfg, t, s_cols, f_ref)?;
             sensor_raw_plot::SensorRawPlotter {}
-                .plot(&cfg.plot, &t_stride, s_stride, sensor_ch, &c_bg_arr)
+                .plot(&cfg.plot, output, &t_stride, s_stride, sensor_ch, &c_bg_arr)
                 .context("failed to plot sensor data")
         },
     )?;
@@ -200,17 +201,17 @@ pub fn run_sensor<'a>(
 
     plot::run_plot(
         &cfg.plot,
+        &cfg.paths().sensor_integral_combined_plot(),
         "plotting sensor integrals",
         "sensor integral plot completed",
-        || {
+        |output| {
             sensor_integral_plot::SensorIntegralPlotter {}
                 .plot(
                     &cfg.plot,
+                    output,
                     &t_stride,
                     &s_integral_stride,
-                    sensor_ch,
-                    &labels,
-                    &units,
+                    (sensor_ch, &labels, &units),
                 )
                 .context("failed to plot sensor integrals")
         },

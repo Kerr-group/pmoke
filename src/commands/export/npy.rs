@@ -134,8 +134,7 @@ fn write_npy_table_replacing(
     if !force || !destination.exists() {
         return write_npy_table(destination, columns, rows);
     }
-    let temporary = temporary_file_path(destination);
-    ensure_missing(&temporary, "NPY replacement temporary file")?;
+    let temporary = crate::commands::run_dir::unique_temporary_path(destination)?;
     let result = (|| {
         write_npy_table(&temporary, columns, rows)?;
         crate::commands::run_dir::replace_file_atomically(&temporary, destination)
@@ -144,12 +143,6 @@ fn write_npy_table_replacing(
         let _ = fs::remove_file(&temporary);
     }
     result
-}
-
-fn temporary_file_path(path: &Path) -> PathBuf {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{}.replace", std::process::id()));
-    path.with_file_name(name)
 }
 
 fn ensure_regular_file(path: &Path, label: &str) -> Result<()> {

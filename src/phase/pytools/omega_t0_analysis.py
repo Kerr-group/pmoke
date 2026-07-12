@@ -3,6 +3,23 @@ import numpy as np
 import warnings
 from numpy.typing import NDArray
 
+
+def _load_gsplot():
+    import importlib
+    import json
+    import os
+    import tempfile
+
+    previous = os.getcwd()
+    with tempfile.TemporaryDirectory(prefix="pmoke-gsplot-") as directory:
+        with open(os.path.join(directory, "gsplot.json"), "w") as config:
+            json.dump({"metadata": False}, config)
+        os.chdir(directory)
+        try:
+            return importlib.import_module("gsplot")
+        finally:
+            os.chdir(previous)
+
 warnings.filterwarnings(
     "ignore",
     message='Creating legend with loc="best" can be slow.*',
@@ -10,26 +27,18 @@ warnings.filterwarnings(
 )
 
 
-def finish_plot(fname: str, save: bool, interactive: bool, output_dir: str):
+def finish_plot(output_path, interactive: bool):
+    import matplotlib.pyplot as plt
+
     if interactive:
-        import matplotlib.pyplot as plt
-
         plt.ioff()
-        if save:
-            import os
-
-            os.makedirs(output_dir, exist_ok=True)
-            path = os.path.join(output_dir, fname)
-            plt.savefig(f"{path}.png", bbox_inches="tight")
+        if output_path is not None:
+            plt.savefig(output_path, bbox_inches="tight")
         plt.show(block=True)
         plt.close("all")
-    elif save:
-        import os
-        import gsplot as gs
-
-        os.makedirs(output_dir, exist_ok=True)
-        path = os.path.join(output_dir, fname)
-        gs.show(path, ft_list=["png"], show=False)
+    elif output_path is not None:
+        plt.savefig(output_path, bbox_inches="tight")
+        plt.close("all")
 
 
 def decimation_indices(series, max_points: int, method: str) -> NDArray:
@@ -84,7 +93,7 @@ class OT0Analyser:
         m_ot0_6: NDArray,
         save: bool,
         interactive: bool,
-        output_dir: str,
+        output_path,
         max_points: int,
         decimation: str,
     ):
@@ -107,7 +116,7 @@ class OT0Analyser:
         plot_error = None
         if save or interactive:
             try:
-                import gsplot as gs
+                gs = _load_gsplot()
 
                 indices = decimation_indices(
                     [m_ot0_1, m_ot0_2, m_ot0_3, m_ot0_4, m_ot0_5, m_ot0_6],
@@ -139,7 +148,7 @@ class OT0Analyser:
                 gs.legend(axs[0], loc="best", markerscale=5)
 
                 gs.label([["$n$", "$-\\omega t_0$ (rad)", [0, 7], ["", ""]]])
-                finish_plot("omega_t0_analysis", save, interactive, output_dir)
+                finish_plot(output_path, interactive)
             except Exception as exc:
                 plot_error = str(exc)
 

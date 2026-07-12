@@ -5,6 +5,14 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnalysisStage {
+    Li,
+    Phase,
+    Kerr,
+}
 
 pub fn prepare(cfg: &Config) -> Result<()> {
     let paths = cfg.paths();
@@ -32,6 +40,13 @@ struct RunState {
     #[serde(skip_serializing_if = "Option::is_none")]
     git_commit: Option<String>,
     started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acquired_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    analysis_started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    analyzed_at: Option<String>,
+    updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<String>,
     config_source: String,
@@ -63,15 +78,46 @@ pub fn write_run_state(
         Err(error) => return Err(error).context("failed to read existing run manifest"),
     };
     let now = jiff::Timestamp::now().to_string();
-    let terminal = matches!(status, "acquired" | "complete" | "failed");
+    let (ex_started, ex_acquired, ex_anal_started, ex_analyzed) = match &existing {
+        Some(state) => (
+            Some(state.started_at.clone()),
+            state.acquired_at.clone(),
+            state.analysis_started_at.clone(),
+            state.analyzed_at.clone(),
+        ),
+        None => (None, None, None, None),
+    };
+
+    let started_at = ex_started.unwrap_or_else(|| now.clone());
+    let acquired_at = if status == "acquired" {
+        Some(now.clone())
+    } else {
+        ex_acquired
+    };
+    let analysis_started_at = if status == "analyzing" {
+        Some(now.clone())
+    } else {
+        ex_anal_started
+    };
+    let analyzed_at = if status == "complete" {
+        Some(now.clone())
+    } else {
+        ex_analyzed
+    };
+    let completed_at = (status == "complete").then(|| now.clone());
+
     let state = RunState {
         schema_version: 1,
         status: status.to_string(),
         stage: stage.to_string(),
         pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
         git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
-        started_at: existing.map_or_else(|| now.clone(), |state| state.started_at),
-        completed_at: terminal.then_some(now),
+        started_at,
+        acquired_at,
+        analysis_started_at,
+        analyzed_at,
+        updated_at: now,
+        completed_at,
         config_source: "config.source.toml".to_string(),
         config_resolved: "config.resolved.toml".to_string(),
         acquisition_manifest: paths
@@ -211,6 +257,156 @@ pub fn publish_staged_directory(staging: &Path, destination: &Path, force: bool)
     sync_parent(destination)
 }
 
+pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Result<Config> {
+    let mut staging_cfg = cfg.clone();
+    staging_cfg.staging_active = true;
+    let staging = staging_cfg.paths();
+    let staging_dir = staging.analysis_dir();
+    if staging_dir.exists() {
+        fs::remove_dir_all(&staging_dir).with_context(|| {
+            format!(
+                "failed to remove incomplete analysis staging directory: {}",
+                staging_dir.display()
+            )
+        })?;
+    }
+    fs::create_dir(&staging_dir).with_context(|| {
+        format!(
+            "failed to create analysis staging directory: {}",
+            staging_dir.display()
+        )
+    })?;
+
+    if stage == AnalysisStage::Li {
+        return Ok(staging_cfg);
+    }
+
+    let resolver = cfg.resolver();
+    for &channel in cfg.phase_signal_ch() {
+        copy_required_file(
+            &resolver.lockin_xy_csv(channel),
+            &staging.lockin_xy_csv(channel),
+            "lock-in XY result",
+        )?;
+        copy_optional_file(
+            &resolver.lockin_xy_npy(channel),
+            &staging.lockin_xy_npy(channel),
+        )?;
+        if stage == AnalysisStage::Kerr {
+            copy_required_file(
+                &resolver.lockin_rotated_csv(channel),
+                &staging.lockin_rotated_csv(channel),
+                "phase-rotated lock-in result",
+            )?;
+            copy_optional_file(
+                &resolver.lockin_rotated_npy(channel),
+                &staging.lockin_rotated_npy(channel),
+            )?;
+        }
+    }
+
+    let canonical = cfg.paths();
+    for source in [
+        canonical.reference_plot_dir(),
+        canonical.sensor_plot_dir(),
+        canonical.lockin_plot_dir(),
+    ] {
+        if let Some(name) = source.file_name() {
+            copy_optional_tree(&source, &staging.plot_dir().join(name))?;
+        }
+    }
+    if stage == AnalysisStage::Kerr {
+        copy_optional_tree(&canonical.phase_plot_dir(), &staging.phase_plot_dir())?;
+    }
+    copy_optional_tree(&canonical.debug_dir(), &staging.debug_dir())?;
+
+    let manifest = resolver.analysis_manifest();
+    copy_required_file(
+        &manifest,
+        &staging.analysis_manifest(),
+        "analysis manifest (run pmoke li first)",
+    )?;
+    Ok(staging_cfg)
+}
+
+pub(crate) fn publish_analysis_staging(cfg: &Config, staging_cfg: &Config) -> Result<()> {
+    publish_staged_directory(
+        &staging_cfg.paths().analysis_dir(),
+        &cfg.paths().analysis_dir(),
+        true,
+    )
+}
+
+fn copy_required_file(source: &Path, destination: &Path, label: &str) -> Result<()> {
+    match fs::symlink_metadata(source) {
+        Ok(metadata) if metadata.file_type().is_file() => copy_file(source, destination),
+        Ok(_) => bail!("{label} is not a regular file: {}", source.display()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            bail!("{label} not found: {}", source.display())
+        }
+        Err(error) => Err(error).with_context(|| format!("failed to inspect {label}")),
+    }
+}
+
+fn copy_optional_file(source: &Path, destination: &Path) -> Result<()> {
+    match fs::symlink_metadata(source) {
+        Ok(metadata) if metadata.file_type().is_file() => copy_file(source, destination),
+        Ok(_) => bail!(
+            "analysis artifact is not a regular file: {}",
+            source.display()
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to inspect analysis artifact: {}", source.display())),
+    }
+}
+
+fn copy_file(source: &Path, destination: &Path) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source, destination).with_context(|| {
+        format!(
+            "failed to copy analysis artifact {} to {}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn copy_optional_tree(source: &Path, destination: &Path) -> Result<()> {
+    match fs::symlink_metadata(source) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Ok(_) => bail!(
+            "analysis artifact directory is not a regular directory: {}",
+            source.display()
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to inspect {}", source.display()));
+        }
+    }
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = destination.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_dir() {
+            copy_optional_tree(&path, &target)?;
+        } else if metadata.file_type().is_file() {
+            copy_file(&path, &target)?;
+        } else {
+            bail!(
+                "analysis artifact tree contains a symbolic link: {}",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 fn replacement_backup_path(destination: &Path) -> PathBuf {
     let mut name = destination.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".backup.{}", std::process::id()));
@@ -294,6 +490,26 @@ fn sync_directory(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn sync_directory(_path: &Path) -> Result<()> {
     Ok(())
+}
+static TEMP_FILE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn unique_temporary_path(path: &Path) -> Result<PathBuf> {
+    let pid = std::process::id();
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{pid}.{nanos}.{counter}.replace"));
+    let temp_path = path.with_file_name(name);
+    if temp_path.exists() {
+        bail!(
+            "unique temporary path already exists: {}",
+            temp_path.display()
+        );
+    }
+    Ok(temp_path)
 }
 
 #[cfg(test)]

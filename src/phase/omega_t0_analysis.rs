@@ -1,8 +1,9 @@
 use crate::config::Plot;
 use crate::python;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use std::path::Path;
 use std::sync::OnceLock;
 
 #[allow(dead_code)]
@@ -13,7 +14,8 @@ static OT0_ANALYSIS_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 pub struct OT0Analyser {}
 
 impl OT0Analyser {
-    pub fn analyse(&self, plot: &Plot, m_omega_t0: [&[f64]; 6]) -> Result<f64> {
+    pub fn analyse(&self, plot: &Plot, output_path: &Path, m_omega_t0: [&[f64]; 6]) -> Result<f64> {
+        let output = crate::plot::prepare_plot_output(plot, output_path)?;
         Python::attach(|py| {
             let analysis_mod = python::cached_module(
                 py,
@@ -29,6 +31,7 @@ impl OT0Analyser {
             let m_ot0_4_obj = python::f64_array1(py, m_omega_t0[3]);
             let m_ot0_5_obj = python::f64_array1(py, m_omega_t0[4]);
             let m_ot0_6_obj = python::f64_array1(py, m_omega_t0[5]);
+            let output_string = output.map(|path| path.to_string_lossy().into_owned());
 
             let analyser = analysis_mod
                 .getattr("OT0Analyser")?
@@ -45,9 +48,9 @@ impl OT0Analyser {
                         m_ot0_4_obj,
                         m_ot0_5_obj,
                         m_ot0_6_obj,
-                        plot.save && plot.enabled,
+                        output_string.is_some(),
                         plot.interactive && plot.enabled,
-                        &plot.output_dir,
+                        output_string,
                         plot.max_points,
                         plot.decimation.as_str(),
                     ),
@@ -56,12 +59,7 @@ impl OT0Analyser {
 
             let omega_t0: f64 = res.get_item("omega_t0")?.extract()?;
             let plot_error: Option<String> = res.get_item("plot_error")?.extract()?;
-            if let Some(plot_error) = plot_error {
-                if plot.fail_on_error {
-                    bail!("failed to plot omega_t0 analysis: {plot_error}");
-                }
-                crate::ui::warn(format!("omega_t0 plot skipped: {plot_error}"));
-            }
+            crate::plot::finish_embedded_plot(plot, output, plot_error, "omega_t0 analysis")?;
 
             Ok(omega_t0)
         })

@@ -141,12 +141,14 @@ pub fn run_li<'a>(
 
     plot::run_plot(
         &cfg.plot,
+        &cfg.paths().lockin_xy_combined_plot(),
         "plotting lock-in results",
         "lock-in plot completed",
-        || {
+        |output| {
             lockin_plot::LIPlotter {}
                 .plot(
                     &cfg.plot,
+                    output,
                     &t_stride,
                     &lockin_output.result,
                     &signal_ch,

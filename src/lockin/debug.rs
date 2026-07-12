@@ -50,12 +50,17 @@ fn prepare_debug_dir(
         .lpf_debug_label
         .clone()
         .unwrap_or_else(|| auto_label(cfg, params, filter));
-    let dir = PathBuf::from("lockin_debug").join(label).join(format!(
-        "{}_ch{}_h{}",
-        lpf_kind_name(cfg.lockin.lpf_kind),
-        signal_ch,
-        harmonic
-    ));
+    let dir = cfg
+        .paths()
+        .debug_dir()
+        .join("lockin")
+        .join(label)
+        .join(format!(
+            "{}_ch{}_h{}",
+            lpf_kind_name(cfg.lockin.lpf_kind),
+            signal_ch,
+            harmonic
+        ));
 
     if dir.exists() {
         if !cfg.lockin.lpf_debug_overwrite {

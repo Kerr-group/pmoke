@@ -4,6 +4,7 @@ use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use std::path::Path;
 use std::sync::OnceLock;
 
 const REF_PLOT_PY: &str = include_str!("pytools/ref_plot.py");
@@ -13,7 +14,14 @@ static REF_PLOT_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 pub struct ReferencePlotter {}
 
 impl ReferencePlotter {
-    pub fn plot(&self, plot: &Plot, t: &[f64], y: &[f64], fit: &[f64]) -> Result<()> {
+    pub fn plot(
+        &self,
+        plot: &Plot,
+        output: Option<&Path>,
+        t: &[f64],
+        y: &[f64],
+        fit: &[f64],
+    ) -> Result<()> {
         Python::attach(|py| {
             let plot_mod =
                 python::cached_module(py, &REF_PLOT_MODULE, REF_PLOT_PY, "ref_plot.py", "ref_plot")
@@ -24,6 +32,7 @@ impl ReferencePlotter {
             let t_obj = python::f64_array1(py, &t_plot);
             let y_obj = python::f64_array1(py, &y_plot);
             let fit_obj = python::f64_array1(py, &fit_plot);
+            let output = output.map(|path| path.to_string_lossy().into_owned());
 
             let plotter = plot_mod
                 .getattr("ReferencePlotter")?
@@ -37,9 +46,9 @@ impl ReferencePlotter {
                         t_obj,
                         y_obj,
                         fit_obj,
-                        plot.save,
+                        output.is_some(),
                         plot.interactive,
-                        &plot.output_dir,
+                        output,
                     ),
                 )
                 .context("python ReferencePlotter.plot(...) failed")?;

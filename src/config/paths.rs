@@ -111,6 +111,80 @@ impl ArtifactPaths {
         self.analysis_dir().join("plots")
     }
 
+    pub fn reference_plot_dir(&self) -> PathBuf {
+        self.plot_dir().join("reference")
+    }
+
+    pub fn sensor_plot_dir(&self) -> PathBuf {
+        self.plot_dir().join("sensor")
+    }
+
+    pub fn lockin_plot_dir(&self) -> PathBuf {
+        self.plot_dir().join("lockin")
+    }
+
+    pub fn phase_plot_dir(&self) -> PathBuf {
+        self.plot_dir().join("phase")
+    }
+
+    pub fn kerr_plot_dir(&self) -> PathBuf {
+        self.plot_dir().join("kerr")
+    }
+
+    pub fn reference_fit_plot(&self) -> PathBuf {
+        self.reference_plot_dir().join("reference_fit.png")
+    }
+
+    pub fn reference_fft_plot(&self) -> PathBuf {
+        self.reference_plot_dir().join("reference_fft.png")
+    }
+
+    pub fn sensor_raw_plot(&self, channel: u8) -> PathBuf {
+        self.sensor_plot_dir().join(format!("ch{channel}_raw.png"))
+    }
+
+    pub fn sensor_integral_plot(&self, channel: u8) -> PathBuf {
+        self.sensor_plot_dir()
+            .join(format!("ch{channel}_integral.png"))
+    }
+
+    pub fn sensor_raw_combined_plot(&self) -> PathBuf {
+        self.sensor_plot_dir().join("raw.png")
+    }
+
+    pub fn sensor_integral_combined_plot(&self) -> PathBuf {
+        self.sensor_plot_dir().join("integral.png")
+    }
+
+    pub fn lockin_xy_plot(&self, channel: u8) -> PathBuf {
+        self.lockin_plot_dir().join(format!("ch{channel}_xy.png"))
+    }
+
+    pub fn lockin_xy_combined_plot(&self) -> PathBuf {
+        self.lockin_plot_dir().join("xy.png")
+    }
+
+    pub fn phase_rotated_plot(&self, channel: u8) -> PathBuf {
+        self.phase_plot_dir()
+            .join(format!("ch{channel}_rotated.png"))
+    }
+
+    pub fn phase_rotated_combined_plot(&self) -> PathBuf {
+        self.phase_plot_dir().join("rotated.png")
+    }
+
+    pub fn phase_offset_plot(&self) -> PathBuf {
+        self.phase_plot_dir().join("omega_t0.png")
+    }
+
+    pub fn kerr_plot(&self) -> PathBuf {
+        self.kerr_plot_dir().join("kerr.png")
+    }
+
+    pub fn kerr_channel_plot(&self, channel: u8) -> PathBuf {
+        self.kerr_plot_dir().join(format!("ch{channel}_kerr.png"))
+    }
+
     pub fn debug_dir(&self) -> PathBuf {
         self.analysis_dir().join("debug")
     }
@@ -288,5 +362,36 @@ impl ArtifactResolver {
             return legacy_path;
         }
         new_path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ArtifactPaths;
+    use std::path::PathBuf;
+
+    #[test]
+    fn canonical_plot_paths_are_stage_scoped_and_staging_aware() {
+        let paths = ArtifactPaths::new(PathBuf::from("shot with space 測定"));
+        assert_eq!(
+            paths.reference_fit_plot(),
+            PathBuf::from("shot with space 測定/analysis/plots/reference/reference_fit.png")
+        );
+        assert_eq!(
+            paths.lockin_xy_plot(3),
+            PathBuf::from("shot with space 測定/analysis/plots/lockin/ch3_xy.png")
+        );
+        assert_eq!(
+            paths.phase_rotated_plot(3),
+            PathBuf::from("shot with space 測定/analysis/plots/phase/ch3_rotated.png")
+        );
+        assert_eq!(
+            paths.kerr_plot(),
+            PathBuf::from("shot with space 測定/analysis/plots/kerr/kerr.png")
+        );
+        assert_eq!(
+            paths.to_staging().kerr_plot(),
+            PathBuf::from("shot with space 測定/analysis.incomplete/plots/kerr/kerr.png")
+        );
     }
 }

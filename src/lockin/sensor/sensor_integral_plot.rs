@@ -4,6 +4,7 @@ use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use std::path::Path;
 use std::sync::OnceLock;
 
 const SENSOR_INTEGRAL_PLOT_PY: &str = include_str!("pytools/sensor_integral_plot.py");
@@ -16,12 +17,12 @@ impl SensorIntegralPlotter {
     pub fn plot(
         &self,
         plot: &Plot,
+        output: Option<&Path>,
         t: &[f64],
         y: &[Vec<f64>],
-        index_arr: &[u8],
-        label_arr: &[&str],
-        unit_arr: &[&str],
+        metadata: (&[u8], &[&str], &[&str]),
     ) -> Result<()> {
+        let (index_arr, label_arr, unit_arr) = metadata;
         Python::attach(|py| {
             let plot_mod = python::cached_module(
                 py,
@@ -34,6 +35,7 @@ impl SensorIntegralPlotter {
             let (t_plot, y_plot) = decimate_xy_2d(plot, t, y)?;
             let t_obj = python::f64_array1(py, &t_plot);
             let y_obj = python::f64_array2(py, &y_plot)?;
+            let output = output.map(|path| path.to_string_lossy().into_owned());
 
             let plotter = plot_mod
                 .getattr("SensorIntegralPlotter")?
@@ -49,9 +51,9 @@ impl SensorIntegralPlotter {
                         index_arr,
                         label_arr,
                         unit_arr,
-                        plot.save,
+                        output.is_some(),
                         plot.interactive,
-                        &plot.output_dir,
+                        output,
                     ),
                 )
                 .context("python SensorIntegralPlotter.plot(...) failed")?;

@@ -4,6 +4,7 @@ use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use std::path::Path;
 use std::sync::OnceLock;
 
 const SENSOR_RAW_PLOT_PY: &str = include_str!("pytools/sensor_raw_plot.py");
@@ -16,6 +17,7 @@ impl SensorRawPlotter {
     pub fn plot(
         &self,
         plot: &Plot,
+        output: Option<&Path>,
         t: &[f64],
         y: Vec<Vec<f64>>,
         index_arr: &[u8],
@@ -34,6 +36,7 @@ impl SensorRawPlotter {
             let t_obj = python::f64_array1(py, &t_plot);
             let y_obj = python::f64_array2(py, &y_plot)?;
             let c_bg_obj = python::f64_array1(py, c_bg_arr);
+            let output = output.map(|path| path.to_string_lossy().into_owned());
 
             let plotter = plot_mod
                 .getattr("SensorRawPlotter")?
@@ -48,9 +51,9 @@ impl SensorRawPlotter {
                         y_obj,
                         index_arr,
                         c_bg_obj,
-                        plot.save,
+                        output.is_some(),
                         plot.interactive,
-                        &plot.output_dir,
+                        output,
                     ),
                 )
                 .context("python SensorRawPlotter.plot(...) failed")?;

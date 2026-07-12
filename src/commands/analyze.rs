@@ -33,6 +33,7 @@ pub fn analyze(cfg: &Config) -> Result<()> {
 }
 
 pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
+    crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "analysis", None)?;
     let result = run_analyze_inner(cfg, data);
     match &result {
@@ -47,11 +48,6 @@ pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
 fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     let mut cfg_staging = cfg.clone();
     cfg_staging.staging_active = true;
-    cfg_staging.plot.output_dir = cfg_staging
-        .paths()
-        .plot_dir()
-        .to_string_lossy()
-        .into_owned();
 
     let staging_analysis = cfg_staging.paths().analysis_dir();
     if staging_analysis.exists() {
@@ -106,7 +102,7 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     Ok(())
 }
 
-fn validate_waveform_data(data: &WaveformData) -> Result<()> {
+pub(crate) fn validate_waveform_data(data: &WaveformData) -> Result<()> {
     let sample_count = data.t.len();
     if sample_count < 2 {
         bail!("analysis requires at least two waveform samples (got {sample_count})");
@@ -168,7 +164,10 @@ mod tests {
     use std::f64::consts::PI;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_DIRECTORY_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     struct TemporaryDirectory(PathBuf);
 
@@ -178,8 +177,9 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
+            let counter = TEMP_DIRECTORY_COUNTER.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "pmoke-synthetic-analysis-{}-{nonce}",
+                "pmoke-synthetic-analysis-{}-{nonce}-{counter}",
                 std::process::id()
             ));
             fs::create_dir(&path).unwrap();
@@ -567,5 +567,63 @@ mod tests {
             assert!(!path.contains('\\'));
             assert!(path.starts_with("../"));
         }
+    }
+
+    #[test]
+    fn test_analyze_overwrite_safety_and_cleanup() {
+        let directory = TemporaryDirectory::new();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
+        cfg.roles.reference_ch = 2;
+        cfg.set_artifact_root(directory.0.clone());
+        let paths = cfg.paths();
+        std::fs::create_dir_all(paths.run_dir.join("plots")).unwrap();
+        std::fs::write(paths.run_dir.join("plots/user-created.png"), b"user").unwrap();
+        for file in [
+            paths.lockin_xy_csv(3),
+            paths.lockin_rotated_csv(3),
+            paths.kerr_csv(),
+            paths.reference_fit_plot(),
+            paths.lockin_xy_combined_plot(),
+            paths.phase_rotated_combined_plot(),
+            paths.kerr_plot(),
+            paths.analysis_manifest(),
+        ] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"old").unwrap();
+        }
+
+        let li = crate::commands::run_dir::prepare_analysis_staging(
+            &cfg,
+            crate::commands::run_dir::AnalysisStage::Li,
+        )
+        .unwrap();
+        assert!(!li.paths().lockin_xy_csv(3).exists());
+        assert!(paths.run_dir.join("plots/user-created.png").is_file());
+        std::fs::remove_dir_all(li.paths().analysis_dir()).unwrap();
+
+        let phase = crate::commands::run_dir::prepare_analysis_staging(
+            &cfg,
+            crate::commands::run_dir::AnalysisStage::Phase,
+        )
+        .unwrap();
+        assert!(phase.paths().lockin_xy_csv(3).is_file());
+        assert!(phase.paths().reference_fit_plot().is_file());
+        assert!(phase.paths().lockin_xy_combined_plot().is_file());
+        assert!(!phase.paths().lockin_rotated_csv(3).exists());
+        assert!(!phase.paths().phase_rotated_combined_plot().exists());
+        assert!(!phase.paths().kerr_csv().exists());
+        assert!(!phase.paths().kerr_plot().exists());
+        std::fs::remove_dir_all(phase.paths().analysis_dir()).unwrap();
+
+        let kerr = crate::commands::run_dir::prepare_analysis_staging(
+            &cfg,
+            crate::commands::run_dir::AnalysisStage::Kerr,
+        )
+        .unwrap();
+        assert!(kerr.paths().lockin_xy_csv(3).is_file());
+        assert!(kerr.paths().lockin_rotated_csv(3).is_file());
+        assert!(kerr.paths().phase_rotated_combined_plot().is_file());
+        assert!(!kerr.paths().kerr_csv().exists());
+        assert!(!kerr.paths().kerr_plot().exists());
     }
 }

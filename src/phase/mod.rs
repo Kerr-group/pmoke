@@ -130,11 +130,12 @@ pub fn run_phase_analysis(
 
     plot::run_plot(
         &cfg.plot,
+        &cfg.paths().phase_rotated_combined_plot(),
         "plotting phase-rotated results",
         "phase plot completed",
-        || {
+        |output| {
             PhaseRotationPlotter {}
-                .plot(&cfg.plot, t, &rotated_results, ch, &labels)
+                .plot(&cfg.plot, output, t, &rotated_results, ch, &labels)
                 .context("failed to plot phase-rotated results")
         },
     )?;
@@ -223,6 +224,7 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
     let omega_t0: f64 = OT0Analyser {}
         .analyse(
             &cfg.plot,
+            &cfg.paths().phase_offset_plot(),
             [
                 &m_omega_t0_1,
                 &m_omega_t0_2,
