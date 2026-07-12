@@ -83,6 +83,7 @@ pub fn export_canonical(cfg: &Config) -> Result<()> {
         cfg,
         crate::commands::run_dir::AnalysisStage::ExportNpy,
     )?;
+    crate::commands::run_dir::write_analysis_config_snapshots(&staging_cfg)?;
     export_canonical_inner(&staging_cfg)?;
     crate::commands::run_dir::publish_analysis_staging(cfg, &staging_cfg)?;
     ui::success("analysis NumPy export completed");
@@ -106,9 +107,7 @@ fn export_canonical_inner(cfg: &Config) -> Result<()> {
     pairs.push((resolver.kerr_csv(), paths.kerr_npy()));
 
     for (_, destination) in &pairs {
-        if !cfg.force {
-            ensure_missing(destination, "NPY output")?;
-        } else if destination.exists() {
+        if destination.exists() {
             ensure_regular_file(destination, "NPY output")?;
         }
     }
@@ -117,7 +116,7 @@ fn export_canonical_inner(cfg: &Config) -> Result<()> {
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        write_npy_table_replacing(destination, &table.columns, table.rows, cfg.force)?;
+        write_npy_table_replacing(destination, &table.columns, table.rows, true)?;
     }
     crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg, "export_npy")?;
     Ok(())
@@ -393,8 +392,7 @@ mod tests {
         assert!(manifest.contains("lockin/ch2_xy.npy"));
         assert!(manifest.contains("kerr/kerr.npy"));
 
-        let error = export_canonical(&cfg).unwrap_err();
-        assert!(error.to_string().contains("already exists"));
+        export_canonical(&cfg).unwrap();
 
         cfg.force = true;
         fs::write(paths.lockin_xy_csv(2), "time (s),value\n0,3\n1,4\n").unwrap();

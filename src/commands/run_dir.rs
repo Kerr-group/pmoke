@@ -17,6 +17,7 @@ pub(crate) enum AnalysisStage {
     ExportNpy,
 }
 
+#[allow(dead_code)]
 pub fn prepare(cfg: &Config) -> Result<()> {
     let paths = cfg.paths();
     let root = &paths.run_dir;
@@ -32,6 +33,32 @@ pub fn prepare(cfg: &Config) -> Result<()> {
         write_run_state(cfg, "initializing", "initializing", None)?;
     }
     sync_directory(root)
+}
+
+pub fn prepare_analysis_run(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
+    ensure_run_directory(&paths.run_dir)?;
+    if !paths.run_manifest().exists() {
+        write_run_state(cfg, "initializing", "initializing", None)?;
+    }
+    sync_directory(&paths.run_dir)
+}
+
+pub(crate) fn write_analysis_config_snapshots(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
+    let analysis = paths.analysis_dir();
+    fs::create_dir_all(&analysis)
+        .with_context(|| format!("failed to create analysis staging: {}", analysis.display()))?;
+    let source = cfg
+        .source_text
+        .as_deref()
+        .context("source config text is unavailable")?;
+    write_atomic_file(&paths.analysis_source_config(), source.as_bytes())
+        .context("failed to write analysis source config snapshot")?;
+    let resolved = render_normalized_config(cfg).context("failed to render analysis config")?;
+    write_atomic_file(&paths.analysis_resolved_config(), resolved.as_bytes())
+        .context("failed to write analysis resolved config snapshot")?;
+    Ok(())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,14 +79,39 @@ struct RunState {
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<String>,
-    config_source: String,
-    config_resolved: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_resolved: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     acquisition_manifest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     analysis_manifest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failed_stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    analysis: Option<RunAnalysisState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RunAnalysisState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_through: Option<String>,
+    last_attempt: AnalysisAttempt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AnalysisAttempt {
+    generation: u64,
+    command: String,
+    status: String,
+    started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_summary: Option<String>,
 }
@@ -81,14 +133,15 @@ pub fn write_run_state(
         Err(error) => return Err(error).context("failed to read existing run manifest"),
     };
     let now = jiff::Timestamp::now().to_string();
-    let (ex_started, ex_acquired, ex_anal_started, ex_analyzed) = match &existing {
+    let (ex_started, ex_acquired, ex_anal_started, ex_analyzed, ex_completed) = match &existing {
         Some(state) => (
             Some(state.started_at.clone()),
             state.acquired_at.clone(),
             state.analysis_started_at.clone(),
             state.analyzed_at.clone(),
+            state.completed_at.clone(),
         ),
-        None => (None, None, None, None),
+        None => (None, None, None, None, None),
     };
 
     let started_at = ex_started.unwrap_or_else(|| now.clone());
@@ -104,15 +157,25 @@ pub fn write_run_state(
     };
     let analyzed_at = if status == "complete" {
         Some(now.clone())
-    } else if status == "analyzing" {
-        None
     } else {
         ex_analyzed
     };
-    let completed_at = (status == "complete").then(|| now.clone());
+    let completed_at = if status == "complete" {
+        Some(now.clone())
+    } else {
+        ex_completed
+    };
 
+    let analysis = analysis_run_state(
+        cfg,
+        existing.as_ref().and_then(|state| state.analysis.clone()),
+        status,
+        stage,
+        error,
+        &now,
+    )?;
     let state = RunState {
-        schema_version: 1,
+        schema_version: 2,
         status: status.to_string(),
         stage: stage.to_string(),
         pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -123,8 +186,14 @@ pub fn write_run_state(
         analyzed_at,
         updated_at: now,
         completed_at,
-        config_source: "config.source.toml".to_string(),
-        config_resolved: "config.resolved.toml".to_string(),
+        config_source: paths
+            .source_config()
+            .is_file()
+            .then(|| "config.source.toml".to_string()),
+        config_resolved: paths
+            .resolved_config()
+            .is_file()
+            .then(|| "config.resolved.toml".to_string()),
         acquisition_manifest: paths
             .acquisition_manifest()
             .exists()
@@ -135,9 +204,94 @@ pub fn write_run_state(
             .then(|| "analysis/manifest.toml".to_string()),
         failed_stage: error.map(|_| stage.to_string()),
         error_summary: error.map(|error| error.to_string()),
+        analysis,
     };
     let encoded = toml::to_string_pretty(&state).context("failed to encode run manifest")?;
     write_atomic_file(&paths.run_manifest(), encoded.as_bytes())
+}
+
+fn analysis_run_state(
+    cfg: &Config,
+    existing: Option<RunAnalysisState>,
+    status: &str,
+    stage: &str,
+    error: Option<&anyhow::Error>,
+    now: &str,
+) -> Result<Option<RunAnalysisState>> {
+    let command = stage.strip_suffix("_complete").unwrap_or(stage);
+    if !matches!(command, "analysis" | "li" | "phase" | "kerr") {
+        return Ok(existing);
+    }
+
+    let published = read_published_analysis(cfg)?;
+    let (published_generation, published_through) = published.unwrap_or_else(|| {
+        existing
+            .as_ref()
+            .map(|state| (state.published_generation, state.published_through.clone()))
+            .unwrap_or((None, None))
+    });
+    let completed = status == "complete" || stage.ends_with("_complete");
+    let failed = error.is_some() || status == "failed";
+    let generation = if completed {
+        published_generation.unwrap_or(1)
+    } else if failed {
+        existing
+            .as_ref()
+            .map(|state| state.last_attempt.generation)
+            .unwrap_or_else(|| published_generation.unwrap_or(0).saturating_add(1))
+    } else {
+        published_generation.unwrap_or(0).saturating_add(1)
+    };
+    let started_at = if completed || failed {
+        existing
+            .as_ref()
+            .filter(|state| state.last_attempt.generation == generation)
+            .map(|state| state.last_attempt.started_at.clone())
+            .unwrap_or_else(|| now.to_string())
+    } else {
+        now.to_string()
+    };
+    let attempt_status = if failed {
+        "failed"
+    } else if completed {
+        "complete"
+    } else {
+        "running"
+    };
+    Ok(Some(RunAnalysisState {
+        published_generation,
+        published_through,
+        last_attempt: AnalysisAttempt {
+            generation,
+            command: command.to_string(),
+            status: attempt_status.to_string(),
+            started_at,
+            completed_at: (completed || failed).then(|| now.to_string()),
+            error_summary: error.map(ToString::to_string),
+        },
+    }))
+}
+
+fn read_published_analysis(cfg: &Config) -> Result<Option<(Option<u64>, Option<String>)>> {
+    let path = cfg.paths().analysis_manifest();
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to read published analysis manifest"),
+    };
+    let manifest: toml::Value =
+        toml::from_str(&contents).context("failed to parse published analysis manifest")?;
+    let generation = manifest
+        .get("generation")
+        .and_then(toml::Value::as_integer)
+        .map(u64::try_from)
+        .transpose()
+        .context("analysis generation must not be negative")?;
+    let through = manifest
+        .get("published_through")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
+    Ok(Some((generation, through)))
 }
 
 fn write_atomic_file(path: &Path, contents: &[u8]) -> Result<()> {
@@ -529,6 +683,7 @@ pub(crate) fn ensure_run_directory(root: &Path) -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 fn write_once_or_verify(path: &Path, contents: &[u8]) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -666,6 +821,23 @@ mod tests {
     }
 
     #[test]
+    fn analysis_prepare_does_not_fabricate_acquisition_config_snapshots() {
+        let directory = temporary_directory();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+
+        prepare_analysis_run(&cfg).unwrap();
+
+        assert!(!cfg.paths().source_config().exists());
+        assert!(!cfg.paths().resolved_config().exists());
+        let run: toml::Value =
+            toml::from_str(&fs::read_to_string(cfg.paths().run_manifest()).unwrap()).unwrap();
+        assert!(run.get("config_source").is_none());
+        assert!(run.get("config_resolved").is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn force_publish_replaces_complete_directory_without_deleting_it_first() {
         let directory = temporary_directory();
         fs::create_dir(&directory).unwrap();
@@ -706,6 +878,45 @@ mod tests {
             Some("acquisition/manifest.toml")
         );
         assert_eq!(run["error_summary"].as_str(), Some("network disconnected"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn failed_analysis_attempt_preserves_the_published_generation() {
+        let directory = temporary_directory();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        prepare(&cfg).unwrap();
+        fs::create_dir_all(cfg.paths().analysis_dir()).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            "schema_version = 2\ngeneration = 4\npublished_through = \"kerr\"\n",
+        )
+        .unwrap();
+
+        write_run_state(&cfg, "analyzing", "phase", None).unwrap();
+        let error = anyhow::anyhow!("phase plot failed");
+        write_run_state(&cfg, "failed", "phase", Some(&error)).unwrap();
+
+        let run: toml::Value =
+            toml::from_str(&fs::read_to_string(cfg.paths().run_manifest()).unwrap()).unwrap();
+        assert_eq!(
+            run["analysis"]["published_generation"].as_integer(),
+            Some(4)
+        );
+        assert_eq!(run["analysis"]["published_through"].as_str(), Some("kerr"));
+        assert_eq!(
+            run["analysis"]["last_attempt"]["generation"].as_integer(),
+            Some(5)
+        );
+        assert_eq!(
+            run["analysis"]["last_attempt"]["status"].as_str(),
+            Some("failed")
+        );
+        assert_eq!(
+            run["analysis"]["last_attempt"]["error_summary"].as_str(),
+            Some("phase plot failed")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -968,13 +1179,9 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
         assert!(stages.contains_key("li"));
         assert!(stages.contains_key("phase"));
         assert!(stages.contains_key("kerr"));
-        assert!(stages.contains_key("sensor"));
-        // stages.sensor should be updated (not 2026-07-13T00:03:00Z anymore)
-        let sensor_stage = stages.get("sensor").unwrap().as_table().unwrap();
-        assert_ne!(
-            sensor_stage.get("completed_at").unwrap().as_str().unwrap(),
-            "2026-07-13T00:03:00Z"
-        );
+        assert!(!stages.contains_key("sensor"));
+        let diagnostics = manifest.get("diagnostics").unwrap().as_table().unwrap();
+        assert!(diagnostics.contains_key("sensor"));
 
         // C. Run standalone reference
         // First recreate sensor plot in analysis/ to verify reference doesn't touch it
@@ -1009,8 +1216,11 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
         assert!(stages_2.contains_key("li"));
         assert!(stages_2.contains_key("phase"));
         assert!(stages_2.contains_key("kerr"));
-        assert!(stages_2.contains_key("reference"));
-        assert!(stages_2.contains_key("sensor"));
+        assert!(!stages_2.contains_key("reference"));
+        assert!(!stages_2.contains_key("sensor"));
+        let diagnostics_2 = manifest_2.get("diagnostics").unwrap().as_table().unwrap();
+        assert!(diagnostics_2.contains_key("reference"));
+        assert!(diagnostics_2.contains_key("sensor"));
 
         fs::remove_dir_all(run_dir).unwrap();
     }

@@ -13,7 +13,7 @@ pub fn analyze(cfg: &Config) -> Result<()> {
     let _lock =
         crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "analyze")?;
     crate::config::validate_for_target(cfg, crate::config::ValidationTarget::Analyze)?;
-    crate::commands::run_dir::prepare(cfg)?;
+    crate::commands::run_dir::prepare_analysis_run(cfg)?;
 
     let pb = ui::spinner("reading fetched waveform data");
     let t0 = std::time::Instant::now();
@@ -67,6 +67,9 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
         std::fs::remove_dir_all(&staging_analysis)
             .context("failed to clean up previous incomplete staging directory")?;
     }
+    std::fs::create_dir(&staging_analysis)
+        .context("failed to create analysis staging directory")?;
+    crate::commands::run_dir::write_analysis_config_snapshots(&cfg_staging)?;
 
     validate_waveform_data(data)?;
     let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results, reference, provenance) =
@@ -98,6 +101,7 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     }
 
     crate::lockin::provenance::write_analysis_metadata(
+        &cfg_staging,
         &cfg_staging.paths(),
         &cfg.resolver(),
         &reference,
@@ -249,8 +253,8 @@ mod tests {
     fn synthetic_harmonics_pipeline_recovers_folded_kerr_angle() {
         let directory = TemporaryDirectory::new();
         let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
-        cfg.version = 4;
         cfg.source_path = directory.0.join("config.toml");
+        cfg.set_artifact_root(directory.0.clone());
         cfg.roles.reference_ch = 2;
         cfg.reference.fft_window = Window {
             start: 0.0,
@@ -353,8 +357,8 @@ mod tests {
     fn run_analyze_supports_repeated_runs_without_force() {
         let directory = TemporaryDirectory::new();
         let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
-        cfg.version = 4;
         cfg.source_path = directory.0.join("config.toml");
+        cfg.set_artifact_root(directory.0.clone());
         cfg.roles.reference_ch = 2;
         cfg.reference.fft_window = Window {
             start: 0.0,
@@ -442,20 +446,42 @@ mod tests {
             b"schema_version = 1\n",
         )
         .unwrap();
+        crate::commands::run_dir::prepare(&cfg).unwrap();
+        let acquisition_config = std::fs::read(cfg.paths().source_config()).unwrap();
 
         // First run succeeds
         run_analyze(&cfg, &data).unwrap();
         assert!(cfg.paths().analysis_manifest().is_file());
 
-        // Second run without force succeeds
+        // A changed analysis config is a new generation; acquisition snapshots stay immutable.
+        cfg.source_text = Some("version = 3\n# revised analysis\n".to_string());
+        cfg.lockin.stride_samples = 25;
         run_analyze(&cfg, &data).unwrap();
         assert!(cfg.paths().analysis_manifest().is_file());
         assert!(!cfg.paths().kerr_csv().with_extension("npy").exists());
+        assert_eq!(
+            std::fs::read(cfg.paths().source_config()).unwrap(),
+            acquisition_config
+        );
+        assert_eq!(
+            std::fs::read_to_string(cfg.paths().analysis_source_config()).unwrap(),
+            "version = 3\n# revised analysis\n"
+        );
 
         // Parse manifest to verify content
         let manifest_content = std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap();
         let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
-        assert_eq!(manifest["schema_version"].as_integer().unwrap(), 1);
+        assert_eq!(manifest["schema_version"].as_integer().unwrap(), 2);
+        assert_eq!(manifest["generation"].as_integer(), Some(2));
+        assert_eq!(manifest["published_through"].as_str(), Some("kerr"));
+        assert_eq!(
+            manifest["config_source"].as_str(),
+            Some("config.source.toml")
+        );
+        assert_eq!(
+            manifest["config_resolved"].as_str(),
+            Some("config.resolved.toml")
+        );
         assert!(manifest["timestamp"].as_str().is_some());
         assert!(manifest["lockin"].as_table().is_some());
         assert_eq!(manifest["reference"]["channel"].as_integer(), Some(2));
@@ -711,6 +737,7 @@ csv = "kerr/kerr.csv"
             crate::commands::run_dir::AnalysisStage::Phase,
         )
         .unwrap();
+        crate::commands::run_dir::write_analysis_config_snapshots(&phase_cfg).unwrap();
         crate::lockin::provenance::refresh_analysis_manifest_outputs(&phase_cfg, "phase").unwrap();
 
         // Check stages after phase re-run: stages.li exists, stages.phase updated, stages.kerr/export_npy deleted
@@ -744,6 +771,7 @@ csv = "kerr/kerr.csv"
             crate::commands::run_dir::AnalysisStage::Li,
         )
         .unwrap();
+        crate::commands::run_dir::write_analysis_config_snapshots(&li_cfg).unwrap();
 
         let reference = crate::lockin::reference::ref_analysis::RefFitParams {
             f_ref: 1000.0,
@@ -767,6 +795,7 @@ csv = "kerr/kerr.csv"
         std::fs::write(&staging_lockin_csv, b"time,ch3 rate,ch3 integral\n0,0,0\n").unwrap();
 
         crate::lockin::provenance::write_analysis_metadata(
+            &li_cfg,
             &li_cfg.paths(),
             &cfg.resolver(),
             &reference,

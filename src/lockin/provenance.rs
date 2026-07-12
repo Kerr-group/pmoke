@@ -107,6 +107,7 @@ struct ReferenceProvenance {
 struct StageProvenance {
     completed_at: String,
     pmoke_version: String,
+    config_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     git_commit: Option<String>,
 }
@@ -114,6 +115,7 @@ struct StageProvenance {
 #[derive(Serialize)]
 struct AnalysisMetadata<'a> {
     schema_version: u32,
+    generation: u64,
     pmoke_version: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     git_commit: Option<&'static str>,
@@ -124,8 +126,13 @@ struct AnalysisMetadata<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     source_acquisition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    source_acquisition_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     source_waveform: Option<String>,
-    source_config: &'static str,
+    config_source: &'static str,
+    config_resolved: &'static str,
+    config_sha256: String,
+    published_through: &'static str,
     reference: ReferenceProvenance,
     lockin: &'a LockinProvenance,
     column_sets: BTreeMap<String, ColumnSet>,
@@ -151,7 +158,11 @@ fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
                 traverse(base_dir, &path, outputs)?;
             } else if path.is_file() {
                 let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if filename == "manifest.toml" || filename.starts_with('.') {
+                if matches!(
+                    filename,
+                    "manifest.toml" | "config.source.toml" | "config.resolved.toml"
+                ) || filename.starts_with('.')
+                {
                     continue;
                 }
                 let relative = path
@@ -510,7 +521,144 @@ fn inspect_csv_shape(path: &Path) -> Result<(Vec<String>, usize)> {
     Ok((names, rows))
 }
 
+pub fn stage_config_fingerprint(cfg: &Config, stage: &str) -> Result<String> {
+    let channels = analysis_channels(cfg);
+    let encoded = match stage {
+        "li" => serde_json::to_vec(&(
+            &cfg.roles,
+            &channels,
+            &cfg.pulse,
+            &cfg.reference,
+            &cfg.lockin,
+        )),
+        "phase" => serde_json::to_vec(&(
+            &cfg.roles,
+            &channels,
+            &cfg.pulse,
+            &cfg.reference,
+            &cfg.lockin,
+            &cfg.phase,
+        )),
+        "kerr" => serde_json::to_vec(&(
+            &cfg.roles,
+            &channels,
+            &cfg.pulse,
+            &cfg.reference,
+            &cfg.lockin,
+            &cfg.phase,
+            &cfg.kerr,
+        )),
+        _ => bail!("unknown analysis stage fingerprint: {stage}"),
+    }
+    .context("failed to serialize analysis stage config")?;
+    Ok(crate::utils::checksum::sha256_hex(&encoded))
+}
+
+fn analysis_channels(cfg: &Config) -> Vec<&crate::config::Channel> {
+    let mut channels = cfg
+        .channels
+        .iter()
+        .filter(|channel| {
+            cfg.roles.sensor_ch.contains(&channel.index)
+                || cfg.roles.reference_ch == channel.index
+                || cfg.roles.signal_ch.contains(&channel.index)
+        })
+        .collect::<Vec<_>>();
+    channels.sort_by_key(|channel| channel.index);
+    channels
+}
+
+pub fn validate_upstream_stage_config(cfg: &Config, stage: &str) -> Result<()> {
+    let manifest = cfg.resolver().analysis_manifest();
+    let contents = fs::read_to_string(&manifest)
+        .with_context(|| format!("failed to read analysis manifest: {}", manifest.display()))?;
+    let value: toml::Value = toml::from_str(&contents)
+        .with_context(|| format!("failed to parse analysis manifest: {}", manifest.display()))?;
+    let recorded = value
+        .get("stages")
+        .and_then(|value| value.get(stage))
+        .and_then(|value| value.get("config_sha256"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "analysis {stage} results have no config fingerprint; run pmoke {stage} to create canonical results"
+            )
+        })?;
+    let current = stage_config_fingerprint(cfg, stage)?;
+    if recorded != current {
+        bail!(
+            "current config is incompatible with the published {stage} results; run pmoke {stage} before continuing"
+        );
+    }
+    validate_upstream_artifact_checksums(cfg, &value, stage)?;
+    Ok(())
+}
+
+fn validate_upstream_artifact_checksums(
+    cfg: &Config,
+    manifest: &toml::Value,
+    stage: &str,
+) -> Result<()> {
+    let suffix = match stage {
+        "li" => "_xy.csv",
+        "phase" => "_rotated.csv",
+        _ => bail!("unknown upstream analysis stage: {stage}"),
+    };
+    let outputs = manifest
+        .get("outputs")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "analysis {stage} results have no output checksums; run pmoke {stage} before continuing"
+            )
+        })?;
+    for channel in cfg.phase_signal_ch() {
+        let relative = format!("lockin/ch{channel}{suffix}");
+        let expected = outputs
+            .iter()
+            .find(|output| output.get("file").and_then(toml::Value::as_str) == Some(&relative))
+            .and_then(|output| output.get("sha256"))
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "analysis {stage} output checksum is missing for {relative}; run pmoke {stage} before continuing"
+                )
+            })?;
+        let path = cfg.paths().analysis_dir().join(&relative);
+        let actual = crate::utils::checksum::file_sha256(&path).with_context(|| {
+            format!(
+                "failed to verify published {stage} output {}; run pmoke {stage} before continuing",
+                path.display()
+            )
+        })?;
+        if actual != expected {
+            bail!(
+                "published {stage} output checksum mismatch for {relative}; run pmoke {stage} before continuing"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn next_generation(run_dir: &Path) -> Result<u64> {
+    let manifest = ArtifactPaths::new(run_dir).analysis_manifest();
+    let current = match fs::read_to_string(&manifest) {
+        Ok(contents) => toml::from_str::<toml::Value>(&contents)
+            .context("failed to parse current analysis generation")?
+            .get("generation")
+            .and_then(toml::Value::as_integer)
+            .unwrap_or(0),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => return Err(error).context("failed to read current analysis generation"),
+    };
+    let current = u64::try_from(current).context("analysis generation must not be negative")?;
+    current
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("analysis generation overflow"))
+}
+
 pub fn write_analysis_metadata(
+    cfg: &Config,
     output_paths: &ArtifactPaths,
     source_resolver: &ArtifactResolver,
     reference: &RefFitParams,
@@ -529,6 +677,14 @@ pub fn write_analysis_metadata(
     let (column_sets, artifacts) = describe_analysis_artifacts(parent)?;
     let (source_acquisition, source_waveform) =
         analysis_sources(&output_paths.run_dir, source_resolver)?;
+    let source_acquisition_sha256 = source_resolver
+        .acquisition_manifest()
+        .is_file()
+        .then(|| crate::utils::checksum::file_sha256(&source_resolver.acquisition_manifest()))
+        .transpose()?;
+    let config_sha256 =
+        crate::utils::checksum::file_sha256(&output_paths.analysis_resolved_config())?;
+    let li_config_sha256 = stage_config_fingerprint(cfg, "li")?;
 
     let now = jiff::Timestamp::now().to_string();
     let mut stages = BTreeMap::new();
@@ -537,6 +693,7 @@ pub fn write_analysis_metadata(
         StageProvenance {
             completed_at: now.clone(),
             pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
+            config_sha256: li_config_sha256,
             git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
         },
     );
@@ -552,6 +709,7 @@ pub fn write_analysis_metadata(
             StageProvenance {
                 completed_at: now.clone(),
                 pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
+                config_sha256: stage_config_fingerprint(cfg, "phase")?,
                 git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
             },
         );
@@ -562,21 +720,33 @@ pub fn write_analysis_metadata(
             StageProvenance {
                 completed_at: now.clone(),
                 pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
+                config_sha256: stage_config_fingerprint(cfg, "kerr")?,
                 git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
             },
         );
     }
 
     let metadata = AnalysisMetadata {
-        schema_version: 1,
+        schema_version: 2,
+        generation: next_generation(&output_paths.run_dir)?,
         pmoke_version: env!("CARGO_PKG_VERSION"),
         git_commit: option_env!("PMOKE_GIT_COMMIT"),
         timestamp: now.clone(),
         analyzed_at: now,
         stages,
         source_acquisition,
+        source_acquisition_sha256,
         source_waveform,
-        source_config: "../config.resolved.toml",
+        config_source: "config.source.toml",
+        config_resolved: "config.resolved.toml",
+        config_sha256,
+        published_through: if has_kerr {
+            "kerr"
+        } else if has_phase {
+            "phase"
+        } else {
+            "li"
+        },
         reference: ReferenceProvenance {
             channel: cfg_roles_reference_ch,
             frequency_hz: reference.f_ref,
@@ -635,15 +805,84 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("analysis manifest has no parent directory"))?;
-    let contents =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    let mut manifest: toml::Value =
-        toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))?;
+    let mut manifest: toml::Value = match fs::read_to_string(&path) {
+        Ok(contents) => toml::from_str(&contents)
+            .with_context(|| format!("failed to parse {}", path.display()))?,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && matches!(stage, "reference" | "sensor") =>
+        {
+            toml::Value::Table(toml::map::Map::new())
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
     let outputs = scan_outputs(parent)?;
     let (column_sets, artifacts) = describe_analysis_artifacts(parent)?;
+    let published_through = if artifacts.iter().any(|artifact| artifact.kind == "kerr") {
+        Some("kerr")
+    } else if artifacts
+        .iter()
+        .any(|artifact| artifact.kind == "lockin_rotated")
+    {
+        Some("phase")
+    } else if artifacts
+        .iter()
+        .any(|artifact| artifact.kind == "lockin_xy")
+    {
+        Some("li")
+    } else {
+        None
+    };
     let table = manifest
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("analysis manifest root must be a table"))?;
+    let now = jiff::Timestamp::now().to_string();
+    table.insert("schema_version".to_string(), toml::Value::Integer(2));
+    table.insert(
+        "generation".to_string(),
+        toml::Value::Integer(i64::try_from(next_generation(&cfg.paths().run_dir)?)?),
+    );
+    table.insert(
+        "pmoke_version".to_string(),
+        toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
+    );
+    table.insert("timestamp".to_string(), toml::Value::String(now.clone()));
+    table.insert(
+        "config_source".to_string(),
+        toml::Value::String("config.source.toml".to_string()),
+    );
+    table.insert(
+        "config_resolved".to_string(),
+        toml::Value::String("config.resolved.toml".to_string()),
+    );
+    table.insert(
+        "config_sha256".to_string(),
+        toml::Value::String(crate::utils::checksum::file_sha256(
+            &cfg.paths().analysis_resolved_config(),
+        )?),
+    );
+    let (source_acquisition, source_waveform) =
+        analysis_sources(&cfg.paths().run_dir, &cfg.resolver())?;
+    table.remove("source_acquisition");
+    table.remove("source_acquisition_sha256");
+    table.remove("source_waveform");
+    if let Some(source) = source_acquisition {
+        table.insert(
+            "source_acquisition".to_string(),
+            toml::Value::String(source),
+        );
+        table.insert(
+            "source_acquisition_sha256".to_string(),
+            toml::Value::String(crate::utils::checksum::file_sha256(
+                &cfg.resolver().acquisition_manifest(),
+            )?),
+        );
+    }
+    if let Some(source) = source_waveform {
+        table.insert("source_waveform".to_string(), toml::Value::String(source));
+    }
     table.insert(
         "outputs".to_string(),
         toml::Value::try_from(outputs).context("failed to encode analysis output entries")?,
@@ -656,6 +895,14 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         "artifacts".to_string(),
         toml::Value::try_from(artifacts).context("failed to encode analysis artifacts")?,
     );
+    if let Some(published_through) = published_through {
+        table.insert(
+            "published_through".to_string(),
+            toml::Value::String(published_through.to_string()),
+        );
+    } else {
+        table.remove("published_through");
+    }
     if stage == "export_npy" {
         table.insert(
             "exported_at".to_string(),
@@ -682,44 +929,65 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         _ => bail!("unknown analysis stage: {stage}"),
     }
 
-    let stages_val = table
-        .entry("stages".to_string())
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    let stages_table = stages_val
-        .as_table_mut()
-        .ok_or_else(|| anyhow::anyhow!("stages in manifest must be a table"))?;
-
-    match stage {
-        "li" => {
-            stages_table.remove("phase");
-            stages_table.remove("kerr");
-            stages_table.remove("export_npy");
-        }
-        "phase" => {
-            stages_table.remove("kerr");
-            stages_table.remove("export_npy");
-        }
-        "kerr" => {
-            stages_table.remove("export_npy");
-        }
-        "reference" | "sensor" | "export_npy" => {}
-        _ => bail!("unknown analysis stage: {stage}"),
-    }
-
-    let now = jiff::Timestamp::now().to_string();
-    let mut stage_prov = toml::map::Map::new();
-    stage_prov.insert("completed_at".to_string(), toml::Value::String(now));
-    stage_prov.insert(
-        "pmoke_version".to_string(),
-        toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
-    );
-    if let Some(git) = option_env!("PMOKE_GIT_COMMIT") {
+    if stage != "export_npy" {
+        let mut stage_prov = toml::map::Map::new();
         stage_prov.insert(
-            "git_commit".to_string(),
-            toml::Value::String(git.to_string()),
+            if matches!(stage, "reference" | "sensor") {
+                "updated_at"
+            } else {
+                "completed_at"
+            }
+            .to_string(),
+            toml::Value::String(now),
         );
+        stage_prov.insert(
+            "pmoke_version".to_string(),
+            toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
+        );
+        if matches!(stage, "li" | "phase" | "kerr") {
+            stage_prov.insert(
+                "config_sha256".to_string(),
+                toml::Value::String(stage_config_fingerprint(cfg, stage)?),
+            );
+        } else if matches!(stage, "reference" | "sensor") {
+            stage_prov.insert(
+                "config_sha256".to_string(),
+                toml::Value::String(crate::utils::checksum::file_sha256(
+                    &cfg.paths().analysis_resolved_config(),
+                )?),
+            );
+        }
+        if let Some(git) = option_env!("PMOKE_GIT_COMMIT") {
+            stage_prov.insert(
+                "git_commit".to_string(),
+                toml::Value::String(git.to_string()),
+            );
+        }
+        let section = if matches!(stage, "reference" | "sensor") {
+            if let Some(stages) = table.get_mut("stages").and_then(toml::Value::as_table_mut) {
+                stages.remove(stage);
+            }
+            "diagnostics"
+        } else {
+            "stages"
+        };
+        let section = table
+            .entry(section.to_string())
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| anyhow::anyhow!("{section} in manifest must be a table"))?;
+        if stage == "li" {
+            section.remove("phase");
+            section.remove("kerr");
+            section.remove("export_npy");
+        } else if stage == "phase" {
+            section.remove("kerr");
+            section.remove("export_npy");
+        } else if stage == "kerr" {
+            section.remove("export_npy");
+        }
+        section.insert(stage.to_string(), toml::Value::Table(stage_prov));
     }
-    stages_table.insert(stage.to_string(), toml::Value::Table(stage_prov));
 
     let encoded =
         toml::to_string_pretty(&manifest).context("failed to encode updated analysis manifest")?;
@@ -846,6 +1114,91 @@ mod tests {
             (Some("../acquisition/manifest.toml".to_string()), None)
         );
 
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn stage_fingerprints_cover_only_their_upstream_dependencies() {
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        let mut unused = cfg.channels[0].clone();
+        unused.index = 4;
+        cfg.channels.push(unused);
+        let li = stage_config_fingerprint(&cfg, "li").unwrap();
+        let phase = stage_config_fingerprint(&cfg, "phase").unwrap();
+
+        let mut unused_changed = cfg.clone();
+        unused_changed
+            .channels
+            .iter_mut()
+            .find(|channel| channel.index == 4)
+            .unwrap()
+            .factor = Some(99.0);
+        assert_eq!(stage_config_fingerprint(&unused_changed, "li").unwrap(), li);
+
+        let mut phase_changed = cfg.clone();
+        phase_changed.phase.m_omega_t0_offset = vec![0.25; 6];
+        assert_eq!(stage_config_fingerprint(&phase_changed, "li").unwrap(), li);
+        assert_ne!(
+            stage_config_fingerprint(&phase_changed, "phase").unwrap(),
+            phase
+        );
+
+        let mut kerr_changed = cfg.clone();
+        kerr_changed.kerr.factor = 2.0;
+        assert_eq!(
+            stage_config_fingerprint(&kerr_changed, "phase").unwrap(),
+            phase
+        );
+        assert_ne!(
+            stage_config_fingerprint(&kerr_changed, "kerr").unwrap(),
+            stage_config_fingerprint(&cfg, "kerr").unwrap()
+        );
+    }
+
+    #[test]
+    fn upstream_validation_rejects_stale_and_legacy_stage_results() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "pmoke-stage-fingerprint-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        let fingerprint = stage_config_fingerprint(&cfg, "li").unwrap();
+        fs::create_dir_all(directory.join("analysis/lockin")).unwrap();
+        let xy = directory.join("analysis/lockin/ch2_xy.csv");
+        fs::write(&xy, b"time,value\n0,1\n").unwrap();
+        let xy_sha256 = crate::utils::checksum::file_sha256(&xy).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                "[stages.li]\nconfig_sha256 = \"{fingerprint}\"\n\n[[outputs]]\nfile = \"lockin/ch2_xy.csv\"\nsha256 = \"{xy_sha256}\"\n"
+            ),
+        )
+        .unwrap();
+        validate_upstream_stage_config(&cfg, "li").unwrap();
+
+        fs::write(&xy, b"time,value\n0,2\n").unwrap();
+        let error = validate_upstream_stage_config(&cfg, "li").unwrap_err();
+        assert!(error.to_string().contains("checksum mismatch"));
+        fs::write(&xy, b"time,value\n0,1\n").unwrap();
+
+        let mut changed = cfg.clone();
+        changed.lockin.stride_samples += 1;
+        let error = validate_upstream_stage_config(&changed, "li").unwrap_err();
+        assert!(error.to_string().contains("run pmoke li"));
+
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            "[stages.li]\ncompleted_at = \"2026-01-01T00:00:00Z\"\n",
+        )
+        .unwrap();
+        let error = validate_upstream_stage_config(&cfg, "li").unwrap_err();
+        assert!(error.to_string().contains("no config fingerprint"));
         fs::remove_dir_all(directory).unwrap();
     }
 
