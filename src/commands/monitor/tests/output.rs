@@ -99,7 +99,7 @@ fn system_events_align_with_the_elapsed_column() {
         .collect::<Vec<_>>();
 
     assert!(rendered[0].starts_with("00:00.2  "));
-    assert!(rendered[1].starts_with("         ~  command"));
+    assert!(rendered[1].starts_with("         SYS   command"));
 }
 
 #[test]
@@ -170,7 +170,37 @@ fn structured_progress_updates_in_place_and_completes_the_same_event() {
     assert_eq!(app.run_output.len(), 1);
     assert_eq!(app.run_output[0].kind, LogKind::Success);
     assert!(!app.run_output[0].transient);
+    assert!(app.run_output[0].progress_id.is_none());
     assert!(app.run_output[0].text.contains("completed · 0.7s"));
+}
+
+#[test]
+fn selecting_a_structured_field_selects_the_whole_logical_event() {
+    let mut app = test_app();
+    app.push_structured_output(UiEvent {
+        event_type: "event".to_string(),
+        sequence: 10,
+        elapsed_ms: 100,
+        level: EventLevel::Info,
+        kind: EventKind::Section,
+        stage: None,
+        message: "Reference".to_string(),
+        fields: vec![
+            ("frequency".to_string(), "1 MHz".to_string()),
+            ("phase".to_string(), "0.1 rad".to_string()),
+        ],
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
+    });
+    app.output_selected = Some(1);
+
+    assert_eq!(app.output_selection_range(), Some((0, 2)));
+    let copied = app.selected_output_text().unwrap();
+    assert!(copied.contains("Reference"));
+    assert!(copied.contains("frequency"));
+    assert!(copied.contains("phase"));
 }
 
 #[test]
@@ -440,14 +470,14 @@ fn visual_output_lines_strip_ansi_and_add_badges() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(rendered.contains('+'));
+    assert!(rendered.contains("OK"));
     assert!(rendered.contains("done"));
     assert!(!rendered.contains("[  OK   ]"));
     assert!(!rendered.contains("\x1b"));
 }
 
 #[test]
-fn event_icons_have_stable_single_cell_width() {
+fn event_labels_are_clear_and_fit_the_fixed_tag_column() {
     for kind in [
         LogKind::Plain,
         LogKind::System,
@@ -461,7 +491,7 @@ fn event_icons_have_stable_single_cell_width() {
         LogKind::Error,
         LogKind::Section,
     ] {
-        assert_eq!(kind.marker().width_cjk(), 1, "{:?}", kind);
+        assert!(kind.label().width_cjk() <= 5, "{:?}", kind);
     }
 }
 
@@ -473,7 +503,9 @@ fn display_padding_uses_cjk_width() {
 
 #[test]
 fn latest_event_feed_line_animates_when_running() {
-    let entries = vec![LogEntry::new(OutputStream::Stdout, "[  OK   ] done")];
+    let mut entry = LogEntry::new(OutputStream::Stdout, "working");
+    entry.transient = true;
+    let entries = vec![entry];
 
     let first = visual_output_lines_with_motion(&entries, 80, None, None, true, 0);
     let second = visual_output_lines_with_motion(&entries, 80, None, None, true, 1);
@@ -490,17 +522,39 @@ fn latest_event_feed_line_animates_when_running() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(first_text.starts_with("|  "));
-    assert!(second_text.starts_with("/  "));
-    assert_ne!(first_text, second_text);
+    assert!(first_text.starts_with("RUN   "));
+    assert_eq!(first_text, second_text);
+    assert_ne!(
+        first[0].line.spans[0].style.fg,
+        second[0].line.spans[0].style.fg
+    );
+}
+
+#[test]
+fn completed_latest_event_keeps_its_semantic_label_while_command_is_running() {
+    let entries = vec![LogEntry::new(
+        OutputStream::Stdout,
+        "[ WARN ] check scaling",
+    )];
+    let lines = visual_output_lines_with_motion(&entries, 80, None, None, true, 0);
+    let text = lines[0]
+        .line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(text.starts_with("WARN  "));
 }
 
 #[test]
 fn latest_wrapped_event_line_keeps_live_highlight_on_continuation() {
-    let entries = vec![LogEntry::new(
+    let mut entry = LogEntry::new(
         OutputStream::System,
         "pmoke --config config.toml fetch Fetch oscilloscope data using the configured output format.",
-    )];
+    );
+    entry.transient = true;
+    let entries = vec![entry];
 
     let lines = visual_output_lines_with_motion(&entries, 36, None, None, true, 0);
 
@@ -517,10 +571,12 @@ fn latest_wrapped_event_line_keeps_live_highlight_on_continuation() {
 
 #[test]
 fn latest_wrapped_metric_line_keeps_live_highlight_on_continuation() {
-    let entries = vec![LogEntry::new(
+    let mut entry = LogEntry::new(
         OutputStream::Stdout,
         "│ output     Fetch oscilloscope data using the configured output format.",
-    )];
+    );
+    entry.transient = true;
+    let entries = vec![entry];
 
     let lines = visual_output_lines_with_motion(&entries, 34, None, None, true, 0);
 
@@ -622,7 +678,7 @@ fn compact_panel_continuation_renders_without_raw_pipe() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(rendered.contains("↳ stride_samples=100"));
+    assert!(rendered.contains("└─ stride_samples=100"));
     assert!(!rendered.contains("│            stride_samples"));
 }
 
@@ -630,19 +686,19 @@ fn compact_panel_continuation_renders_without_raw_pipe() {
 fn visual_output_line_count_does_not_overcount_exact_width() {
     let entries = vec![LogEntry::new(OutputStream::Stdout, "abcdefghijklm")];
 
-    assert_eq!(visual_output_line_count(&entries, 16), 1);
-    assert_eq!(visual_output_line_count(&entries, 15), 2);
+    assert_eq!(visual_output_line_count(&entries, 19), 1);
+    assert_eq!(visual_output_line_count(&entries, 18), 2);
 }
 
 #[test]
 fn visual_output_line_count_uses_cjk_display_width() {
     let entries = vec![LogEntry::new(OutputStream::Stdout, "○○○○○○○")];
 
-    assert_eq!(visual_output_line_count(&entries, 17), 1);
-    assert_eq!(visual_output_line_count(&entries, 16), 2);
+    assert_eq!(visual_output_line_count(&entries, 20), 1);
+    assert_eq!(visual_output_line_count(&entries, 19), 2);
     assert_eq!(
-        visual_output_line_count(&entries, 16),
-        visual_output_lines(&entries, 16, None, None).len()
+        visual_output_line_count(&entries, 19),
+        visual_output_lines(&entries, 19, None, None).len()
     );
 }
 

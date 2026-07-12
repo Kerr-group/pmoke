@@ -27,7 +27,6 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime},
 };
-use tachyonfx::{CellFilter, Duration as FxDuration, EffectManager, Interpolation, Motion, fx};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 mod actions;
@@ -54,8 +53,7 @@ use formatting::{
 #[cfg(test)]
 use layout::workflow_panel_width;
 use layout::{
-    UiLayout, config_panel_layout, latest_event_feed_effect_area, output_inner_layout,
-    output_visible_rows, workflow_layout,
+    UiLayout, config_panel_layout, output_inner_layout, output_visible_rows, workflow_layout,
 };
 use output::*;
 use panels::*;
@@ -68,12 +66,11 @@ use timeline::{render_run_timeline, timeline_motion_frame};
 use view::*;
 
 const TUI_IDLE_TICK: Duration = Duration::from_millis(150);
-const TUI_ANIMATION_TICK: Duration = Duration::from_millis(16);
-const TUI_REDUCED_MOTION_TICK: Duration = Duration::from_millis(100);
+const TUI_ANIMATION_TICK: Duration = Duration::from_millis(100);
+const TUI_REDUCED_MOTION_TICK: Duration = Duration::from_millis(250);
 const CONTEXT_DETAILS_MIN_WIDTH: usize = 60;
 const OUTPUT_PREFIX_WIDTH: u16 = 12;
 const TIMELINE_BADGE_WIDTH: usize = 5;
-const EVENT_FEED_EFFECT_MS: u32 = 520;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MotionMode {
@@ -180,17 +177,6 @@ pub fn monitor(config_path: &str, load: ConfigLoad) -> Result<()> {
         Err(error) => Err(error),
         Ok(()) => restore_result,
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-enum MonitorEffect {
-    #[default]
-    EventFeedLatest,
-}
-
-fn fx_duration(elapsed: Duration) -> FxDuration {
-    let millis = elapsed.as_millis().min(u128::from(u32::MAX)) as u32;
-    FxDuration::from_millis(millis)
 }
 
 #[derive(Clone)]
@@ -327,6 +313,9 @@ impl LogEntry {
 
     fn from_event(event: &UiEvent) -> Vec<Self> {
         let kind = log_kind_for_event(event);
+        let active_progress_id = (event.kind == EventKind::Progress)
+            .then(|| event.progress_id.clone())
+            .flatten();
         let mut text = if event.kind == EventKind::Section {
             format!("╭─ {}", event.message)
         } else {
@@ -351,7 +340,7 @@ impl LogEntry {
             stream: OutputStream::Stdout,
             transient: event.kind == EventKind::Progress,
             field: None,
-            progress_id: event.progress_id.clone(),
+            progress_id: active_progress_id.clone(),
         }];
         let field_count = event.fields.len();
         entries.extend(
@@ -372,7 +361,7 @@ impl LogEntry {
                         value: value.clone(),
                         last: index + 1 == field_count,
                     }),
-                    progress_id: event.progress_id.clone(),
+                    progress_id: active_progress_id.clone(),
                 }),
         );
         entries
@@ -451,8 +440,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) -> Result<()> {
     loop {
         app.poll_command();
-        let effect_delta = app.effect_delta();
-        terminal.draw(|frame| render(frame, app, effect_delta))?;
+        terminal.draw(|frame| render(frame, app))?;
 
         let tick = tui_frame_tick(app);
         if event::poll(tick)? {
@@ -582,7 +570,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
 
 fn tui_frame_tick(app: &MonitorApp) -> Duration {
     match app.motion_mode {
-        MotionMode::Full if app.command_running() || app.effects.is_running() => TUI_ANIMATION_TICK,
+        MotionMode::Full if app.command_running() => TUI_ANIMATION_TICK,
         MotionMode::Reduced if app.command_running() => TUI_REDUCED_MOTION_TICK,
         _ => TUI_IDLE_TICK,
     }

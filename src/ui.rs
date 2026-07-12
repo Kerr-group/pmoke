@@ -7,8 +7,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::io::{self, Write};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -16,6 +16,7 @@ const JSONL_OUTPUT_ENV: &str = "PMOKE_OUTPUT";
 const JSONL_OUTPUT_VALUE: &str = "jsonl";
 const OUTPUT_STAGE_ENV: &str = "PMOKE_STAGE";
 static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static PROGRESS_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EVENT_EPOCH: OnceLock<Instant> = OnceLock::new();
 
 pub(crate) fn initialize_output() {
@@ -136,44 +137,153 @@ pub fn fmt_duration(duration: Duration) -> String {
     format!("{duration:.2?}")
 }
 
-pub fn spinner(message: impl Into<String>) -> ProgressBar {
-    if jsonl_output_enabled() {
-        return ProgressBar::hidden();
+#[derive(Clone)]
+pub struct UiProgress {
+    bar: ProgressBar,
+    state: Arc<ProgressState>,
+}
+
+struct ProgressState {
+    id: String,
+    total: Option<u64>,
+    current: AtomicU64,
+    message: Mutex<String>,
+    started_at: Instant,
+}
+
+impl UiProgress {
+    fn new(bar: ProgressBar, message: String, total: Option<u64>) -> Self {
+        let progress = Self {
+            bar,
+            state: Arc::new(ProgressState {
+                id: format!(
+                    "progress:{}",
+                    PROGRESS_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+                ),
+                total,
+                current: AtomicU64::new(0),
+                message: Mutex::new(message),
+                started_at: Instant::now(),
+            }),
+        };
+        progress.emit_update();
+        progress
     }
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(spinner_style());
-    pb.set_message(message.into());
-    pb.enable_steady_tick(Duration::from_millis(80));
-    pb
-}
 
-pub fn progress(message: impl Into<String>, len: u64) -> ProgressBar {
-    if jsonl_output_enabled() {
-        return ProgressBar::hidden();
+    pub fn set_message(&self, message: impl Into<String>) {
+        let message = message.into();
+        self.bar.set_message(message.clone());
+        if let Ok(mut current) = self.state.message.lock() {
+            *current = message;
+        }
+        self.emit_update();
     }
-    let pb = ProgressBar::new(len);
-    pb.set_style(progress_style());
-    pb.set_message(message.into());
-    pb.enable_steady_tick(Duration::from_millis(80));
-    pb
+
+    pub fn inc(&self, delta: u64) {
+        self.bar.inc(delta);
+        self.state.current.fetch_add(delta, Ordering::Relaxed);
+        self.emit_update();
+    }
+
+    pub fn finish_and_clear(&self) {
+        self.bar.finish_and_clear();
+    }
+
+    fn suspend<R>(&self, f: impl FnOnce() -> R) -> R {
+        self.bar.suspend(f)
+    }
+
+    fn emit_update(&self) {
+        if !jsonl_output_enabled() {
+            return;
+        }
+        let message = self
+            .state
+            .message
+            .lock()
+            .map(|message| message.clone())
+            .unwrap_or_else(|_| "working".to_string());
+        let mut event = UiEvent::new(EventLevel::Info, EventKind::Progress, message, Vec::new());
+        event.progress_id = Some(self.state.id.clone());
+        event.progress_current = self
+            .state
+            .total
+            .map(|_| self.state.current.load(Ordering::Relaxed));
+        event.progress_total = self.state.total;
+        emit_event(&event, || {});
+    }
+
+    fn emit_completion(&self, level: EventLevel, kind: EventKind, message: String) {
+        if !jsonl_output_enabled() {
+            return;
+        }
+        let mut event = UiEvent::new(level, kind, message, Vec::new());
+        event.progress_id = Some(self.state.id.clone());
+        event.duration_ms =
+            Some(u64::try_from(self.state.started_at.elapsed().as_millis()).unwrap_or(u64::MAX));
+        emit_event(&event, || {});
+    }
 }
 
-pub fn finish_read(pb: ProgressBar, message: impl Display) {
+pub fn spinner(message: impl Into<String>) -> UiProgress {
+    let message = message.into();
+    let pb = if jsonl_output_enabled() {
+        ProgressBar::hidden()
+    } else {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(spinner_style());
+        pb.set_message(message.clone());
+        pb.enable_steady_tick(Duration::from_millis(80));
+        pb
+    };
+    UiProgress::new(pb, message, None)
+}
+
+pub fn progress(message: impl Into<String>, len: u64) -> UiProgress {
+    let message = message.into();
+    let pb = if jsonl_output_enabled() {
+        ProgressBar::hidden()
+    } else {
+        let pb = ProgressBar::new(len);
+        pb.set_style(progress_style());
+        pb.set_message(message.clone());
+        pb.enable_steady_tick(Duration::from_millis(80));
+        pb
+    };
+    UiProgress::new(pb, message, Some(len))
+}
+
+pub fn finish_read(pb: UiProgress, message: impl Display) {
     pb.finish_and_clear();
-    read(message);
+    let message = message.to_string();
+    if jsonl_output_enabled() {
+        pb.emit_completion(EventLevel::Info, EventKind::Read, message);
+    } else {
+        read(message);
+    }
 }
 
-pub fn finish_success(pb: ProgressBar, message: impl Display) {
+pub fn finish_success(pb: UiProgress, message: impl Display) {
     pb.finish_and_clear();
-    success(message);
+    let message = message.to_string();
+    if jsonl_output_enabled() {
+        pb.emit_completion(EventLevel::Success, EventKind::Status, message);
+    } else {
+        success(message);
+    }
 }
 
-pub fn finish_saved(pb: ProgressBar, message: impl Display) {
+pub fn finish_saved(pb: UiProgress, message: impl Display) {
     pb.finish_and_clear();
-    saved(message);
+    let message = message.to_string();
+    if jsonl_output_enabled() {
+        pb.emit_completion(EventLevel::Success, EventKind::Save, message);
+    } else {
+        saved(message);
+    }
 }
 
-pub fn suspend_progress<R>(pb: &ProgressBar, f: impl FnOnce() -> R) -> R {
+pub fn suspend_progress<R>(pb: &UiProgress, f: impl FnOnce() -> R) -> R {
     pb.suspend(f)
 }
 
@@ -417,6 +527,18 @@ mod tests {
         assert_eq!(parse_jsonl_event(&encoded), Some(event));
         assert!(parse_jsonl_event("plain output").is_none());
         assert!(parse_jsonl_event(r#"{"type":"other"}"#).is_none());
+    }
+
+    #[test]
+    fn ui_progress_tracks_shared_position_and_message_state() {
+        let progress = UiProgress::new(ProgressBar::hidden(), "starting".to_string(), Some(4));
+        let worker = progress.clone();
+        worker.set_message("channel 2");
+        worker.inc(2);
+
+        assert_eq!(progress.state.current.load(Ordering::Relaxed), 2);
+        assert_eq!(progress.state.total, Some(4));
+        assert_eq!(progress.state.message.lock().unwrap().as_str(), "channel 2");
     }
 
     #[test]

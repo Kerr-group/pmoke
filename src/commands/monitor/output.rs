@@ -18,7 +18,7 @@ pub(super) fn visual_output_lines_with_motion(
     entries: &[LogEntry],
     width: u16,
     selected_range: Option<(usize, usize)>,
-    cursor: Option<usize>,
+    _cursor: Option<usize>,
     running: bool,
     frame: usize,
 ) -> Vec<VisualOutputLine> {
@@ -47,13 +47,12 @@ pub(super) fn visual_output_lines_with_motion(
             let is_selected = selected_range
                 .map(|(start, end)| (start..=end).contains(&entry_index))
                 .unwrap_or(false);
-            let is_cursor = cursor == Some(entry_index);
-            let is_live_latest = running && Some(entry_index) == latest_entry && !is_selected;
+            let is_live_latest =
+                running && entry.transient && Some(entry_index) == latest_entry && !is_selected;
             let context = OutputRenderContext {
                 entry_index,
                 width: output_content_width(width, show_elapsed),
                 selected: is_selected,
-                cursor: is_cursor,
                 live_latest: is_live_latest,
                 frame,
                 elapsed_ms: entry.elapsed_ms,
@@ -103,7 +102,6 @@ pub(super) struct OutputRenderContext {
     entry_index: usize,
     width: usize,
     selected: bool,
-    cursor: bool,
     live_latest: bool,
     frame: usize,
     elapsed_ms: Option<u64>,
@@ -179,19 +177,15 @@ pub(super) fn section_output_line(
     kind: LogKind,
     context: OutputRenderContext,
 ) -> Line<'static> {
-    let marker = if context.cursor {
-        "◆".to_string()
-    } else if context.selected {
-        "▌".to_string()
-    } else if context.live_latest {
-        event_feed_spinner_symbol(context.frame).to_string()
+    let tag = if context.live_latest {
+        "RUN"
     } else {
-        kind.marker().to_string()
+        kind.label()
     };
     let mut spans = elapsed_prefix(context, true);
     spans.extend([
         Span::styled(
-            format!("{marker}  "),
+            format!("{tag:<5} "),
             selected_output_style(Style::default().fg(Color::Cyan), context.selected),
         ),
         Span::styled(
@@ -218,14 +212,10 @@ pub(super) fn metric_output_lines(
         .into_iter()
         .enumerate()
         .map(|(idx, value_line)| {
-            let marker = if context.cursor && idx == 0 {
-                "◆".to_string()
-            } else if context.selected && idx == 0 {
-                "▌".to_string()
-            } else if context.live_latest && idx == 0 {
-                event_feed_spinner_symbol(context.frame).to_string()
+            let tag = if context.live_latest && idx == 0 {
+                "RUN"
             } else {
-                " ".to_string()
+                ""
             };
             let rail = selected_output_style(
                 live_output_rail_style(context.live_latest, context.frame),
@@ -234,7 +224,7 @@ pub(super) fn metric_output_lines(
             let mut spans = elapsed_prefix(context, idx == 0);
             spans.extend(if idx == 0 {
                 vec![
-                    Span::styled(format!("{marker}  │ "), rail),
+                    Span::styled(format!("{tag:<5} │ "), rail),
                     Span::styled(
                         pad_display_width(key, key_width),
                         selected_output_style(
@@ -255,7 +245,7 @@ pub(super) fn metric_output_lines(
                 ]
             } else {
                 vec![
-                    Span::styled("   │ ", rail),
+                    Span::styled("      │ ", rail),
                     Span::styled(" ".repeat(key_width), rail),
                     Span::styled("  ", rail),
                     Span::styled(
@@ -285,7 +275,7 @@ pub(super) fn field_output_lines(
     last: bool,
 ) -> Vec<VisualOutputLine> {
     let key_width = key.width_cjk().clamp(8, 18);
-    let value_width = context.width.saturating_sub(key_width + 8).max(12);
+    let value_width = context.width.saturating_sub(key_width + 11).max(12);
     let branch = if last { "└─ " } else { "├─ " };
     wrap_log_text(value, value_width)
         .into_iter()
@@ -295,9 +285,9 @@ pub(super) fn field_output_lines(
             spans.extend([
                 Span::styled(
                     if index == 0 {
-                        format!("   {branch}")
+                        format!("      {branch}")
                     } else {
-                        "      ".to_string()
+                        "         ".to_string()
                     },
                     selected_output_style(
                         live_output_rail_style(context.live_latest, context.frame),
@@ -333,19 +323,15 @@ pub(super) fn metric_continuation_lines(
     context: OutputRenderContext,
     value: &str,
 ) -> Vec<VisualOutputLine> {
-    let value_width = context.width.saturating_sub(6).max(12);
+    let value_width = context.width.saturating_sub(9).max(12);
     wrap_log_text(value, value_width)
         .into_iter()
         .enumerate()
         .map(|(idx, value_line)| {
-            let marker = if context.cursor && idx == 0 {
-                "◆".to_string()
-            } else if context.selected && idx == 0 {
-                "▌".to_string()
-            } else if context.live_latest && idx == 0 {
-                event_feed_spinner_symbol(context.frame).to_string()
+            let tag = if context.live_latest && idx == 0 {
+                "RUN"
             } else {
-                " ".to_string()
+                ""
             };
             let rail = selected_output_style(
                 live_output_rail_style(context.live_latest, context.frame),
@@ -356,14 +342,7 @@ pub(super) fn metric_continuation_lines(
                 line: Line::from({
                     let mut spans = elapsed_prefix(context, idx == 0);
                     spans.extend([
-                        Span::styled(format!("{marker}  └─ "), rail),
-                        Span::styled(
-                            "↳ ",
-                            selected_output_style(
-                                Style::default().fg(Color::DarkGray),
-                                context.selected,
-                            ),
-                        ),
+                        Span::styled(format!("{tag:<5} └─ "), rail),
                         Span::styled(
                             value_line,
                             selected_output_style(
@@ -387,25 +366,21 @@ pub(super) fn event_output_lines(
     kind: LogKind,
     text: &str,
 ) -> Vec<VisualOutputLine> {
-    let text_width = context.width.saturating_sub(3).max(12);
+    let text_width = context.width.saturating_sub(6).max(12);
     wrap_log_text(text, text_width)
         .into_iter()
         .enumerate()
         .map(|(idx, line)| {
             let mut spans = elapsed_prefix(context, idx == 0);
             spans.extend(if idx == 0 {
-                let marker = if context.cursor {
-                    "◆".to_string()
-                } else if context.selected {
-                    "▌".to_string()
-                } else if context.live_latest {
-                    event_feed_spinner_symbol(context.frame).to_string()
+                let tag = if context.live_latest {
+                    "RUN"
                 } else {
-                    kind.marker().to_string()
+                    kind.label()
                 };
                 vec![
                     Span::styled(
-                        format!("{marker}  "),
+                        format!("{tag:<5} "),
                         selected_output_style(
                             live_output_marker_style(kind, context.live_latest, context.frame),
                             context.selected,
@@ -422,7 +397,7 @@ pub(super) fn event_output_lines(
             } else {
                 vec![
                     Span::styled(
-                        "   │ ",
+                        "      │ ",
                         selected_output_style(
                             live_output_rail_style(context.live_latest, context.frame),
                             context.selected,
@@ -455,15 +430,15 @@ pub(super) fn output_display_line_count(display: &OutputDisplay, width: usize) -
         }
         OutputDisplay::Field { key, value, .. } => {
             let key_width = key.width_cjk().clamp(8, 18);
-            let value_width = width.saturating_sub(key_width + 8).max(12);
+            let value_width = width.saturating_sub(key_width + 11).max(12);
             wrap_line_count(value, value_width)
         }
         OutputDisplay::Continuation(value) => {
-            let value_width = width.saturating_sub(6).max(12);
+            let value_width = width.saturating_sub(9).max(12);
             wrap_line_count(value, value_width)
         }
         OutputDisplay::Event(text) => {
-            let text_width = width.saturating_sub(3).max(12);
+            let text_width = width.saturating_sub(6).max(12);
             wrap_line_count(text, text_width)
         }
     }
@@ -589,7 +564,7 @@ pub(super) fn event_text_style(kind: LogKind) -> Style {
         LogKind::Error => Style::default()
             .fg(Color::LightRed)
             .add_modifier(Modifier::BOLD),
-        LogKind::System => Style::default().fg(Color::Yellow),
+        LogKind::System => Style::default().fg(Color::Gray),
         LogKind::Fit => Style::default().fg(Color::LightYellow),
         _ => Style::default().fg(Color::Gray),
     }
@@ -612,27 +587,27 @@ pub(super) enum LogKind {
 }
 
 impl LogKind {
-    pub(super) fn marker(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
-            Self::Plain => ".",
-            Self::System => "~",
-            Self::Success => "+",
-            Self::Info => "i",
-            Self::Read => "v",
-            Self::Save => "^",
-            Self::Fit => "*",
-            Self::Metric => ":",
-            Self::Skipped => ">",
-            Self::Warning => "!",
-            Self::Error => "x",
-            Self::Section => "#",
+            Self::Plain => "LOG",
+            Self::System => "SYS",
+            Self::Success => "OK",
+            Self::Info => "INFO",
+            Self::Read => "READ",
+            Self::Save => "SAVE",
+            Self::Fit => "FIT",
+            Self::Metric => "DATA",
+            Self::Skipped => "SKIP",
+            Self::Warning => "WARN",
+            Self::Error => "ERR",
+            Self::Section => "STEP",
         }
     }
 
     pub(super) fn color(self) -> Color {
         match self {
             Self::Plain => Color::Gray,
-            Self::System => Color::Yellow,
+            Self::System => Color::Gray,
             Self::Success => Color::Green,
             Self::Info => Color::Cyan,
             Self::Read => Color::Blue,
@@ -649,7 +624,7 @@ impl LogKind {
     pub(super) fn text_style(self) -> Style {
         let style = Style::default().fg(self.color());
         match self {
-            Self::System | Self::Section | Self::Fit => style.add_modifier(Modifier::BOLD),
+            Self::Section | Self::Fit => style.add_modifier(Modifier::BOLD),
             Self::Error | Self::Warning | Self::Success => style.add_modifier(Modifier::BOLD),
             _ => style,
         }

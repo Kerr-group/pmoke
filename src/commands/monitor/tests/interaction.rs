@@ -26,7 +26,7 @@ fn cancel_command_marks_run_and_sends_stop_signal() {
 }
 
 #[test]
-fn tui_tick_uses_60fps_while_command_is_running() {
+fn tui_tick_uses_a_calm_rate_while_command_is_running() {
     let mut app = test_app();
     let (_event_tx, event_rx) = mpsc::channel();
     let (cancel_tx, _cancel_rx) = mpsc::channel();
@@ -40,6 +40,7 @@ fn tui_tick_uses_60fps_while_command_is_running() {
     });
 
     assert_eq!(tui_frame_tick(&app), TUI_ANIMATION_TICK);
+    assert_eq!(TUI_ANIMATION_TICK, Duration::from_millis(100));
 }
 
 #[test]

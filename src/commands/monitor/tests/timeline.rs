@@ -23,17 +23,6 @@ fn keeps_lockin_settings_in_live_output() {
 }
 
 #[test]
-fn tui_tick_uses_60fps_while_effects_are_running() {
-    let mut app = test_app();
-
-    assert_eq!(tui_frame_tick(&app), TUI_IDLE_TICK);
-    app.push_output(OutputStream::Stdout, "[ INFO ] running");
-
-    assert_eq!(tui_frame_tick(&app), TUI_ANIMATION_TICK);
-    assert_eq!(TUI_ANIMATION_TICK, Duration::from_millis(16));
-}
-
-#[test]
 fn strips_csi_ansi_codes() {
     assert_eq!(strip_ansi_codes("\x1b[1;36mLock-in\x1b[0m"), "Lock-in");
 }
@@ -76,50 +65,17 @@ fn output_layout_uses_status_and_log_regions_only() {
 }
 
 #[test]
+fn activity_uses_every_available_log_row_without_the_removed_inner_header() {
+    assert_eq!(output_visible_rows(Rect::new(0, 0, 80, 8)), 8);
+}
+
+#[test]
 fn output_layout_hides_timeline_when_too_short() {
     let sections = output_inner_layout(Rect::new(0, 0, 80, 6));
 
     assert_eq!(sections.status.height, 1);
     assert_eq!(sections.timeline.height, 0);
     assert!(sections.log.height > 0);
-}
-
-#[test]
-fn latest_event_feed_effect_area_targets_last_visible_row() {
-    let area = latest_event_feed_effect_area(Rect::new(3, 5, 40, 8), 12, 8, 0)
-        .expect("latest row should be visible");
-
-    assert_eq!(area, Rect::new(3, 12, 39, 1));
-    assert_eq!(
-        latest_event_feed_effect_area(Rect::new(3, 5, 40, 8), 12, 8, 1),
-        None
-    );
-}
-
-#[test]
-fn pushing_output_starts_event_feed_effect() {
-    let mut app = test_app();
-
-    app.push_output(OutputStream::Stdout, "[ INFO ] running");
-
-    assert!(app.effects.is_running());
-}
-
-#[test]
-fn hidden_event_feed_effects_advance_to_idle() {
-    let mut app = test_app();
-    app.push_output(OutputStream::Stdout, "[ INFO ] running");
-    let mut buffer = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 4, 1));
-
-    process_event_feed_effects(
-        &mut app,
-        FxDuration::from_millis(EVENT_FEED_EFFECT_MS * 2),
-        &mut buffer,
-        None,
-    );
-
-    assert!(!app.effects.is_running());
-    assert_eq!(tui_frame_tick(&app), TUI_IDLE_TICK);
 }
 
 #[test]

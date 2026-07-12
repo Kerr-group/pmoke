@@ -4,9 +4,7 @@ use ratatui::backend::TestBackend;
 fn render_dashboard_text(width: u16, height: u16, app: &mut MonitorApp) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|frame| render(frame, app, FxDuration::from_millis(0)))
-        .unwrap();
+    terminal.draw(|frame| render(frame, app)).unwrap();
     terminal
         .backend()
         .buffer()
@@ -155,7 +153,7 @@ fn activity_header_uses_a_static_frame_when_motion_is_off() {
     app.motion_mode = MotionMode::Off;
 
     let title = activity_title(&app, 0, 80);
-    assert!(title.contains("| LIVE · Analyze all"));
+    assert!(title.contains("LIVE · Analyze all"));
     assert!(!title.contains("LIVE LOG"));
 }
 

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn render(frame: &mut Frame<'_>, app: &mut MonitorApp, effect_delta: FxDuration) {
+pub(super) fn render(frame: &mut Frame<'_>, app: &mut MonitorApp) {
     let area = frame.area();
     frame.render_widget(Clear, area);
 
@@ -14,7 +14,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &mut MonitorApp, effect_delta: 
         .split(area);
 
     render_header(frame, app, outer[0]);
-    render_body(frame, app, outer[1], effect_delta);
+    render_body(frame, app, outer[1]);
     render_footer(frame, app, outer[2]);
 
     if app.show_help {
@@ -177,16 +177,11 @@ pub(super) fn fit_context_path(path: &str, width: usize) -> String {
     format!("{prefix}{}", tail.into_iter().collect::<String>())
 }
 
-pub(super) fn render_body(
-    frame: &mut Frame<'_>,
-    app: &mut MonitorApp,
-    area: Rect,
-    effect_delta: FxDuration,
-) {
+pub(super) fn render_body(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rect) {
     let layout = UiLayout::new(area);
     render_command_palette(frame, app, layout.workflow);
     render_inspector(frame, app, layout.inspector);
-    render_run_output(frame, app, layout.activity, effect_delta);
+    render_run_output(frame, app, layout.activity);
 }
 
 pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
@@ -209,18 +204,6 @@ pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
         Span::styled(format!("[{focus}]"), Style::default().fg(Color::DarkGray)),
     ]);
     frame.render_widget(Paragraph::new(line), area);
-}
-
-pub(super) fn process_event_feed_effects(
-    app: &mut MonitorApp,
-    effect_delta: FxDuration,
-    buffer: &mut ratatui::buffer::Buffer,
-    area: Option<Rect>,
-) {
-    if app.effects.is_running() {
-        app.effects
-            .process_effects(effect_delta, buffer, area.unwrap_or_default());
-    }
 }
 
 pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
@@ -515,12 +498,7 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
     );
 }
 
-pub(super) fn render_run_output(
-    frame: &mut Frame<'_>,
-    app: &mut MonitorApp,
-    area: Rect,
-    effect_delta: FxDuration,
-) {
+pub(super) fn render_run_output(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rect) {
     let output = app.visible_output();
     let block_base = Block::default()
         .borders(Borders::ALL)
@@ -560,7 +538,6 @@ pub(super) fn render_run_output(
     render_run_timeline(frame, app, output_sections.timeline);
 
     if log_area.height == 0 || log_area.width == 0 {
-        process_event_feed_effects(app, effect_delta, frame.buffer_mut(), None);
         return;
     }
 
@@ -592,10 +569,6 @@ pub(super) fn render_run_output(
     };
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
 
-    let effect_area =
-        latest_event_feed_effect_area(log_area, visual_line_count, visible_rows, effective_scroll);
-    process_event_feed_effects(app, effect_delta, frame.buffer_mut(), effect_area);
-
     render_output_scrollbar(
         frame.buffer_mut(),
         log_area,
@@ -623,8 +596,7 @@ pub(super) fn activity_title(app: &MonitorApp, effective_scroll: usize, width: u
             )
         } else {
             format!(
-                "{} LIVE · {} · {}",
-                event_feed_spinner_symbol(timeline_motion_frame(app)),
+                "LIVE · {} · {}",
                 run.label,
                 format_live_duration(run.started_at.elapsed())
             )
@@ -699,10 +671,6 @@ pub(super) fn output_scrollbar_thumb(
         .unwrap_or(0);
 
     Some((thumb_start, thumb_len))
-}
-
-pub(super) fn event_feed_spinner_symbol(frame: usize) -> char {
-    ['|', '/', '-', '\\'][frame % 4]
 }
 
 pub(super) fn event_feed_pulse_color(frame: usize) -> Color {
