@@ -18,3 +18,29 @@ pub fn build_channel_list(cfg: &Config) -> Result<Vec<u8>> {
 
     Ok(channels)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::build_channel_list;
+
+    #[test]
+    fn includes_every_sensor_reference_and_signal_channel_in_numeric_order() {
+        let mut cfg = crate::test_support::test_config(vec![4, 1], vec![3]);
+        cfg.roles.reference_ch = 2;
+
+        assert_eq!(build_channel_list(&cfg).unwrap(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn rejects_a_channel_assigned_to_more_than_one_role() {
+        let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
+        cfg.roles.reference_ch = 3;
+
+        let error = build_channel_list(&cfg).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Duplicate channel detected: ch3")
+        );
+    }
+}
