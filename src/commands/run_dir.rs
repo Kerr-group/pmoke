@@ -247,12 +247,9 @@ pub fn publish_staged_directory(staging: &Path, destination: &Path, force: bool)
         };
     }
     if let Err(error) = fs::remove_dir_all(&backup) {
-        return Err(error).with_context(|| {
-            format!(
-                "new output was published but failed to remove backup {}",
-                backup.display()
-            )
-        });
+        crate::ui::warn(format!(
+            "analysis was published, but stale backup could not be removed: {error}"
+        ));
     }
     sync_parent(destination)
 }
@@ -336,6 +333,53 @@ pub(crate) fn publish_analysis_staging(cfg: &Config, staging_cfg: &Config) -> Re
         true,
     )
 }
+
+pub struct AnalysisLock {
+    path: PathBuf,
+}
+
+impl AnalysisLock {
+    pub fn acquire(run_dir: &Path, stage: &str) -> Result<Self> {
+        let path = run_dir.join(".analysis.lock");
+        let now = jiff::Timestamp::now().to_string();
+        let content = format!(
+            "pid = {}\nstage = \"{}\"\nstarted_at = \"{}\"\n",
+            std::process::id(),
+            stage,
+            now
+        );
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(content.as_bytes())?;
+                file.sync_all()?;
+                Ok(Self { path })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let current_info = fs::read_to_string(&path)
+                    .unwrap_or_else(|_| "unknown".to_string());
+                bail!(
+                    "Another analysis is currently running in this directory (lock file exists: {}).\nLock info:\n{}",
+                    path.display(),
+                    current_info
+                );
+            }
+            Err(error) => Err(error).with_context(|| {
+                format!("failed to create analysis lock: {}", path.display())
+            }),
+        }
+    }
+}
+
+impl Drop for AnalysisLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 
 fn copy_required_file(source: &Path, destination: &Path, label: &str) -> Result<()> {
     match fs::symlink_metadata(source) {

@@ -4,12 +4,17 @@ use crate::utils::waveform::read_all_fetched_waveforms;
 use anyhow::{Result, bail};
 
 pub fn li(cfg: &Config) -> Result<()> {
+    let _lock = crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "li")?;
     crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "li", None)?;
     let result = li_inner(cfg);
     match &result {
-        Ok(()) => crate::commands::run_dir::write_run_state(cfg, "complete", "li", None)?,
-        Err(error) => crate::commands::run_dir::write_run_state(cfg, "failed", "li", Some(error))?,
+        Ok(()) => {
+            crate::commands::run_dir::write_run_state(cfg, "analyzing", "li_complete", None)?
+        }
+        Err(error) => {
+            crate::commands::run_dir::write_run_state(cfg, "failed", "li", Some(error))?
+        }
     }
     result
 }

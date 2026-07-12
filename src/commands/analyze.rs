@@ -33,6 +33,7 @@ pub fn analyze(cfg: &Config) -> Result<()> {
 }
 
 pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
+    let _lock = crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "analysis")?;
     crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "analysis", None)?;
     let result = run_analyze_inner(cfg, data);

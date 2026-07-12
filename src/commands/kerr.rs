@@ -2,6 +2,7 @@ use crate::{config::Config, kerr::run};
 use anyhow::Result;
 
 pub fn kerr(cfg: &Config) -> Result<()> {
+    let _lock = crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "kerr")?;
     crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "kerr", None)?;
     let result = kerr_inner(cfg);
@@ -20,6 +21,6 @@ fn kerr_inner(cfg: &Config) -> Result<()> {
         crate::commands::run_dir::AnalysisStage::Kerr,
     )?;
     run(&staging_cfg)?;
-    crate::lockin::provenance::refresh_analysis_manifest_outputs(&staging_cfg)?;
+    crate::lockin::provenance::refresh_analysis_manifest_outputs(&staging_cfg, "kerr")?;
     crate::commands::run_dir::publish_analysis_staging(cfg, &staging_cfg)
 }

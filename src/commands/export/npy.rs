@@ -112,7 +112,7 @@ pub fn export_canonical(cfg: &Config) -> Result<()> {
                 created.push(destination.clone());
             }
         }
-        crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg)?;
+        crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg, "export_npy")?;
         Ok(())
     })();
     if result.is_err() {

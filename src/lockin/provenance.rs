@@ -2,11 +2,11 @@ use crate::config::{ArtifactPaths, ArtifactResolver, Config, LockinLpfKind};
 
 use crate::lockin::lockin_core::{LockinProcessor, legacy_boxcar_enbw_hz};
 use crate::lockin::reference::ref_analysis::RefFitParams;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +104,14 @@ struct ReferenceProvenance {
 }
 
 #[derive(Serialize)]
+struct StageProvenance {
+    completed_at: String,
+    pmoke_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    git_commit: Option<String>,
+}
+
+#[derive(Serialize)]
 struct AnalysisMetadata<'a> {
     schema_version: u32,
     pmoke_version: &'static str,
@@ -111,6 +119,8 @@ struct AnalysisMetadata<'a> {
     git_commit: Option<&'static str>,
     timestamp: String,
     analyzed_at: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    stages: BTreeMap<String, StageProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_acquisition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,6 +176,102 @@ fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
     Ok(outputs)
 }
 
+fn validate_npy_file(path: &Path, expected_rows: usize, expected_cols: usize) -> Result<()> {
+    let mut file = std::fs::File::open(path)
+        .with_context(|| format!("failed to open NPY file: {}", path.display()))?;
+    let mut magic = [0u8; 6];
+    file.read_exact(&mut magic)
+        .with_context(|| format!("failed to read NPY magic: {}", path.display()))?;
+    if &magic != b"\x93NUMPY" {
+        bail!("invalid NPY magic bytes: {}", path.display());
+    }
+    let mut version = [0u8; 2];
+    file.read_exact(&mut version)
+        .with_context(|| format!("failed to read NPY version: {}", path.display()))?;
+    if version[0] != 1 && version[0] != 2 {
+        bail!("unsupported NPY version: {}.{}", version[0], version[1]);
+    }
+
+    let header_len = if version[0] == 1 {
+        let mut header_len_bytes = [0u8; 2];
+        file.read_exact(&mut header_len_bytes)
+            .with_context(|| format!("failed to read NPY header len: {}", path.display()))?;
+        u16::from_le_bytes(header_len_bytes) as usize
+    } else {
+        let mut header_len_bytes = [0u8; 4];
+        file.read_exact(&mut header_len_bytes)
+            .with_context(|| format!("failed to read NPY header len: {}", path.display()))?;
+        u32::from_le_bytes(header_len_bytes) as usize
+    };
+
+    let mut header_bytes = vec![0u8; header_len];
+    file.read_exact(&mut header_bytes)
+        .with_context(|| format!("failed to read NPY header dict: {}", path.display()))?;
+    let header = String::from_utf8(header_bytes)
+        .with_context(|| format!("NPY header is not valid UTF-8: {}", path.display()))?;
+
+    if !header.contains("'descr': '<f8'") && !header.contains("\"descr\": \"<f8\"") {
+        bail!("NPY descr is not '<f8': {}", path.display());
+    }
+    if header.contains("'fortran_order': True") || header.contains("\"fortran_order\": true") {
+        bail!("NPY is in Fortran order, expected C order: {}", path.display());
+    }
+
+    let shape_pos = header
+        .find("'shape': (")
+        .or_else(|| header.find("\"shape\": ("))
+        .ok_or_else(|| anyhow::anyhow!("NPY header missing shape: {}", path.display()))?;
+    let start_pos = shape_pos + 10;
+    let end_pos = header[start_pos..]
+        .find(')')
+        .ok_or_else(|| anyhow::anyhow!("invalid NPY shape format: {}", path.display()))?
+        + start_pos;
+    let shape_str = &header[start_pos..end_pos];
+    let parts = shape_str
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() != 2 {
+        bail!("expected 2D NPY shape, found: ({})", shape_str);
+    }
+    let parsed_rows: usize = parts[0]
+        .parse()
+        .with_context(|| format!("failed to parse NPY shape rows: {}", parts[0]))?;
+    let parsed_cols: usize = parts[1]
+        .parse()
+        .with_context(|| format!("failed to parse NPY shape columns: {}", parts[1]))?;
+
+    if parsed_rows != expected_rows {
+        bail!(
+            "NPY row count mismatch: found {parsed_rows}, expected {expected_rows} in {}",
+            path.display()
+        );
+    }
+    if parsed_cols != expected_cols {
+        bail!(
+            "NPY column count mismatch: found {parsed_cols}, expected {expected_cols} in {}",
+            path.display()
+        );
+    }
+
+    let expected_payload = expected_rows * expected_cols * 8;
+    let file_metadata = path
+        .metadata()
+        .with_context(|| format!("failed to get metadata for NPY: {}", path.display()))?;
+    let prefix_len = if version[0] == 1 { 10 } else { 12 };
+    let expected_file_size = prefix_len + header_len + expected_payload;
+    if file_metadata.len() as usize != expected_file_size {
+        bail!(
+            "NPY file size mismatch in {}: found {}, expected {expected_file_size}",
+            path.display(),
+            file_metadata.len()
+        );
+    }
+
+    Ok(())
+}
+
 fn describe_analysis_artifacts(
     dir: &Path,
 ) -> Result<(BTreeMap<String, ColumnSet>, Vec<AnalysisArtifact>)> {
@@ -196,13 +302,18 @@ fn describe_analysis_artifacts(
                 column_sets.insert(kind.clone(), candidate);
             }
             let npy_path = path.with_extension("npy");
-            let npy = npy_path.exists().then(|| {
-                npy_path
-                    .strip_prefix(dir)
-                    .unwrap_or(&npy_path)
-                    .to_string_lossy()
-                    .replace('\\', "/")
-            });
+            let npy = if npy_path.exists() {
+                validate_npy_file(&npy_path, rows, columns)?;
+                Some(
+                    npy_path
+                        .strip_prefix(dir)
+                        .unwrap_or(&npy_path)
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                )
+            } else {
+                None
+            };
             artifacts.push(AnalysisArtifact {
                 kind: kind.clone(),
                 channel,
@@ -323,11 +434,21 @@ fn collect_plot_files(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<()> 
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with('.') {
+                continue;
+            }
+        }
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
             collect_plot_files(&path, paths)?;
         } else if metadata.file_type().is_file() {
-            paths.push(path);
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let lower = ext.to_ascii_lowercase();
+                if lower == "png" || lower == "pdf" || lower == "svg" {
+                    paths.push(path);
+                }
+            }
         } else {
             anyhow::bail!("plot artifact is a symbolic link: {}", path.display());
         }
@@ -405,12 +526,49 @@ pub fn write_analysis_metadata(
         analysis_sources(&output_paths.run_dir, source_resolver)?;
 
     let now = jiff::Timestamp::now().to_string();
+    let mut stages = BTreeMap::new();
+    stages.insert(
+        "li".to_string(),
+        StageProvenance {
+            completed_at: now.clone(),
+            pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
+            git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
+        },
+    );
+    let has_phase = artifacts
+        .iter()
+        .any(|a| a.kind == "lockin_rotated" || a.kind == "phase_rotated_plot");
+    let has_kerr = artifacts
+        .iter()
+        .any(|a| a.kind == "kerr" || a.kind == "kerr_plot");
+    if has_phase {
+        stages.insert(
+            "phase".to_string(),
+            StageProvenance {
+                completed_at: now.clone(),
+                pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
+                git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
+            },
+        );
+    }
+    if has_kerr {
+        stages.insert(
+            "kerr".to_string(),
+            StageProvenance {
+                completed_at: now.clone(),
+                pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
+                git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
+            },
+        );
+    }
+
     let metadata = AnalysisMetadata {
         schema_version: 1,
         pmoke_version: env!("CARGO_PKG_VERSION"),
         git_commit: option_env!("PMOKE_GIT_COMMIT"),
         timestamp: now.clone(),
         analyzed_at: now,
+        stages,
         source_acquisition,
         source_waveform,
         source_config: "../config.resolved.toml",
@@ -467,7 +625,7 @@ fn relative_analysis_source(run_dir: &Path, source: &Path) -> Result<String> {
     Ok(format!("../{}", parts.join("/")))
 }
 
-pub fn refresh_analysis_manifest_outputs(cfg: &Config) -> Result<()> {
+pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()> {
     let path = cfg.paths().analysis_manifest();
     let parent = path
         .parent()
@@ -497,6 +655,26 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config) -> Result<()> {
         "analyzed_at".to_string(),
         toml::Value::String(jiff::Timestamp::now().to_string()),
     );
+
+    let stages_val = table
+        .entry("stages".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let stages_table = stages_val
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("stages in manifest must be a table"))?;
+
+    let now = jiff::Timestamp::now().to_string();
+    let mut stage_prov = toml::map::Map::new();
+    stage_prov.insert("completed_at".to_string(), toml::Value::String(now));
+    stage_prov.insert(
+        "pmoke_version".to_string(),
+        toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
+    );
+    if let Some(git) = option_env!("PMOKE_GIT_COMMIT") {
+        stage_prov.insert("git_commit".to_string(), toml::Value::String(git.to_string()));
+    }
+    stages_table.insert(stage.to_string(), toml::Value::Table(stage_prov));
+
     let encoded =
         toml::to_string_pretty(&manifest).context("failed to encode updated analysis manifest")?;
     write_atomic(&path, encoded.as_bytes())
@@ -655,6 +833,60 @@ mod tests {
             Some(&["kerr/kerr.csv".to_string()][..])
         );
         assert_eq!(plot.format.as_deref(), Some("png"));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn test_npy_file_validation() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "pmoke-npy-val-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let npy_path = directory.join("test.npy");
+
+        // Helper to write a custom NPY header
+        let write_npy = |path: &Path, header_dict: &str, payload_len: usize| {
+            let mut file = fs::File::create(path).unwrap();
+            file.write_all(b"\x93NUMPY").unwrap();
+            file.write_all(&[1, 0]).unwrap();
+            let padding = (64 - ((10 + header_dict.len() + 1) % 64)) % 64;
+            let header = format!("{}{}\n", header_dict, " ".repeat(padding));
+            let header_len = header.len() as u16;
+            file.write_all(&header_len.to_le_bytes()).unwrap();
+            file.write_all(header.as_bytes()).unwrap();
+            file.write_all(&vec![0u8; payload_len]).unwrap();
+        };
+
+        // 1. Valid NPY
+        write_npy(&npy_path, "{'descr': '<f8', 'fortran_order': False, 'shape': (100, 3), }", 100 * 3 * 8);
+        assert!(validate_npy_file(&npy_path, 100, 3).is_ok());
+
+        // 2. Invalid magic
+        let mut data = fs::read(&npy_path).unwrap();
+        data[0] = b'X';
+        let bad_magic_path = directory.join("bad_magic.npy");
+        fs::write(&bad_magic_path, &data).unwrap();
+        assert!(validate_npy_file(&bad_magic_path, 100, 3).is_err());
+
+        // 3. Invalid descr
+        let bad_descr_path = directory.join("bad_descr.npy");
+        write_npy(&bad_descr_path, "{'descr': '<f4', 'fortran_order': False, 'shape': (100, 3), }", 100 * 3 * 4);
+        assert!(validate_npy_file(&bad_descr_path, 100, 3).is_err());
+
+        // 4. Invalid shape rows/cols
+        assert!(validate_npy_file(&npy_path, 99, 3).is_err());
+        assert!(validate_npy_file(&npy_path, 100, 4).is_err());
+
+        // 5. Invalid file size (truncated payload)
+        let truncated_path = directory.join("truncated.npy");
+        write_npy(&truncated_path, "{'descr': '<f8', 'fortran_order': False, 'shape': (100, 3), }", 100 * 3 * 8 - 1);
+        assert!(validate_npy_file(&truncated_path, 100, 3).is_err());
 
         fs::remove_dir_all(directory).unwrap();
     }
