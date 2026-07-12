@@ -31,12 +31,7 @@ pub(super) fn render_run_timeline(frame: &mut Frame<'_>, app: &MonitorApp, area:
 
     let motion_frame = timeline_motion_frame(app);
     let step_lines = timeline_step_lines(&timeline.steps, area.width, area.height, motion_frame);
-    let header = timeline_header_line(
-        app.command_running(),
-        timeline.done,
-        timeline.total,
-        motion_frame,
-    );
+    let header = timeline_header_line(timeline.done, timeline.total);
 
     let lines = if area.height >= 3 {
         let mut lines = Vec::with_capacity(area.height as usize);
@@ -76,31 +71,16 @@ pub(super) fn render_run_timeline(frame: &mut Frame<'_>, app: &MonitorApp, area:
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn timeline_header_line(
-    running: bool,
-    done: usize,
-    total: usize,
-    motion_frame: usize,
-) -> Line<'static> {
+fn timeline_header_line(done: usize, total: usize) -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            " RUN TIMELINE ",
+            " TIMELINE ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        if running {
-            Span::styled(
-                format!("{} ", timeline_spinner_symbol(motion_frame)),
-                Style::default()
-                    .fg(timeline_pulse_color(motion_frame))
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else {
-            Span::raw("")
-        },
         Span::styled(
             format!("{done}/{total} complete"),
             Style::default().fg(Color::Gray),
@@ -199,16 +179,24 @@ pub(super) fn timeline_motion_frame(app: &MonitorApp) -> usize {
         .unwrap_or(0)
 }
 
-pub(super) fn spinner_frame(frames: &'static [char], frame: usize) -> char {
-    frames[frame % frames.len()]
+fn timeline_state_label(state: TimelineStepState) -> &'static str {
+    match state {
+        TimelineStepState::Done => "DONE",
+        TimelineStepState::Current => "RUN",
+        TimelineStepState::Pending => "NEXT",
+        TimelineStepState::Failed => "FAIL",
+        TimelineStepState::Stopping => "STOP",
+    }
 }
 
-fn timeline_spinner_symbol(frame: usize) -> char {
-    spinner_frame(&['◜', '◝', '◞', '◟'], frame)
-}
-
-fn timeline_pending_symbol(frame: usize) -> char {
-    spinner_frame(&['░', '▒', '▓', '▒'], frame)
+fn timeline_compact_state_label(state: TimelineStepState) -> &'static str {
+    match state {
+        TimelineStepState::Done => "OK",
+        TimelineStepState::Current => "RUN",
+        TimelineStepState::Pending => "...",
+        TimelineStepState::Failed => "ERR",
+        TimelineStepState::Stopping => "STP",
+    }
 }
 
 fn timeline_pulse_color(frame: usize) -> Color {
@@ -219,13 +207,13 @@ fn timeline_pulse_color(frame: usize) -> Color {
     }
 }
 
-fn timeline_connector_span(next_step: &TimelineStep, frame: usize) -> Span<'static> {
+fn timeline_connector_span(next_step: &TimelineStep, _frame: usize) -> Span<'static> {
     let style = if matches!(
         next_step.state,
         TimelineStepState::Current | TimelineStepState::Stopping
     ) {
         Style::default()
-            .fg(timeline_pulse_color(frame))
+            .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -233,13 +221,13 @@ fn timeline_connector_span(next_step: &TimelineStep, frame: usize) -> Span<'stat
     Span::styled(" ─ ", style)
 }
 
-fn timeline_compact_connector_span(next_step: &TimelineStep, frame: usize) -> Span<'static> {
+fn timeline_compact_connector_span(next_step: &TimelineStep, _frame: usize) -> Span<'static> {
     let style = if matches!(
         next_step.state,
         TimelineStepState::Current | TimelineStepState::Stopping
     ) {
         Style::default()
-            .fg(timeline_pulse_color(frame))
+            .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -248,36 +236,12 @@ fn timeline_compact_connector_span(next_step: &TimelineStep, frame: usize) -> Sp
 }
 
 pub(super) fn timeline_step_spans(step: &TimelineStep, frame: usize) -> Vec<Span<'static>> {
-    let (icon, fg, bg, modifier) = match step.state {
-        TimelineStepState::Done => ("✓".to_string(), Color::Black, Color::Green, Modifier::BOLD),
-        TimelineStepState::Current => (
-            timeline_spinner_symbol(frame).to_string(),
-            Color::Black,
-            timeline_pulse_color(frame),
-            Modifier::BOLD,
-        ),
-        TimelineStepState::Pending => (
-            timeline_pending_symbol(frame).to_string(),
-            Color::DarkGray,
-            Color::Reset,
-            Modifier::empty(),
-        ),
-        TimelineStepState::Failed => (
-            "×".to_string(),
-            Color::Black,
-            Color::LightRed,
-            Modifier::BOLD,
-        ),
-        TimelineStepState::Stopping => (
-            "!".to_string(),
-            Color::Black,
-            if frame.is_multiple_of(2) {
-                Color::Yellow
-            } else {
-                Color::LightRed
-            },
-            Modifier::BOLD,
-        ),
+    let (fg, bg, modifier) = match step.state {
+        TimelineStepState::Done => (Color::Black, Color::Green, Modifier::BOLD),
+        TimelineStepState::Current => (Color::Black, timeline_pulse_color(frame), Modifier::BOLD),
+        TimelineStepState::Pending => (Color::DarkGray, Color::Reset, Modifier::empty()),
+        TimelineStepState::Failed => (Color::Black, Color::LightRed, Modifier::BOLD),
+        TimelineStepState::Stopping => (Color::Black, Color::Yellow, Modifier::BOLD),
     };
     let badge_style = if matches!(step.state, TimelineStepState::Pending) {
         Style::default().fg(fg)
@@ -299,7 +263,10 @@ pub(super) fn timeline_step_spans(step: &TimelineStep, frame: usize) -> Vec<Span
     };
 
     vec![
-        Span::styled(timeline_badge_cell(&icon), badge_style),
+        Span::styled(
+            timeline_badge_cell(timeline_state_label(step.state)),
+            badge_style,
+        ),
         Span::raw(" "),
         Span::styled(step.label.to_string(), label_style),
     ]
@@ -317,43 +284,22 @@ pub(super) fn timeline_badge_cell(icon: &str) -> String {
 }
 
 fn timeline_compact_step_span(step: &TimelineStep, frame: usize) -> Span<'static> {
-    let (icon, fg, bg, modifier) = match step.state {
-        TimelineStepState::Done => ("✓".to_string(), Color::Black, Color::Green, Modifier::BOLD),
-        TimelineStepState::Current => (
-            timeline_spinner_symbol(frame).to_string(),
-            Color::Black,
-            timeline_pulse_color(frame),
-            Modifier::BOLD,
-        ),
-        TimelineStepState::Pending => (
-            timeline_pending_symbol(frame).to_string(),
-            Color::DarkGray,
-            Color::Reset,
-            Modifier::empty(),
-        ),
-        TimelineStepState::Failed => (
-            "×".to_string(),
-            Color::Black,
-            Color::LightRed,
-            Modifier::BOLD,
-        ),
-        TimelineStepState::Stopping => (
-            "!".to_string(),
-            Color::Black,
-            if frame.is_multiple_of(2) {
-                Color::Yellow
-            } else {
-                Color::LightRed
-            },
-            Modifier::BOLD,
-        ),
+    let (fg, bg, modifier) = match step.state {
+        TimelineStepState::Done => (Color::Black, Color::Green, Modifier::BOLD),
+        TimelineStepState::Current => (Color::Black, timeline_pulse_color(frame), Modifier::BOLD),
+        TimelineStepState::Pending => (Color::DarkGray, Color::Reset, Modifier::empty()),
+        TimelineStepState::Failed => (Color::Black, Color::LightRed, Modifier::BOLD),
+        TimelineStepState::Stopping => (Color::Black, Color::Yellow, Modifier::BOLD),
     };
     let style = if matches!(step.state, TimelineStepState::Pending) {
         Style::default().fg(fg)
     } else {
         Style::default().fg(fg).bg(bg).add_modifier(modifier)
     };
-    Span::styled(timeline_compact_badge_cell(&icon), style)
+    Span::styled(
+        timeline_compact_badge_cell(timeline_compact_state_label(step.state)),
+        style,
+    )
 }
 
 fn timeline_compact_badge_cell(icon: &str) -> String {

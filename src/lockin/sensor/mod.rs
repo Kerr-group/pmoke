@@ -85,7 +85,7 @@ pub fn run_sensor<'a>(
     let c_bg_arr = match calculate_background_averages(cfg, t, s_cols) {
         Ok(c_bg_arr) => c_bg_arr,
         Err(err) => {
-            pb.finish_and_clear();
+            ui::finish_cancelled(pb, "sensor background averaging stopped");
             return Err(err);
         }
     };

@@ -95,14 +95,13 @@ pub fn run_plot(
             Ok(())
         }
         Err(err) if plot.fail_on_error => {
-            pb.finish_and_clear();
+            ui::finish_cancelled(pb, format!("{progress} failed"));
             remove_partial_plot(output);
             Err(err)
         }
         Err(err) => {
-            pb.finish_and_clear();
             remove_partial_plot(output);
-            ui::warn(format!("{progress} skipped: {err:#}"));
+            ui::finish_warning(pb, format!("{progress} skipped: {err:#}"));
             Ok(())
         }
     }

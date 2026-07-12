@@ -185,7 +185,7 @@ impl UiProgress {
         self.emit_update();
     }
 
-    pub fn finish_and_clear(&self) {
+    fn finish_and_clear(&self) {
         self.bar.finish_and_clear();
     }
 
@@ -280,6 +280,26 @@ pub fn finish_saved(pb: UiProgress, message: impl Display) {
         pb.emit_completion(EventLevel::Success, EventKind::Save, message);
     } else {
         saved(message);
+    }
+}
+
+pub fn finish_cancelled(pb: UiProgress, message: impl Display) {
+    pb.finish_and_clear();
+    let message = message.to_string();
+    if jsonl_output_enabled() {
+        pb.emit_completion(EventLevel::Info, EventKind::Skip, message);
+    } else {
+        skipped(message);
+    }
+}
+
+pub fn finish_warning(pb: UiProgress, message: impl Display) {
+    pb.finish_and_clear();
+    let message = message.to_string();
+    if jsonl_output_enabled() {
+        pb.emit_completion(EventLevel::Warning, EventKind::Status, message);
+    } else {
+        warn(message);
     }
 }
 
