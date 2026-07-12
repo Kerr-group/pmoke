@@ -252,7 +252,9 @@ fn resolve_raw_channel_path(raw_dir: &Path, file: &str, idx: usize) -> Result<Pa
     }
     for component in relative.components() {
         if !matches!(component, Component::Normal(_)) {
-            bail!("raw csv channel file must be a safe relative path for channel index {idx}: {file}");
+            bail!(
+                "raw csv channel file must be a safe relative path for channel index {idx}: {file}"
+            );
         }
     }
     Ok(raw_dir.join(relative))
