@@ -722,7 +722,11 @@ mod tests {
                             if *active > *max_c {
                                 *max_c = *active;
                             }
-                            assert!(*active <= 1, "Exclusion violated! Concurrency count: {}", *active);
+                            assert!(
+                                *active <= 1,
+                                "Exclusion violated! Concurrency count: {}",
+                                *active
+                            );
                         }
                         thread::sleep(std::time::Duration::from_millis(2));
                         {

@@ -642,12 +642,25 @@ fn test_force_fetch_analysis_invalidation_and_transaction() {
     assert!(!legacy_kerr.exists());
     assert!(!lockin_res_1.exists());
     assert!(!lockin_rot_2.exists());
-    assert!(run_dir.join(".analysis.backup").exists());
+
+    let backup_exists = fs::read_dir(run_dir).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".analysis.backup.")
+    });
+    assert!(backup_exists);
 
     // 3. Commit backup
     backup.commit(run_dir).unwrap();
 
-    assert!(!run_dir.join(".analysis.backup").exists());
+    let backup_exists_after = fs::read_dir(run_dir).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".analysis.backup.")
+    });
+    assert!(!backup_exists_after);
 
     // Verify legacy_analysis.invalidated.<timestamp> exists and contains the files
     let mut invalidated_found = false;
@@ -697,4 +710,118 @@ fn test_force_fetch_analysis_invalidation_and_transaction() {
 
     fs::remove_dir_all(dir).unwrap();
     let _ = fs::remove_dir_all(new_dir);
+}
+
+#[test]
+fn test_analysis_backup_partial_move_failure_and_rollback() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+    let custom_backup = run_dir.join("my_custom_backup");
+    fs::create_dir_all(&custom_backup).unwrap();
+
+    // Pre-create a conflicting directory inside the custom backup path for lockin_results_ch1.csv
+    // This will cause rename to fail for that specific item!
+    fs::create_dir(custom_backup.join("lockin_results_ch1.csv")).unwrap();
+
+    // Create 1st item (analysis/) and 2nd item (lockin_results_ch1.csv)
+    let canonical = run_dir.join("analysis");
+    fs::create_dir_all(&canonical).unwrap();
+    fs::write(canonical.join("manifest.toml"), b"manifest").unwrap();
+
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    // Call create_internal with custom backup dir (this should fail on 2nd item rename)
+    let result = AnalysisBackup::create_internal(run_dir, custom_backup.clone());
+    assert!(result.is_err());
+
+    // Verify RAII automatically rolled back the 1st item (analysis/)
+    assert!(canonical.exists());
+    assert!(canonical.join("manifest.toml").is_file());
+    assert!(lockin_res_1.exists());
+
+    // Verify custom backup directory is removed on drop restore
+    assert!(!custom_backup.exists());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_analysis_backup_restore_failure() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!lockin_res_1.exists());
+
+    // Before restoring, create a directory at lockin_res_1 to cause restore to fail
+    fs::create_dir(&lockin_res_1).unwrap();
+
+    // Call restore (should fail)
+    let restore_err = backup.restore();
+    assert!(restore_err.is_err());
+    assert!(
+        restore_err
+            .unwrap_err()
+            .to_string()
+            .contains("failed to restore")
+    );
+
+    // Cleanup directory
+    let _ = fs::remove_dir_all(&lockin_res_1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_stale_backup_is_not_deleted() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+
+    // Create a stale backup directory
+    let stale_backup = run_dir.join(".analysis.backup.12345.2026-07-12.0");
+    fs::create_dir_all(&stale_backup).unwrap();
+    fs::write(stale_backup.join("stale.txt"), b"stale").unwrap();
+
+    // Create a new backup
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+
+    // Stale backup must not be deleted!
+    assert!(stale_backup.exists());
+    assert!(stale_backup.join("stale.txt").is_file());
+
+    std::mem::drop(backup);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_process_and_auto_reject_force() {
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.force = true;
+
+    let result_process = crate::commands::process::process(&config);
+    assert!(result_process.is_err());
+    assert!(
+        result_process
+            .unwrap_err()
+            .to_string()
+            .contains("--force is not yet supported for process/auto")
+    );
+
+    let result_auto = crate::commands::auto::auto(&config);
+    assert!(result_auto.is_err());
+    assert!(
+        result_auto
+            .unwrap_err()
+            .to_string()
+            .contains("--force is not yet supported for process/auto")
+    );
 }

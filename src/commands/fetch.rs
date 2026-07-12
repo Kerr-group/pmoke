@@ -162,38 +162,70 @@ fn check_acquisition_exists(cfg: &Config) -> Result<()> {
 struct AnalysisBackup {
     backup_dir: PathBuf,
     moved_items: Vec<(PathBuf, PathBuf)>,
+    committed: bool,
 }
 
 impl AnalysisBackup {
     fn create(run_dir: &Path) -> Result<Self> {
-        let backup_dir = run_dir.join(".analysis.backup");
-        if backup_dir.exists() {
-            std::fs::remove_dir_all(&backup_dir)?;
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let pid = std::process::id();
+        let timestamp = jiff::Timestamp::now()
+            .to_string()
+            .replace(':', "-")
+            .replace('.', "-");
+        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let backup_dir = run_dir.join(format!(
+            ".analysis.backup.{}.{}.{}",
+            pid, timestamp, counter
+        ));
+        Self::create_internal(run_dir, backup_dir)
+    }
+
+    fn create_internal(run_dir: &Path, backup_dir: PathBuf) -> Result<Self> {
+        if let Ok(entries) = std::fs::read_dir(run_dir) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let name = entry.file_name().into_string().unwrap_or_default();
+                    if name.starts_with(".analysis.backup.") && entry.path() != backup_dir {
+                        crate::ui::warn(format!(
+                            "Stale analysis backup directory detected: {}. Manual recovery of previous analysis files may be possible.",
+                            entry.path().display()
+                        ));
+                    }
+                }
+            }
         }
+
         std::fs::create_dir_all(&backup_dir)?;
 
-        let mut moved_items = Vec::new();
+        let mut backup = Self {
+            backup_dir,
+            moved_items: Vec::new(),
+            committed: false,
+        };
+
+        let mut candidates = Vec::new();
 
         // 1. Check canonical analysis/
         let canonical = run_dir.join("analysis");
         if canonical.exists() {
-            moved_items.push((canonical.clone(), PathBuf::from("analysis")));
+            candidates.push((canonical.clone(), PathBuf::from("analysis")));
         }
 
         // 2. Check legacy folders/files
         let legacy_npy = run_dir.join("analysis_npy");
         if legacy_npy.exists() {
-            moved_items.push((legacy_npy.clone(), PathBuf::from("analysis_npy")));
+            candidates.push((legacy_npy.clone(), PathBuf::from("analysis_npy")));
         }
 
         let legacy_meta = run_dir.join("analysis_metadata.toml");
         if legacy_meta.exists() {
-            moved_items.push((legacy_meta.clone(), PathBuf::from("analysis_metadata.toml")));
+            candidates.push((legacy_meta.clone(), PathBuf::from("analysis_metadata.toml")));
         }
 
         let legacy_kerr = run_dir.join("kerr_results.csv");
         if legacy_kerr.exists() {
-            moved_items.push((legacy_kerr.clone(), PathBuf::from("kerr_results.csv")));
+            candidates.push((legacy_kerr.clone(), PathBuf::from("kerr_results.csv")));
         }
 
         // Wildcards for lockin results
@@ -202,10 +234,11 @@ impl AnalysisBackup {
                 if let Ok(entry) = entry {
                     let path = entry.path();
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if (name.starts_with("lockin_results_ch") || name.starts_with("lockin_rotated_ch"))
+                        if (name.starts_with("lockin_results_ch")
+                            || name.starts_with("lockin_rotated_ch"))
                             && name.ends_with(".csv")
                         {
-                            moved_items.push((path.clone(), PathBuf::from(name)));
+                            candidates.push((path.clone(), PathBuf::from(name)));
                         }
                     }
                 }
@@ -213,36 +246,58 @@ impl AnalysisBackup {
         }
 
         // Move all items into backup_dir
-        for (orig, rel) in &moved_items {
-            let dest = backup_dir.join(rel);
+        for (orig, rel) in candidates {
+            let dest = backup.backup_dir.join(&rel);
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::rename(orig, &dest)
-                .with_context(|| format!("failed to move {} to backup", orig.display()))?;
+            if let Err(err) = std::fs::rename(&orig, &dest) {
+                return Err(err).with_context(|| {
+                    format!(
+                        "failed to move {} to backup directory: {}",
+                        orig.display(),
+                        backup.backup_dir.display()
+                    )
+                });
+            }
+            backup.moved_items.push((orig, rel));
         }
 
-        Ok(Self { backup_dir, moved_items })
+        Ok(backup)
     }
 
-    fn restore(self) -> Result<()> {
-        for (orig, rel) in self.moved_items.into_iter().rev() {
-            let backup_path = self.backup_dir.join(rel);
+    fn restore_internal(&mut self) -> Result<()> {
+        let mut errors = Vec::new();
+        for (orig, rel) in self.moved_items.drain(..).rev() {
+            let backup_path = self.backup_dir.join(&rel);
             if backup_path.exists() {
                 if let Some(parent) = orig.parent() {
-                    std::fs::create_dir_all(parent)?;
+                    let _ = std::fs::create_dir_all(parent);
                 }
-                std::fs::rename(&backup_path, &orig)
-                    .with_context(|| format!("failed to restore backup to {}", orig.display()))?;
+                if let Err(err) = std::fs::rename(&backup_path, &orig) {
+                    errors.push(format!(
+                        "failed to restore {} from backup: {}",
+                        orig.display(),
+                        err
+                    ));
+                }
             }
         }
         let _ = std::fs::remove_dir_all(&self.backup_dir);
+        if !errors.is_empty() {
+            anyhow::bail!("{}", errors.join("; "));
+        }
         Ok(())
     }
 
-    fn commit(self, run_dir: &Path) -> Result<()> {
+    fn restore(mut self) -> Result<()> {
+        self.restore_internal()
+    }
+
+    fn commit(mut self, run_dir: &Path) -> Result<()> {
         if self.moved_items.is_empty() {
             let _ = std::fs::remove_dir_all(&self.backup_dir);
+            self.committed = true;
             return Ok(());
         }
         let timestamp = jiff::Timestamp::now()
@@ -250,9 +305,27 @@ impl AnalysisBackup {
             .replace(':', "-")
             .replace('.', "-");
         let dest_dir = run_dir.join(format!("legacy_analysis.invalidated.{}", timestamp));
-        std::fs::rename(&self.backup_dir, &dest_dir)
-            .with_context(|| format!("failed to move analysis backup to invalidated folder: {}", dest_dir.display()))?;
+        std::fs::rename(&self.backup_dir, &dest_dir).with_context(|| {
+            format!(
+                "failed to move analysis backup to invalidated folder: {}",
+                dest_dir.display()
+            )
+        })?;
+        self.committed = true;
         Ok(())
+    }
+}
+
+impl Drop for AnalysisBackup {
+    fn drop(&mut self) {
+        if !self.committed {
+            if let Err(err) = self.restore_internal() {
+                crate::ui::warn(format!(
+                    "Failed to automatically restore analysis backup during drop rollback: {}",
+                    err
+                ));
+            }
+        }
     }
 }
 
@@ -289,15 +362,33 @@ pub fn fetch_with_options(
     match &result {
         Ok(()) => {
             if let Some(b) = backup {
-                b.commit(&cfg.paths().run_dir)?;
+                let backup_path = b.backup_dir.clone();
+                if let Err(commit_err) = b.commit(&cfg.paths().run_dir) {
+                    crate::ui::warn(format!(
+                        "new acquisition was published, but invalidated analysis could not be archived: {commit_err}; backup remains at {}",
+                        backup_path.display()
+                    ));
+                }
             }
             crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?
         }
         Err(error) => {
-            if let Some(b) = backup {
-                let _ = b.restore();
-            }
-            crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(error))?
+            let final_err = if let Some(b) = backup {
+                let backup_path = b.backup_dir.clone();
+                match b.restore() {
+                    Ok(()) => error.clone(),
+                    Err(restore_err) => {
+                        error.context(format!(
+                            "fetch failed and previous analysis could not be restored: {restore_err}; backup remains at {}",
+                            backup_path.display()
+                        ))
+                    }
+                }
+            } else {
+                error.clone()
+            };
+            crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(&final_err))?;
+            return Err(final_err);
         }
     }
     result
