@@ -24,6 +24,8 @@ pub(super) fn visual_output_lines_with_motion(
 ) -> Vec<VisualOutputLine> {
     let width = width.max(1) as usize;
     let latest_entry = entries.iter().rposition(is_renderable_output_entry);
+    let show_elapsed =
+        width >= ELAPSED_MIN_OUTPUT_WIDTH && entries.iter().any(|entry| entry.elapsed_ms.is_some());
     entries
         .iter()
         .enumerate()
@@ -40,13 +42,14 @@ pub(super) fn visual_output_lines_with_motion(
             let is_live_latest = running && Some(entry_index) == latest_entry && !is_selected;
             let context = OutputRenderContext {
                 entry_index,
-                width: output_content_width(width, entry.elapsed_ms),
+                width: output_content_width(width, show_elapsed),
                 selected: is_selected,
                 cursor: is_cursor,
                 live_latest: is_live_latest,
                 frame,
                 elapsed_ms: entry.elapsed_ms,
                 event_head: entry.event_head,
+                show_elapsed,
             };
             render_output_display_lines(context, kind, display)
         })
@@ -55,12 +58,14 @@ pub(super) fn visual_output_lines_with_motion(
 
 pub(super) fn visual_output_line_count(entries: &[LogEntry], width: u16) -> usize {
     let width = width.max(1) as usize;
+    let show_elapsed =
+        width >= ELAPSED_MIN_OUTPUT_WIDTH && entries.iter().any(|entry| entry.elapsed_ms.is_some());
     entries
         .iter()
         .map(|entry| {
             let text = strip_ansi_codes(&entry.text);
             let kind = entry.kind;
-            let content_width = output_content_width(width, entry.elapsed_ms);
+            let content_width = output_content_width(width, show_elapsed);
             output_display(kind, &text)
                 .map(|display| output_display_line_count(&display, content_width))
                 .unwrap_or(0)
@@ -86,13 +91,14 @@ pub(super) struct OutputRenderContext {
     frame: usize,
     elapsed_ms: Option<u64>,
     event_head: bool,
+    show_elapsed: bool,
 }
 
 const ELAPSED_PREFIX_WIDTH: usize = 9;
 const ELAPSED_MIN_OUTPUT_WIDTH: usize = 52;
 
-fn output_content_width(width: usize, elapsed_ms: Option<u64>) -> usize {
-    if elapsed_ms.is_some() && width >= ELAPSED_MIN_OUTPUT_WIDTH {
+fn output_content_width(width: usize, show_elapsed: bool) -> usize {
+    if show_elapsed {
         width.saturating_sub(ELAPSED_PREFIX_WIDTH)
     } else {
         width
@@ -100,14 +106,12 @@ fn output_content_width(width: usize, elapsed_ms: Option<u64>) -> usize {
 }
 
 fn elapsed_prefix(context: OutputRenderContext, first_line: bool) -> Vec<Span<'static>> {
-    let Some(elapsed_ms) = context
-        .elapsed_ms
-        .filter(|_| context.width.saturating_add(ELAPSED_PREFIX_WIDTH) >= ELAPSED_MIN_OUTPUT_WIDTH)
-    else {
+    if !context.show_elapsed {
         return Vec::new();
-    };
-    let text = if context.event_head && first_line {
+    }
+    let text = if context.event_head && first_line && context.elapsed_ms.is_some() {
         // Keep the prefix at its documented fixed width even for very long runs.
+        let elapsed_ms = context.elapsed_ms.unwrap_or_default();
         let total_tenths = (elapsed_ms / 100).min(99 * 600 + 599);
         let minutes = total_tenths / 600;
         let seconds = (total_tenths / 10) % 60;

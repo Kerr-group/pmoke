@@ -60,6 +60,35 @@ fn structured_event_line_count_matches_rendering_with_elapsed_prefix() {
 }
 
 #[test]
+fn system_events_align_with_the_elapsed_column() {
+    let event = UiEvent {
+        event_type: "event".to_string(),
+        sequence: 44,
+        elapsed_ms: 200,
+        level: EventLevel::Success,
+        kind: EventKind::Status,
+        stage: None,
+        message: "complete".to_string(),
+        fields: Vec::new(),
+    };
+    let mut entries = LogEntry::from_event(&event);
+    entries.push(LogEntry::new(OutputStream::System, "command finished"));
+    let rendered = visual_output_lines(&entries, 80, None, None)
+        .into_iter()
+        .map(|line| {
+            line.line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(rendered[0].starts_with("+00:00.2 "));
+    assert!(rendered[1].starts_with("         ◆  SYS"));
+}
+
+#[test]
 fn paused_activity_counts_new_events_and_follow_clears_them() {
     let mut app = test_app();
     app.push_output(OutputStream::Stdout, "first");
