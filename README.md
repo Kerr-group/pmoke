@@ -176,7 +176,9 @@ shot_000123/
 │   ├── manifest.toml
 │   ├── waveforms/
 │   │   ├── ch1.u16le
-│   │   └── ch2.u16le
+│   │   ├── ch2.u16le
+│   │   ├── ch3.u16le
+│   │   └── ch4.u16le
 │   └── screenshots/
 │       └── oscilloscope.png
 └── analysis/
@@ -193,6 +195,8 @@ shot_000123/
 With v4, relative data and plot paths are resolved from the config directory or run directory (if specified).
 
 Use `data.output = "raw"` for large DHO captures. It preserves the original WORD payload and avoids huge CSV files in the hot path. New acquisitions write raw files inside `acquisition/waveforms/` and metadata to `acquisition/manifest.toml`.
+
+RAW acquisition stores every distinct channel used by the configured sensor, reference, or lock-in signal roles. For the example config above, sensors use ch1 and ch4, the reference uses ch2, and the lock-in signal uses ch3, so `ch1.u16le` through `ch4.u16le` are all present. The acquisition manifest is the authoritative channel inventory.
 
 `raw_waveform/` and `raw.csv` (or `raw_waveform/raw.csv`) are recognized as legacy layouts and fully supported as fallback inputs.
 
