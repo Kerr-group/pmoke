@@ -38,38 +38,29 @@ pub fn csv_with_canonical_lock(
 ) -> Result<()> {
     let resolved_output = resolve_for_comparison(output)?;
     let resolved_canonical = resolve_for_comparison(&cfg.paths().waveform_csv())?;
+    let resolved_waveforms = resolve_for_comparison(&cfg.paths().waveform_dir())?;
 
-    if resolved_paths_equal(&resolved_output, &resolved_canonical) {
+    // Check if the output is within the current run's waveforms directory (inclusive)
+    if path_is_within(&resolved_output, &resolved_waveforms) {
+        anyhow::ensure!(
+            resolved_paths_equal(&resolved_output, &resolved_canonical),
+            "custom CSV exports cannot be written anywhere under the canonical \
+             acquisition/waveforms directory"
+        );
+
         let run_dir = &cfg.paths().run_dir;
         crate::commands::run_dir::ensure_run_directory(run_dir)?;
         let _lock = crate::commands::run_dir::RunMutationLock::acquire(run_dir, "export_csv")?;
         return csv(input, output, force);
     }
 
-    // Check if the resolved output lands inside *any* run's canonical waveforms
-    // directory (acquisition/waveforms/) by comparing the resolved parent against
-    // the current run's waveform directory.  If the parent is a different run's
-    // waveform directory we reject; we detect this by checking whether the resolved
-    // parent ends with the canonical waveforms suffix while not matching this run.
-    let resolved_waveforms = resolve_for_comparison(&cfg.paths().waveform_dir())?;
-    if let Some(parent) = resolved_output.parent() {
-        let parent_path = parent.to_path_buf();
-        if resolved_paths_equal(&parent_path, &resolved_waveforms) {
-            let filename = resolved_output.file_name();
-            anyhow::ensure!(
-                is_canonical_waveform_filename(filename),
-                "custom CSV exports cannot be written inside the canonical \
-                 acquisition/waveforms directory"
-            );
-
-            let run_dir = &cfg.paths().run_dir;
-            crate::commands::run_dir::ensure_run_directory(run_dir)?;
-            let _lock = crate::commands::run_dir::RunMutationLock::acquire(run_dir, "export_csv")?;
-            return csv(input, output, force);
-        }
-        if looks_like_canonical_waveforms_dir(&parent_path) {
+    // Check if the output is within any other run's waveforms directory
+    for ancestor in resolved_output.ancestors() {
+        if looks_like_canonical_waveforms_dir(ancestor)
+            && !resolved_paths_equal(ancestor, &resolved_waveforms)
+        {
             anyhow::bail!(
-                "output resolves to another run's canonical waveform; \
+                "output resolves to another run's canonical waveforms directory; \
                  select that run with --run-dir or use a custom export path"
             );
         }
@@ -155,28 +146,46 @@ fn resolve_for_comparison(p: &std::path::Path) -> Result<std::path::PathBuf> {
 }
 
 fn resolved_paths_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(windows)]
     {
         a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(windows))]
     {
         a == b
     }
 }
 
-fn is_canonical_waveform_filename(name: Option<&std::ffi::OsStr>) -> bool {
-    let Some(name) = name else {
-        return false;
-    };
-    let name_str = name.to_string_lossy();
-    #[cfg(any(windows, target_os = "macos"))]
+fn components_equal(a: std::path::Component, b: std::path::Component) -> bool {
+    #[cfg(windows)]
     {
-        name_str.eq_ignore_ascii_case("waveform.csv")
+        a.as_os_str().to_string_lossy().to_lowercase()
+            == b.as_os_str().to_string_lossy().to_lowercase()
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(windows))]
     {
-        name_str == "waveform.csv"
+        a == b
+    }
+}
+
+fn path_is_within(child: &std::path::Path, parent: &std::path::Path) -> bool {
+    let mut child_comps = child.components();
+    let mut parent_comps = parent.components();
+
+    loop {
+        match (child_comps.next(), parent_comps.next()) {
+            (Some(c), Some(p)) => {
+                if !components_equal(c, p) {
+                    return false;
+                }
+            }
+            (None, Some(_)) => {
+                return false;
+            }
+            (_, None) => {
+                return true;
+            }
+        }
     }
 }
 
@@ -620,6 +629,57 @@ mod tests {
 
         drop(lock);
         fs::remove_dir_all(run_dir_a).unwrap();
+    }
+
+    #[test]
+    fn rejects_custom_csv_under_canonical_waveforms_directory() {
+        let run_dir = std::env::temp_dir().join("pmoke-custom-csv-cur");
+        fs::create_dir_all(&run_dir).unwrap();
+
+        // Target path is acquisition/waveforms/custom/export.csv
+        let output = run_dir.join("acquisition/waveforms/custom/export.csv");
+
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir.clone());
+
+        let error =
+            csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("custom CSV exports cannot be written anywhere under the canonical"),
+            "Expected error about custom CSV under canonical directory, got: {}",
+            error
+        );
+
+        fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_custom_csv_under_other_run_canonical_waveforms_directory() {
+        let run_dir_a = std::env::temp_dir().join("pmoke-custom-csv-other-a");
+        let run_dir_b = std::env::temp_dir().join("pmoke-custom-csv-other-b");
+        fs::create_dir_all(&run_dir_a).unwrap();
+        fs::create_dir_all(&run_dir_b).unwrap();
+
+        // Target path is under run B's waveforms directory: acquisition/waveforms/custom/export.csv
+        let output = run_dir_b.join("acquisition/waveforms/custom/export.csv");
+
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir_a.clone());
+
+        let error =
+            csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("output resolves to another run's canonical waveforms directory"),
+            "Expected error about another run's canonical waveforms directory, got: {}",
+            error
+        );
+
+        fs::remove_dir_all(run_dir_a).unwrap();
+        fs::remove_dir_all(run_dir_b).unwrap();
     }
 
     #[cfg(windows)]
