@@ -653,6 +653,17 @@ y_reference = 0.0
             .contains("config snapshot not found"),
         "{verification:#?}"
     );
+    let export = dir.join("waveform.csv");
+    let report = export_raw_waveform_csv(&dir, &export).unwrap();
+    assert!(!report.config_snapshot_verified);
+    assert!(
+        report
+            .config_snapshot_warning
+            .as_deref()
+            .unwrap()
+            .contains("config snapshot not found")
+    );
+    fs::remove_file(export).unwrap();
     fs::write(dir.join("ch1.u16le"), [0_u8, 0, 2, 0]).unwrap();
     let error = verify_raw_waveform_dir(&dir).unwrap_err();
     assert!(error.to_string().contains("checksum mismatch"), "{error:#}");
@@ -798,6 +809,8 @@ y_reference = 0.0
 
     assert_eq!(report.channel_count, 2);
     assert_eq!(report.sample_count, 2);
+    assert!(!report.config_snapshot_verified);
+    assert!(report.config_snapshot_warning.is_none());
     assert_eq!(csv, "time (s),ch1,ch2\n1,0,1\n1.5,2,3\n");
     let error = export_raw_waveform_csv(&dir, &output).unwrap_err();
     assert!(error.to_string().contains("already exists"));

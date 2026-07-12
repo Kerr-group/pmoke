@@ -148,10 +148,12 @@ pub struct RawVerification {
     pub config_snapshot_warning: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawCsvExport {
     pub channel_count: usize,
     pub sample_count: usize,
+    pub config_snapshot_verified: bool,
+    pub config_snapshot_warning: Option<String>,
 }
 
 pub fn read_all_fetched_waveforms(cfg: &Config) -> Result<WaveformData> {
@@ -366,6 +368,8 @@ pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvE
     Ok(RawCsvExport {
         channel_count: verification.channel_count,
         sample_count: verification.sample_count,
+        config_snapshot_verified: verification.config_snapshot_verified,
+        config_snapshot_warning: verification.config_snapshot_warning,
     })
 }
 
