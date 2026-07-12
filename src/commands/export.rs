@@ -36,40 +36,70 @@ pub fn csv_with_canonical_lock(
     output: &std::path::Path,
     force: bool,
 ) -> Result<()> {
-    let canonical_output = cfg.paths().waveform_csv();
-    if paths_equivalent(output, &canonical_output)? {
+    let resolved_output = resolve_for_comparison(output)?;
+    let resolved_canonical = resolve_for_comparison(&cfg.paths().waveform_csv())?;
+
+    if resolved_paths_equal(&resolved_output, &resolved_canonical) {
         let run_dir = &cfg.paths().run_dir;
         crate::commands::run_dir::ensure_run_directory(run_dir)?;
         let _lock = crate::commands::run_dir::RunMutationLock::acquire(run_dir, "export_csv")?;
-        csv(input, output, force)
-    } else {
-        let resolved_output = resolve_for_comparison(output)?;
-        if looks_like_canonical_waveform_path(&resolved_output) {
+        return csv(input, output, force);
+    }
+
+    // Check if the resolved output lands inside *any* run's canonical waveforms
+    // directory (acquisition/waveforms/) by comparing the resolved parent against
+    // the current run's waveform directory.  If the parent is a different run's
+    // waveform directory we reject; we detect this by checking whether the resolved
+    // parent ends with the canonical waveforms suffix while not matching this run.
+    let resolved_waveforms = resolve_for_comparison(&cfg.paths().waveform_dir())?;
+    if let Some(parent) = resolved_output.parent() {
+        let parent_path = parent.to_path_buf();
+        if resolved_paths_equal(&parent_path, &resolved_waveforms) {
+            // Same waveform directory as current run but different filename –
+            // still lock-protect it.
+            let run_dir = &cfg.paths().run_dir;
+            crate::commands::run_dir::ensure_run_directory(run_dir)?;
+            let _lock = crate::commands::run_dir::RunMutationLock::acquire(run_dir, "export_csv")?;
+            return csv(input, output, force);
+        }
+        if looks_like_canonical_waveforms_dir(&parent_path) {
             anyhow::bail!(
                 "output resolves to another run's canonical waveform; \
                  select that run with --run-dir or use a custom export path"
             );
         }
-        csv(input, output, force)
     }
+
+    csv(input, output, force)
 }
 
-fn looks_like_canonical_waveform_path(output: &std::path::Path) -> bool {
-    let has_canonical_suffix = || -> Option<bool> {
-        if output.file_name()? != "waveform.csv" {
+/// Returns `true` if the path looks like it ends with `acquisition/waveforms`.
+fn looks_like_canonical_waveforms_dir(path: &std::path::Path) -> bool {
+    let check = || -> Option<bool> {
+        if path.file_name()? != "waveforms" {
             return Some(false);
         }
-        let waveforms = output.parent()?;
-        if waveforms.file_name()? != "waveforms" {
-            return Some(false);
-        }
-        let acquisition = waveforms.parent()?;
+        let acquisition = path.parent()?;
         if acquisition.file_name()? != "acquisition" {
             return Some(false);
         }
         Some(true)
     };
-    has_canonical_suffix().unwrap_or(false)
+    check().unwrap_or(false)
+}
+
+/// Check path existence with proper I/O error propagation.
+///
+/// Unlike `Path::exists()`, this function distinguishes between "does not exist"
+/// (returns `Ok(false)`) and I/O errors such as permission denied, symlink loops,
+/// or inaccessible network paths (returns `Err`).
+fn path_exists_for_resolution(path: &std::path::Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to inspect path component: {}", path.display())),
+    }
 }
 
 fn resolve_for_comparison(p: &std::path::Path) -> Result<std::path::PathBuf> {
@@ -92,7 +122,7 @@ fn resolve_for_comparison(p: &std::path::Path) -> Result<std::path::PathBuf> {
             }
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
-                if resolved.exists() {
+                if path_exists_for_resolution(&resolved)? {
                     resolved = resolved.canonicalize().with_context(|| {
                         format!(
                             "failed to resolve existing path ancestor: {}",
@@ -104,7 +134,7 @@ fn resolve_for_comparison(p: &std::path::Path) -> Result<std::path::PathBuf> {
             }
             std::path::Component::Normal(name) => {
                 resolved.push(name);
-                if resolved.exists() {
+                if path_exists_for_resolution(&resolved)? {
                     resolved = resolved.canonicalize().with_context(|| {
                         format!(
                             "failed to resolve existing path ancestor: {}",
@@ -119,20 +149,22 @@ fn resolve_for_comparison(p: &std::path::Path) -> Result<std::path::PathBuf> {
     Ok(clean_path(&resolved))
 }
 
-fn paths_equivalent(a: &std::path::Path, b: &std::path::Path) -> Result<bool> {
-    let resolved_a = resolve_for_comparison(a)?;
-    let resolved_b = resolve_for_comparison(b)?;
-
+fn resolved_paths_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
     #[cfg(windows)]
     {
-        let lower_a = resolved_a.to_string_lossy().to_lowercase();
-        let lower_b = resolved_b.to_string_lossy().to_lowercase();
-        Ok(lower_a == lower_b)
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
     }
     #[cfg(not(windows))]
     {
-        Ok(resolved_a == resolved_b)
+        a == b
     }
+}
+
+#[cfg(test)]
+fn paths_equivalent(a: &std::path::Path, b: &std::path::Path) -> Result<bool> {
+    let resolved_a = resolve_for_comparison(a)?;
+    let resolved_b = resolve_for_comparison(b)?;
+    Ok(resolved_paths_equal(&resolved_a, &resolved_b))
 }
 
 fn clean_path(p: &std::path::Path) -> std::path::PathBuf {
@@ -443,6 +475,104 @@ mod tests {
         // Create alias pointing to subdir_a
         let alias = run_dir_a.join("alias");
         std::os::unix::fs::symlink(&subdir_a, &alias).unwrap();
+
+        // Lock is acquired on run_dir_a
+        let lock = crate::commands::run_dir::RunMutationLock::acquire(&run_dir_a, "test").unwrap();
+
+        // Config is for shot A
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir_a.clone());
+
+        // Target path is alias/../waveform.csv (resolves to shot_A/acquisition/waveforms/waveform.csv)
+        let output = alias.join("../waveform.csv");
+
+        let error =
+            csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(
+            error.to_string().contains("run-mutating operation"),
+            "Expected 'run-mutating operation', got: {}",
+            error
+        );
+
+        drop(lock);
+        fs::remove_dir_all(run_dir_a).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_other_run_canonical_csv_through_symlink_parent_traversal_windows() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let run_dir_a =
+            std::env::temp_dir().join(format!("pmoke-other-symlink-parent-a-{}", nonce));
+        let run_dir_b =
+            std::env::temp_dir().join(format!("pmoke-other-symlink-parent-b-{}", nonce));
+
+        // Create shot_B/acquisition/waveforms/subdir
+        let subdir_b = run_dir_b.join("acquisition/waveforms/subdir");
+        fs::create_dir_all(&subdir_b).unwrap();
+
+        // Create shot_A/alias pointing to subdir_b
+        let alias = run_dir_a.join("alias");
+        fs::create_dir_all(&run_dir_a).unwrap();
+
+        if let Err(err) = std::os::windows::fs::symlink_dir(&subdir_b, &alias) {
+            println!(
+                "Skipping Windows directory symlink test because creation failed: {:?}",
+                err
+            );
+            fs::remove_dir_all(run_dir_a).unwrap();
+            fs::remove_dir_all(run_dir_b).unwrap();
+            return;
+        }
+
+        // Config is for shot A
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir_a.clone());
+
+        // Target path is alias/../waveform.csv (resolves to shot_B/acquisition/waveforms/waveform.csv)
+        let output = alias.join("../waveform.csv");
+
+        let error =
+            csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("output resolves to another run's canonical waveform"),
+            "Expected 'output resolves to another run's canonical waveform', got: {}",
+            error
+        );
+
+        fs::remove_dir_all(run_dir_a).unwrap();
+        fs::remove_dir_all(run_dir_b).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn current_run_lock_acquired_through_symlink_parent_traversal_windows() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let run_dir_a = std::env::temp_dir().join(format!("pmoke-current-symlink-a-{}", nonce));
+
+        // Create shot_A/acquisition/waveforms/subdir
+        let subdir_a = run_dir_a.join("acquisition/waveforms/subdir");
+        fs::create_dir_all(&subdir_a).unwrap();
+
+        // Create alias pointing to subdir_a
+        let alias = run_dir_a.join("alias");
+
+        if let Err(err) = std::os::windows::fs::symlink_dir(&subdir_a, &alias) {
+            println!(
+                "Skipping Windows directory symlink test because creation failed: {:?}",
+                err
+            );
+            fs::remove_dir_all(run_dir_a).unwrap();
+            return;
+        }
 
         // Lock is acquired on run_dir_a
         let lock = crate::commands::run_dir::RunMutationLock::acquire(&run_dir_a, "test").unwrap();
