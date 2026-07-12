@@ -18,7 +18,7 @@ pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
             let default_output = paths.waveform_csv();
             let input = input.as_deref().unwrap_or(default_input);
             let output = output.as_deref().unwrap_or(&default_output);
-            csv(input, output)
+            csv(input, output, cfg.force)
         }
         ExportCommand::Npy { output } => {
             if let Some(output) = output {
@@ -30,11 +30,24 @@ pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
     }
 }
 
-pub fn csv(input: &std::path::Path, output: &std::path::Path) -> Result<()> {
+pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Result<()> {
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let report = export_raw_waveform_csv(input, output)?;
+    let temporary = forced_export_path(output);
+    let (destination, replace) = if force && output.exists() {
+        validate_replaceable_file(output)?;
+        (temporary.as_path(), true)
+    } else {
+        (output, false)
+    };
+    let report = export_raw_waveform_csv(input, destination)?;
+    if replace
+        && let Err(error) = crate::commands::run_dir::replace_file_atomically(destination, output)
+    {
+        let _ = std::fs::remove_file(destination);
+        return Err(error);
+    }
     ui::settings_table(
         "CSV export",
         vec![
@@ -45,5 +58,21 @@ pub fn csv(input: &std::path::Path, output: &std::path::Path) -> Result<()> {
         ],
     );
     ui::success("RAW waveform CSV export completed");
+    Ok(())
+}
+
+fn forced_export_path(output: &std::path::Path) -> std::path::PathBuf {
+    let mut name = output.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.replace", std::process::id()));
+    output.with_file_name(name)
+}
+
+fn validate_replaceable_file(path: &std::path::Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    anyhow::ensure!(
+        metadata.file_type().is_file(),
+        "output to replace is not a regular file: {}",
+        path.display()
+    );
     Ok(())
 }

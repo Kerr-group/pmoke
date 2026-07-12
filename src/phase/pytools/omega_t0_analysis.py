@@ -1,4 +1,3 @@
-import gsplot as gs
 import lmfit
 import numpy as np
 import warnings
@@ -26,6 +25,7 @@ def finish_plot(fname: str, save: bool, interactive: bool, output_dir: str):
         plt.close("all")
     elif save:
         import os
+        import gsplot as gs
 
         os.makedirs(output_dir, exist_ok=True)
         path = os.path.join(output_dir, fname)
@@ -107,6 +107,8 @@ class OT0Analyser:
         plot_error = None
         if save or interactive:
             try:
+                import gsplot as gs
+
                 indices = decimation_indices(
                     [m_ot0_1, m_ot0_2, m_ot0_3, m_ot0_4, m_ot0_5, m_ot0_6],
                     max_points,

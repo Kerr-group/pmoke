@@ -1,4 +1,3 @@
-import gsplot as gs
 import numpy as np
 from numpy.typing import NDArray
 from scipy.special import jn
@@ -19,6 +18,7 @@ def finish_plot(fname: str, save: bool, interactive: bool, output_dir: str):
         plt.close("all")
     elif save:
         import os
+        import gsplot as gs
 
         os.makedirs(output_dir, exist_ok=True)
         path = os.path.join(output_dir, fname)
@@ -93,6 +93,8 @@ class KerrStandardAnalyser:
         plot_error = None
         if save or interactive:
             try:
+                import gsplot as gs
+
                 indices = decimation_indices(kerr, max_points, decimation)
                 t_plot = t[indices]
                 x_plot = x[indices]

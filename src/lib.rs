@@ -67,7 +67,7 @@ fn run_with(args: Cli) -> Result<()> {
             },
     }) = args.command.as_ref()
     {
-        return commands::export::csv(input, output);
+        return commands::export::csv(input, output, args.force);
     }
 
     let mut load = config::load_from_path(&args.config);

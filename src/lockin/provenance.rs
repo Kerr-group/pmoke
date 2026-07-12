@@ -1,6 +1,7 @@
 use crate::config::{Config, LockinLpfKind};
 
 use crate::lockin::lockin_core::{LockinProcessor, legacy_boxcar_enbw_hz};
+use crate::lockin::reference::ref_analysis::RefFitParams;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -83,12 +84,24 @@ struct AnalysisArtifact {
 }
 
 #[derive(Serialize)]
+struct ReferenceProvenance {
+    channel: u8,
+    frequency_hz: f64,
+    amplitude: f64,
+    phase_rad: f64,
+}
+
+#[derive(Serialize)]
 struct AnalysisMetadata<'a> {
     schema_version: u32,
     pmoke_version: &'static str,
     timestamp: String,
-    source_acquisition: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_acquisition: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_waveform: Option<String>,
     source_config: &'static str,
+    reference: ReferenceProvenance,
     lockin: &'a LockinProvenance,
     column_sets: BTreeMap<String, ColumnSet>,
     artifacts: Vec<AnalysisArtifact>,
@@ -240,7 +253,11 @@ fn inspect_csv_shape(path: &Path) -> Result<(Vec<String>, usize)> {
     Ok((names, rows))
 }
 
-pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Result<()> {
+pub fn write_analysis_metadata(
+    cfg: &Config,
+    reference: &RefFitParams,
+    lockin: &LockinProvenance,
+) -> Result<()> {
     let path = cfg.paths().analysis_manifest();
     let parent = path
         .parent()
@@ -251,13 +268,21 @@ pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Resul
 
     let outputs = scan_outputs(parent)?;
     let (column_sets, artifacts) = describe_analysis_artifacts(parent)?;
+    let (source_acquisition, source_waveform) = analysis_sources(cfg)?;
 
     let metadata = AnalysisMetadata {
         schema_version: 1,
         pmoke_version: env!("CARGO_PKG_VERSION"),
         timestamp: jiff::Timestamp::now().to_string(),
-        source_acquisition: "../acquisition/manifest.toml",
+        source_acquisition,
+        source_waveform,
         source_config: "../config.resolved.toml",
+        reference: ReferenceProvenance {
+            channel: cfg.roles.reference_ch,
+            frequency_hz: reference.f_ref,
+            amplitude: reference.a_ref,
+            phase_rad: reference.omega_tref,
+        },
         lockin,
         column_sets,
         artifacts,
@@ -266,6 +291,42 @@ pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Resul
     let encoded =
         toml::to_string_pretty(&metadata).context("failed to encode analysis metadata")?;
     write_atomic(&path, encoded.as_bytes())
+}
+
+fn analysis_sources(cfg: &Config) -> Result<(Option<String>, Option<String>)> {
+    let resolver = cfg.resolver();
+    let manifest = resolver.acquisition_manifest();
+    if manifest.is_file() {
+        return Ok((Some(relative_analysis_source(cfg, &manifest)?), None));
+    }
+    let waveform = resolver.waveform_csv();
+    if waveform.is_file() {
+        return Ok((None, Some(relative_analysis_source(cfg, &waveform)?)));
+    }
+    Ok((None, None))
+}
+
+fn relative_analysis_source(cfg: &Config, source: &Path) -> Result<String> {
+    let run_dir = &cfg.paths().run_dir;
+    let relative = source.strip_prefix(run_dir).unwrap_or(source);
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(
+                part.to_str()
+                    .ok_or_else(|| anyhow::anyhow!("analysis source path is not UTF-8"))?,
+            ),
+            std::path::Component::CurDir => {}
+            _ => anyhow::bail!(
+                "analysis source is outside the run directory: {}",
+                source.display()
+            ),
+        }
+    }
+    if parts.is_empty() {
+        anyhow::bail!("analysis source path is empty: {}", source.display());
+    }
+    Ok(format!("../{}", parts.join("/")))
 }
 
 pub fn refresh_analysis_manifest_outputs(cfg: &Config) -> Result<()> {
@@ -319,7 +380,7 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
             .sync_all()
             .with_context(|| format!("failed to sync {}", temporary.display()))?;
         drop(writer);
-        replace_file(&temporary, path)
+        crate::commands::run_dir::replace_file_atomically(&temporary, path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -333,37 +394,12 @@ fn temporary_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> Result<()> {
-    fs::rename(source, destination).with_context(|| {
-        format!(
-            "failed to replace {} with {}",
-            destination.display(),
-            source.display()
-        )
-    })
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> Result<()> {
-    if destination.exists() {
-        fs::remove_file(destination)
-            .with_context(|| format!("failed to remove {}", destination.display()))?;
-    }
-    fs::rename(source, destination).with_context(|| {
-        format!(
-            "failed to replace {} with {}",
-            destination.display(),
-            source.display()
-        )
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::LockinLpfKind;
     use std::f64::consts::PI;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn records_resolved_legacy_filter_values() {
@@ -408,5 +444,50 @@ mod tests {
                 std::process::id()
             ))
         );
+    }
+
+    #[test]
+    fn analysis_sources_record_the_artifact_that_was_actually_read() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "pmoke-analysis-sources-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(directory.join("raw_waveform")).unwrap();
+        fs::write(
+            directory.join("raw_waveform/metadata.toml"),
+            b"version = 1\n",
+        )
+        .unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+
+        let sources = analysis_sources(&cfg).unwrap();
+        assert_eq!(
+            sources,
+            (Some("../raw_waveform/metadata.toml".to_string()), None)
+        );
+
+        fs::remove_dir_all(directory.join("raw_waveform")).unwrap();
+        fs::write(directory.join("raw.csv"), b"ch1,ch2\n").unwrap();
+        let sources = analysis_sources(&cfg).unwrap();
+        assert_eq!(sources, (None, Some("../raw.csv".to_string())));
+
+        fs::create_dir_all(directory.join("acquisition")).unwrap();
+        fs::write(
+            directory.join("acquisition/manifest.toml"),
+            b"schema_version = 1\n",
+        )
+        .unwrap();
+        let sources = analysis_sources(&cfg).unwrap();
+        assert_eq!(
+            sources,
+            (Some("../acquisition/manifest.toml".to_string()), None)
+        );
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }

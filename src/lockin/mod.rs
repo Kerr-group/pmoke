@@ -34,6 +34,7 @@ type LockinRunOutput = (
     Vec<Vec<f64>>,
     Vec<Vec<f64>>,
     Vec<Vec<Vec<f64>>>,
+    RefFitParams,
     LockinProvenance,
 );
 
@@ -160,6 +161,7 @@ pub fn run_li<'a>(
         sensor_rate_stride,
         sensor_integral_stride,
         lockin_output.result,
+        ref_fit_params,
         lockin_output.provenance,
     ))
 }

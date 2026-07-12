@@ -78,7 +78,8 @@ pub enum Command {
         /// Override output format from config [fetch].output
         #[arg(long, value_enum)]
         format: Option<FetchFormat>,
-        /// Output path. CSV defaults to raw.csv; raw defaults to raw_waveform/
+        /// Output path. CSV defaults to acquisition/waveforms/waveform.csv;
+        /// RAW defaults to acquisition/
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
     },
@@ -144,7 +145,7 @@ pub enum ConfigCommand {
 pub enum RawCommand {
     /// Verify RAW metadata, file sizes, and available checksums
     Verify {
-        /// RAW waveform directory (defaults to the configured raw_waveform artifact)
+        /// RAW acquisition directory (defaults to acquisition/ with legacy fallback)
         #[arg(long, value_name = "DIR")]
         input: Option<PathBuf>,
     },
@@ -154,16 +155,16 @@ pub enum RawCommand {
 pub enum ExportCommand {
     /// Convert a verified RAW waveform directory to CSV
     Csv {
-        /// RAW waveform directory (defaults to the configured raw_waveform artifact)
+        /// RAW acquisition directory (defaults to acquisition/ with legacy fallback)
         #[arg(long, value_name = "DIR")]
         input: Option<PathBuf>,
-        /// CSV destination (defaults to the configured raw.csv artifact)
+        /// CSV destination (defaults to acquisition/waveforms/waveform.csv)
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
     /// Convert analysis result CSV files to NumPy tables
     Npy {
-        /// Destination directory (defaults to analysis_npy)
+        /// Destination directory (defaults to NPY files beside canonical analysis CSVs)
         #[arg(long, value_name = "DIR")]
         output: Option<PathBuf>,
     },

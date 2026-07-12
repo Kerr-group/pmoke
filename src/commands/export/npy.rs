@@ -34,7 +34,11 @@ struct CsvTable {
 }
 
 pub fn export(cfg: &Config, output: &Path) -> Result<()> {
-    ensure_missing(output, "NPY output directory")?;
+    if !cfg.force {
+        ensure_missing(output, "NPY output directory")?;
+    } else if output.exists() {
+        ensure_regular_directory(output, "NPY output")?;
+    }
     if let Some(parent) = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -54,14 +58,7 @@ pub fn export(cfg: &Config, output: &Path) -> Result<()> {
     let result = export_into(cfg, &staging).and_then(|metadata| {
         write_metadata(&staging, &metadata)?;
         sync_directory(&staging)?;
-        fs::rename(&staging, output).with_context(|| {
-            format!(
-                "failed to publish NPY directory {} as {}",
-                staging.display(),
-                output.display()
-            )
-        })?;
-        sync_parent(output)?;
+        crate::commands::run_dir::publish_staged_directory(&staging, output, cfg.force)?;
         Ok(metadata)
     });
     if result.is_err() {
@@ -96,7 +93,11 @@ pub fn export_canonical(cfg: &Config) -> Result<()> {
     pairs.push((resolver.kerr_csv(), paths.kerr_npy()));
 
     for (_, destination) in &pairs {
-        ensure_missing(destination, "NPY output")?;
+        if !cfg.force {
+            ensure_missing(destination, "NPY output")?;
+        } else if destination.exists() {
+            ensure_regular_file(destination, "NPY output")?;
+        }
     }
     let mut created = Vec::new();
     let result: Result<()> = (|| {
@@ -105,8 +106,11 @@ pub fn export_canonical(cfg: &Config) -> Result<()> {
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent)?;
             }
-            created.push(destination.clone());
-            write_npy_table(destination, &table.columns, table.rows)?;
+            let existed = destination.exists();
+            write_npy_table_replacing(destination, &table.columns, table.rows, cfg.force)?;
+            if !existed {
+                created.push(destination.clone());
+            }
         }
         crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg)?;
         Ok(())
@@ -118,6 +122,51 @@ pub fn export_canonical(cfg: &Config) -> Result<()> {
     }
     result?;
     ui::success("analysis NumPy export completed");
+    Ok(())
+}
+
+fn write_npy_table_replacing(
+    destination: &Path,
+    columns: &[Vec<f64>],
+    rows: usize,
+    force: bool,
+) -> Result<()> {
+    if !force || !destination.exists() {
+        return write_npy_table(destination, columns, rows);
+    }
+    let temporary = temporary_file_path(destination);
+    ensure_missing(&temporary, "NPY replacement temporary file")?;
+    let result = (|| {
+        write_npy_table(&temporary, columns, rows)?;
+        crate::commands::run_dir::replace_file_atomically(&temporary, destination)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn temporary_file_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.replace", std::process::id()));
+    path.with_file_name(name)
+}
+
+fn ensure_regular_file(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect {label}: {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!("{label} is not a regular file: {}", path.display());
+    }
+    Ok(())
+}
+
+fn ensure_regular_directory(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect {label}: {}", path.display()))?;
+    if !metadata.file_type().is_dir() {
+        bail!("{label} is not a regular directory: {}", path.display());
+    }
     Ok(())
 }
 
@@ -281,22 +330,6 @@ fn sync_directory(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn sync_parent(path: &Path) -> Result<()> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        File::open(parent)?.sync_all()?;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn sync_parent(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +401,21 @@ mod tests {
         let manifest = fs::read_to_string(paths.analysis_manifest()).unwrap();
         assert!(manifest.contains("lockin/ch2_xy.npy"));
         assert!(manifest.contains("kerr/kerr.npy"));
+
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("already exists"));
+
+        cfg.force = true;
+        fs::write(paths.lockin_xy_csv(2), "time (s),value\n0,3\n1,4\n").unwrap();
+        export_canonical(&cfg).unwrap();
+        let bytes = fs::read(paths.lockin_xy_npy(2)).unwrap();
+        let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+        let payload = &bytes[10 + header_len..];
+        let values = payload
+            .chunks_exact(8)
+            .map(|chunk| f64::from_le_bytes(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(values, vec![0.0, 3.0, 1.0, 4.0]);
         fs::remove_dir_all(root).unwrap();
     }
 }

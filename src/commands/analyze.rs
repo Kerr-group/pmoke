@@ -115,7 +115,7 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     }
 
     validate_waveform_data(data)?;
-    let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results, provenance) =
+    let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results, reference, provenance) =
         run_li(&cfg_staging, &data.t, &data.channels)?;
 
     // run phase analysis here
@@ -143,7 +143,7 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
         ui::skipped("phase analysis: no channels specified");
     }
 
-    crate::lockin::provenance::write_analysis_metadata(&cfg_staging, &provenance)?;
+    crate::lockin::provenance::write_analysis_metadata(&cfg_staging, &reference, &provenance)?;
 
     let canonical_analysis = cfg.paths().analysis_dir();
     crate::commands::run_dir::publish_staged_directory(
@@ -497,6 +497,10 @@ mod tests {
         assert_eq!(manifest["schema_version"].as_integer().unwrap(), 1);
         assert!(manifest["timestamp"].as_str().is_some());
         assert!(manifest["lockin"].as_table().is_some());
+        assert_eq!(manifest["reference"]["channel"].as_integer(), Some(2));
+        assert!(manifest["reference"]["frequency_hz"].as_float().unwrap() > 0.0);
+        assert!(manifest.get("source_acquisition").is_none());
+        assert!(manifest.get("source_waveform").is_none());
         let artifacts = manifest["artifacts"].as_array().unwrap();
         let kerr_artifact = artifacts
             .iter()

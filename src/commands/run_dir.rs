@@ -116,6 +116,17 @@ fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
     fs::rename(source, destination)
 }
 
+pub(crate) fn replace_file_atomically(source: &Path, destination: &Path) -> Result<()> {
+    atomic_replace(source, destination).with_context(|| {
+        format!(
+            "failed to atomically replace {} with {}",
+            destination.display(),
+            source.display()
+        )
+    })?;
+    sync_parent(destination)
+}
+
 #[cfg(windows)]
 fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
