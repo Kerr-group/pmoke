@@ -651,10 +651,17 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         "artifacts".to_string(),
         toml::Value::try_from(artifacts).context("failed to encode analysis artifacts")?,
     );
-    table.insert(
-        "analyzed_at".to_string(),
-        toml::Value::String(jiff::Timestamp::now().to_string()),
-    );
+    if stage == "export_npy" {
+        table.insert(
+            "exported_at".to_string(),
+            toml::Value::String(jiff::Timestamp::now().to_string()),
+        );
+    } else {
+        table.insert(
+            "analyzed_at".to_string(),
+            toml::Value::String(jiff::Timestamp::now().to_string()),
+        );
+    }
 
     let stages_val = table
         .entry("stages".to_string())
@@ -662,6 +669,23 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
     let stages_table = stages_val
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("stages in manifest must be a table"))?;
+
+    match stage {
+        "li" => {
+            stages_table.remove("phase");
+            stages_table.remove("kerr");
+            stages_table.remove("export_npy");
+        }
+        "phase" => {
+            stages_table.remove("kerr");
+            stages_table.remove("export_npy");
+        }
+        "kerr" => {
+            stages_table.remove("export_npy");
+        }
+        "export_npy" => {}
+        _ => bail!("unknown analysis stage: {stage}"),
+    }
 
     let now = jiff::Timestamp::now().to_string();
     let mut stage_prov = toml::map::Map::new();

@@ -77,6 +77,11 @@ pub fn export(cfg: &Config, output: &Path) -> Result<()> {
 }
 
 pub fn export_canonical(cfg: &Config) -> Result<()> {
+    let _lock = crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "export_npy")?;
+    export_canonical_inner(cfg)
+}
+
+fn export_canonical_inner(cfg: &Config) -> Result<()> {
     let paths = cfg.paths();
     let resolver = cfg.resolver();
     let mut pairs = Vec::new();

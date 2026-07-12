@@ -101,6 +101,8 @@ pub fn write_run_state(
     };
     let analyzed_at = if status == "complete" {
         Some(now.clone())
+    } else if status == "analyzing" {
+        None
     } else {
         ex_analyzed
     };
@@ -338,10 +340,47 @@ pub struct AnalysisLock {
     path: PathBuf,
 }
 
+fn is_pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        if let Ok(mut child) = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            if let Ok(status) = child.wait() {
+                return status.success();
+            }
+        }
+        true
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(output) = std::process::Command::new("tasklist")
+            .arg("/FI")
+            .arg(format!("PID eq {pid}"))
+            .arg("/NH")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            return text.contains(&pid.to_string());
+        }
+        true
+    }
+}
+
 impl AnalysisLock {
     pub fn acquire(run_dir: &Path, stage: &str) -> Result<Self> {
         let path = run_dir.join(".analysis.lock");
         let now = jiff::Timestamp::now().to_string();
+        Self::acquire_internal(run_dir, &path, stage, &now)
+    }
+
+    fn acquire_internal(run_dir: &Path, path: &Path, stage: &str, now: &str) -> Result<Self> {
         let content = format!(
             "pid = {}\nstage = \"{}\"\nstarted_at = \"{}\"\n",
             std::process::id(),
@@ -351,18 +390,49 @@ impl AnalysisLock {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&path)
+            .open(path)
         {
             Ok(mut file) => {
-                file.write_all(content.as_bytes())?;
-                file.sync_all()?;
-                Ok(Self { path })
+                let result: Result<()> = (|| {
+                    file.write_all(content.as_bytes())?;
+                    file.sync_all()?;
+                    Ok(())
+                })();
+                if result.is_err() {
+                    let _ = fs::remove_file(path);
+                }
+                result?;
+                Ok(Self { path: path.to_path_buf() })
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let current_info = fs::read_to_string(&path)
+                let current_info = fs::read_to_string(path)
                     .unwrap_or_else(|_| "unknown".to_string());
+
+                let mut pid_opt = None;
+                for line in current_info.lines() {
+                    if line.starts_with("pid = ") {
+                        if let Some(pid_str) = line.strip_prefix("pid = ") {
+                            if let Ok(p) = pid_str.trim().parse::<u32>() {
+                                pid_opt = Some(p);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(pid) = pid_opt {
+                    if !is_pid_alive(pid) {
+                        crate::ui::warn(format!(
+                            "Stale analysis lock detected (PID {pid} is not running). Removing stale lock file: {}",
+                            path.display()
+                        ));
+                        let _ = fs::remove_file(path);
+                        return Self::acquire_internal(run_dir, path, stage, now);
+                    }
+                }
+
                 bail!(
-                    "Another analysis is currently running in this directory (lock file exists: {}).\nLock info:\n{}",
+                    "Another analysis is currently running in this directory (lock file exists: {}).\nLock info:\n{}\n\n\
+                    The lock may be stale. Verify no pmoke process is running, then remove .analysis.lock.",
                     path.display(),
                     current_info
                 );

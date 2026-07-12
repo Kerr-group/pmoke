@@ -627,4 +627,134 @@ mod tests {
         assert!(!kerr.paths().kerr_csv().exists());
         assert!(!kerr.paths().kerr_plot().exists());
     }
+
+    #[test]
+    fn test_stage_provenance_cleanup_on_rerun() {
+        let directory = TemporaryDirectory::new();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
+        cfg.roles.reference_ch = 2;
+        cfg.set_artifact_root(directory.0.clone());
+        let paths = cfg.paths();
+
+        // 1. Setup a fully analyzed manifest with li, phase, kerr stages
+        let manifest_path = paths.analysis_manifest();
+        std::fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+
+        // Also create files so that prepare_analysis_staging carries forward what is not deleted
+        for file in [
+            paths.lockin_xy_csv(3),
+            paths.lockin_rotated_csv(3),
+            paths.kerr_csv(),
+        ] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"data").unwrap();
+        }
+        for file in [
+            paths.reference_fit_plot(),
+            paths.lockin_xy_combined_plot(),
+            paths.phase_rotated_combined_plot(),
+            paths.kerr_plot(),
+        ] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"\x89PNG\r\n\x1a\n").unwrap();
+        }
+
+        let initial_manifest = r#"schema_version = 1
+pmoke_version = "0.2.0"
+timestamp = "2026-07-12T19:00:00Z"
+analyzed_at = "2026-07-12T19:00:00Z"
+source_config = "../config.resolved.toml"
+
+[stages.li]
+completed_at = "2026-07-12T19:00:00Z"
+pmoke_version = "0.2.0"
+
+[stages.phase]
+completed_at = "2026-07-12T19:00:01Z"
+pmoke_version = "0.2.0"
+
+[stages.kerr]
+completed_at = "2026-07-12T19:00:02Z"
+pmoke_version = "0.2.0"
+
+[[artifacts]]
+kind = "lockin_xy"
+channel = 3
+csv = "lockin/ch3_xy.csv"
+
+[[artifacts]]
+kind = "lockin_rotated"
+channel = 3
+csv = "lockin/ch3_rotated.csv"
+
+[[artifacts]]
+kind = "kerr"
+csv = "kerr/kerr.csv"
+"#;
+        std::fs::write(&manifest_path, initial_manifest).unwrap();
+
+        // 2. Re-run phase staging
+        let phase_cfg = crate::commands::run_dir::prepare_analysis_staging(
+            &cfg,
+            crate::commands::run_dir::AnalysisStage::Phase,
+        )
+        .unwrap();
+        crate::lockin::provenance::refresh_analysis_manifest_outputs(&phase_cfg, "phase").unwrap();
+
+        // Check stages after phase re-run: stages.li exists, stages.phase updated, stages.kerr/export_npy deleted
+        let manifest_content = std::fs::read_to_string(phase_cfg.paths().analysis_manifest()).unwrap();
+        let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
+        let stages = manifest["stages"].as_table().unwrap();
+        assert!(stages.contains_key("li"));
+        assert!(stages.contains_key("phase"));
+        assert!(!stages.contains_key("kerr"));
+        assert!(!stages.contains_key("export_npy"));
+
+        // Check artifacts after phase: lockin_rotated and kerr should be gone because they are not carried forward
+        let artifacts = manifest["artifacts"].as_array().unwrap();
+        assert!(artifacts.iter().any(|a| a["kind"].as_str() == Some("lockin_xy")));
+        assert!(!artifacts.iter().any(|a| a["kind"].as_str() == Some("lockin_rotated")));
+        assert!(!artifacts.iter().any(|a| a["kind"].as_str() == Some("kerr")));
+
+        // 3. Re-run li staging from the original full state
+        std::fs::write(&manifest_path, initial_manifest).unwrap();
+        let li_cfg = crate::commands::run_dir::prepare_analysis_staging(
+            &cfg,
+            crate::commands::run_dir::AnalysisStage::Li,
+        )
+        .unwrap();
+
+        let reference = crate::lockin::reference::ref_analysis::RefFitParams { f_ref: 1000.0, a_ref: 1.0, omega_tref: 0.0 };
+        let time = (0..2000).map(|i| i as f64 * 1e-5).collect::<Vec<_>>();
+        let signal = vec![0.0; 2000];
+        let processor = crate::lockin::lockin_core::LockinProcessor::new(
+            &time,
+            &signal,
+            1000.0,
+            0.0,
+            &cfg.lockin,
+        )
+        .unwrap();
+        let provenance = crate::lockin::provenance::LockinProvenance::from_processor(&processor);
+        // Ensure there is at least one lockin csv file in staging so it gets described
+        let staging_lockin_csv = li_cfg.paths().lockin_xy_csv(3);
+        std::fs::create_dir_all(staging_lockin_csv.parent().unwrap()).unwrap();
+        std::fs::write(&staging_lockin_csv, b"time,ch3 rate,ch3 integral\n0,0,0\n").unwrap();
+
+        crate::lockin::provenance::write_analysis_metadata(
+            &li_cfg.paths(),
+            &cfg.resolver(),
+            &reference,
+            &provenance,
+            2,
+        )
+        .unwrap();
+
+        let manifest_content_li = std::fs::read_to_string(li_cfg.paths().analysis_manifest()).unwrap();
+        let manifest_li: toml::Value = toml::from_str(&manifest_content_li).unwrap();
+        let stages_li = manifest_li["stages"].as_table().unwrap();
+        assert!(stages_li.contains_key("li"));
+        assert!(!stages_li.contains_key("phase"));
+        assert!(!stages_li.contains_key("kerr"));
+    }
 }
