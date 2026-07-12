@@ -389,7 +389,7 @@ impl RunMutationLock {
         match file.try_lock_exclusive() {
             Ok(()) => {}
             Err(error) => {
-                let is_lock_collision = {
+                let is_lock_collision = error.kind() == io::ErrorKind::WouldBlock || {
                     #[cfg(windows)]
                     {
                         error.raw_os_error() == Some(32) || error.raw_os_error() == Some(33)
@@ -398,8 +398,7 @@ impl RunMutationLock {
                     {
                         false
                     }
-                } || error.kind() == io::ErrorKind::WouldBlock
-                    || error.kind() == io::ErrorKind::PermissionDenied;
+                };
 
                 if is_lock_collision {
                     let content = fs::read_to_string(&path).unwrap_or_default();

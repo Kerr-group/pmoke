@@ -47,7 +47,7 @@ pub fn csv_with_canonical_lock(
         if looks_like_canonical_waveform_path(&resolved_output) {
             anyhow::bail!(
                 "output resolves to another run's canonical waveform; \
-                 select that run with --run-dir or use a a custom export path"
+                 select that run with --run-dir or use a custom export path"
             );
         }
         csv(input, output, force)
@@ -81,29 +81,39 @@ fn resolve_for_comparison(p: &std::path::Path) -> Result<std::path::PathBuf> {
             .join(p)
     };
 
-    // Clean lexically first to handle non-existent relative dots
-    let cleaned = clean_path(&absolute);
-
-    let mut existing = cleaned.as_path();
-    let mut remainder = Vec::new();
-
-    while !existing.exists() {
-        let name = match existing.file_name() {
-            Some(n) => n,
-            None => break,
-        };
-        remainder.push(name.to_os_string());
-        existing = match existing.parent() {
-            Some(parent_dir) => parent_dir,
-            None => break,
-        };
-    }
-
-    let mut resolved = existing
-        .canonicalize()
-        .unwrap_or_else(|_| existing.to_path_buf());
-    for component in remainder.into_iter().rev() {
-        resolved.push(component);
+    let mut resolved = std::path::PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => {
+                resolved.push(prefix.as_os_str());
+            }
+            std::path::Component::RootDir => {
+                resolved.push(component.as_os_str());
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if resolved.exists() {
+                    resolved = resolved.canonicalize().with_context(|| {
+                        format!(
+                            "failed to resolve existing path ancestor: {}",
+                            resolved.display()
+                        )
+                    })?;
+                }
+                resolved.pop();
+            }
+            std::path::Component::Normal(name) => {
+                resolved.push(name);
+                if resolved.exists() {
+                    resolved = resolved.canonicalize().with_context(|| {
+                        format!(
+                            "failed to resolve existing path ancestor: {}",
+                            resolved.display()
+                        )
+                    })?;
+                }
+            }
+        }
     }
 
     Ok(clean_path(&resolved))
@@ -373,5 +383,86 @@ mod tests {
 
         fs::remove_dir_all(run_dir_a).unwrap();
         fs::remove_dir_all(run_dir_b).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_other_run_canonical_csv_through_symlink_parent_traversal() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let run_dir_a =
+            std::env::temp_dir().join(format!("pmoke-other-symlink-parent-a-{}", nonce));
+        let run_dir_b =
+            std::env::temp_dir().join(format!("pmoke-other-symlink-parent-b-{}", nonce));
+
+        // Create shot_B/acquisition/waveforms/subdir
+        let subdir_b = run_dir_b.join("acquisition/waveforms/subdir");
+        fs::create_dir_all(&subdir_b).unwrap();
+
+        // Create shot_A/alias pointing to subdir_b
+        let alias = run_dir_a.join("alias");
+        fs::create_dir_all(&run_dir_a).unwrap();
+        std::os::unix::fs::symlink(&subdir_b, &alias).unwrap();
+
+        // Config is for shot A
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir_a.clone());
+
+        // Target path is alias/../waveform.csv (resolves to shot_B/acquisition/waveforms/waveform.csv)
+        let output = alias.join("../waveform.csv");
+
+        let error =
+            csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("output resolves to another run's canonical waveform"),
+            "Expected 'output resolves to another run's canonical waveform', got: {}",
+            error
+        );
+
+        fs::remove_dir_all(run_dir_a).unwrap();
+        fs::remove_dir_all(run_dir_b).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn current_run_lock_acquired_through_symlink_parent_traversal() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let run_dir_a = std::env::temp_dir().join(format!("pmoke-current-symlink-a-{}", nonce));
+
+        // Create shot_A/acquisition/waveforms/subdir
+        let subdir_a = run_dir_a.join("acquisition/waveforms/subdir");
+        fs::create_dir_all(&subdir_a).unwrap();
+
+        // Create alias pointing to subdir_a
+        let alias = run_dir_a.join("alias");
+        std::os::unix::fs::symlink(&subdir_a, &alias).unwrap();
+
+        // Lock is acquired on run_dir_a
+        let lock = crate::commands::run_dir::RunMutationLock::acquire(&run_dir_a, "test").unwrap();
+
+        // Config is for shot A
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir_a.clone());
+
+        // Target path is alias/../waveform.csv (resolves to shot_A/acquisition/waveforms/waveform.csv)
+        let output = alias.join("../waveform.csv");
+
+        let error =
+            csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(
+            error.to_string().contains("run-mutating operation"),
+            "Expected 'run-mutating operation', got: {}",
+            error
+        );
+
+        drop(lock);
+        fs::remove_dir_all(run_dir_a).unwrap();
     }
 }
