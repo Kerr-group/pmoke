@@ -1,6 +1,7 @@
 use crate::config::{
     self, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning, FetchAnalysisInput, FetchOutput,
 };
+use crate::ui::{EventKind, EventLevel, UiEvent};
 use anyhow::Result;
 use crossterm::{
     event::{
@@ -252,6 +253,11 @@ impl InspectorView {
 struct LogEntry {
     text: String,
     kind: LogKind,
+    sequence: Option<u64>,
+    elapsed_ms: Option<u64>,
+    event_head: bool,
+    stream: OutputStream,
+    transient: bool,
 }
 
 impl LogEntry {
@@ -259,16 +265,80 @@ impl LogEntry {
     fn new(stream: OutputStream, text: impl Into<String>) -> Self {
         let text = text.into();
         let kind = classify_log_entry(stream, &strip_ansi_codes(&text));
-        Self { text, kind }
+        Self {
+            text,
+            kind,
+            sequence: None,
+            elapsed_ms: None,
+            event_head: false,
+            stream,
+            transient: false,
+        }
     }
 
-    fn with_kind(text: String, kind: LogKind) -> Self {
-        Self { text, kind }
+    fn with_kind(text: String, kind: LogKind, stream: OutputStream) -> Self {
+        Self {
+            text,
+            kind,
+            sequence: None,
+            elapsed_ms: None,
+            event_head: false,
+            stream,
+            transient: false,
+        }
+    }
+
+    fn from_event(event: &UiEvent) -> Vec<Self> {
+        let kind = log_kind_for_event(event);
+        let text = if event.kind == EventKind::Section {
+            format!("╭─ {}", event.message)
+        } else {
+            event.message.clone()
+        };
+        let mut entries = vec![Self {
+            text,
+            kind,
+            sequence: Some(event.sequence),
+            elapsed_ms: Some(event.elapsed_ms),
+            event_head: true,
+            stream: OutputStream::Stdout,
+            transient: event.kind == EventKind::Progress,
+        }];
+        entries.extend(event.fields.iter().map(|(key, value)| Self {
+            text: format!("│ {key}  {value}"),
+            kind: LogKind::Metric,
+            sequence: Some(event.sequence),
+            elapsed_ms: Some(event.elapsed_ms),
+            event_head: false,
+            stream: OutputStream::Stdout,
+            transient: false,
+        }));
+        entries
+    }
+}
+
+fn log_kind_for_event(event: &UiEvent) -> LogKind {
+    match event.level {
+        EventLevel::Error => LogKind::Error,
+        EventLevel::Warning => LogKind::Warning,
+        EventLevel::Success if event.kind == EventKind::Save => LogKind::Save,
+        EventLevel::Success => LogKind::Success,
+        EventLevel::Info => match event.kind {
+            EventKind::Read => LogKind::Read,
+            EventKind::Save => LogKind::Save,
+            EventKind::Skip => LogKind::Skipped,
+            EventKind::Section => LogKind::Section,
+            EventKind::Metric => LogKind::Metric,
+            EventKind::System => LogKind::System,
+            _ => LogKind::Info,
+        },
     }
 }
 
 enum RunEvent {
     Output(OutputStream, String),
+    Progress(OutputStream, String),
+    Structured(UiEvent),
     Finished { ok: bool, status: String },
     Failed(String),
 }
@@ -779,6 +849,9 @@ fn clamp_output_scroll(app: &mut MonitorApp, area: Rect) {
 
     if let Some(max_scroll) = max_output_scroll_for_area(app, area) {
         app.run_output_scroll = app.run_output_scroll.min(max_scroll);
+        if app.run_output_scroll == 0 {
+            app.new_output_events = 0;
+        }
     }
 }
 
@@ -947,6 +1020,8 @@ fn spawn_command_runner(
             .args(command_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        command.env("PMOKE_OUTPUT", "jsonl");
+        command.env("PMOKE_STAGE", action.command_name());
         if let Some(width) = table_width {
             command.env("PMOKE_TABLE_WIDTH", width.to_string());
         }
@@ -1085,36 +1160,52 @@ fn spawn_stream_reader<R: Read + Send + 'static>(
         let mut record = Vec::new();
         let mut previous_was_cr = false;
 
-        let emit = |bytes: &[u8]| {
-            tx.send(RunEvent::Output(
-                kind,
-                String::from_utf8_lossy(bytes).into_owned(),
-            ))
+        let emit = |bytes: &[u8], progress: bool| {
+            let text = String::from_utf8_lossy(bytes).into_owned();
+            let event = if !progress
+                && kind == OutputStream::Stdout
+                && let Some(event) = crate::ui::parse_jsonl_event(&text)
+            {
+                RunEvent::Structured(event)
+            } else if progress {
+                RunEvent::Progress(kind, text)
+            } else {
+                RunEvent::Output(kind, text)
+            };
+            tx.send(event)
         };
 
         loop {
             match stream.read(&mut read_buf) {
                 Ok(0) => {
                     if !record.is_empty() {
-                        let _ = emit(&record);
+                        let _ = emit(&record, previous_was_cr);
                     }
                     break;
                 }
                 Ok(read) => {
                     for &byte in &read_buf[..read] {
-                        match byte {
-                            b'\r' => {
-                                if emit(&record).is_err() {
+                        if previous_was_cr {
+                            if byte == b'\n' {
+                                if emit(&record, false).is_err() {
                                     return;
                                 }
                                 record.clear();
+                                previous_was_cr = false;
+                                continue;
+                            }
+                            if emit(&record, true).is_err() {
+                                return;
+                            }
+                            record.clear();
+                            previous_was_cr = false;
+                        }
+                        match byte {
+                            b'\r' => {
                                 previous_was_cr = true;
                             }
-                            b'\n' if previous_was_cr => {
-                                previous_was_cr = false;
-                            }
                             b'\n' => {
-                                if emit(&record).is_err() {
+                                if emit(&record, false).is_err() {
                                     return;
                                 }
                                 record.clear();
@@ -1128,7 +1219,7 @@ fn spawn_stream_reader<R: Read + Send + 'static>(
                 }
                 Err(err) => {
                     if !record.is_empty() {
-                        let _ = emit(&record);
+                        let _ = emit(&record, false);
                     }
                     let _ = tx.send(RunEvent::Output(
                         OutputStream::Stderr,

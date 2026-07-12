@@ -544,15 +544,7 @@ pub(super) fn render_run_output(
         visual_selection_range(&visual_lines_for_layout, app.output_selection_range());
     let visible_rows = output_visible_rows(log_area);
     let effective_scroll = effective_output_scroll(app, log_area, visual_line_count);
-    let title = if output.is_empty() {
-        " OUTPUT ".to_string()
-    } else if let Some((index, total)) = app.history_position() {
-        format!(" OUTPUT history {index}/{total} · {visual_line_count} lines ")
-    } else if effective_scroll == 0 {
-        format!(" OUTPUT latest · {visual_line_count} lines ")
-    } else {
-        format!(" OUTPUT -{effective_scroll} lines ")
-    };
+    let title = activity_title(app, effective_scroll, area.width);
 
     let block = block_base.title(title);
     frame.render_widget(block, area);
@@ -602,7 +594,7 @@ pub(super) fn render_run_output(
     frame.render_widget(
         output_header(
             log_chunks[0].width,
-            app.command_running() && app.history_view.is_none(),
+            effective_scroll == 0 && app.history_view.is_none(),
             timeline_motion_frame(app),
         ),
         log_chunks[0],
@@ -627,6 +619,35 @@ pub(super) fn render_run_output(
         visible_rows,
         effective_scroll,
     );
+}
+
+pub(super) fn activity_title(app: &MonitorApp, effective_scroll: usize, width: u16) -> String {
+    let detail = if let Some((index, total)) = app.history_position() {
+        format!("HISTORY {index}/{total}")
+    } else if effective_scroll > 0 {
+        if app.new_output_events > 0 {
+            format!("PAUSED · {} NEW · G follow", app.new_output_events)
+        } else {
+            "PAUSED · G follow".to_string()
+        }
+    } else if let Some(run) = &app.active_run {
+        let state = if run.cancel_requested {
+            "STOPPING"
+        } else {
+            "RUNNING"
+        };
+        format!(
+            "LIVE · {state} · {} · {}",
+            run.label,
+            format_live_duration(run.started_at.elapsed())
+        )
+    } else if app.last_run.as_ref().is_some_and(|run| !run.ok) {
+        "LIVE · FAILED".to_string()
+    } else {
+        "LIVE · READY".to_string()
+    };
+    let available = width.saturating_sub(4) as usize;
+    format!(" {} ", fit_text(&format!("ACTIVITY · {detail}"), available))
 }
 
 pub(super) fn render_output_scrollbar(
@@ -704,50 +725,29 @@ pub(super) fn output_header_spans(width: u16) -> Vec<Span<'static>> {
 }
 
 pub(super) fn output_header_spans_with_motion(
-    width: u16,
-    running: bool,
+    _width: u16,
+    live: bool,
     frame: usize,
 ) -> Vec<Span<'static>> {
     let scanner = event_feed_spinner_symbol(frame);
     let scanner_style = Style::default()
         .fg(event_feed_pulse_color(frame))
         .add_modifier(Modifier::BOLD);
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(
-            " EVENT FEED ",
+            if live { " LIVE LOG " } else { " EVENT LOG " },
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Cyan)
+                .bg(if live { Color::Cyan } else { Color::Gray })
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        if running {
+        if live {
             Span::styled(format!("{scanner} live"), scanner_style)
         } else {
-            Span::styled("analysis output", Style::default().fg(Color::Gray))
+            Span::styled("paused", Style::default().fg(Color::Gray))
         },
     ];
-
-    if width >= 60 {
-        spans.extend([
-            Span::raw("  "),
-            Span::styled("●", Style::default().fg(Color::Green)),
-            Span::raw(" "),
-            Span::styled("ok", Style::default().fg(Color::DarkGray)),
-            Span::raw(" "),
-            Span::styled("●", Style::default().fg(Color::Cyan)),
-            Span::raw(" "),
-            Span::styled("info", Style::default().fg(Color::DarkGray)),
-            Span::raw(" "),
-            Span::styled("●", Style::default().fg(Color::Yellow)),
-            Span::raw(" "),
-            Span::styled("warn", Style::default().fg(Color::DarkGray)),
-            Span::raw(" "),
-            Span::styled("●", Style::default().fg(Color::LightRed)),
-            Span::raw(" "),
-            Span::styled("error", Style::default().fg(Color::DarkGray)),
-        ]);
-    }
 
     spans
 }
@@ -768,7 +768,7 @@ pub(super) fn render_output_status_bar(
     frame: &mut Frame<'_>,
     app: &MonitorApp,
     area: Rect,
-    visual_line_count: usize,
+    _visual_line_count: usize,
     effective_scroll: usize,
     selected_visual_range: Option<(usize, usize)>,
 ) {
@@ -788,12 +788,15 @@ pub(super) fn render_output_status_bar(
     } else {
         ("FAILED", Color::Red)
     };
-    let scroll = if effective_scroll == 0 {
-        "latest".to_string()
+    let mode = if app.history_view.is_some() {
+        "history".to_string()
+    } else if effective_scroll == 0 {
+        "following".to_string()
+    } else if app.new_output_events > 0 {
+        format!("{} new", app.new_output_events)
     } else {
-        format!("-{effective_scroll} lines")
+        "paused".to_string()
     };
-    let selection = output_selection_status(selected_visual_range);
 
     let mut spans = vec![
         Span::styled(
@@ -804,18 +807,44 @@ pub(super) fn render_output_status_bar(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled("lines ", Style::default().fg(Color::DarkGray)),
+        Span::styled("events ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            visual_line_count.to_string(),
+            app.visible_event_count().to_string(),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  /  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(selection, Style::default().fg(Color::Gray)),
-        Span::styled("  /  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(scroll, Style::default().fg(Color::Cyan)),
+        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(mode, Style::default().fg(Color::Cyan)),
     ];
+    let warning_count = app.visible_warning_count();
+    let error_count = app.visible_error_count();
+    if area.width >= 46 && warning_count > 0 {
+        spans.extend([
+            Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{warning_count} warn"),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]);
+    }
+    if area.width >= 58 && error_count > 0 {
+        spans.extend([
+            Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{error_count} error"),
+                Style::default().fg(Color::LightRed),
+            ),
+        ]);
+    }
+    if app.focus == FocusPane::Output && area.width >= 72 {
+        let selection = output_selection_status(selected_visual_range);
+        spans.extend([
+            Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(selection, Style::default().fg(Color::Gray)),
+            Span::styled("  ·  j/k v y g/G", Style::default().fg(Color::DarkGray)),
+        ]);
+    }
     if let Some(status) = &app.copy_status {
         spans.extend([
             Span::styled("  │  ", Style::default().fg(Color::DarkGray)),

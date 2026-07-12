@@ -305,7 +305,7 @@ pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area:
         ]),
         Line::from(vec![
             Span::styled("Ctrl+C", Style::default().fg(Color::Cyan)),
-            Span::raw(" interrupt command or cancel output selection"),
+            Span::raw(" interrupt command or cancel activity selection"),
         ]),
         Line::from(vec![
             Span::styled("j/k, Up/Down, g/G", Style::default().fg(Color::Cyan)),
@@ -317,7 +317,7 @@ pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area:
         ]),
         Line::from(vec![
             Span::styled("a/o/m/f/s", Style::default().fg(Color::Cyan)),
-            Span::raw(" focus workflow/output or inspector views"),
+            Span::raw(" focus workflow/activity or inspector views"),
         ]),
         Line::from(vec![
             Span::styled("/", Style::default().fg(Color::Cyan)),
@@ -325,34 +325,34 @@ pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area:
         ]),
         Line::from(vec![
             Span::styled("[ / ]", Style::default().fg(Color::Cyan)),
-            Span::raw(" browse older runs / return toward live output"),
+            Span::raw(" browse older runs / return toward live activity"),
         ]),
         Line::from(vec![
             Span::styled(
                 "PageUp/PageDown, Ctrl-u/Ctrl-d",
                 Style::default().fg(Color::Cyan),
             ),
-            Span::raw(" scroll live output"),
+            Span::raw(" scroll activity events"),
         ]),
         Line::from(vec![
-            Span::styled("o / Click output", Style::default().fg(Color::Cyan)),
-            Span::raw(" focus and select output"),
+            Span::styled("o / Click activity", Style::default().fg(Color::Cyan)),
+            Span::raw(" focus and select events"),
         ]),
         Line::from(vec![
-            Span::styled("j/k, g/G in output", Style::default().fg(Color::Cyan)),
-            Span::raw(" move selected output line"),
+            Span::styled("j/k, g/G in activity", Style::default().fg(Color::Cyan)),
+            Span::raw(" move selected event"),
         ]),
         Line::from(vec![
             Span::styled("V then j/k", Style::default().fg(Color::Cyan)),
-            Span::raw(" visual-line select output"),
+            Span::raw(" visual-line select activity"),
         ]),
         Line::from(vec![
-            Span::styled("y / Enter in output", Style::default().fg(Color::Cyan)),
-            Span::raw(" copy selected output lines"),
+            Span::styled("y / Enter in activity", Style::default().fg(Color::Cyan)),
+            Span::raw(" copy selected events"),
         ]),
         Line::from(vec![
             Span::styled("End", Style::default().fg(Color::Cyan)),
-            Span::raw(" follow latest output"),
+            Span::raw(" follow live activity"),
         ]),
         Line::from(vec![
             Span::styled("Mouse wheel", Style::default().fg(Color::Cyan)),

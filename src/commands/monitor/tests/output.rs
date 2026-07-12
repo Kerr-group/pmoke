@@ -1,6 +1,100 @@
 use super::*;
 
 #[test]
+fn structured_events_keep_one_logical_count_and_render_elapsed_time() {
+    let mut app = test_app();
+    app.push_structured_output(UiEvent {
+        event_type: "event".to_string(),
+        sequence: 42,
+        elapsed_ms: 1_234,
+        level: EventLevel::Warning,
+        kind: EventKind::Section,
+        stage: Some("lockin".to_string()),
+        message: "Lock-in settings".to_string(),
+        fields: vec![
+            ("output rate".to_string(), "500 kHz".to_string()),
+            ("window".to_string(), "1.71 us".to_string()),
+        ],
+    });
+
+    assert_eq!(app.run_output.len(), 3);
+    assert_eq!(app.visible_event_count(), 1);
+    assert_eq!(app.visible_warning_count(), 1);
+    let rendered = visual_output_lines(app.visible_output(), 80, None, None)
+        .into_iter()
+        .map(|line| {
+            line.line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(rendered[0].starts_with("+00:01.2 "));
+    assert!(rendered[1].starts_with("         "));
+}
+
+#[test]
+fn structured_event_line_count_matches_rendering_with_elapsed_prefix() {
+    let event = UiEvent {
+        event_type: "event".to_string(),
+        sequence: 43,
+        elapsed_ms: u64::MAX,
+        level: EventLevel::Info,
+        kind: EventKind::Status,
+        stage: None,
+        message: "a message that wraps once the elapsed prefix is reserved".to_string(),
+        fields: Vec::new(),
+    };
+    let entries = LogEntry::from_event(&event);
+    let rendered = visual_output_lines(&entries, 52, None, None);
+
+    assert_eq!(visual_output_line_count(&entries, 52), rendered.len());
+    let first = rendered[0]
+        .line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(first.starts_with("+99:59.9 "));
+}
+
+#[test]
+fn paused_activity_counts_new_events_and_follow_clears_them() {
+    let mut app = test_app();
+    app.push_output(OutputStream::Stdout, "first");
+    app.run_output_scroll = 1;
+    app.push_output(OutputStream::Stdout, "second");
+    assert_eq!(app.new_output_events, 1);
+    app.follow_output();
+    assert_eq!(app.new_output_events, 0);
+    assert_eq!(app.run_output_scroll, 0);
+}
+
+#[test]
+fn carriage_return_progress_replaces_the_previous_transient_line() {
+    let mut app = test_app();
+    app.push_progress(OutputStream::Stdout, "fetch 10%");
+    app.push_progress(OutputStream::Stdout, "fetch 20%");
+    assert_eq!(app.run_output.len(), 1);
+    assert_eq!(app.run_output[0].text, "fetch 20%");
+    app.push_output(OutputStream::Stdout, "fetch complete");
+    app.push_progress(OutputStream::Stdout, "next 1%");
+    assert_eq!(app.run_output.len(), 3);
+}
+
+#[test]
+fn live_highlight_targets_the_latest_renderable_entry() {
+    let entries = vec![
+        LogEntry::new(OutputStream::Stdout, "[  OK  ] complete"),
+        LogEntry::new(OutputStream::Stdout, "╰────────╯"),
+    ];
+    let lines = visual_output_lines_with_motion(&entries, 80, None, None, true, 0);
+    assert_eq!(lines.len(), 1);
+    assert_ne!(lines[0].line.spans[0].content.as_ref(), "✓ ");
+}
+
+#[test]
 fn selected_output_text_strips_ansi_codes() {
     let mut app = test_app();
     app.push_output(OutputStream::Stdout, "\x1b[31mhello\x1b[0m");
@@ -167,7 +261,8 @@ fn stream_reader_frames_records_across_short_reads() {
     let records = rx
         .into_iter()
         .filter_map(|event| match event {
-            RunEvent::Output(stream, text) => Some((stream, text)),
+            RunEvent::Output(stream, text) => Some(("output", stream, text)),
+            RunEvent::Progress(stream, text) => Some(("progress", stream, text)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -175,12 +270,39 @@ fn stream_reader_frames_records_across_short_reads() {
     assert_eq!(
         records,
         vec![
-            (OutputStream::Stderr, "[ WARN ] one".to_string()),
-            (OutputStream::Stderr, "progress 1".to_string()),
-            (OutputStream::Stderr, "progress 2".to_string()),
-            (OutputStream::Stderr, "last".to_string()),
+            ("output", OutputStream::Stderr, "[ WARN ] one".to_string()),
+            ("progress", OutputStream::Stderr, "progress 1".to_string()),
+            ("output", OutputStream::Stderr, "progress 2".to_string()),
+            ("output", OutputStream::Stderr, "last".to_string()),
         ]
     );
+}
+
+#[test]
+fn stream_reader_decodes_structured_stdout_and_falls_back_for_plain_text() {
+    let input = concat!(
+        "{\"type\":\"event\",\"sequence\":9,\"elapsed_ms\":12,",
+        "\"level\":\"success\",\"kind\":\"status\",",
+        "\"message\":\"done\"}\nplain\n"
+    );
+    let (tx, rx) = std::sync::mpsc::sync_channel(4);
+    spawn_stream_reader(
+        std::io::Cursor::new(input.as_bytes().to_vec()),
+        OutputStream::Stdout,
+        tx,
+    )
+    .join()
+    .unwrap();
+    let events = rx.into_iter().collect::<Vec<_>>();
+    assert!(matches!(
+        &events[0],
+        RunEvent::Structured(event)
+            if event.sequence == 9 && event.message == "done"
+    ));
+    assert!(matches!(
+        &events[1],
+        RunEvent::Output(OutputStream::Stdout, text) if text == "plain"
+    ));
 }
 
 #[test]

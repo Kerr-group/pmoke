@@ -4,9 +4,104 @@ use comfy_table::{
 };
 use console::{Term, style};
 use indicatif::{ProgressBar, ProgressStyle};
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::io::{self, Write};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use std::time::Instant;
+
+const JSONL_OUTPUT_ENV: &str = "PMOKE_OUTPUT";
+const JSONL_OUTPUT_VALUE: &str = "jsonl";
+const OUTPUT_STAGE_ENV: &str = "PMOKE_STAGE";
+static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static EVENT_EPOCH: OnceLock<Instant> = OnceLock::new();
+
+pub(crate) fn initialize_output() {
+    EVENT_EPOCH.get_or_init(Instant::now);
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EventLevel {
+    Success,
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EventKind {
+    Status,
+    Read,
+    Save,
+    Skip,
+    Progress,
+    Section,
+    Metric,
+    System,
+    Raw,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct UiEvent {
+    #[serde(rename = "type")]
+    pub(crate) event_type: String,
+    pub(crate) sequence: u64,
+    pub(crate) elapsed_ms: u64,
+    pub(crate) level: EventLevel,
+    pub(crate) kind: EventKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) stage: Option<String>,
+    pub(crate) message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) fields: Vec<(String, String)>,
+}
+
+impl UiEvent {
+    fn new(
+        level: EventLevel,
+        kind: EventKind,
+        message: impl Display,
+        fields: Vec<(String, String)>,
+    ) -> Self {
+        let elapsed = EVENT_EPOCH.get_or_init(Instant::now).elapsed();
+        Self {
+            event_type: "event".to_string(),
+            sequence: EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            level,
+            kind,
+            stage: std::env::var(OUTPUT_STAGE_ENV).ok(),
+            message: message.to_string(),
+            fields,
+        }
+    }
+}
+
+pub(crate) fn parse_jsonl_event(line: &str) -> Option<UiEvent> {
+    let event = serde_json::from_str::<UiEvent>(line).ok()?;
+    (event.event_type == "event").then_some(event)
+}
+
+fn jsonl_output_enabled() -> bool {
+    std::env::var(JSONL_OUTPUT_ENV).as_deref() == Ok(JSONL_OUTPUT_VALUE)
+}
+
+fn emit_event(event: &UiEvent, human: impl FnOnce()) {
+    if !jsonl_output_enabled() {
+        human();
+        return;
+    }
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    if serde_json::to_writer(&mut output, event).is_ok() {
+        let _ = output.write_all(b"\n");
+        let _ = output.flush();
+    }
+}
 
 fn badge(label: &str) -> String {
     format!("[{label:^6}]")
@@ -30,6 +125,9 @@ pub fn fmt_duration(duration: Duration) -> String {
 }
 
 pub fn spinner(message: impl Into<String>) -> ProgressBar {
+    if jsonl_output_enabled() {
+        return ProgressBar::hidden();
+    }
     let pb = ProgressBar::new_spinner();
     pb.set_style(spinner_style());
     pb.set_message(message.into());
@@ -38,6 +136,9 @@ pub fn spinner(message: impl Into<String>) -> ProgressBar {
 }
 
 pub fn progress(message: impl Into<String>, len: u64) -> ProgressBar {
+    if jsonl_output_enabled() {
+        return ProgressBar::hidden();
+    }
     let pb = ProgressBar::new(len);
     pb.set_style(progress_style());
     pb.set_message(message.into());
@@ -65,33 +166,61 @@ pub fn suspend_progress<R>(pb: &ProgressBar, f: impl FnOnce() -> R) -> R {
 }
 
 pub fn success(message: impl Display) {
-    println!("{} {}", style(badge("OK")).green().bold(), message);
+    let event = UiEvent::new(EventLevel::Success, EventKind::Status, &message, Vec::new());
+    emit_event(&event, || {
+        println!("{} {}", style(badge("OK")).green().bold(), message);
+    });
 }
 
 pub fn info(message: impl Display) {
-    println!("{} {}", style(badge("INFO")).cyan().bold(), message);
+    let event = UiEvent::new(EventLevel::Info, EventKind::Status, &message, Vec::new());
+    emit_event(&event, || {
+        println!("{} {}", style(badge("INFO")).cyan().bold(), message);
+    });
 }
 
 pub fn read(message: impl Display) {
-    println!("{} {}", style(badge("READ")).cyan().bold(), message);
+    let event = UiEvent::new(EventLevel::Info, EventKind::Read, &message, Vec::new());
+    emit_event(&event, || {
+        println!("{} {}", style(badge("READ")).cyan().bold(), message);
+    });
 }
 
 pub fn saved(message: impl Display) {
-    println!("{} {}", style(badge("SAVE")).magenta().bold(), message);
-    flush_stdout();
+    let event = UiEvent::new(EventLevel::Success, EventKind::Save, &message, Vec::new());
+    emit_event(&event, || {
+        println!("{} {}", style(badge("SAVE")).magenta().bold(), message);
+        flush_stdout();
+    });
 }
 
 pub fn skipped(message: impl Display) {
-    println!("{} {}", style(badge("SKIP")).yellow().bold(), message);
+    let event = UiEvent::new(EventLevel::Info, EventKind::Skip, &message, Vec::new());
+    emit_event(&event, || {
+        println!("{} {}", style(badge("SKIP")).yellow().bold(), message);
+    });
 }
 
 pub fn warn(message: impl Display) {
-    eprintln!("{} {}", style(badge("WARN")).yellow().bold(), message);
+    let event = UiEvent::new(EventLevel::Warning, EventKind::Status, &message, Vec::new());
+    emit_event(&event, || {
+        eprintln!("{} {}", style(badge("WARN")).yellow().bold(), message);
+    });
+}
+
+pub fn error(message: impl Display) {
+    let event = UiEvent::new(EventLevel::Error, EventKind::Status, &message, Vec::new());
+    emit_event(&event, || {
+        eprintln!("{} {}", style(badge("ERR")).red().bold(), message);
+    });
 }
 
 pub fn section(title: impl Display) {
-    println!();
-    println!("{}", style(format!("{title}")).bold().underlined());
+    let event = UiEvent::new(EventLevel::Info, EventKind::Section, &title, Vec::new());
+    emit_event(&event, || {
+        println!();
+        println!("{}", style(format!("{title}")).bold().underlined());
+    });
 }
 
 pub fn summary_table(title: impl Display, headers: &[&str], rows: Vec<Vec<String>>) {
@@ -118,8 +247,14 @@ fn flush_stdout() {
 }
 
 fn summary_panel(title: impl Display, rows: Vec<(String, String)>) {
+    let title = title.to_string();
+    let event = UiEvent::new(EventLevel::Info, EventKind::Section, &title, rows.clone());
+    emit_event(&event, || summary_panel_human(&title, rows));
+}
+
+fn summary_panel_human(title: &str, rows: Vec<(String, String)>) {
     println!();
-    println!("{}", style(format!("╭─ {}", title)).cyan().bold());
+    println!("{}", style(format!("╭─ {title}")).cyan().bold());
 
     if rows.is_empty() {
         println!("{} {}", style("│").cyan(), style("empty").dim());
@@ -248,6 +383,24 @@ mod tests {
         assert_eq!(badge("OK"), "[  OK  ]");
         assert_eq!(badge("READ"), "[ READ ]");
         assert_eq!(badge("SAVE"), "[ SAVE ]");
+    }
+
+    #[test]
+    fn jsonl_event_round_trips_with_structured_fields() {
+        let event = UiEvent {
+            event_type: "event".to_string(),
+            sequence: 7,
+            elapsed_ms: 1234,
+            level: EventLevel::Warning,
+            kind: EventKind::Section,
+            stage: Some("lockin".to_string()),
+            message: "Lock-in settings".to_string(),
+            fields: vec![("output rate".to_string(), "500 kHz".to_string())],
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        assert_eq!(parse_jsonl_event(&encoded), Some(event));
+        assert!(parse_jsonl_event("plain output").is_none());
+        assert!(parse_jsonl_event(r#"{"type":"other"}"#).is_none());
     }
 
     #[test]

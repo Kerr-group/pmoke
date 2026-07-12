@@ -26,7 +26,7 @@ fn dashboard_render_keeps_core_regions_at_wide_and_compact_sizes() {
 
         assert!(rendered.contains("WORKFLOW"), "{width}x{height}");
         assert!(rendered.contains("INSPECTOR"), "{width}x{height}");
-        assert!(rendered.contains("OUTPUT"), "{width}x{height}");
+        assert!(rendered.contains("ACTIVITY"), "{width}x{height}");
         assert!(
             rendered.contains("dashboard render probe"),
             "{width}x{height}"
@@ -43,7 +43,7 @@ fn tiny_dashboard_hides_inspector_but_preserves_workflow_and_activity() {
     let rendered = render_dashboard_text(40, 14, &mut app);
 
     assert!(rendered.contains("WORKFLOW"));
-    assert!(rendered.contains("OUTPUT"));
+    assert!(rendered.contains("ACTIVITY"));
     assert!(rendered.contains("tiny output"));
     assert!(!rendered.contains("INSPECTOR"));
 }
@@ -127,7 +127,7 @@ fn context_bar_only_adds_config_when_cwd_keeps_useful_space() {
 }
 
 #[test]
-fn output_header_omits_badge_legend_when_narrow() {
+fn output_header_uses_a_compact_live_log_label_at_every_width() {
     let narrow_text = output_header_spans(24)
         .iter()
         .map(|span| span.content.as_ref())
@@ -137,10 +137,24 @@ fn output_header_omits_badge_legend_when_narrow() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(!narrow_text.contains("error"));
-    assert!(wide_text.contains("analysis output"));
-    assert!(wide_text.contains("warn"));
-    assert!(wide_text.contains("error"));
+    assert!(narrow_text.contains("EVENT LOG"));
+    assert!(wide_text.contains("EVENT LOG"));
+    assert!(!wide_text.contains("analysis output"));
+    assert!(!wide_text.contains("warn"));
+    assert!(!wide_text.contains("error"));
+}
+
+#[test]
+fn activity_title_distinguishes_live_and_paused_states() {
+    let mut app = test_app();
+    assert!(activity_title(&app, 0, 80).contains("ACTIVITY · LIVE · READY"));
+
+    app.new_output_events = 12;
+    assert!(activity_title(&app, 4, 80).contains("PAUSED · 12 NEW · G follow"));
+
+    let narrow = activity_title(&app, 4, 24);
+    assert!(narrow.contains("ACTIVITY"));
+    assert!(narrow.width_cjk() <= 22);
 }
 
 #[test]

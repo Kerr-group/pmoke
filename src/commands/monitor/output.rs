@@ -23,7 +23,7 @@ pub(super) fn visual_output_lines_with_motion(
     frame: usize,
 ) -> Vec<VisualOutputLine> {
     let width = width.max(1) as usize;
-    let latest_entry = entries.len().saturating_sub(1);
+    let latest_entry = entries.iter().rposition(is_renderable_output_entry);
     entries
         .iter()
         .enumerate()
@@ -37,14 +37,16 @@ pub(super) fn visual_output_lines_with_motion(
                 .map(|(start, end)| (start..=end).contains(&entry_index))
                 .unwrap_or(false);
             let is_cursor = cursor == Some(entry_index);
-            let is_live_latest = running && entry_index == latest_entry && !is_selected;
+            let is_live_latest = running && Some(entry_index) == latest_entry && !is_selected;
             let context = OutputRenderContext {
                 entry_index,
-                width,
+                width: output_content_width(width, entry.elapsed_ms),
                 selected: is_selected,
                 cursor: is_cursor,
                 live_latest: is_live_latest,
                 frame,
+                elapsed_ms: entry.elapsed_ms,
+                event_head: entry.event_head,
             };
             render_output_display_lines(context, kind, display)
         })
@@ -58,8 +60,9 @@ pub(super) fn visual_output_line_count(entries: &[LogEntry], width: u16) -> usiz
         .map(|entry| {
             let text = strip_ansi_codes(&entry.text);
             let kind = entry.kind;
+            let content_width = output_content_width(width, entry.elapsed_ms);
             output_display(kind, &text)
-                .map(|display| output_display_line_count(&display, width))
+                .map(|display| output_display_line_count(&display, content_width))
                 .unwrap_or(0)
         })
         .sum()
@@ -81,6 +84,39 @@ pub(super) struct OutputRenderContext {
     cursor: bool,
     live_latest: bool,
     frame: usize,
+    elapsed_ms: Option<u64>,
+    event_head: bool,
+}
+
+const ELAPSED_PREFIX_WIDTH: usize = 9;
+const ELAPSED_MIN_OUTPUT_WIDTH: usize = 52;
+
+fn output_content_width(width: usize, elapsed_ms: Option<u64>) -> usize {
+    if elapsed_ms.is_some() && width >= ELAPSED_MIN_OUTPUT_WIDTH {
+        width.saturating_sub(ELAPSED_PREFIX_WIDTH)
+    } else {
+        width
+    }
+}
+
+fn elapsed_prefix(context: OutputRenderContext, first_line: bool) -> Vec<Span<'static>> {
+    let Some(elapsed_ms) = context
+        .elapsed_ms
+        .filter(|_| context.width.saturating_add(ELAPSED_PREFIX_WIDTH) >= ELAPSED_MIN_OUTPUT_WIDTH)
+    else {
+        return Vec::new();
+    };
+    let text = if context.event_head && first_line {
+        // Keep the prefix at its documented fixed width even for very long runs.
+        let total_tenths = (elapsed_ms / 100).min(99 * 600 + 599);
+        let minutes = total_tenths / 600;
+        let seconds = (total_tenths / 10) % 60;
+        let tenths = total_tenths % 10;
+        format!("+{minutes:02}:{seconds:02}.{tenths} ")
+    } else {
+        " ".repeat(ELAPSED_PREFIX_WIDTH)
+    };
+    vec![Span::styled(text, Style::default().fg(Color::DarkGray))]
 }
 
 impl OutputDisplay {
@@ -127,7 +163,8 @@ pub(super) fn section_output_line(
     } else {
         kind.marker().to_string()
     };
-    Line::from(vec![
+    let mut spans = elapsed_prefix(context, true);
+    spans.extend([
         Span::styled(
             format!("{marker} "),
             selected_output_style(Style::default().fg(Color::Cyan), context.selected),
@@ -149,7 +186,8 @@ pub(super) fn section_output_line(
             " ━━",
             selected_output_style(Style::default().fg(Color::DarkGray), context.selected),
         ),
-    ])
+    ]);
+    Line::from(spans)
 }
 
 pub(super) fn metric_output_lines(
@@ -176,7 +214,8 @@ pub(super) fn metric_output_lines(
                 live_output_rail_style(context.live_latest, context.frame),
                 context.selected,
             );
-            let spans = if idx == 0 {
+            let mut spans = elapsed_prefix(context, idx == 0);
+            spans.extend(if idx == 0 {
                 vec![
                     Span::styled(format!("{marker}  │ "), rail),
                     Span::styled(
@@ -213,7 +252,7 @@ pub(super) fn metric_output_lines(
                         ),
                     ),
                 ]
-            };
+            });
             VisualOutputLine {
                 entry_index: context.entry_index,
                 line: Line::from(spans),
@@ -246,26 +285,30 @@ pub(super) fn metric_continuation_lines(
             );
             VisualOutputLine {
                 entry_index: context.entry_index,
-                line: Line::from(vec![
-                    Span::styled(format!("{marker}  │ "), rail),
-                    Span::styled(
-                        "↳ ",
-                        selected_output_style(
-                            Style::default().fg(Color::DarkGray),
-                            context.selected,
-                        ),
-                    ),
-                    Span::styled(
-                        value_line,
-                        selected_output_style(
-                            live_output_metric_continuation_style(
-                                context.live_latest,
-                                context.frame,
+                line: Line::from({
+                    let mut spans = elapsed_prefix(context, idx == 0);
+                    spans.extend([
+                        Span::styled(format!("{marker}  │ "), rail),
+                        Span::styled(
+                            "↳ ",
+                            selected_output_style(
+                                Style::default().fg(Color::DarkGray),
+                                context.selected,
                             ),
-                            context.selected,
                         ),
-                    ),
-                ]),
+                        Span::styled(
+                            value_line,
+                            selected_output_style(
+                                live_output_metric_continuation_style(
+                                    context.live_latest,
+                                    context.frame,
+                                ),
+                                context.selected,
+                            ),
+                        ),
+                    ]);
+                    spans
+                }),
             }
         })
         .collect()
@@ -281,7 +324,8 @@ pub(super) fn event_output_lines(
         .into_iter()
         .enumerate()
         .map(|(idx, line)| {
-            let spans = if idx == 0 {
+            let mut spans = elapsed_prefix(context, idx == 0);
+            spans.extend(if idx == 0 {
                 let marker = if context.cursor {
                     "◆".to_string()
                 } else if context.selected {
@@ -329,7 +373,7 @@ pub(super) fn event_output_lines(
                         ),
                     ),
                 ]
-            };
+            });
             VisualOutputLine {
                 entry_index: context.entry_index,
                 line: Line::from(spans),
