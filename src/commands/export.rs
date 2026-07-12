@@ -31,21 +31,31 @@ pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
 }
 
 pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Result<()> {
+    if output.exists() && !force {
+        anyhow::bail!(
+            "output file already exists: {} (use --force to overwrite)",
+            output.display()
+        );
+    }
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let temporary = forced_export_path(output);
-    let (destination, replace) = if force && output.exists() {
-        validate_replaceable_file(output)?;
-        (temporary.as_path(), true)
-    } else {
-        (output, false)
+    if temporary.exists() {
+        std::fs::remove_file(&temporary)?;
+    }
+    let report = match export_raw_waveform_csv(input, &temporary) {
+        Ok(rep) => rep,
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
     };
-    let report = export_raw_waveform_csv(input, destination)?;
-    if replace
-        && let Err(error) = crate::commands::run_dir::replace_file_atomically(destination, output)
-    {
-        let _ = std::fs::remove_file(destination);
+    if output.exists() {
+        validate_replaceable_file(output)?;
+    }
+    if let Err(error) = crate::commands::run_dir::replace_file_atomically(&temporary, output) {
+        let _ = std::fs::remove_file(&temporary);
         return Err(error);
     }
     ui::settings_table(

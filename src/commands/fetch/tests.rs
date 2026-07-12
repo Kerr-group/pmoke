@@ -546,3 +546,48 @@ fn unique_test_dir() -> PathBuf {
         sequence
     ))
 }
+
+#[test]
+fn test_fetch_out_denied_and_export_properties() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(dir.clone());
+    config.source_path = dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+
+    // 1. fetch --out is explicitly denied
+    let out_file = dir.join("custom_out.csv");
+    let result = fetch_with_options(&config, Some(FetchFormat::Csv), Some(&out_file));
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("--out is not supported for fetch"));
+
+    // 2. No output files are created when denied (no run.toml or custom_out.csv created)
+    assert!(!out_file.exists());
+    assert!(!dir.join("run.toml").exists());
+    assert!(!dir.join("acquisition").exists());
+
+    // 3. Export CSV --output does not change canonical acquisition
+    let acq_dir = dir.join("acquisition");
+    fs::create_dir_all(acq_dir.join("waveforms")).unwrap();
+    fs::write(acq_dir.join("manifest.toml"), b"schema_version = 1\n").unwrap();
+    fs::write(acq_dir.join("waveforms/ch1.u16le"), b"\x00\x00").unwrap();
+
+    let export_out = dir.join("exported_waveform.csv");
+    crate::commands::export::csv(&acq_dir, &export_out, false).unwrap();
+    assert!(export_out.is_file());
+
+    // Verify canonical acquisition is unchanged
+    assert!(acq_dir.join("waveforms/ch1.u16le").is_file());
+
+    // 4. Custom export failure does not leave partial files
+    let bad_input = dir.join("nonexistent_acq");
+    let bad_out = dir.join("bad_export_out.csv");
+    let export_err = crate::commands::export::csv(&bad_input, &bad_out, false);
+    assert!(export_err.is_err());
+    assert!(!bad_out.exists());
+
+    fs::remove_dir_all(dir).unwrap();
+}

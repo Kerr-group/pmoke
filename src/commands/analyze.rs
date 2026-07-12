@@ -88,7 +88,13 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
         ui::skipped("phase analysis: no channels specified");
     }
 
-    crate::lockin::provenance::write_analysis_metadata(&cfg_staging, &reference, &provenance)?;
+    crate::lockin::provenance::write_analysis_metadata(
+        &cfg_staging.paths(),
+        &cfg.resolver(),
+        &reference,
+        &provenance,
+        cfg_staging.roles.reference_ch,
+    )?;
 
     let canonical_analysis = cfg.paths().analysis_dir();
     crate::commands::run_dir::publish_staged_directory(
@@ -417,6 +423,13 @@ mod tests {
             channels: vec![sensor, reference, signal],
         };
 
+        std::fs::create_dir_all(directory.0.join("acquisition")).unwrap();
+        std::fs::write(
+            directory.0.join("acquisition/manifest.toml"),
+            b"schema_version = 1\n",
+        )
+        .unwrap();
+
         // First run succeeds
         run_analyze(&cfg, &data).unwrap();
         assert!(cfg.paths().analysis_manifest().is_file());
@@ -434,7 +447,10 @@ mod tests {
         assert!(manifest["lockin"].as_table().is_some());
         assert_eq!(manifest["reference"]["channel"].as_integer(), Some(2));
         assert!(manifest["reference"]["frequency_hz"].as_float().unwrap() > 0.0);
-        assert!(manifest.get("source_acquisition").is_none());
+        assert_eq!(
+            manifest["source_acquisition"].as_str(),
+            Some("../acquisition/manifest.toml")
+        );
         assert!(manifest.get("source_waveform").is_none());
         let artifacts = manifest["artifacts"].as_array().unwrap();
         let kerr_artifact = artifacts
@@ -477,5 +493,69 @@ mod tests {
                 .iter()
                 .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy")
         );
+    }
+
+    #[test]
+    fn test_provenance_input_resolution() {
+        let temp_dir = TemporaryDirectory::new();
+        let root = &temp_dir.0;
+
+        // 1. Canonical RAW
+        let canonical_raw_dir = root.join("acquisition");
+        std::fs::create_dir_all(&canonical_raw_dir).unwrap();
+        std::fs::write(canonical_raw_dir.join("manifest.toml"), b"schema_version = 1\n").unwrap();
+
+
+        let resolver = crate::config::ArtifactResolver::new(&root);
+        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        assert_eq!(source_acq.as_deref(), Some("../acquisition/manifest.toml"));
+        assert!(source_wf.is_none());
+
+        // 2. Canonical CSV
+        std::fs::remove_dir_all(&canonical_raw_dir).unwrap();
+        let canonical_csv_dir = root.join("acquisition/waveforms");
+        std::fs::create_dir_all(&canonical_csv_dir).unwrap();
+        std::fs::write(canonical_csv_dir.join("waveform.csv"), b"time,ch1\n").unwrap();
+
+        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        assert!(source_acq.is_none());
+        assert_eq!(source_wf.as_deref(), Some("../acquisition/waveforms/waveform.csv"));
+
+        // 3. Legacy RAW
+        std::fs::remove_dir_all(root.join("acquisition")).unwrap();
+        let legacy_raw_dir = root.join("raw_waveform");
+        std::fs::create_dir_all(&legacy_raw_dir).unwrap();
+        std::fs::write(legacy_raw_dir.join("metadata.toml"), b"version = 1\n").unwrap();
+
+        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        assert_eq!(source_acq.as_deref(), Some("../raw_waveform/metadata.toml"));
+        assert!(source_wf.is_none());
+
+        // 4. Legacy CSV
+        std::fs::remove_dir_all(&legacy_raw_dir).unwrap();
+        std::fs::write(root.join("raw.csv"), b"time,ch1\n").unwrap();
+
+        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        assert!(source_acq.is_none());
+        assert_eq!(source_wf.as_deref(), Some("../raw.csv"));
+
+        // 5. Auto resolution
+        std::fs::remove_file(root.join("raw.csv")).unwrap();
+        let acq_dir = root.join("acquisition");
+        std::fs::create_dir_all(acq_dir.join("waveforms")).unwrap();
+        std::fs::write(acq_dir.join("manifest.toml"), b"schema_version = 1\n").unwrap();
+        std::fs::write(acq_dir.join("waveforms/waveform.csv"), b"time,ch1\n").unwrap();
+
+        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        assert_eq!(source_acq.as_deref(), Some("../acquisition/manifest.toml"));
+        assert!(source_wf.is_none());
+
+        // Verification of paths
+        if let Some(path) = &source_acq {
+            assert!(!path.starts_with('/'));
+            assert!(!path.contains('\\'));
+            assert!(path.starts_with("../"));
+        }
+
     }
 }

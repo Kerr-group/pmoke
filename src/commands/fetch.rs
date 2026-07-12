@@ -164,6 +164,12 @@ pub fn fetch_with_options(
     format: Option<FetchFormat>,
     out: Option<&Path>,
 ) -> Result<()> {
+    if out.is_some() {
+        bail!(
+            "--out is not supported for fetch; \
+             canonical output is acquisition/waveforms/waveform.csv"
+        );
+    }
     crate::commands::run_dir::prepare(cfg)?;
     crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
     let result = fetch_with_options_inner(cfg, format, out);

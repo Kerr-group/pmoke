@@ -1,4 +1,4 @@
-use crate::config::{Config, LockinLpfKind};
+use crate::config::{Config, LockinLpfKind, ArtifactPaths, ArtifactResolver};
 
 use crate::lockin::lockin_core::{LockinProcessor, legacy_boxcar_enbw_hz};
 use crate::lockin::reference::ref_analysis::RefFitParams;
@@ -254,11 +254,13 @@ fn inspect_csv_shape(path: &Path) -> Result<(Vec<String>, usize)> {
 }
 
 pub fn write_analysis_metadata(
-    cfg: &Config,
+    output_paths: &ArtifactPaths,
+    source_resolver: &ArtifactResolver,
     reference: &RefFitParams,
     lockin: &LockinProvenance,
+    cfg_roles_reference_ch: u8,
 ) -> Result<()> {
-    let path = cfg.paths().analysis_manifest();
+    let path = output_paths.analysis_manifest();
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("analysis manifest has no parent directory"))?;
@@ -268,7 +270,7 @@ pub fn write_analysis_metadata(
 
     let outputs = scan_outputs(parent)?;
     let (column_sets, artifacts) = describe_analysis_artifacts(parent)?;
-    let (source_acquisition, source_waveform) = analysis_sources(cfg)?;
+    let (source_acquisition, source_waveform) = analysis_sources(&output_paths.run_dir, source_resolver)?;
 
     let metadata = AnalysisMetadata {
         schema_version: 1,
@@ -278,7 +280,7 @@ pub fn write_analysis_metadata(
         source_waveform,
         source_config: "../config.resolved.toml",
         reference: ReferenceProvenance {
-            channel: cfg.roles.reference_ch,
+            channel: cfg_roles_reference_ch,
             frequency_hz: reference.f_ref,
             amplitude: reference.a_ref,
             phase_rad: reference.omega_tref,
@@ -293,21 +295,22 @@ pub fn write_analysis_metadata(
     write_atomic(&path, encoded.as_bytes())
 }
 
-fn analysis_sources(cfg: &Config) -> Result<(Option<String>, Option<String>)> {
-    let resolver = cfg.resolver();
+pub(crate) fn analysis_sources(
+    run_dir: &Path,
+    resolver: &ArtifactResolver,
+) -> Result<(Option<String>, Option<String>)> {
     let manifest = resolver.acquisition_manifest();
     if manifest.is_file() {
-        return Ok((Some(relative_analysis_source(cfg, &manifest)?), None));
+        return Ok((Some(relative_analysis_source(run_dir, &manifest)?), None));
     }
     let waveform = resolver.waveform_csv();
     if waveform.is_file() {
-        return Ok((None, Some(relative_analysis_source(cfg, &waveform)?)));
+        return Ok((None, Some(relative_analysis_source(run_dir, &waveform)?)));
     }
     Ok((None, None))
 }
 
-fn relative_analysis_source(cfg: &Config, source: &Path) -> Result<String> {
-    let run_dir = &cfg.paths().run_dir;
+fn relative_analysis_source(run_dir: &Path, source: &Path) -> Result<String> {
     let relative = source.strip_prefix(run_dir).unwrap_or(source);
     let mut parts = Vec::new();
     for component in relative.components() {
@@ -465,7 +468,7 @@ mod tests {
         let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
         cfg.set_artifact_root(directory.clone());
 
-        let sources = analysis_sources(&cfg).unwrap();
+        let sources = analysis_sources(&cfg.paths().run_dir, &cfg.resolver()).unwrap();
         assert_eq!(
             sources,
             (Some("../raw_waveform/metadata.toml".to_string()), None)
@@ -473,7 +476,7 @@ mod tests {
 
         fs::remove_dir_all(directory.join("raw_waveform")).unwrap();
         fs::write(directory.join("raw.csv"), b"ch1,ch2\n").unwrap();
-        let sources = analysis_sources(&cfg).unwrap();
+        let sources = analysis_sources(&cfg.paths().run_dir, &cfg.resolver()).unwrap();
         assert_eq!(sources, (None, Some("../raw.csv".to_string())));
 
         fs::create_dir_all(directory.join("acquisition")).unwrap();
@@ -482,7 +485,7 @@ mod tests {
             b"schema_version = 1\n",
         )
         .unwrap();
-        let sources = analysis_sources(&cfg).unwrap();
+        let sources = analysis_sources(&cfg.paths().run_dir, &cfg.resolver()).unwrap();
         assert_eq!(
             sources,
             (Some("../acquisition/manifest.toml".to_string()), None)
