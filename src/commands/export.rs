@@ -361,9 +361,12 @@ mod tests {
         // Target path is alias_b/waveform.csv which points to shot B's canonical path
         let output = alias_b.join("waveform.csv");
 
-        let error = csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        let error =
+            csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
         assert!(
-            error.to_string().contains("output resolves to another run's canonical waveform"),
+            error
+                .to_string()
+                .contains("output resolves to another run's canonical waveform"),
             "Expected 'output resolves to another run's canonical waveform', got: {}",
             error
         );
