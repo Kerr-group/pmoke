@@ -21,3 +21,4 @@
 ### Fixes
 
 - PowerShell completion is loaded from a standalone script so its required `using namespace` statements no longer invalidate an existing profile.
+- The TUI calls the cross-stage `process` and `auto` workflow group `END-TO-END`; acquisition-only `automeasure` remains under `ACQUISITION`.
