@@ -1,4 +1,4 @@
-use crate::config::{Config, Plot, PlotDecimation};
+use crate::config::{Plot, PlotDecimation};
 use crate::ui;
 use anyhow::{Context, Result, bail};
 use std::fs;
@@ -7,27 +7,6 @@ use std::path::Path;
 
 pub type DecimatedSeries2d = (Vec<f64>, Vec<Vec<f64>>);
 pub type DecimatedSeries3d = (Vec<f64>, Vec<Vec<Vec<f64>>>);
-
-pub fn warn_canonical_plot_layout(cfg: &Config) {
-    if !cfg.plot.enabled {
-        return;
-    }
-    let canonical = cfg.paths().plot_dir();
-    if cfg.version < 4 && Path::new(&cfg.plot.output_dir) != canonical {
-        ui::warn(format!(
-            "plot.output_dir is ignored for canonical run artifacts; plots are written under {}",
-            canonical.display()
-        ));
-    }
-    let legacy = cfg.paths().run_dir.join("plots");
-    if legacy.exists() && legacy != canonical {
-        ui::warn(format!(
-            "legacy plot directory exists at {}; new plots are written under {}",
-            legacy.display(),
-            canonical.display()
-        ));
-    }
-}
 
 pub fn prepare_plot_output<'a>(plot: &Plot, output_path: &'a Path) -> Result<Option<&'a Path>> {
     if !(plot.enabled && plot.save) {

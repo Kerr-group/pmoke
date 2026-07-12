@@ -294,9 +294,15 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
 
 fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
     let legacy_timebase = raw.timebase.into();
+    let deprecated_plot_output_dir = raw.plot.output_dir != Plot::default().output_dir;
     let mut warnings = vec![ConfigWarning::new(
         "legacy config v2: [timebase] is deprecated and is used only when raw.csv has no time column; raw metadata and newer CSV files use their recorded time axis",
     )];
+    if deprecated_plot_output_dir {
+        warnings.push(ConfigWarning::new(
+            "plot.output_dir is deprecated and ignored; canonical plots are written under analysis/plots",
+        ));
+    }
     let mut cfg = Config {
         version: 3,
         instruments: raw.instruments.map(Into::into),
@@ -362,6 +368,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
 }
 
 fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
+    let deprecated_plot_output_dir = raw.plot.output_dir != Plot::default().output_dir;
     let mut cfg = Config {
         version: raw.version,
         instruments: raw.instruments.map(Into::into),
@@ -406,7 +413,12 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
         kerr: raw.kerr.into(),
     };
 
-    let validation = validate_common(&mut cfg);
+    let mut validation = validate_common(&mut cfg);
+    if deprecated_plot_output_dir {
+        validation.warnings.push(ConfigWarning::new(
+            "plot.output_dir is deprecated and ignored; canonical plots are written under analysis/plots",
+        ));
+    }
     if validation.errors.is_empty() {
         ConfigLoad::Ready {
             config: cfg,

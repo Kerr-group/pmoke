@@ -253,6 +253,11 @@ pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Re
         let _ = std::fs::remove_file(&temporary);
         return Err(error);
     }
+    if let Some(warning) = report.config_snapshot_warning.as_deref() {
+        ui::warn(format!(
+            "RAW provenance snapshot could not be verified: {warning}; waveform sizes and channel checksums were verified independently"
+        ));
+    }
     ui::settings_table(
         "CSV export",
         vec![
@@ -260,6 +265,17 @@ pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Re
             ("output".to_string(), output.display().to_string()),
             ("channels".to_string(), report.channel_count.to_string()),
             ("samples".to_string(), report.sample_count.to_string()),
+            (
+                "config snapshots".to_string(),
+                if report.config_snapshot_verified {
+                    "verified"
+                } else if report.config_snapshot_warning.is_some() {
+                    "unverified"
+                } else {
+                    "unavailable (legacy metadata)"
+                }
+                .to_string(),
+            ),
         ],
     );
     ui::success("RAW waveform CSV export completed");

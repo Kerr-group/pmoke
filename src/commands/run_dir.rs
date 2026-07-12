@@ -17,6 +17,7 @@ pub(crate) enum AnalysisStage {
     ExportNpy,
 }
 
+#[allow(dead_code)]
 pub fn prepare(cfg: &Config) -> Result<()> {
     let paths = cfg.paths();
     let root = &paths.run_dir;
@@ -32,6 +33,262 @@ pub fn prepare(cfg: &Config) -> Result<()> {
         write_run_state(cfg, "initializing", "initializing", None)?;
     }
     sync_directory(root)
+}
+
+pub fn prepare_analysis_run(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
+    ensure_run_directory(&paths.run_dir)?;
+    if !paths.run_manifest().exists() {
+        write_run_state(cfg, "initializing", "initializing", None)?;
+    }
+    sync_directory(&paths.run_dir)
+}
+
+pub(crate) fn write_analysis_config_snapshots(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
+    let analysis = paths.analysis_dir();
+    fs::create_dir_all(&analysis)
+        .with_context(|| format!("failed to create analysis staging: {}", analysis.display()))?;
+    let source = cfg
+        .source_text
+        .as_deref()
+        .context("source config text is unavailable")?;
+    write_atomic_file(&paths.analysis_source_config(), source.as_bytes())
+        .context("failed to write analysis source config snapshot")?;
+    let resolved = render_normalized_config(cfg).context("failed to render analysis config")?;
+    write_atomic_file(&paths.analysis_resolved_config(), resolved.as_bytes())
+        .context("failed to write analysis resolved config snapshot")?;
+    Ok(())
+}
+
+pub(crate) fn ensure_analysis_config_snapshots(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
+    let source_exists = paths.analysis_source_config().is_file();
+    let resolved_exists = paths.analysis_resolved_config().is_file();
+    match (source_exists, resolved_exists) {
+        (true, true) => verify_analysis_config_snapshots(cfg),
+        (false, false) => {
+            if analysis_contains_published_artifacts(&paths.analysis_dir())? {
+                bail!(
+                    "existing analysis results have no config snapshots under {}; rerun pmoke analyze or pmoke li instead of attributing legacy results to the current config",
+                    paths.analysis_dir().display()
+                );
+            }
+            write_analysis_config_snapshots(cfg)
+        }
+        _ => bail!(
+            "analysis config snapshots are incomplete under {}; rerun pmoke analyze or pmoke li",
+            paths.analysis_dir().display()
+        ),
+    }
+}
+
+pub(crate) fn verify_analysis_config_snapshots(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
+    let manifest = match fs::read_to_string(paths.analysis_manifest()) {
+        Ok(contents) => toml::from_str::<toml::Value>(&contents)
+            .context("failed to parse analysis manifest while verifying config snapshots")?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("failed to read analysis manifest"),
+    };
+    let schema_version = analysis_manifest_schema_version(&manifest)?;
+    let strict =
+        schema_version >= i64::from(crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION);
+    verify_recorded_checksum(
+        &manifest,
+        "config_source_sha256",
+        &paths.analysis_source_config(),
+        strict,
+    )?;
+    let resolved_key = if strict || manifest.get("config_resolved_sha256").is_some() {
+        "config_resolved_sha256"
+    } else {
+        "config_sha256"
+    };
+    verify_recorded_checksum(
+        &manifest,
+        resolved_key,
+        &paths.analysis_resolved_config(),
+        strict,
+    )
+}
+
+fn analysis_manifest_schema_version(manifest: &toml::Value) -> Result<i64> {
+    let current = i64::from(crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION);
+    let version = match manifest.get("schema_version") {
+        Some(value) => value.as_integer().ok_or_else(|| {
+            anyhow::anyhow!("analysis manifest schema_version must be an integer")
+        })?,
+        None if [
+            "generation",
+            "published_through",
+            "config_source",
+            "config_resolved",
+            "config_sha256",
+            "config_source_sha256",
+            "config_resolved_sha256",
+            "diagnostics",
+        ]
+        .iter()
+        .any(|key| manifest.get(key).is_some()) =>
+        {
+            bail!("analysis manifest uses versioned fields but has no schema_version")
+        }
+        None => 1,
+    };
+    if !(1..=current).contains(&version) {
+        bail!("unsupported analysis manifest schema_version: {version}");
+    }
+    Ok(version)
+}
+
+fn verify_recorded_checksum(
+    manifest: &toml::Value,
+    key: &str,
+    path: &Path,
+    required: bool,
+) -> Result<()> {
+    let expected = match manifest.get(key) {
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("analysis manifest {key} must be a string"))?,
+        None if required => bail!(
+            "analysis manifest schema v{} requires {key}",
+            crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION
+        ),
+        None => return Ok(()),
+    };
+    validate_sha256(expected, key)?;
+    let actual = crate::utils::checksum::file_sha256(path)
+        .with_context(|| format!("failed to checksum analysis config: {}", path.display()))?;
+    if actual != expected {
+        bail!(
+            "analysis config snapshot checksum mismatch for {}: expected {expected}, got {actual}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_sha256(value: &str, label: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("{label} must be a 64-character SHA-256 hexadecimal digest");
+    }
+    Ok(())
+}
+
+fn analysis_contains_published_artifacts(directory: &Path) -> Result<bool> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).context("failed to inspect existing analysis results"),
+    };
+    for entry in entries {
+        let entry = entry.context("failed to inspect existing analysis result")?;
+        let name = entry.file_name();
+        if name != "config.source.toml" && name != "config.resolved.toml" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn verify_analysis_diagnostic_snapshots(
+    cfg: &Config,
+    replacing_stage: Option<&str>,
+) -> Result<()> {
+    let manifest_path = cfg.paths().analysis_manifest();
+    let contents = match fs::read_to_string(&manifest_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("failed to read analysis manifest"),
+    };
+    let manifest: toml::Value = toml::from_str(&contents)
+        .context("failed to parse analysis manifest while verifying diagnostics")?;
+    let Some(diagnostics) = manifest.get("diagnostics") else {
+        return Ok(());
+    };
+    let diagnostics = diagnostics
+        .as_table()
+        .ok_or_else(|| anyhow::anyhow!("diagnostics in analysis manifest must be a table"))?;
+    for (stage, value) in diagnostics {
+        if replacing_stage == Some(stage.as_str()) {
+            continue;
+        }
+        if !matches!(stage.as_str(), "reference" | "sensor") {
+            bail!("unknown diagnostic stage in analysis manifest: {stage}");
+        }
+        let table = value
+            .as_table()
+            .ok_or_else(|| anyhow::anyhow!("diagnostic {stage} provenance must be a table"))?;
+        let expected_source = format!("diagnostics/{stage}/config.source.toml");
+        let expected_resolved = format!("diagnostics/{stage}/config.resolved.toml");
+        for (path_key, checksum_key, expected_path, actual_path) in [
+            (
+                "config_source",
+                "config_source_sha256",
+                expected_source.as_str(),
+                cfg.paths().diagnostic_source_config(stage),
+            ),
+            (
+                "config_resolved",
+                "config_resolved_sha256",
+                expected_resolved.as_str(),
+                cfg.paths().diagnostic_resolved_config(stage),
+            ),
+        ] {
+            let recorded_path = table
+                .get(path_key)
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("diagnostic {stage} requires {path_key}"))?;
+            if recorded_path != expected_path {
+                bail!("diagnostic {stage} {path_key} must be {expected_path}");
+            }
+            let expected_checksum = table
+                .get(checksum_key)
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("diagnostic {stage} requires {checksum_key}"))?;
+            validate_sha256(expected_checksum, checksum_key)?;
+            let actual_checksum =
+                crate::utils::checksum::file_sha256(&actual_path).with_context(|| {
+                    format!(
+                        "failed to verify diagnostic config: {}",
+                        actual_path.display()
+                    )
+                })?;
+            if actual_checksum != expected_checksum {
+                bail!(
+                    "diagnostic config checksum mismatch for {}: expected {expected_checksum}, got {actual_checksum}",
+                    actual_path.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn write_diagnostic_config_snapshots(cfg: &Config, stage: &str) -> Result<()> {
+    if !matches!(stage, "reference" | "sensor") {
+        bail!("unknown diagnostic config stage: {stage}");
+    }
+    let paths = cfg.paths();
+    let directory = paths.diagnostic_config_dir(stage);
+    fs::create_dir_all(&directory).with_context(|| {
+        format!(
+            "failed to create diagnostic config directory: {}",
+            directory.display()
+        )
+    })?;
+    let source = cfg
+        .source_text
+        .as_deref()
+        .context("source config text is unavailable")?;
+    write_atomic_file(&paths.diagnostic_source_config(stage), source.as_bytes())?;
+    let resolved = render_normalized_config(cfg).context("failed to render diagnostic config")?;
+    write_atomic_file(
+        &paths.diagnostic_resolved_config(stage),
+        resolved.as_bytes(),
+    )
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,14 +309,39 @@ struct RunState {
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<String>,
-    config_source: String,
-    config_resolved: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_resolved: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     acquisition_manifest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     analysis_manifest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failed_stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    analysis: Option<RunAnalysisState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RunAnalysisState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_through: Option<String>,
+    last_attempt: AnalysisAttempt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AnalysisAttempt {
+    generation: u64,
+    command: String,
+    status: String,
+    started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_summary: Option<String>,
 }
@@ -81,14 +363,15 @@ pub fn write_run_state(
         Err(error) => return Err(error).context("failed to read existing run manifest"),
     };
     let now = jiff::Timestamp::now().to_string();
-    let (ex_started, ex_acquired, ex_anal_started, ex_analyzed) = match &existing {
+    let (ex_started, ex_acquired, ex_anal_started, ex_analyzed, ex_completed) = match &existing {
         Some(state) => (
             Some(state.started_at.clone()),
             state.acquired_at.clone(),
             state.analysis_started_at.clone(),
             state.analyzed_at.clone(),
+            state.completed_at.clone(),
         ),
-        None => (None, None, None, None),
+        None => (None, None, None, None, None),
     };
 
     let started_at = ex_started.unwrap_or_else(|| now.clone());
@@ -104,17 +387,53 @@ pub fn write_run_state(
     };
     let analyzed_at = if status == "complete" {
         Some(now.clone())
-    } else if status == "analyzing" {
-        None
     } else {
         ex_analyzed
     };
-    let completed_at = (status == "complete").then(|| now.clone());
+    let completed_at = if status == "complete" {
+        Some(now.clone())
+    } else {
+        ex_completed
+    };
 
+    let analysis = analysis_run_state(
+        cfg,
+        existing.as_ref().and_then(|state| state.analysis.clone()),
+        status,
+        stage,
+        error,
+        &now,
+    )?;
+    let preserve_summary = status == "published";
+    let preserved_summary = existing.as_ref().map(|state| {
+        match analysis
+            .as_ref()
+            .and_then(|analysis| analysis.published_through.as_deref())
+        {
+            Some("kerr") => ("complete".to_string(), "analysis".to_string()),
+            Some(stage @ ("li" | "phase")) => {
+                ("analyzing".to_string(), format!("{stage}_complete"))
+            }
+            _ if state.status != "failed" => (state.status.clone(), state.stage.clone()),
+            _ => ("initializing".to_string(), "initializing".to_string()),
+        }
+    });
     let state = RunState {
-        schema_version: 1,
-        status: status.to_string(),
-        stage: stage.to_string(),
+        schema_version: 2,
+        status: if preserve_summary {
+            preserved_summary
+                .as_ref()
+                .map_or_else(|| "initializing".to_string(), |summary| summary.0.clone())
+        } else {
+            status.to_string()
+        },
+        stage: if preserve_summary {
+            preserved_summary
+                .as_ref()
+                .map_or_else(|| "initializing".to_string(), |summary| summary.1.clone())
+        } else {
+            stage.to_string()
+        },
         pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
         git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
         started_at,
@@ -123,8 +442,14 @@ pub fn write_run_state(
         analyzed_at,
         updated_at: now,
         completed_at,
-        config_source: "config.source.toml".to_string(),
-        config_resolved: "config.resolved.toml".to_string(),
+        config_source: paths
+            .source_config()
+            .is_file()
+            .then(|| "config.source.toml".to_string()),
+        config_resolved: paths
+            .resolved_config()
+            .is_file()
+            .then(|| "config.resolved.toml".to_string()),
         acquisition_manifest: paths
             .acquisition_manifest()
             .exists()
@@ -135,9 +460,98 @@ pub fn write_run_state(
             .then(|| "analysis/manifest.toml".to_string()),
         failed_stage: error.map(|_| stage.to_string()),
         error_summary: error.map(|error| error.to_string()),
+        analysis,
     };
     let encoded = toml::to_string_pretty(&state).context("failed to encode run manifest")?;
     write_atomic_file(&paths.run_manifest(), encoded.as_bytes())
+}
+
+fn analysis_run_state(
+    cfg: &Config,
+    existing: Option<RunAnalysisState>,
+    status: &str,
+    stage: &str,
+    error: Option<&anyhow::Error>,
+    now: &str,
+) -> Result<Option<RunAnalysisState>> {
+    let command = stage.strip_suffix("_complete").unwrap_or(stage);
+    if !matches!(
+        command,
+        "analysis" | "li" | "phase" | "kerr" | "reference" | "sensor" | "export_npy"
+    ) {
+        return Ok(existing);
+    }
+
+    let published = read_published_analysis(cfg)?;
+    let (published_generation, published_through) = published.unwrap_or_else(|| {
+        existing
+            .as_ref()
+            .map(|state| (state.published_generation, state.published_through.clone()))
+            .unwrap_or((None, None))
+    });
+    let completed = status == "complete" || stage.ends_with("_complete");
+    let failed = error.is_some() || status == "failed";
+    let generation = if completed {
+        published_generation.unwrap_or(1)
+    } else if failed {
+        existing
+            .as_ref()
+            .filter(|state| state.last_attempt.status == "running")
+            .map(|state| state.last_attempt.generation)
+            .unwrap_or_else(|| published_generation.unwrap_or(0).saturating_add(1))
+    } else {
+        published_generation.unwrap_or(0).saturating_add(1)
+    };
+    let started_at = if completed || failed {
+        existing
+            .as_ref()
+            .filter(|state| state.last_attempt.generation == generation)
+            .map(|state| state.last_attempt.started_at.clone())
+            .unwrap_or_else(|| now.to_string())
+    } else {
+        now.to_string()
+    };
+    let attempt_status = if failed {
+        "failed"
+    } else if completed {
+        "complete"
+    } else {
+        "running"
+    };
+    Ok(Some(RunAnalysisState {
+        published_generation,
+        published_through,
+        last_attempt: AnalysisAttempt {
+            generation,
+            command: command.to_string(),
+            status: attempt_status.to_string(),
+            started_at,
+            completed_at: (completed || failed).then(|| now.to_string()),
+            error_summary: error.map(ToString::to_string),
+        },
+    }))
+}
+
+fn read_published_analysis(cfg: &Config) -> Result<Option<(Option<u64>, Option<String>)>> {
+    let path = cfg.paths().analysis_manifest();
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to read published analysis manifest"),
+    };
+    let manifest: toml::Value =
+        toml::from_str(&contents).context("failed to parse published analysis manifest")?;
+    let generation = manifest
+        .get("generation")
+        .and_then(toml::Value::as_integer)
+        .map(u64::try_from)
+        .transpose()
+        .context("analysis generation must not be negative")?;
+    let through = manifest
+        .get("published_through")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
+    Ok(Some((generation, through)))
 }
 
 fn write_atomic_file(path: &Path, contents: &[u8]) -> Result<()> {
@@ -338,6 +752,7 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
         copy_optional_tree(&canonical.phase_plot_dir(), &staging.phase_plot_dir())?;
     }
     copy_optional_tree(&canonical.debug_dir(), &staging.debug_dir())?;
+    copy_optional_tree(&canonical.diagnostics_dir(), &staging.diagnostics_dir())?;
 
     let manifest = resolver.analysis_manifest();
     copy_required_file(
@@ -529,6 +944,7 @@ pub(crate) fn ensure_run_directory(root: &Path) -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 fn write_once_or_verify(path: &Path, contents: &[u8]) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -666,6 +1082,23 @@ mod tests {
     }
 
     #[test]
+    fn analysis_prepare_does_not_fabricate_acquisition_config_snapshots() {
+        let directory = temporary_directory();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+
+        prepare_analysis_run(&cfg).unwrap();
+
+        assert!(!cfg.paths().source_config().exists());
+        assert!(!cfg.paths().resolved_config().exists());
+        let run: toml::Value =
+            toml::from_str(&fs::read_to_string(cfg.paths().run_manifest()).unwrap()).unwrap();
+        assert!(run.get("config_source").is_none());
+        assert!(run.get("config_resolved").is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn force_publish_replaces_complete_directory_without_deleting_it_first() {
         let directory = temporary_directory();
         fs::create_dir(&directory).unwrap();
@@ -706,6 +1139,45 @@ mod tests {
             Some("acquisition/manifest.toml")
         );
         assert_eq!(run["error_summary"].as_str(), Some("network disconnected"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn failed_analysis_attempt_preserves_the_published_generation() {
+        let directory = temporary_directory();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        prepare(&cfg).unwrap();
+        fs::create_dir_all(cfg.paths().analysis_dir()).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            "schema_version = 2\ngeneration = 4\npublished_through = \"kerr\"\n",
+        )
+        .unwrap();
+
+        write_run_state(&cfg, "analyzing", "phase", None).unwrap();
+        let error = anyhow::anyhow!("phase plot failed");
+        write_run_state(&cfg, "failed", "phase", Some(&error)).unwrap();
+
+        let run: toml::Value =
+            toml::from_str(&fs::read_to_string(cfg.paths().run_manifest()).unwrap()).unwrap();
+        assert_eq!(
+            run["analysis"]["published_generation"].as_integer(),
+            Some(4)
+        );
+        assert_eq!(run["analysis"]["published_through"].as_str(), Some("kerr"));
+        assert_eq!(
+            run["analysis"]["last_attempt"]["generation"].as_integer(),
+            Some(5)
+        );
+        assert_eq!(
+            run["analysis"]["last_attempt"]["status"].as_str(),
+            Some("failed")
+        );
+        assert_eq!(
+            run["analysis"]["last_attempt"]["error_summary"].as_str(),
+            Some("phase plot failed")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -934,6 +1406,8 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
                 model: "dummy".to_string(),
             },
         });
+        write_analysis_config_snapshots(&cfg).unwrap();
+        write_run_state(&cfg, "complete", "analysis", None).unwrap();
 
         // Save reference plot hash before sensor execution
         let ref_plot_hash_before = crate::utils::checksum::file_sha256(&ref_plot_file).unwrap();
@@ -954,6 +1428,8 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
         // B. Verify manifest state after sensor execution
         let manifest_content = fs::read_to_string(&manifest_path).unwrap();
         let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
+        let analysis_source_before_reference =
+            fs::read(cfg.paths().analysis_source_config()).unwrap();
 
         assert_eq!(
             manifest.get("analyzed_at").unwrap().as_str().unwrap(),
@@ -968,13 +1444,9 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
         assert!(stages.contains_key("li"));
         assert!(stages.contains_key("phase"));
         assert!(stages.contains_key("kerr"));
-        assert!(stages.contains_key("sensor"));
-        // stages.sensor should be updated (not 2026-07-13T00:03:00Z anymore)
-        let sensor_stage = stages.get("sensor").unwrap().as_table().unwrap();
-        assert_ne!(
-            sensor_stage.get("completed_at").unwrap().as_str().unwrap(),
-            "2026-07-13T00:03:00Z"
-        );
+        assert!(!stages.contains_key("sensor"));
+        let diagnostics = manifest.get("diagnostics").unwrap().as_table().unwrap();
+        assert!(diagnostics.contains_key("sensor"));
 
         // C. Run standalone reference
         // First recreate sensor plot in analysis/ to verify reference doesn't touch it
@@ -983,6 +1455,7 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
         let sensor_plot_hash_before_ref =
             crate::utils::checksum::file_sha256(&sensor_plot_file).unwrap();
 
+        cfg.source_text = Some("version = 3\n# reference diagnostic\n".to_string());
         crate::commands::reference::reference(&cfg).unwrap();
 
         // D. Verify reference command did NOT overwrite/delete/modify sensor plot
@@ -1009,9 +1482,126 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
         assert!(stages_2.contains_key("li"));
         assert!(stages_2.contains_key("phase"));
         assert!(stages_2.contains_key("kerr"));
-        assert!(stages_2.contains_key("reference"));
-        assert!(stages_2.contains_key("sensor"));
+        assert!(!stages_2.contains_key("reference"));
+        assert!(!stages_2.contains_key("sensor"));
+        let diagnostics_2 = manifest_2.get("diagnostics").unwrap().as_table().unwrap();
+        assert!(diagnostics_2.contains_key("reference"));
+        assert!(diagnostics_2.contains_key("sensor"));
+        assert_eq!(
+            fs::read(cfg.paths().analysis_source_config()).unwrap(),
+            analysis_source_before_reference
+        );
+        assert_eq!(
+            fs::read_to_string(cfg.paths().diagnostic_source_config("reference")).unwrap(),
+            "version = 3\n# reference diagnostic\n"
+        );
+        let run: toml::Value =
+            toml::from_str(&fs::read_to_string(cfg.paths().run_manifest()).unwrap()).unwrap();
+        assert_eq!(
+            run["analysis"]["published_generation"].as_integer(),
+            manifest_2["generation"].as_integer()
+        );
+        assert_eq!(
+            run["analysis"]["last_attempt"]["command"].as_str(),
+            Some("reference")
+        );
+        assert_eq!(run["status"].as_str(), Some("complete"));
+        assert_eq!(run["stage"].as_str(), Some("analysis"));
 
         fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_results_without_config_snapshots_are_not_attributed_to_current_config() {
+        let directory = temporary_directory();
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        fs::write(
+            directory.join("analysis/manifest.toml"),
+            "schema_version = 1\n",
+        )
+        .unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+
+        let error = ensure_analysis_config_snapshots(&cfg).unwrap_err();
+
+        assert!(error.to_string().contains("no config snapshots"));
+        assert!(!cfg.paths().analysis_source_config().exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn current_schema_requires_well_formed_config_checksums() {
+        let directory = temporary_directory();
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        write_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                "schema_version = {}\nconfig_source_sha256 = 123\n",
+                crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION
+            ),
+        )
+        .unwrap();
+
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+
+        assert!(error.to_string().contains("must be a string"));
+        fs::write(cfg.paths().analysis_manifest(), "schema_version = 2\n").unwrap();
+        verify_analysis_config_snapshots(&cfg).unwrap();
+
+        fs::write(cfg.paths().analysis_manifest(), "schema_version = \"3\"\n").unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(error.to_string().contains("must be an integer"));
+
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            "config_source_sha256 = \"0000000000000000000000000000000000000000000000000000000000000000\"\n",
+        )
+        .unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(error.to_string().contains("has no schema_version"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn carried_diagnostic_config_checksum_is_verified() {
+        let directory = temporary_directory();
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        write_diagnostic_config_snapshots(&cfg, "sensor").unwrap();
+        let source_hash =
+            crate::utils::checksum::file_sha256(&cfg.paths().diagnostic_source_config("sensor"))
+                .unwrap();
+        let resolved_hash =
+            crate::utils::checksum::file_sha256(&cfg.paths().diagnostic_resolved_config("sensor"))
+                .unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                r#"schema_version = 2
+
+[diagnostics.sensor]
+config_source = "diagnostics/sensor/config.source.toml"
+config_resolved = "diagnostics/sensor/config.resolved.toml"
+config_source_sha256 = "{source_hash}"
+config_resolved_sha256 = "{resolved_hash}"
+"#
+            ),
+        )
+        .unwrap();
+        fs::write(
+            cfg.paths().diagnostic_source_config("sensor"),
+            b"tampered\n",
+        )
+        .unwrap();
+
+        let error = verify_analysis_diagnostic_snapshots(&cfg, None).unwrap_err();
+        assert!(error.to_string().contains("checksum mismatch"));
+        verify_analysis_diagnostic_snapshots(&cfg, Some("sensor")).unwrap();
+        fs::remove_dir_all(directory).unwrap();
     }
 }

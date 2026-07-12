@@ -3,6 +3,7 @@ use crate::constants::{KERR_NAME, LI_RESULTS_NAME, LI_ROTATED_NAME};
 use crate::ui;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -77,12 +78,31 @@ pub fn export(cfg: &Config, output: &Path) -> Result<()> {
 }
 
 pub fn export_canonical(cfg: &Config) -> Result<()> {
+    crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
     let _lock =
         crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "export_npy")?;
+    crate::commands::run_dir::prepare_analysis_run(cfg)?;
+    let result = export_canonical_locked(cfg);
+    match &result {
+        Ok(()) => crate::commands::run_dir::write_run_state(
+            cfg,
+            "published",
+            "export_npy_complete",
+            None,
+        )?,
+        Err(error) => {
+            crate::commands::run_dir::write_run_state(cfg, "failed", "export_npy", Some(error))?
+        }
+    }
+    result
+}
+
+fn export_canonical_locked(cfg: &Config) -> Result<()> {
     let staging_cfg = crate::commands::run_dir::prepare_analysis_staging(
         cfg,
         crate::commands::run_dir::AnalysisStage::ExportNpy,
     )?;
+    crate::commands::run_dir::ensure_analysis_config_snapshots(&staging_cfg)?;
     export_canonical_inner(&staging_cfg)?;
     crate::commands::run_dir::publish_analysis_staging(cfg, &staging_cfg)?;
     ui::success("analysis NumPy export completed");
@@ -91,24 +111,24 @@ pub fn export_canonical(cfg: &Config) -> Result<()> {
 
 fn export_canonical_inner(cfg: &Config) -> Result<()> {
     let paths = cfg.paths();
-    let resolver = cfg.resolver();
-    let mut pairs = Vec::new();
-    for &channel in cfg.phase_signal_ch() {
-        pairs.push((
-            resolver.lockin_xy_csv(channel),
-            paths.lockin_xy_npy(channel),
-        ));
-        pairs.push((
-            resolver.lockin_rotated_csv(channel),
-            paths.lockin_rotated_npy(channel),
-        ));
-    }
-    pairs.push((resolver.kerr_csv(), paths.kerr_npy()));
+    crate::commands::run_dir::verify_analysis_diagnostic_snapshots(cfg, None)?;
+    let manifest_path = paths.analysis_manifest();
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(&manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    let output_checksums = manifest_output_checksums(&manifest)?;
+    let checksums = manifest_csv_checksums(&manifest, &output_checksums)?;
+    let pairs = canonical_csv_npy_pairs(&paths.analysis_dir(), &checksums)?;
+    let mutable_npys = pairs
+        .iter()
+        .map(|(_, destination)| relative_output_path(&paths.analysis_dir(), destination))
+        .collect::<Result<BTreeSet<_>>>()?;
+    verify_immutable_analysis_outputs(&paths.analysis_dir(), &output_checksums, &mutable_npys)?;
 
     for (_, destination) in &pairs {
-        if !cfg.force {
-            ensure_missing(destination, "NPY output")?;
-        } else if destination.exists() {
+        if destination.exists() {
             ensure_regular_file(destination, "NPY output")?;
         }
     }
@@ -117,10 +137,304 @@ fn export_canonical_inner(cfg: &Config) -> Result<()> {
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        write_npy_table_replacing(destination, &table.columns, table.rows, cfg.force)?;
+        write_npy_table_replacing(destination, &table.columns, table.rows, true)?;
     }
     crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg, "export_npy")?;
     Ok(())
+}
+
+fn manifest_output_checksums(manifest: &toml::Value) -> Result<BTreeMap<String, String>> {
+    let outputs = manifest
+        .get("outputs")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| {
+            anyhow!(
+                "analysis manifest has no output checksums; rerun pmoke analyze or pmoke li before exporting NPY"
+            )
+        })?;
+    let mut checksums = BTreeMap::new();
+    for output in outputs {
+        let file = output
+            .get("file")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| anyhow!("analysis output file must be a string"))?;
+        validate_manifest_output_path(file)?;
+        let checksum = output
+            .get("sha256")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| anyhow!("analysis output checksum is missing for {file}"))?;
+        if checksum.len() != 64 || !checksum.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("analysis output checksum is malformed for {file}");
+        }
+        if checksums
+            .insert(file.to_string(), checksum.to_string())
+            .is_some()
+        {
+            bail!("analysis manifest contains duplicate output entries for {file}");
+        }
+    }
+    Ok(checksums)
+}
+
+fn manifest_csv_checksums(
+    manifest: &toml::Value,
+    output_checksums: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>> {
+    let checksums = output_checksums
+        .iter()
+        .filter(|(file, _)| looks_like_canonical_analysis_csv(file))
+        .map(|(file, checksum)| (file.clone(), checksum.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    if let Some(artifacts) = manifest.get("artifacts") {
+        let artifacts = artifacts
+            .as_array()
+            .ok_or_else(|| anyhow!("analysis manifest artifacts must be an array"))?;
+        let mut artifact_csvs = BTreeSet::new();
+        for artifact in artifacts {
+            let Some(csv) = artifact.get("csv") else {
+                continue;
+            };
+            let csv = csv
+                .as_str()
+                .ok_or_else(|| anyhow!("analysis artifact csv must be a string"))?;
+            validate_canonical_analysis_csv_path(csv)?;
+            if !artifact_csvs.insert(csv.to_string()) {
+                bail!("analysis manifest contains duplicate CSV artifacts for {csv}");
+            }
+        }
+        let output_csvs = checksums.keys().cloned().collect::<BTreeSet<_>>();
+        if artifact_csvs != output_csvs {
+            bail!("analysis manifest CSV artifacts and output checksums do not match");
+        }
+    }
+    if checksums.is_empty() {
+        bail!(
+            "analysis manifest contains no canonical CSV artifacts; run pmoke analyze or pmoke li first"
+        );
+    }
+    Ok(checksums)
+}
+
+fn validate_manifest_output_path(file: &str) -> Result<()> {
+    if file.contains('\\') {
+        bail!("analysis manifest paths must use forward slashes: {file}");
+    }
+    let path = Path::new(file);
+    if path.is_absolute()
+        || path.components().next().is_none()
+        || !path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        bail!("invalid analysis output path in manifest: {file}");
+    }
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    if filename.is_empty()
+        || filename.starts_with('.')
+        || matches!(
+            filename,
+            "manifest.toml" | "config.source.toml" | "config.resolved.toml"
+        )
+    {
+        bail!("analysis manifest records a reserved output path: {file}");
+    }
+    Ok(())
+}
+
+fn relative_output_path(analysis_dir: &Path, path: &Path) -> Result<String> {
+    path.strip_prefix(analysis_dir)
+        .context("analysis output is outside the analysis directory")?
+        .to_str()
+        .ok_or_else(|| anyhow!("analysis output path is not UTF-8"))
+        .map(|value| value.replace('\\', "/"))
+}
+
+fn verify_immutable_analysis_outputs(
+    analysis_dir: &Path,
+    expected: &BTreeMap<String, String>,
+    mutable_npys: &BTreeSet<String>,
+) -> Result<()> {
+    let mut actual = BTreeMap::new();
+    collect_analysis_outputs(analysis_dir, analysis_dir, &mut actual)?;
+    let expected_immutable = expected
+        .keys()
+        .filter(|file| !mutable_npys.contains(*file))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let actual_immutable = actual
+        .keys()
+        .filter(|file| !mutable_npys.contains(*file))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if let Some(missing) = expected_immutable.difference(&actual_immutable).next() {
+        bail!("analysis output recorded in the manifest is missing: {missing}");
+    }
+    if let Some(extra) = actual_immutable.difference(&expected_immutable).next() {
+        bail!("analysis contains an unrecorded output: {extra}");
+    }
+    for relative in expected_immutable {
+        let path = actual
+            .get(&relative)
+            .ok_or_else(|| anyhow!("analysis output plan is missing {relative}"))?;
+        let expected_checksum = expected
+            .get(&relative)
+            .ok_or_else(|| anyhow!("analysis output checksum plan is missing {relative}"))?;
+        let actual_checksum = crate::utils::checksum::file_sha256(path)
+            .with_context(|| format!("failed to checksum analysis output: {}", path.display()))?;
+        if actual_checksum.as_str() != expected_checksum {
+            bail!(
+                "analysis output checksum mismatch for {relative}: expected {expected_checksum}, got {actual_checksum}; rerun the owning analysis stage"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn collect_analysis_outputs(
+    analysis_dir: &Path,
+    directory: &Path,
+    outputs: &mut BTreeMap<String, PathBuf>,
+) -> Result<()> {
+    for entry in fs::read_dir(directory).with_context(|| {
+        format!(
+            "failed to inspect analysis directory: {}",
+            directory.display()
+        )
+    })? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_dir() {
+            collect_analysis_outputs(analysis_dir, &path, outputs)?;
+            continue;
+        }
+        if !metadata.file_type().is_file() {
+            bail!("analysis output is not a regular file: {}", path.display());
+        }
+        let filename = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if filename.starts_with('.')
+            || matches!(
+                filename,
+                "manifest.toml" | "config.source.toml" | "config.resolved.toml"
+            )
+        {
+            continue;
+        }
+        let relative = relative_output_path(analysis_dir, &path)?;
+        if outputs.insert(relative.clone(), path).is_some() {
+            bail!("duplicate analysis output path: {relative}");
+        }
+    }
+    Ok(())
+}
+
+fn looks_like_canonical_analysis_csv(file: &str) -> bool {
+    (file.starts_with("lockin/") || file.starts_with("kerr/")) && file.ends_with(".csv")
+}
+
+fn validate_canonical_analysis_csv_path(file: &str) -> Result<()> {
+    if file.contains('\\') {
+        bail!("analysis manifest paths must use forward slashes: {file}");
+    }
+    let path = Path::new(file);
+    let components = path.components().collect::<Vec<_>>();
+    let valid_root = matches!(
+        components.first(),
+        Some(std::path::Component::Normal(root)) if *root == "lockin" || *root == "kerr"
+    );
+    if path.is_absolute()
+        || components.len() != 2
+        || !valid_root
+        || path.extension().and_then(|value| value.to_str()) != Some("csv")
+    {
+        bail!("invalid canonical analysis CSV path in manifest: {file}");
+    }
+    Ok(())
+}
+
+fn canonical_csv_npy_pairs(
+    analysis_dir: &Path,
+    checksums: &BTreeMap<String, String>,
+) -> Result<Vec<(PathBuf, PathBuf)>> {
+    let mut actual_csvs = BTreeSet::new();
+    let mut existing_npys = BTreeSet::new();
+    for directory in [analysis_dir.join("lockin"), analysis_dir.join("kerr")] {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to inspect canonical analysis CSV directory: {}",
+                        directory.display()
+                    )
+                });
+            }
+        };
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_dir() {
+                bail!(
+                    "canonical analysis artifact directory must not contain nested directories: {}",
+                    path.display()
+                );
+            }
+            if !metadata.file_type().is_file() {
+                bail!(
+                    "canonical analysis artifact is not a regular file: {}",
+                    path.display()
+                );
+            }
+            let extension = path.extension().and_then(|extension| extension.to_str());
+            if !matches!(extension, Some("csv" | "npy")) {
+                bail!(
+                    "canonical analysis artifact has an unsupported file type: {}",
+                    path.display()
+                );
+            }
+            let relative = path
+                .strip_prefix(analysis_dir)
+                .context("canonical analysis artifact is outside the analysis directory")?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if extension == Some("csv") {
+                actual_csvs.insert(relative);
+            } else {
+                existing_npys.insert(relative);
+            }
+        }
+    }
+    let expected_csvs = checksums.keys().cloned().collect::<BTreeSet<_>>();
+    if let Some(missing) = expected_csvs.difference(&actual_csvs).next() {
+        bail!("canonical analysis CSV recorded in the manifest is missing: {missing}");
+    }
+    if let Some(extra) = actual_csvs.difference(&expected_csvs).next() {
+        bail!("canonical analysis contains an unrecorded CSV: {extra}");
+    }
+    for npy in existing_npys {
+        let csv = Path::new(&npy).with_extension("csv");
+        let csv = csv.to_string_lossy().replace('\\', "/");
+        if !expected_csvs.contains(&csv) {
+            bail!("canonical analysis contains an orphan NPY without a recorded CSV: {npy}");
+        }
+    }
+    Ok(expected_csvs
+        .into_iter()
+        .map(|relative| {
+            let source = analysis_dir.join(relative);
+            let destination = source.with_extension("npy");
+            (source, destination)
+        })
+        .collect())
 }
 
 fn write_npy_table_replacing(
@@ -372,41 +686,119 @@ mod tests {
         let paths = cfg.paths();
         for csv in [
             paths.lockin_xy_csv(2),
+            paths.lockin_xy_csv(3),
             paths.lockin_rotated_csv(2),
             paths.kerr_csv(),
         ] {
             fs::create_dir_all(csv.parent().unwrap()).unwrap();
             fs::write(csv, "time (s),value\n0,1\n1,2\n").unwrap();
         }
+        let kerr_plot = paths.kerr_plot();
+        fs::create_dir_all(kerr_plot.parent().unwrap()).unwrap();
+        let png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+        fs::write(&kerr_plot, png).unwrap();
+        crate::commands::run_dir::write_analysis_config_snapshots(&cfg).unwrap();
         fs::write(
             paths.analysis_manifest(),
             "schema_version = 1\noutputs = []\n",
         )
         .unwrap();
+        crate::lockin::provenance::refresh_analysis_manifest_outputs(&cfg, "export_npy").unwrap();
 
         export_canonical(&cfg).unwrap();
 
         assert!(paths.lockin_xy_npy(2).is_file());
+        assert!(paths.lockin_xy_npy(3).is_file());
         assert!(paths.lockin_rotated_npy(2).is_file());
         assert!(paths.kerr_npy().is_file());
         let manifest = fs::read_to_string(paths.analysis_manifest()).unwrap();
         assert!(manifest.contains("lockin/ch2_xy.npy"));
         assert!(manifest.contains("kerr/kerr.npy"));
+        let analysis_source = fs::read(paths.analysis_source_config()).unwrap();
 
+        fs::write(&kerr_plot, b"tampered plot").unwrap();
         let error = export_canonical(&cfg).unwrap_err();
-        assert!(error.to_string().contains("already exists"));
+        assert!(error.to_string().contains("output checksum mismatch"));
+        fs::write(&kerr_plot, png).unwrap();
+
+        let extra_output = paths.debug_dir().join("unrecorded.txt");
+        fs::create_dir_all(extra_output.parent().unwrap()).unwrap();
+        fs::write(&extra_output, b"unrecorded").unwrap();
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("unrecorded output"));
+        fs::remove_file(extra_output).unwrap();
+
+        let nested = paths.analysis_dir().join("lockin/nested");
+        fs::create_dir(&nested).unwrap();
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("nested directories"));
+        fs::remove_dir(nested).unwrap();
+
+        let unsupported = paths.analysis_dir().join("lockin/notes.bin");
+        fs::write(&unsupported, b"notes").unwrap();
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("unsupported file type"));
+        fs::remove_file(unsupported).unwrap();
+
+        let missing_csv = paths.lockin_xy_csv(3);
+        let missing_csv_contents = fs::read(&missing_csv).unwrap();
+        fs::remove_file(&missing_csv).unwrap();
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("recorded in the manifest is missing")
+        );
+        fs::write(&missing_csv, missing_csv_contents).unwrap();
+
+        let extra_csv = paths.lockin_xy_csv(9);
+        fs::write(&extra_csv, "time (s),value\n0,1\n").unwrap();
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("unrecorded CSV"));
+        fs::remove_file(extra_csv).unwrap();
+
+        let orphan_npy = paths.lockin_xy_npy(9);
+        fs::write(&orphan_npy, b"orphan").unwrap();
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("orphan NPY"));
+        fs::remove_file(orphan_npy).unwrap();
+
+        cfg.source_text = Some("version = 3\n# export-only change\n".to_string());
+        export_canonical(&cfg).unwrap();
+        assert_eq!(
+            fs::read(paths.analysis_source_config()).unwrap(),
+            analysis_source
+        );
+        let manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(paths.analysis_manifest()).unwrap()).unwrap();
+        let run: toml::Value =
+            toml::from_str(&fs::read_to_string(paths.run_manifest()).unwrap()).unwrap();
+        assert_eq!(
+            run["analysis"]["published_generation"].as_integer(),
+            manifest["generation"].as_integer()
+        );
+        assert_eq!(
+            run["analysis"]["last_attempt"]["command"].as_str(),
+            Some("export_npy")
+        );
+        assert_eq!(run["status"].as_str(), Some("complete"));
+
+        fs::write(paths.analysis_source_config(), b"tampered\n").unwrap();
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("checksum mismatch"));
+        fs::write(paths.analysis_source_config(), &analysis_source).unwrap();
 
         cfg.force = true;
+        let npy_before = fs::read(paths.lockin_xy_npy(2)).unwrap();
+        let manifest_before = fs::read(paths.analysis_manifest()).unwrap();
         fs::write(paths.lockin_xy_csv(2), "time (s),value\n0,3\n1,4\n").unwrap();
-        export_canonical(&cfg).unwrap();
-        let bytes = fs::read(paths.lockin_xy_npy(2)).unwrap();
-        let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
-        let payload = &bytes[10 + header_len..];
-        let values = payload
-            .chunks_exact(8)
-            .map(|chunk| f64::from_le_bytes(chunk.try_into().unwrap()))
-            .collect::<Vec<_>>();
-        assert_eq!(values, vec![0.0, 3.0, 1.0, 4.0]);
+        let error = export_canonical(&cfg).unwrap_err();
+        assert!(error.to_string().contains("output checksum mismatch"));
+        assert_eq!(fs::read(paths.lockin_xy_npy(2)).unwrap(), npy_before);
+        assert_eq!(
+            fs::read(paths.analysis_manifest()).unwrap(),
+            manifest_before
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

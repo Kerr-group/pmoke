@@ -75,6 +75,31 @@ impl ArtifactPaths {
         self.analysis_dir().join("manifest.toml")
     }
 
+    pub fn analysis_source_config(&self) -> PathBuf {
+        self.analysis_dir().join("config.source.toml")
+    }
+
+    pub fn analysis_resolved_config(&self) -> PathBuf {
+        self.analysis_dir().join("config.resolved.toml")
+    }
+
+    pub fn diagnostic_config_dir(&self, stage: &str) -> PathBuf {
+        self.diagnostics_dir().join(stage)
+    }
+
+    pub fn diagnostics_dir(&self) -> PathBuf {
+        self.analysis_dir().join("diagnostics")
+    }
+
+    pub fn diagnostic_source_config(&self, stage: &str) -> PathBuf {
+        self.diagnostic_config_dir(stage).join("config.source.toml")
+    }
+
+    pub fn diagnostic_resolved_config(&self, stage: &str) -> PathBuf {
+        self.diagnostic_config_dir(stage)
+            .join("config.resolved.toml")
+    }
+
     pub fn lockin_xy_csv(&self, channel: u8) -> PathBuf {
         self.analysis_dir()
             .join("lockin")

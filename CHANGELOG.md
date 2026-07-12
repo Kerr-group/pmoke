@@ -2,8 +2,18 @@
 
 ## Unreleased
 
+### Changes
+
+- Analysis commands are safely rerunnable as new transactional generations, including when analysis-only config values change.
+- Each published analysis stores its own `analysis/config.source.toml` and `analysis/config.resolved.toml`; root config snapshots remain immutable acquisition provenance.
+- Analysis manifest schema 3 records generation numbers, config and acquisition checksums, the published stage, and stage-scoped config fingerprints.
+- `phase` and `kerr` reject stale upstream results with an explicit command to rerun, while standalone `reference` and `sensor` create diagnostic-only manifests when needed.
+- Canonical NPY export is idempotent and replaces only generated NPY artifacts transactionally.
+
 ### Fixes
 
+- Diagnostic and NPY generations now keep `run.toml` synchronized with the published analysis generation; diagnostic configs are stored separately without replacing numerical-analysis provenance.
+- Analysis attempts that fail while reading waveform input are recorded, and both source and resolved analysis configs are checksum-protected.
 - Reanalysis continues with a warning when only an acquisition config snapshot checksum is stale; RAW channel sizes and checksums remain mandatory, while `raw verify` stays strict.
 - Standalone `reference` and `sensor` diagnostic plots no longer require `li` to have created an analysis manifest first.
 

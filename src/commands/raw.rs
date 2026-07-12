@@ -38,6 +38,15 @@ pub fn verify(path: &Path) -> Result<()> {
                 }
                 .to_string(),
             ),
+            (
+                "config snapshots".to_string(),
+                if result.config_snapshot_verified {
+                    "verified"
+                } else {
+                    "unavailable (legacy metadata)"
+                }
+                .to_string(),
+            ),
         ],
     );
     ui::success("RAW waveform verification completed");

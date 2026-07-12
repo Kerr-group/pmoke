@@ -137,19 +137,23 @@ pub struct WaveformData {
     pub channels: Vec<Vec<f64>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawVerification {
     pub metadata_version: u32,
     pub channel_count: usize,
     pub sample_count: usize,
     pub total_bytes: u64,
     pub checksums_verified: bool,
+    pub config_snapshot_verified: bool,
+    pub config_snapshot_warning: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawCsvExport {
     pub channel_count: usize,
     pub sample_count: usize,
+    pub config_snapshot_verified: bool,
+    pub config_snapshot_warning: Option<String>,
 }
 
 pub fn read_all_fetched_waveforms(cfg: &Config) -> Result<WaveformData> {
@@ -247,9 +251,33 @@ pub fn read_raw_waveform_channels_from_dir(
 }
 
 pub fn verify_raw_waveform_dir(base_dir: &Path) -> Result<RawVerification> {
+    verify_raw_waveform_dir_with_policy(base_dir, ConfigSnapshotPolicy::Strict)
+}
+
+#[derive(Clone, Copy)]
+enum ConfigSnapshotPolicy {
+    Strict,
+    Warn,
+}
+
+fn verify_raw_waveform_dir_with_policy(
+    base_dir: &Path,
+    config_policy: ConfigSnapshotPolicy,
+) -> Result<RawVerification> {
     let metadata = read_raw_metadata(base_dir)?;
     validate_raw_format(&metadata)?;
-    validate_manifest_config(base_dir, &metadata)?;
+    let (config_snapshot_verified, config_snapshot_warning) =
+        if metadata.version == RAW_METADATA_VERSION {
+            match validate_manifest_config(base_dir, &metadata) {
+                Ok(()) => (true, None),
+                Err(error) if matches!(config_policy, ConfigSnapshotPolicy::Warn) => {
+                    (false, Some(format!("{error:#}")))
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            (false, None)
+        };
 
     let declared_channels = declared_raw_channels(&metadata)?;
     if declared_channels.is_empty() {
@@ -284,12 +312,14 @@ pub fn verify_raw_waveform_dir(base_dir: &Path) -> Result<RawVerification> {
         sample_count,
         total_bytes,
         checksums_verified: metadata.version == RAW_METADATA_VERSION,
+        config_snapshot_verified,
+        config_snapshot_warning,
     })
 }
 
 pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvExport> {
     let manifest_before = raw_manifest_sha256(base_dir)?;
-    let verification = verify_raw_waveform_dir(base_dir)?;
+    let verification = verify_raw_waveform_dir_with_policy(base_dir, ConfigSnapshotPolicy::Warn)?;
     ensure_export_path_available(output)?;
     let metadata = read_raw_metadata(base_dir)?;
     let mut declared_channels = declared_raw_channels(&metadata)?;
@@ -326,8 +356,9 @@ pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvE
     ensure_export_path_available(&temporary)?;
     let result = (|| {
         write_raw_csv(&temporary, &header_refs, base_dir, &channels)?;
-        let after_export = verify_raw_waveform_dir(base_dir)
-            .context("RAW source verification failed after CSV conversion")?;
+        let after_export =
+            verify_raw_waveform_dir_with_policy(base_dir, ConfigSnapshotPolicy::Warn)
+                .context("RAW source verification failed after CSV conversion")?;
         let manifest_after = raw_manifest_sha256(base_dir)?;
         if after_export != verification || manifest_after != manifest_before {
             bail!("RAW source manifest changed during CSV conversion");
@@ -354,6 +385,8 @@ pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvE
     Ok(RawCsvExport {
         channel_count: verification.channel_count,
         sample_count: verification.sample_count,
+        config_snapshot_verified: verification.config_snapshot_verified,
+        config_snapshot_warning: verification.config_snapshot_warning,
     })
 }
 
