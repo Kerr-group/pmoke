@@ -827,4 +827,182 @@ mod tests {
 
         fs::remove_dir_all(&directory).unwrap();
     }
+
+    #[test]
+    fn test_diagnostic_stages_manifest_behavior_and_no_side_effects() {
+        unsafe {
+            std::env::set_var("MPLBACKEND", "agg");
+        }
+        let directory = temporary_directory();
+        let run_dir = &directory;
+        fs::create_dir_all(run_dir).unwrap();
+
+        // 1. Setup acquisition waveforms
+        let waveforms_dir = run_dir.join("acquisition/waveforms");
+        fs::create_dir_all(&waveforms_dir).unwrap();
+        let csv_path = waveforms_dir.join("waveform.csv");
+        let mut csv_content = String::from("t,ch1,ch2\n");
+        let dt = 1e-9;
+        let f = 10.0e6;
+        for i in 0..200 {
+            let t = i as f64 * dt;
+            let ch1 = (2.0 * std::f64::consts::PI * f * t).sin();
+            let ch2 = (2.0 * std::f64::consts::PI * f * t + 0.5).sin();
+            csv_content.push_str(&format!("{:.12},{:.12},{:.12}\n", t, ch1, ch2));
+        }
+        fs::write(&csv_path, csv_content).unwrap();
+
+        // 2. Setup initial analysis directory with manifest
+        let analysis_dir = run_dir.join("analysis");
+        let plots_dir = analysis_dir.join("plots");
+        let ref_plots_dir = plots_dir.join("reference");
+        let sensor_plots_dir = plots_dir.join("sensor");
+        fs::create_dir_all(&ref_plots_dir).unwrap();
+        fs::create_dir_all(&sensor_plots_dir).unwrap();
+
+        // Write dummy plots (must have valid PNG signature)
+        let ref_plot_file = ref_plots_dir.join("reference_fit.png");
+        let sensor_plot_file = sensor_plots_dir.join("sensor_fit.png");
+        let dummy_png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
+        fs::write(&ref_plot_file, dummy_png).unwrap();
+        fs::write(&sensor_plot_file, dummy_png).unwrap();
+
+        let initial_manifest = r#"schema_version = 1
+source_acquisition = "../acquisition/manifest.toml"
+analyzed_at = "2026-07-13T00:00:00Z"
+exported_at = "2026-07-13T00:05:00Z"
+
+[stages.li]
+completed_at = "2026-07-13T00:00:00Z"
+pmoke_version = "0.1.0"
+
+[stages.phase]
+completed_at = "2026-07-13T00:01:00Z"
+pmoke_version = "0.1.0"
+
+[stages.kerr]
+completed_at = "2026-07-13T00:02:00Z"
+pmoke_version = "0.1.0"
+
+[stages.sensor]
+completed_at = "2026-07-13T00:03:00Z"
+pmoke_version = "0.1.0"
+
+[[artifacts]]
+kind = "reference_plot"
+file = "plots/reference/reference_fit.png"
+sha256 = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+
+[[artifacts]]
+kind = "sensor_plot"
+file = "plots/sensor/sensor_fit.png"
+sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
+"#;
+        let manifest_path = analysis_dir.join("manifest.toml");
+        fs::write(&manifest_path, initial_manifest).unwrap();
+
+        // 3. Create test Config
+        let mut cfg = crate::test_support::test_config(vec![2], vec![1]);
+        cfg.set_artifact_root(run_dir.clone());
+        cfg.reference.fft_window.start = 0.0;
+        cfg.reference.fft_window.end = 200e-9;
+        cfg.reference.stride_samples = 2;
+        cfg.reference.window_samples = 10;
+        let window_bg = crate::config::Window {
+            start: 0.0,
+            end: 50.0e-9,
+        };
+        cfg.pulse.bg_window_before = window_bg;
+        cfg.pulse.bg_window_after = window_bg;
+        cfg.plot.enabled = false;
+        cfg.instruments = Some(crate::config::Instruments {
+            function_generator: None,
+            oscilloscope: crate::config::Oscilloscope {
+                connection: crate::config::Connection::Tcpip {
+                    ip: "127.0.0.1".to_string(),
+                    port: 80,
+                },
+                model: "dummy".to_string(),
+            },
+        });
+
+        // Save reference plot hash before sensor execution
+        let ref_plot_hash_before = crate::utils::checksum::file_sha256(&ref_plot_file).unwrap();
+
+        // 4. Run standalone sensor
+        crate::commands::sensor::sensor(&cfg).unwrap();
+
+        // A. Verify sensor command did NOT overwrite/delete/modify the reference plot!
+        let ref_plot_hash_after_sensor =
+            crate::utils::checksum::file_sha256(&ref_plot_file).unwrap();
+        assert_eq!(
+            ref_plot_hash_before, ref_plot_hash_after_sensor,
+            "standalone sensor run modified reference plot!"
+        );
+        // The sensor plot was deleted in staging and not regenerated since plot.enabled = false
+        assert!(!sensor_plot_file.exists());
+
+        // B. Verify manifest state after sensor execution
+        let manifest_content = fs::read_to_string(&manifest_path).unwrap();
+        let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
+
+        assert_eq!(
+            manifest.get("analyzed_at").unwrap().as_str().unwrap(),
+            "2026-07-13T00:00:00Z"
+        );
+        assert_eq!(
+            manifest.get("exported_at").unwrap().as_str().unwrap(),
+            "2026-07-13T00:05:00Z"
+        );
+
+        let stages = manifest.get("stages").unwrap().as_table().unwrap();
+        assert!(stages.contains_key("li"));
+        assert!(stages.contains_key("phase"));
+        assert!(stages.contains_key("kerr"));
+        assert!(stages.contains_key("sensor"));
+        // stages.sensor should be updated (not 2026-07-13T00:03:00Z anymore)
+        let sensor_stage = stages.get("sensor").unwrap().as_table().unwrap();
+        assert_ne!(
+            sensor_stage.get("completed_at").unwrap().as_str().unwrap(),
+            "2026-07-13T00:03:00Z"
+        );
+
+        // C. Run standalone reference
+        // First recreate sensor plot in analysis/ to verify reference doesn't touch it
+        fs::create_dir_all(sensor_plot_file.parent().unwrap()).unwrap();
+        fs::write(&sensor_plot_file, dummy_png).unwrap();
+        let sensor_plot_hash_before_ref =
+            crate::utils::checksum::file_sha256(&sensor_plot_file).unwrap();
+
+        crate::commands::reference::reference(&cfg).unwrap();
+
+        // D. Verify reference command did NOT overwrite/delete/modify sensor plot
+        let sensor_plot_hash_after_ref =
+            crate::utils::checksum::file_sha256(&sensor_plot_file).unwrap();
+        assert_eq!(
+            sensor_plot_hash_before_ref, sensor_plot_hash_after_ref,
+            "standalone reference run modified sensor plot!"
+        );
+        // The reference plot was deleted in staging and not regenerated since plot.enabled = false
+        assert!(!ref_plot_file.exists());
+
+        // F. Verify manifest updates after reference execution
+        let manifest_content_2 = fs::read_to_string(&manifest_path).unwrap();
+        let manifest_2: toml::Value = toml::from_str(&manifest_content_2).unwrap();
+
+        assert_eq!(
+            manifest_2.get("analyzed_at").unwrap().as_str().unwrap(),
+            "2026-07-13T00:00:00Z"
+        );
+        assert!(manifest_2.get("plots_updated_at").is_some());
+
+        let stages_2 = manifest_2.get("stages").unwrap().as_table().unwrap();
+        assert!(stages_2.contains_key("li"));
+        assert!(stages_2.contains_key("phase"));
+        assert!(stages_2.contains_key("kerr"));
+        assert!(stages_2.contains_key("reference"));
+        assert!(stages_2.contains_key("sensor"));
+
+        fs::remove_dir_all(run_dir).unwrap();
+    }
 }

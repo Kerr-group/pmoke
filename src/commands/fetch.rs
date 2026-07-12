@@ -410,6 +410,13 @@ fn rename_file(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 fn has_any_analysis_artifact(run_dir: &Path) -> Result<bool> {
+    if run_dir.exists() && !run_dir.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a directory",
+        ))
+        .with_context(|| format!("failed to inspect run directory: {}", run_dir.display()));
+    }
     for artifact in [
         run_dir.join("analysis"),
         run_dir.join("analysis_npy"),

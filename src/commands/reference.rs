@@ -9,6 +9,7 @@ pub fn reference(cfg: &Config) -> Result<()> {
         crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "reference")?;
     crate::config::validate_for_target(cfg, ValidationTarget::Reference)?;
     crate::commands::run_dir::prepare(cfg)?;
+    require_analysis_manifest(cfg)?;
 
     let staging_cfg = crate::commands::run_dir::prepare_analysis_staging(
         cfg,
@@ -19,7 +20,7 @@ pub fn reference(cfg: &Config) -> Result<()> {
     crate::commands::run_dir::publish_analysis_staging(cfg, &staging_cfg)
 }
 
-pub(crate) fn refresh_manifest_if_present(cfg: &Config, stage: &str) -> Result<()> {
+pub fn require_analysis_manifest(cfg: &Config) -> Result<()> {
     let manifest = cfg.paths().analysis_manifest();
     if !manifest.is_file() {
         anyhow::bail!(
@@ -27,6 +28,11 @@ pub(crate) fn refresh_manifest_if_present(cfg: &Config, stage: &str) -> Result<(
              analysis manifest; run pmoke li first"
         );
     }
+    Ok(())
+}
+
+pub(crate) fn refresh_manifest_if_present(cfg: &Config, stage: &str) -> Result<()> {
+    require_analysis_manifest(cfg)?;
     crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg, stage)?;
     Ok(())
 }

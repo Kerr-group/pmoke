@@ -4,7 +4,7 @@ pub mod sensor_raw_plot;
 
 use crate::config::{Channel, Config};
 use crate::constants::FETCHED_FNAME;
-use crate::lockin::reference::run_fit_ref;
+use crate::lockin::reference::run_fit_ref_without_plot;
 use crate::lockin::stride::{li_stride_2d, li_stride_time};
 use crate::utils::time_axis::TimeAxisRef;
 use crate::utils::waveform::read_waveform_channels;
@@ -36,7 +36,7 @@ struct SensorIntegralMaximum {
 }
 
 pub fn run(cfg: &Config) -> Result<()> {
-    let ref_fit_params = run_fit_ref(cfg)?;
+    let ref_fit_params = run_fit_ref_without_plot(cfg)?;
 
     let sensor_ch = cfg.roles.sensor_ch.clone();
     let pb = ui::spinner(format!("reading sensor channels {:?}", sensor_ch));

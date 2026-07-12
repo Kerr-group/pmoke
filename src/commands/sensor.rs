@@ -8,6 +8,7 @@ pub fn sensor(cfg: &Config) -> Result<()> {
     let _lock = crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "sensor")?;
     crate::config::validate_for_target(cfg, ValidationTarget::Sensor)?;
     crate::commands::run_dir::prepare(cfg)?;
+    crate::commands::reference::require_analysis_manifest(cfg)?;
 
     let staging_cfg = crate::commands::run_dir::prepare_analysis_staging(
         cfg,

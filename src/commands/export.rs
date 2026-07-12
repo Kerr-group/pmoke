@@ -3,7 +3,7 @@ use crate::config::Config;
 
 use crate::ui;
 use crate::utils::waveform::export_raw_waveform_csv;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 mod npy;
 
@@ -43,49 +43,108 @@ pub fn csv_with_canonical_lock(
         let _lock = crate::commands::run_dir::RunMutationLock::acquire(run_dir, "export_csv")?;
         csv(input, output, force)
     } else {
+        if looks_like_canonical_waveform_path(output) {
+            anyhow::bail!(
+                "output points to another run's canonical waveform; \
+                 select that run with --run-dir or use a custom export path"
+            );
+        }
         csv(input, output, force)
     }
 }
 
-fn paths_equivalent(a: &std::path::Path, b: &std::path::Path) -> Result<bool> {
-    let clean_path = |p: &std::path::Path| -> std::path::PathBuf {
-        use std::path::Component;
-        let mut stack = Vec::new();
-        for comp in p.components() {
-            match comp {
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    stack.pop();
-                }
-                Component::Normal(c) => {
-                    stack.push(c);
-                }
-                Component::RootDir => {
-                    stack.push(comp.as_os_str());
-                }
-                Component::Prefix(prefix) => {
-                    stack.push(prefix.as_os_str());
-                }
-            }
+fn looks_like_canonical_waveform_path(output: &std::path::Path) -> bool {
+    let has_canonical_suffix = || -> Option<bool> {
+        if output.file_name()? != "waveform.csv" {
+            return Some(false);
         }
-        stack.iter().collect()
+        let waveforms = output.parent()?;
+        if waveforms.file_name()? != "waveforms" {
+            return Some(false);
+        }
+        let acquisition = waveforms.parent()?;
+        if acquisition.file_name()? != "acquisition" {
+            return Some(false);
+        }
+        Some(true)
     };
+    has_canonical_suffix().unwrap_or(false)
+}
 
-    let resolve = |p: &std::path::Path| -> std::path::PathBuf {
-        let abs = if p.is_absolute() {
+fn paths_equivalent(a: &std::path::Path, b: &std::path::Path) -> Result<bool> {
+    let resolve = |p: &std::path::Path| -> Result<std::path::PathBuf> {
+        let absolute = if p.is_absolute() {
             p.to_path_buf()
         } else {
             std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .context("failed to get current working directory")?
                 .join(p)
         };
-        if let Ok(canon) = abs.canonicalize() {
-            return canon;
+
+        // Clean lexically first to handle non-existent relative dots
+        let cleaned = clean_path(&absolute);
+
+        let mut existing = cleaned.as_path();
+        let mut remainder = Vec::new();
+
+        while !existing.exists() {
+            let name = match existing.file_name() {
+                Some(n) => n,
+                None => break,
+            };
+            remainder.push(name.to_os_string());
+            existing = match existing.parent() {
+                Some(parent_dir) => parent_dir,
+                None => break,
+            };
         }
-        clean_path(&abs)
+
+        let mut resolved = existing
+            .canonicalize()
+            .unwrap_or_else(|_| existing.to_path_buf());
+        for component in remainder.into_iter().rev() {
+            resolved.push(component);
+        }
+
+        Ok(clean_path(&resolved))
     };
 
-    Ok(resolve(a) == resolve(b))
+    let resolved_a = resolve(a)?;
+    let resolved_b = resolve(b)?;
+
+    #[cfg(windows)]
+    {
+        let lower_a = resolved_a.to_string_lossy().to_lowercase();
+        let lower_b = resolved_b.to_string_lossy().to_lowercase();
+        Ok(lower_a == lower_b)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(resolved_a == resolved_b)
+    }
+}
+
+fn clean_path(p: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut stack = Vec::new();
+    for comp in p.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                stack.pop();
+            }
+            Component::Normal(c) => {
+                stack.push(c);
+            }
+            Component::RootDir => {
+                stack.push(comp.as_os_str());
+            }
+            Component::Prefix(prefix) => {
+                stack.push(prefix.as_os_str());
+            }
+        }
+    }
+    stack.iter().collect()
 }
 
 pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Result<()> {
@@ -194,5 +253,61 @@ mod tests {
 
         drop(lock);
         fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_csv_alias_through_symlink_uses_lock() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let run_dir = std::env::temp_dir().join(format!("pmoke-symlink-lock-{}", nonce));
+        let canonical_dir = run_dir.join("acquisition/waveforms");
+        fs::create_dir_all(&canonical_dir).unwrap();
+
+        // Create a symlink pointing to the waveforms directory
+        let symlink_dir = run_dir.join("alias_waveforms");
+        std::os::unix::fs::symlink(&canonical_dir, &symlink_dir).unwrap();
+
+        // Lock is acquired on the run directory
+        let lock = crate::commands::run_dir::RunMutationLock::acquire(&run_dir, "test").unwrap();
+
+        // waveform.csv does not exist yet
+        let output = symlink_dir.join("waveform.csv");
+
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir.clone());
+
+        let error =
+            csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(error.to_string().contains("run-mutating operation"));
+
+        drop(lock);
+        fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn canonical_csv_rejects_other_run_canonical_output() {
+        let run_dir_a = std::env::temp_dir().join("pmoke-other-run-a");
+        let run_dir_b = std::env::temp_dir().join("pmoke-other-run-b");
+        fs::create_dir_all(&run_dir_a).unwrap();
+        fs::create_dir_all(&run_dir_b).unwrap();
+
+        let output_b = run_dir_b.join("acquisition/waveforms/waveform.csv");
+
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir_a.clone());
+
+        let error = csv_with_canonical_lock(&config, Path::new("missing-raw"), &output_b, false)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("output points to another run's canonical waveform")
+        );
+
+        fs::remove_dir_all(run_dir_a).unwrap();
+        fs::remove_dir_all(run_dir_b).unwrap();
     }
 }
