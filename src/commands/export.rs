@@ -43,10 +43,11 @@ pub fn csv_with_canonical_lock(
         let _lock = crate::commands::run_dir::RunMutationLock::acquire(run_dir, "export_csv")?;
         csv(input, output, force)
     } else {
-        if looks_like_canonical_waveform_path(output) {
+        let resolved_output = resolve_for_comparison(output)?;
+        if looks_like_canonical_waveform_path(&resolved_output) {
             anyhow::bail!(
-                "output points to another run's canonical waveform; \
-                 select that run with --run-dir or use a custom export path"
+                "output resolves to another run's canonical waveform; \
+                 select that run with --run-dir or use a a custom export path"
             );
         }
         csv(input, output, force)
@@ -131,16 +132,25 @@ fn clean_path(p: &std::path::Path) -> std::path::PathBuf {
         match comp {
             Component::CurDir => {}
             Component::ParentDir => {
-                stack.pop();
+                if let Some(last) = stack.last() {
+                    match last {
+                        Component::Prefix(_) | Component::RootDir => {
+                            // Do not pop RootDir or Prefix
+                        }
+                        Component::ParentDir => {
+                            stack.push(comp);
+                        }
+                        Component::Normal(_) => {
+                            stack.pop();
+                        }
+                        _ => {}
+                    }
+                } else {
+                    stack.push(comp);
+                }
             }
-            Component::Normal(c) => {
-                stack.push(c);
-            }
-            Component::RootDir => {
-                stack.push(comp.as_os_str());
-            }
-            Component::Prefix(prefix) => {
-                stack.push(prefix.as_os_str());
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
+                stack.push(comp);
             }
         }
     }
@@ -318,7 +328,44 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("output points to another run's canonical waveform")
+                .contains("output resolves to another run's canonical waveform")
+        );
+
+        fs::remove_dir_all(run_dir_a).unwrap();
+        fs::remove_dir_all(run_dir_b).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_other_run_canonical_csv_through_symlink() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let run_dir_a = std::env::temp_dir().join(format!("pmoke-other-symlink-a-{}", nonce));
+        let run_dir_b = std::env::temp_dir().join(format!("pmoke-other-symlink-b-{}", nonce));
+
+        // Create run_dir_b's waveforms directory
+        let canonical_dir_b = run_dir_b.join("acquisition/waveforms");
+        fs::create_dir_all(&canonical_dir_b).unwrap();
+
+        // Create a symlink in run_dir_a pointing to run_dir_b's waveforms directory
+        let alias_b = run_dir_a.join("alias_b");
+        fs::create_dir_all(&run_dir_a).unwrap();
+        std::os::unix::fs::symlink(&canonical_dir_b, &alias_b).unwrap();
+
+        // Config is for shot A
+        let mut config = crate::test_support::test_config(vec![1], vec![2]);
+        config.set_artifact_root(run_dir_a.clone());
+
+        // Target path is alias_b/waveform.csv which points to shot B's canonical path
+        let output = alias_b.join("waveform.csv");
+
+        let error = csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(
+            error.to_string().contains("output resolves to another run's canonical waveform"),
+            "Expected 'output resolves to another run's canonical waveform', got: {}",
+            error
         );
 
         fs::remove_dir_all(run_dir_a).unwrap();
