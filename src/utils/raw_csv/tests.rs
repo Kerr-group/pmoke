@@ -357,7 +357,7 @@ fn streamed_raw_csv_rejects_invalid_time_and_degenerate_voltage_mapping() {
         &[channel("../outside.u16le", 1, 0.0, 1.0, 0.0, 0.0)],
     )
     .unwrap_err();
-    assert!(error.to_string().contains("plain file name"));
+    assert!(error.to_string().contains("safe relative path"));
 
     fs::remove_dir_all(dir).unwrap();
 }

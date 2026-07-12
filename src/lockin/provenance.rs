@@ -122,7 +122,7 @@ fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
                 let relative_str = relative
                     .to_str()
                     .ok_or_else(|| anyhow::anyhow!("non-utf8 path in output files"))?
-                    .to_string();
+                    .replace('\\', "/");
                 let sha256 = crate::utils::checksum::file_sha256(&path)?;
                 outputs.push(OutputFileInfo {
                     file: relative_str,

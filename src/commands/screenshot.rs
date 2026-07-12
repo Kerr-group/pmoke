@@ -103,7 +103,7 @@ fn ensure_image_directory(path: &Path) -> Result<()> {
             "screenshot output directory is not a directory: {}",
             path.display()
         ),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir(path)
+        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir_all(path)
             .with_context(|| format!("failed to create screenshot directory: {}", path.display())),
         Err(error) => Err(error)
             .with_context(|| format!("failed to inspect screenshot directory: {}", path.display())),
