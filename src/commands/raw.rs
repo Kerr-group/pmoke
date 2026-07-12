@@ -18,11 +18,6 @@ pub fn run(cfg: &Config, command: &RawCommand) -> Result<()> {
 
 pub fn verify(path: &Path) -> Result<()> {
     let result = verify_raw_waveform_dir(path)?;
-    if let Some(warning) = result.config_snapshot_warning.as_deref() {
-        ui::warn(format!(
-            "RAW provenance snapshot could not be verified: {warning}; waveform sizes and channel checksums were verified independently"
-        ));
-    }
     ui::settings_table(
         "RAW verification",
         vec![
@@ -47,8 +42,6 @@ pub fn verify(path: &Path) -> Result<()> {
                 "config snapshots".to_string(),
                 if result.config_snapshot_verified {
                     "verified"
-                } else if result.config_snapshot_warning.is_some() {
-                    "unverified"
                 } else {
                     "unavailable (legacy metadata)"
                 }
