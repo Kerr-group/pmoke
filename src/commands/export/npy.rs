@@ -78,7 +78,7 @@ pub fn export(cfg: &Config, output: &Path) -> Result<()> {
 
 pub fn export_canonical(cfg: &Config) -> Result<()> {
     let _lock =
-        crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "export_npy")?;
+        crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "export_npy")?;
     let staging_cfg = crate::commands::run_dir::prepare_analysis_staging(
         cfg,
         crate::commands::run_dir::AnalysisStage::ExportNpy,

@@ -9,6 +9,10 @@ use crate::{
 use anyhow::{Context, Result, bail};
 
 pub fn analyze(cfg: &Config) -> Result<()> {
+    crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
+    let _lock =
+        crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "analyze")?;
+
     let pb = ui::spinner("reading fetched waveform data");
     let t0 = std::time::Instant::now();
     let data = read_all_fetched_waveforms(cfg)?;
@@ -28,12 +32,18 @@ pub fn analyze(cfg: &Config) -> Result<()> {
         bail!("Fetched data is empty, cannot extract channels.");
     }
 
-    run_analyze(cfg, &data)?;
+    run_analyze_locked(cfg, &data)?;
     Ok(())
 }
 
 pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
-    let _lock = crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "analysis")?;
+    crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
+    let _lock =
+        crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "analysis")?;
+    run_analyze_locked(cfg, data)
+}
+
+pub fn run_analyze_locked(cfg: &Config, data: &WaveformData) -> Result<()> {
     crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "analysis", None)?;
     let result = run_analyze_inner(cfg, data);

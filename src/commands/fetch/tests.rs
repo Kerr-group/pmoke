@@ -800,7 +800,6 @@ fn test_analysis_backup_restore_failure() {
 }
 
 #[test]
-#[allow(clippy::permissions_set_readonly_false)]
 fn test_backup_commit_failure_warning() {
     let dir = unique_test_dir();
     fs::create_dir(&dir).unwrap();
@@ -812,18 +811,15 @@ fn test_backup_commit_failure_warning() {
     let backup = AnalysisBackup::create(run_dir).unwrap();
     assert!(!lockin_res_1.exists());
 
-    // Make run_dir read-only to cause commit rename to fail
-    let mut perms = fs::metadata(run_dir).unwrap().permissions();
-    perms.set_readonly(true);
-    fs::set_permissions(run_dir, perms.clone()).unwrap();
+    // Enable mock rename error
+    MOCK_RENAME_ERROR.with(|m| m.set(true));
 
     // Call commit (should fail)
     let commit_res = backup.commit(run_dir);
     assert!(commit_res.is_err());
 
-    // Restore write permissions so we can clean up
-    perms.set_readonly(false);
-    fs::set_permissions(run_dir, perms).unwrap();
+    // Disable mock rename error
+    MOCK_RENAME_ERROR.with(|m| m.set(false));
 
     // Verify that the old analysis was NOT restored to the original position
     assert!(!lockin_res_1.exists());
@@ -834,6 +830,108 @@ fn test_backup_commit_failure_warning() {
     assert!(backup_dir_path.join("lockin_results_ch1.csv").is_file());
 
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_restore_missing_backup_item_already_restored() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!lockin_res_1.exists());
+
+    // Remove the file from backup_dir, but write it back to its original location
+    let backup_dir_path = find_analysis_backup(run_dir);
+    fs::remove_file(backup_dir_path.join("lockin_results_ch1.csv")).unwrap();
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    // Call restore (should succeed because it's already restored)
+    assert!(backup.restore().is_ok());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_restore_missing_backup_item_not_restored_fails() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!lockin_res_1.exists());
+
+    // Remove the file from backup_dir and ensure original doesn't exist
+    let backup_dir_path = find_analysis_backup(run_dir);
+    fs::remove_file(backup_dir_path.join("lockin_results_ch1.csv")).unwrap();
+
+    // Call restore (should fail because both backup and original are missing)
+    let restore_err = backup.restore();
+    assert!(restore_err.is_err());
+    assert!(
+        restore_err
+            .unwrap_err()
+            .to_string()
+            .contains("backup item is missing and original was not restored")
+    );
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_normal_fetch_fails_before_modifying_state() {
+    let dir = unique_test_dir();
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(dir.clone());
+    config.source_path = dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+    config.force = false;
+
+    // Create the run directory and pre-create an acquisition directory to trigger exists failure
+    crate::commands::run_dir::ensure_run_directory(&config.paths().run_dir).unwrap();
+    fs::create_dir_all(config.paths().acquisition_dir()).unwrap();
+
+    // Call fetch (should fail preflight check)
+    let fetch_res = fetch_with_options(&config, None, None);
+    assert!(fetch_res.is_err());
+
+    // Verify run.toml does not exist (meaning we didn't prepare/write state before checking!)
+    let run_toml = config.paths().run_manifest();
+    assert!(!run_toml.exists());
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_normal_fetch_rejects_orphan_analysis() {
+    let dir = unique_test_dir();
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(dir.clone());
+    config.source_path = dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+    config.force = false;
+
+    // Create run directory and pre-create analysis directory (no acquisition exists, so it's an orphan analysis)
+    crate::commands::run_dir::ensure_run_directory(&config.paths().run_dir).unwrap();
+    fs::create_dir_all(config.paths().analysis_dir()).unwrap();
+
+    // Call fetch (should fail on orphan analysis check)
+    let fetch_res = fetch_with_options(&config, None, None);
+    assert!(fetch_res.is_err());
+    assert!(
+        fetch_res
+            .unwrap_err()
+            .to_string()
+            .contains("analysis artifacts already exist without a valid acquisition")
+    );
+
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]

@@ -162,6 +162,7 @@ fn check_acquisition_exists(cfg: &Config) -> Result<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackupState {
     RollbackArmed,
+    RecoveryFailed,
     Invalidated,
     Restored,
 }
@@ -250,7 +251,7 @@ impl AnalysisBackup {
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            if let Err(err) = std::fs::rename(&orig, &dest) {
+            if let Err(err) = rename_file(&orig, &dest) {
                 let rollback_res = backup.restore_internal();
                 return match rollback_res {
                     Ok(()) => Err(err).with_context(|| {
@@ -284,6 +285,14 @@ impl AnalysisBackup {
             let backup_path = self.backup_dir.join(&relative);
 
             if !backup_path.exists() {
+                if original.exists() {
+                    continue;
+                }
+                errors.push(format!(
+                    "backup item is missing and original was not restored: {}",
+                    original.display()
+                ));
+                failed_items.push((original, relative));
                 continue;
             }
 
@@ -300,7 +309,7 @@ impl AnalysisBackup {
                 }
             }
 
-            if let Err(error) = std::fs::rename(&backup_path, &original) {
+            if let Err(error) = rename_file(&backup_path, &original) {
                 errors.push(format!(
                     "failed to restore {} from backup: {}",
                     original.display(),
@@ -330,7 +339,13 @@ impl AnalysisBackup {
     }
 
     fn restore(mut self) -> Result<()> {
-        self.restore_internal()
+        match self.restore_internal() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.state = BackupState::RecoveryFailed;
+                Err(error)
+            }
+        }
     }
 
     fn commit(mut self, run_dir: &Path) -> Result<()> {
@@ -342,7 +357,7 @@ impl AnalysisBackup {
         }
         let timestamp = jiff::Timestamp::now().to_string().replace([':', '.'], "-");
         let dest_dir = run_dir.join(format!("legacy_analysis.invalidated.{}", timestamp));
-        std::fs::rename(&self.backup_dir, &dest_dir).with_context(|| {
+        rename_file(&self.backup_dir, &dest_dir).with_context(|| {
             format!(
                 "failed to move analysis backup to invalidated folder: {}",
                 dest_dir.display()
@@ -366,6 +381,50 @@ impl Drop for AnalysisBackup {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static MOCK_RENAME_ERROR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn rename_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if MOCK_RENAME_ERROR.with(|m| m.get()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "mock rename error",
+        ));
+    }
+    std::fs::rename(from, to)
+}
+
+fn has_any_analysis_artifact(run_dir: &Path) -> Result<bool> {
+    if run_dir.join("analysis").exists() {
+        return Ok(true);
+    }
+    if run_dir.join("analysis_npy").exists() {
+        return Ok(true);
+    }
+    if run_dir.join("analysis_metadata.toml").exists() {
+        return Ok(true);
+    }
+    if run_dir.join("kerr_results.csv").exists() {
+        return Ok(true);
+    }
+    if let Ok(entries) = std::fs::read_dir(run_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if (name_str.starts_with("lockin_results_ch")
+                || name_str.starts_with("lockin_rotated_ch"))
+                && name_str.ends_with(".csv")
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 pub fn fetch_with_options(
     cfg: &Config,
     format: Option<FetchFormat>,
@@ -378,14 +437,19 @@ pub fn fetch_with_options(
         );
     }
     crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
-    let _lock = if cfg.force {
-        Some(crate::commands::run_dir::AnalysisLock::acquire(
-            &cfg.paths().run_dir,
-            "fetch_force",
-        )?)
-    } else {
-        None
-    };
+    let _lock = crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "fetch")?;
+
+    // Preflight checks before modifying state or directory
+    if !cfg.force {
+        check_acquisition_exists(cfg)?;
+        if has_any_analysis_artifact(&cfg.paths().run_dir)? {
+            bail!(
+                "analysis artifacts already exist without a valid acquisition; \
+                 use --force to invalidate them or choose a new run directory"
+            );
+        }
+    }
+
     crate::commands::run_dir::prepare(cfg)?;
 
     let backup = if cfg.force {
@@ -544,7 +608,7 @@ fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
+pub fn run_fetch_for_process_locked(cfg: &Config) -> Result<WaveformData> {
     crate::commands::run_dir::prepare(cfg)?;
     crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
     let result = run_fetch_for_process_inner(cfg);

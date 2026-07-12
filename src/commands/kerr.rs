@@ -2,7 +2,7 @@ use crate::{config::Config, kerr::run};
 use anyhow::Result;
 
 pub fn kerr(cfg: &Config) -> Result<()> {
-    let _lock = crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "kerr")?;
+    let _lock = crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "kerr")?;
     crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "kerr", None)?;
     let result = kerr_inner(cfg);

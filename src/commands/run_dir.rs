@@ -355,13 +355,13 @@ pub(crate) fn publish_analysis_staging(cfg: &Config, staging_cfg: &Config) -> Re
     )
 }
 
-pub struct AnalysisLock {
+pub struct RunMutationLock {
     file: fs::File,
 }
 
-impl AnalysisLock {
+impl RunMutationLock {
     pub fn acquire(run_dir: &Path, stage: &str) -> Result<Self> {
-        let path = run_dir.join(".analysis.lock");
+        let path = run_dir.join(".run.lock");
         let mut file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -374,7 +374,7 @@ impl AnalysisLock {
         if file.try_lock_exclusive().is_err() {
             let content = fs::read_to_string(&path).unwrap_or_default();
             bail!(
-                "Another analysis is currently running in this directory (lock file exists: {}).\nLock info:\n{}",
+                "Another run mutation operation is currently running in this directory (lock file exists: {}).\nLock info:\n{}",
                 path.display(),
                 content
             );
@@ -393,7 +393,7 @@ impl AnalysisLock {
     }
 }
 
-impl Drop for AnalysisLock {
+impl Drop for RunMutationLock {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.file);
     }
@@ -681,19 +681,19 @@ mod tests {
         fs::create_dir_all(run_dir).unwrap();
 
         // 1. Process A acquires lock
-        let lock_a = AnalysisLock::acquire(run_dir, "stage_a").unwrap();
+        let lock_a = RunMutationLock::acquire(run_dir, "stage_a").unwrap();
 
         // 2. Process B try to acquire lock (should fail)
-        let lock_b_err = AnalysisLock::acquire(run_dir, "stage_b");
+        let lock_b_err = RunMutationLock::acquire(run_dir, "stage_b");
         assert!(lock_b_err.is_err());
 
         // 3. Drop A, then B acquires lock successfully
         std::mem::drop(lock_a);
-        let lock_b = AnalysisLock::acquire(run_dir, "stage_b");
+        let lock_b = RunMutationLock::acquire(run_dir, "stage_b");
         assert!(lock_b.is_ok());
 
         // 4. lock file still exists
-        let lock_path = run_dir.join(".analysis.lock");
+        let lock_path = run_dir.join(".run.lock");
         assert!(lock_path.exists());
 
         // 5. Drop B
@@ -714,7 +714,9 @@ mod tests {
             let max_concurrency_c = Arc::clone(&max_concurrency);
             threads.push(thread::spawn(move || {
                 for _ in 0..20 {
-                    if let Ok(_lock) = AnalysisLock::acquire(&run_dir_c, &format!("thread_{}", i)) {
+                    if let Ok(_lock) =
+                        RunMutationLock::acquire(&run_dir_c, &format!("thread_{}", i))
+                    {
                         {
                             let mut active = active_count_c.lock().unwrap();
                             *active += 1;
@@ -747,7 +749,7 @@ mod tests {
         assert!(max_observed <= 1);
 
         // 7. Verify lock file can be reacquired without manual deletion
-        let lock_final = AnalysisLock::acquire(run_dir, "final");
+        let lock_final = RunMutationLock::acquire(run_dir, "final");
         assert!(lock_final.is_ok());
 
         fs::remove_dir_all(&directory).unwrap();
