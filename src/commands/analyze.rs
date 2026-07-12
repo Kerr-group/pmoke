@@ -702,7 +702,8 @@ csv = "kerr/kerr.csv"
         crate::lockin::provenance::refresh_analysis_manifest_outputs(&phase_cfg, "phase").unwrap();
 
         // Check stages after phase re-run: stages.li exists, stages.phase updated, stages.kerr/export_npy deleted
-        let manifest_content = std::fs::read_to_string(phase_cfg.paths().analysis_manifest()).unwrap();
+        let manifest_content =
+            std::fs::read_to_string(phase_cfg.paths().analysis_manifest()).unwrap();
         let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
         let stages = manifest["stages"].as_table().unwrap();
         assert!(stages.contains_key("li"));
@@ -712,8 +713,16 @@ csv = "kerr/kerr.csv"
 
         // Check artifacts after phase: lockin_rotated and kerr should be gone because they are not carried forward
         let artifacts = manifest["artifacts"].as_array().unwrap();
-        assert!(artifacts.iter().any(|a| a["kind"].as_str() == Some("lockin_xy")));
-        assert!(!artifacts.iter().any(|a| a["kind"].as_str() == Some("lockin_rotated")));
+        assert!(
+            artifacts
+                .iter()
+                .any(|a| a["kind"].as_str() == Some("lockin_xy"))
+        );
+        assert!(
+            !artifacts
+                .iter()
+                .any(|a| a["kind"].as_str() == Some("lockin_rotated"))
+        );
         assert!(!artifacts.iter().any(|a| a["kind"].as_str() == Some("kerr")));
 
         // 3. Re-run li staging from the original full state
@@ -724,7 +733,11 @@ csv = "kerr/kerr.csv"
         )
         .unwrap();
 
-        let reference = crate::lockin::reference::ref_analysis::RefFitParams { f_ref: 1000.0, a_ref: 1.0, omega_tref: 0.0 };
+        let reference = crate::lockin::reference::ref_analysis::RefFitParams {
+            f_ref: 1000.0,
+            a_ref: 1.0,
+            omega_tref: 0.0,
+        };
         let time = (0..2000).map(|i| i as f64 * 1e-5).collect::<Vec<_>>();
         let signal = vec![0.0; 2000];
         let processor = crate::lockin::lockin_core::LockinProcessor::new(
@@ -750,7 +763,8 @@ csv = "kerr/kerr.csv"
         )
         .unwrap();
 
-        let manifest_content_li = std::fs::read_to_string(li_cfg.paths().analysis_manifest()).unwrap();
+        let manifest_content_li =
+            std::fs::read_to_string(li_cfg.paths().analysis_manifest()).unwrap();
         let manifest_li: toml::Value = toml::from_str(&manifest_content_li).unwrap();
         let stages_li = manifest_li["stages"].as_table().unwrap();
         assert!(stages_li.contains_key("li"));

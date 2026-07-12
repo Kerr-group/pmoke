@@ -9,12 +9,8 @@ pub fn li(cfg: &Config) -> Result<()> {
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "li", None)?;
     let result = li_inner(cfg);
     match &result {
-        Ok(()) => {
-            crate::commands::run_dir::write_run_state(cfg, "analyzing", "li_complete", None)?
-        }
-        Err(error) => {
-            crate::commands::run_dir::write_run_state(cfg, "failed", "li", Some(error))?
-        }
+        Ok(()) => crate::commands::run_dir::write_run_state(cfg, "analyzing", "li_complete", None)?,
+        Err(error) => crate::commands::run_dir::write_run_state(cfg, "failed", "li", Some(error))?,
     }
     result
 }

@@ -214,7 +214,10 @@ fn validate_npy_file(path: &Path, expected_rows: usize, expected_cols: usize) ->
         bail!("NPY descr is not '<f8': {}", path.display());
     }
     if header.contains("'fortran_order': True") || header.contains("\"fortran_order\": true") {
-        bail!("NPY is in Fortran order, expected C order: {}", path.display());
+        bail!(
+            "NPY is in Fortran order, expected C order: {}",
+            path.display()
+        );
     }
 
     let shape_pos = header
@@ -434,10 +437,12 @@ fn collect_plot_files(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<()> 
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') {
-                continue;
-            }
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name.starts_with('.'))
+        {
+            continue;
         }
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
@@ -445,7 +450,7 @@ fn collect_plot_files(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<()> 
         } else if metadata.file_type().is_file() {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 let lower = ext.to_ascii_lowercase();
-                if lower == "png" || lower == "pdf" || lower == "svg" {
+                if matches!(lower.as_str(), "png" | "pdf" | "svg") {
                     paths.push(path);
                 }
             }
@@ -663,6 +668,14 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         );
     }
 
+    match stage {
+        "li" | "phase" | "kerr" => {
+            table.remove("exported_at");
+        }
+        "export_npy" => {}
+        _ => bail!("unknown analysis stage: {stage}"),
+    }
+
     let stages_val = table
         .entry("stages".to_string())
         .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
@@ -695,7 +708,10 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
     );
     if let Some(git) = option_env!("PMOKE_GIT_COMMIT") {
-        stage_prov.insert("git_commit".to_string(), toml::Value::String(git.to_string()));
+        stage_prov.insert(
+            "git_commit".to_string(),
+            toml::Value::String(git.to_string()),
+        );
     }
     stages_table.insert(stage.to_string(), toml::Value::Table(stage_prov));
 
@@ -867,10 +883,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "pmoke-npy-val-{}-{nonce}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("pmoke-npy-val-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
         let npy_path = directory.join("test.npy");
 
@@ -888,7 +902,11 @@ mod tests {
         };
 
         // 1. Valid NPY
-        write_npy(&npy_path, "{'descr': '<f8', 'fortran_order': False, 'shape': (100, 3), }", 100 * 3 * 8);
+        write_npy(
+            &npy_path,
+            "{'descr': '<f8', 'fortran_order': False, 'shape': (100, 3), }",
+            100 * 3 * 8,
+        );
         assert!(validate_npy_file(&npy_path, 100, 3).is_ok());
 
         // 2. Invalid magic
@@ -900,7 +918,11 @@ mod tests {
 
         // 3. Invalid descr
         let bad_descr_path = directory.join("bad_descr.npy");
-        write_npy(&bad_descr_path, "{'descr': '<f4', 'fortran_order': False, 'shape': (100, 3), }", 100 * 3 * 4);
+        write_npy(
+            &bad_descr_path,
+            "{'descr': '<f4', 'fortran_order': False, 'shape': (100, 3), }",
+            100 * 3 * 4,
+        );
         assert!(validate_npy_file(&bad_descr_path, 100, 3).is_err());
 
         // 4. Invalid shape rows/cols
@@ -909,7 +931,11 @@ mod tests {
 
         // 5. Invalid file size (truncated payload)
         let truncated_path = directory.join("truncated.npy");
-        write_npy(&truncated_path, "{'descr': '<f8', 'fortran_order': False, 'shape': (100, 3), }", 100 * 3 * 8 - 1);
+        write_npy(
+            &truncated_path,
+            "{'descr': '<f8', 'fortran_order': False, 'shape': (100, 3), }",
+            100 * 3 * 8 - 1,
+        );
         assert!(validate_npy_file(&truncated_path, 100, 3).is_err());
 
         fs::remove_dir_all(directory).unwrap();

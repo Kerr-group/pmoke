@@ -2,7 +2,7 @@ use crate::config::{Config, render_normalized_config};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Seek, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,6 +12,7 @@ pub(crate) enum AnalysisStage {
     Li,
     Phase,
     Kerr,
+    ExportNpy,
 }
 
 pub fn prepare(cfg: &Config) -> Result<()> {
@@ -94,7 +95,7 @@ pub fn write_run_state(
     } else {
         ex_acquired
     };
-    let analysis_started_at = if status == "analyzing" {
+    let analysis_started_at = if status == "analyzing" && ex_anal_started.is_none() {
         Some(now.clone())
     } else {
         ex_anal_started
@@ -276,6 +277,24 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
         )
     })?;
 
+    if stage == AnalysisStage::ExportNpy {
+        let canonical_dir = cfg.paths().analysis_dir();
+        if canonical_dir.exists() {
+            for entry in fs::read_dir(&canonical_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let target = staging_dir.join(entry.file_name());
+                let metadata = fs::symlink_metadata(&path)?;
+                if metadata.file_type().is_dir() {
+                    copy_optional_tree(&path, &target)?;
+                } else if metadata.file_type().is_file() {
+                    copy_file(&path, &target)?;
+                }
+            }
+        }
+        return Ok(staging_cfg);
+    }
+
     if stage == AnalysisStage::Li {
         return Ok(staging_cfg);
     }
@@ -337,119 +356,51 @@ pub(crate) fn publish_analysis_staging(cfg: &Config, staging_cfg: &Config) -> Re
 }
 
 pub struct AnalysisLock {
+    file: fs::File,
     path: PathBuf,
-}
-
-fn is_pid_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        if let Ok(mut child) = std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            if let Ok(status) = child.wait() {
-                return status.success();
-            }
-        }
-        true
-    }
-    #[cfg(windows)]
-    {
-        if let Ok(output) = std::process::Command::new("tasklist")
-            .arg("/FI")
-            .arg(format!("PID eq {pid}"))
-            .arg("/NH")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output()
-        {
-            let text = String::from_utf8_lossy(&output.stdout);
-            return text.contains(&pid.to_string());
-        }
-        true
-    }
 }
 
 impl AnalysisLock {
     pub fn acquire(run_dir: &Path, stage: &str) -> Result<Self> {
         let path = run_dir.join(".analysis.lock");
-        let now = jiff::Timestamp::now().to_string();
-        Self::acquire_internal(run_dir, &path, stage, &now)
-    }
-
-    fn acquire_internal(run_dir: &Path, path: &Path, stage: &str, now: &str) -> Result<Self> {
-        let content = format!(
-            "pid = {}\nstage = \"{}\"\nstarted_at = \"{}\"\n",
-            std::process::id(),
-            stage,
-            now
-        );
-        match OpenOptions::new()
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
             .write(true)
-            .create_new(true)
-            .open(path)
-        {
-            Ok(mut file) => {
-                let result: Result<()> = (|| {
-                    file.write_all(content.as_bytes())?;
-                    file.sync_all()?;
-                    Ok(())
-                })();
-                if result.is_err() {
-                    let _ = fs::remove_file(path);
-                }
-                result?;
-                Ok(Self { path: path.to_path_buf() })
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let current_info = fs::read_to_string(path)
-                    .unwrap_or_else(|_| "unknown".to_string());
+            .truncate(false)
+            .open(&path)
+            .with_context(|| format!("failed to open lock file: {}", path.display()))?;
 
-                let mut pid_opt = None;
-                for line in current_info.lines() {
-                    if line.starts_with("pid = ") {
-                        if let Some(pid_str) = line.strip_prefix("pid = ") {
-                            if let Ok(p) = pid_str.trim().parse::<u32>() {
-                                pid_opt = Some(p);
-                            }
-                        }
-                    }
-                }
-
-                if let Some(pid) = pid_opt {
-                    if !is_pid_alive(pid) {
-                        crate::ui::warn(format!(
-                            "Stale analysis lock detected (PID {pid} is not running). Removing stale lock file: {}",
-                            path.display()
-                        ));
-                        let _ = fs::remove_file(path);
-                        return Self::acquire_internal(run_dir, path, stage, now);
-                    }
-                }
-
-                bail!(
-                    "Another analysis is currently running in this directory (lock file exists: {}).\nLock info:\n{}\n\n\
-                    The lock may be stale. Verify no pmoke process is running, then remove .analysis.lock.",
-                    path.display(),
-                    current_info
-                );
-            }
-            Err(error) => Err(error).with_context(|| {
-                format!("failed to create analysis lock: {}", path.display())
-            }),
+        use fs2::FileExt;
+        if file.try_lock_exclusive().is_err() {
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            bail!(
+                "Another analysis is currently running in this directory (lock file exists: {}).\nLock info:\n{}\n\n\
+                The lock may be stale. Verify no pmoke process is running, then remove .analysis.lock.",
+                path.display(),
+                content
+            );
         }
+
+        file.set_len(0)?;
+        file.seek(std::io::SeekFrom::Start(0))?;
+
+        let now = jiff::Timestamp::now().to_string();
+        writeln!(file, "pid = {}", std::process::id())?;
+        writeln!(file, "stage = \"{stage}\"")?;
+        writeln!(file, "started_at = \"{now}\"")?;
+        file.sync_all()?;
+
+        Ok(Self { file, path })
     }
 }
 
 impl Drop for AnalysisLock {
     fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
         let _ = fs::remove_file(&self.path);
     }
 }
-
 
 fn copy_required_file(source: &Path, destination: &Path, label: &str) -> Result<()> {
     match fs::symlink_metadata(source) {

@@ -77,8 +77,16 @@ pub fn export(cfg: &Config, output: &Path) -> Result<()> {
 }
 
 pub fn export_canonical(cfg: &Config) -> Result<()> {
-    let _lock = crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "export_npy")?;
-    export_canonical_inner(cfg)
+    let _lock =
+        crate::commands::run_dir::AnalysisLock::acquire(&cfg.paths().run_dir, "export_npy")?;
+    let staging_cfg = crate::commands::run_dir::prepare_analysis_staging(
+        cfg,
+        crate::commands::run_dir::AnalysisStage::ExportNpy,
+    )?;
+    export_canonical_inner(&staging_cfg)?;
+    crate::commands::run_dir::publish_analysis_staging(cfg, &staging_cfg)?;
+    ui::success("analysis NumPy export completed");
+    Ok(())
 }
 
 fn export_canonical_inner(cfg: &Config) -> Result<()> {
@@ -104,29 +112,14 @@ fn export_canonical_inner(cfg: &Config) -> Result<()> {
             ensure_regular_file(destination, "NPY output")?;
         }
     }
-    let mut created = Vec::new();
-    let result: Result<()> = (|| {
-        for (source, destination) in &pairs {
-            let table = read_csv_table(source)?;
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let existed = destination.exists();
-            write_npy_table_replacing(destination, &table.columns, table.rows, cfg.force)?;
-            if !existed {
-                created.push(destination.clone());
-            }
+    for (source, destination) in &pairs {
+        let table = read_csv_table(source)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
         }
-        crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg, "export_npy")?;
-        Ok(())
-    })();
-    if result.is_err() {
-        for path in created {
-            let _ = fs::remove_file(path);
-        }
+        write_npy_table_replacing(destination, &table.columns, table.rows, cfg.force)?;
     }
-    result?;
-    ui::success("analysis NumPy export completed");
+    crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg, "export_npy")?;
     Ok(())
 }
 

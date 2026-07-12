@@ -170,11 +170,27 @@ pub fn fetch_with_options(
              canonical output is acquisition/waveforms/waveform.csv"
         );
     }
+    let _lock = if cfg.force {
+        Some(crate::commands::run_dir::AnalysisLock::acquire(
+            &cfg.paths().run_dir,
+            "fetch_force",
+        )?)
+    } else {
+        None
+    };
     crate::commands::run_dir::prepare(cfg)?;
     crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
     let result = fetch_with_options_inner(cfg, format, out);
     match &result {
-        Ok(()) => crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?,
+        Ok(()) => {
+            if cfg.force {
+                let analysis_dir = cfg.paths().analysis_dir();
+                if analysis_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&analysis_dir);
+                }
+            }
+            crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?
+        }
         Err(error) => {
             crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(error))?
         }
