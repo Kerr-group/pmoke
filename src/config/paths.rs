@@ -372,26 +372,26 @@ mod tests {
 
     #[test]
     fn canonical_plot_paths_are_stage_scoped_and_staging_aware() {
-        let paths = ArtifactPaths::new(PathBuf::from("shot with space 測定"));
+        let paths = ArtifactPaths::new(PathBuf::from("shot with space measurement"));
         assert_eq!(
             paths.reference_fit_plot(),
-            PathBuf::from("shot with space 測定/analysis/plots/reference/reference_fit.png")
+            PathBuf::from("shot with space measurement/analysis/plots/reference/reference_fit.png")
         );
         assert_eq!(
             paths.lockin_xy_plot(3),
-            PathBuf::from("shot with space 測定/analysis/plots/lockin/ch3_xy.png")
+            PathBuf::from("shot with space measurement/analysis/plots/lockin/ch3_xy.png")
         );
         assert_eq!(
             paths.phase_rotated_plot(3),
-            PathBuf::from("shot with space 測定/analysis/plots/phase/ch3_rotated.png")
+            PathBuf::from("shot with space measurement/analysis/plots/phase/ch3_rotated.png")
         );
         assert_eq!(
             paths.kerr_plot(),
-            PathBuf::from("shot with space 測定/analysis/plots/kerr/kerr.png")
+            PathBuf::from("shot with space measurement/analysis/plots/kerr/kerr.png")
         );
         assert_eq!(
             paths.to_staging().kerr_plot(),
-            PathBuf::from("shot with space 測定/analysis.incomplete/plots/kerr/kerr.png")
+            PathBuf::from("shot with space measurement/analysis.incomplete/plots/kerr/kerr.png")
         );
     }
 }
