@@ -86,10 +86,27 @@ pub fn analyze(cfg: &Config) -> Result<()> {
 }
 
 pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
+    crate::commands::run_dir::write_run_state(cfg, "analyzing", "analysis", None)?;
+    let result = run_analyze_inner(cfg, data);
+    match &result {
+        Ok(()) => crate::commands::run_dir::write_run_state(cfg, "complete", "analysis", None)?,
+        Err(error) => {
+            crate::commands::run_dir::write_run_state(cfg, "failed", "analysis", Some(error))?
+        }
+    }
+    result
+}
+
+fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     check_analysis_exists(cfg)?;
 
     let mut cfg_staging = cfg.clone();
     cfg_staging.staging_active = true;
+    cfg_staging.plot.output_dir = cfg_staging
+        .paths()
+        .plot_dir()
+        .to_string_lossy()
+        .into_owned();
 
     let staging_analysis = cfg_staging.paths().analysis_dir();
     if staging_analysis.exists() {
@@ -129,18 +146,11 @@ pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
     crate::lockin::provenance::write_analysis_metadata(&cfg_staging, &provenance)?;
 
     let canonical_analysis = cfg.paths().analysis_dir();
-    if canonical_analysis.exists() {
-        if cfg.force {
-            std::fs::remove_dir_all(&canonical_analysis)?;
-        } else {
-            bail!(
-                "analysis directory already exists: {}",
-                canonical_analysis.display()
-            );
-        }
-    }
-    std::fs::rename(&staging_analysis, &canonical_analysis)
-        .context("failed to rename staging directory to canonical analysis directory")?;
+    crate::commands::run_dir::publish_staged_directory(
+        &staging_analysis,
+        &canonical_analysis,
+        cfg.force,
+    )?;
 
     Ok(())
 }
@@ -484,13 +494,21 @@ mod tests {
         // Parse manifest to verify content
         let manifest_content = std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap();
         let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
-        assert_eq!(manifest["schema_version"].as_integer().unwrap(), 4);
+        assert_eq!(manifest["schema_version"].as_integer().unwrap(), 1);
         assert!(manifest["timestamp"].as_str().is_some());
         assert!(manifest["lockin"].as_table().is_some());
 
         let outputs = manifest["outputs"].as_array().unwrap();
-        assert!(outputs.iter().any(|v| v["file"].as_str().unwrap() == "kerr/kerr.csv"));
-        assert!(!outputs.iter().any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy"));
+        assert!(
+            outputs
+                .iter()
+                .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.csv")
+        );
+        assert!(
+            !outputs
+                .iter()
+                .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy")
+        );
 
         // Fourth run with save_npy = true and force = true succeeds
         cfg.lockin.save_npy = true;
@@ -501,7 +519,15 @@ mod tests {
         let manifest_content_2 = std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap();
         let manifest_2: toml::Value = toml::from_str(&manifest_content_2).unwrap();
         let outputs_2 = manifest_2["outputs"].as_array().unwrap();
-        assert!(outputs_2.iter().any(|v| v["file"].as_str().unwrap() == "kerr/kerr.csv"));
-        assert!(outputs_2.iter().any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy"));
+        assert!(
+            outputs_2
+                .iter()
+                .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.csv")
+        );
+        assert!(
+            outputs_2
+                .iter()
+                .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy")
+        );
     }
 }

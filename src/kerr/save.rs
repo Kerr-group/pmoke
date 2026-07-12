@@ -22,7 +22,15 @@ pub fn write_kerr_results<P: AsRef<Path>>(
     kerr_results: &[Vec<f64>],
     save_npy: bool,
 ) -> Result<()> {
-    write_analysis_results(fname, headers, t, s_rate, s_integral, kerr_results, save_npy)
+    write_analysis_results(
+        fname,
+        headers,
+        t,
+        s_rate,
+        s_integral,
+        kerr_results,
+        save_npy,
+    )
 }
 
 #[cfg(test)]

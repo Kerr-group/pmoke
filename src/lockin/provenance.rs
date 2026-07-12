@@ -66,6 +66,8 @@ struct AnalysisMetadata<'a> {
     schema_version: u32,
     pmoke_version: &'static str,
     timestamp: String,
+    source_acquisition: &'static str,
+    source_config: &'static str,
     lockin: &'a LockinProvenance,
     outputs: Vec<OutputFileInfo>,
 }
@@ -76,7 +78,11 @@ fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
         return Ok(outputs);
     }
 
-    fn traverse(base_dir: &Path, current_dir: &Path, outputs: &mut Vec<OutputFileInfo>) -> Result<()> {
+    fn traverse(
+        base_dir: &Path,
+        current_dir: &Path,
+        outputs: &mut Vec<OutputFileInfo>,
+    ) -> Result<()> {
         for entry in std::fs::read_dir(current_dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -87,9 +93,11 @@ fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
                 if filename == "manifest.toml" || filename.starts_with('.') {
                     continue;
                 }
-                let relative = path.strip_prefix(base_dir)
+                let relative = path
+                    .strip_prefix(base_dir)
                     .context("failed to strip prefix from output file path")?;
-                let relative_str = relative.to_str()
+                let relative_str = relative
+                    .to_str()
                     .ok_or_else(|| anyhow::anyhow!("non-utf8 path in output files"))?
                     .to_string();
                 let sha256 = crate::utils::checksum::file_sha256(&path)?;
@@ -109,7 +117,9 @@ fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
 
 pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Result<()> {
     let path = cfg.paths().analysis_manifest();
-    let parent = path.parent().ok_or_else(|| anyhow::anyhow!("analysis manifest has no parent directory"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("analysis manifest has no parent directory"))?;
     if !parent.exists() {
         fs::create_dir_all(parent).context("failed to create directory for analysis manifest")?;
     }
@@ -117,14 +127,33 @@ pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Resul
     let outputs = scan_outputs(parent)?;
 
     let metadata = AnalysisMetadata {
-        schema_version: 4,
+        schema_version: 1,
         pmoke_version: env!("CARGO_PKG_VERSION"),
         timestamp: jiff::Timestamp::now().to_string(),
+        source_acquisition: "../acquisition/manifest.toml",
+        source_config: "../config.resolved.toml",
         lockin,
         outputs,
     };
     let encoded =
         toml::to_string_pretty(&metadata).context("failed to encode analysis metadata")?;
+    write_atomic(&path, encoded.as_bytes())
+}
+
+pub fn refresh_analysis_manifest_outputs(cfg: &Config) -> Result<()> {
+    let path = cfg.paths().analysis_manifest();
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("analysis manifest has no parent directory"))?;
+    let contents =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let mut manifest: toml::Value =
+        toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))?;
+    let outputs = scan_outputs(parent)?;
+    manifest["outputs"] =
+        toml::Value::try_from(outputs).context("failed to encode analysis output entries")?;
+    let encoded =
+        toml::to_string_pretty(&manifest).context("failed to encode updated analysis manifest")?;
     write_atomic(&path, encoded.as_bytes())
 }
 

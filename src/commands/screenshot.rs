@@ -6,7 +6,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-const SCREENSHOT_DIR: &str = "screenshot";
 const SCREENSHOT_FILENAME: &str = "oscilloscope.png";
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
@@ -29,25 +28,22 @@ pub(crate) fn prepare_screenshot(cfg: &Config) -> Result<ScreenshotPlan> {
     cfg.instruments
         .as_ref()
         .ok_or_else(|| anyhow!("instruments.oscilloscope is required"))?;
-    prepare_screenshot_output(&cfg.source_path)
+    prepare_screenshot_path(&cfg.paths().oscilloscope_screenshot())
 }
 
-fn prepare_screenshot_output(config_path: &Path) -> Result<ScreenshotPlan> {
-    let config_parent = config_path
+pub(crate) fn prepare_screenshot_path(final_path: &Path) -> Result<ScreenshotPlan> {
+    let output_dir = final_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let output_dir = config_parent.join(SCREENSHOT_DIR);
-    ensure_image_directory(&output_dir)?;
-
-    let final_path = output_dir.join(SCREENSHOT_FILENAME);
+    ensure_image_directory(output_dir)?;
     let temp_path = output_dir.join(format!(".{SCREENSHOT_FILENAME}.tmp"));
-    ensure_path_absent(&final_path, "screenshot output")?;
+    ensure_path_absent(final_path, "screenshot output")?;
     ensure_path_absent(&temp_path, "screenshot temporary output")?;
 
     Ok(ScreenshotPlan {
         temp_path,
-        final_path,
+        final_path: final_path.to_path_buf(),
     })
 }
 
@@ -176,18 +172,21 @@ mod tests {
     fn screenshot_output_uses_config_sibling_directory_and_refuses_existing_outputs() {
         let dir = unique_test_dir();
         fs::create_dir(&dir).unwrap();
-        let config_path = dir.join("config.toml");
+        let output = dir.join("acquisition/screenshots/oscilloscope.png");
 
-        let plan = prepare_screenshot_output(&config_path).unwrap();
-        assert_eq!(plan.final_path, dir.join("screenshot/oscilloscope.png"));
-        assert_eq!(plan.temp_path, dir.join("screenshot/.oscilloscope.png.tmp"));
-        assert!(dir.join("screenshot").is_dir());
+        let plan = prepare_screenshot_path(&output).unwrap();
+        assert_eq!(plan.final_path, output);
+        assert_eq!(
+            plan.temp_path,
+            dir.join("acquisition/screenshots/.oscilloscope.png.tmp")
+        );
+        assert!(dir.join("acquisition/screenshots").is_dir());
 
         fs::write(&plan.final_path, b"existing").unwrap();
-        assert!(prepare_screenshot_output(&config_path).is_err());
+        assert!(prepare_screenshot_path(&output).is_err());
         fs::remove_file(&plan.final_path).unwrap();
         fs::write(&plan.temp_path, b"partial").unwrap();
-        assert!(prepare_screenshot_output(&config_path).is_err());
+        assert!(prepare_screenshot_path(&output).is_err());
 
         fs::remove_dir_all(dir).unwrap();
     }

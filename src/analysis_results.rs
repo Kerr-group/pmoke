@@ -75,11 +75,18 @@ pub fn write_analysis_results<P: AsRef<Path>>(
         .collect::<Vec<_>>();
     let header_refs = headers.iter().map(String::as_str).collect::<Vec<_>>();
     let path_ref = path.as_ref();
+    if path_ref.exists() {
+        bail!("analysis output already exists: {}", path_ref.display());
+    }
+    let npy_path = path_ref.with_extension("npy");
+    if save_npy && npy_path.exists() {
+        bail!("analysis output already exists: {}", npy_path.display());
+    }
     write_csv(path_ref, &header_refs, &columns)?;
 
-    if save_npy {
-        let npy_path = path_ref.with_extension("npy");
-        crate::utils::csv::write_npy(&npy_path, &columns)?;
+    if save_npy && let Err(error) = crate::utils::csv::write_npy(&npy_path, &columns) {
+        let _ = std::fs::remove_file(path_ref);
+        return Err(error);
     }
 
     Ok(())

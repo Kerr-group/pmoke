@@ -229,11 +229,15 @@ fn raw_metadata_serializes_horizontal_settings() {
 
     // Verify oscilloscope fields
     assert_eq!(
-        decoded["oscilloscope"]["horizontal_offset"].as_float().unwrap(),
+        decoded["oscilloscope"]["horizontal_offset"]
+            .as_float()
+            .unwrap(),
         metadata.oscilloscope.horizontal_offset
     );
     assert_eq!(
-        decoded["oscilloscope"]["horizontal_scale"].as_float().unwrap(),
+        decoded["oscilloscope"]["horizontal_scale"]
+            .as_float()
+            .unwrap(),
         metadata.oscilloscope.horizontal_scale
     );
 
@@ -248,8 +252,14 @@ fn raw_metadata_serializes_horizontal_settings() {
     assert_eq!(ch1["y_increment"].as_float().unwrap(), ch1_meta.y_increment);
     assert_eq!(ch1["y_origin"].as_float().unwrap(), ch1_meta.y_origin);
     assert_eq!(ch1["y_reference"].as_float().unwrap(), ch1_meta.y_reference);
-    assert_eq!(ch1["vertical_offset"].as_float().unwrap(), ch1_meta.vertical_offset);
-    assert_eq!(ch1["vertical_scale"].as_float().unwrap(), ch1_meta.vertical_scale);
+    assert_eq!(
+        ch1["vertical_offset"].as_float().unwrap(),
+        ch1_meta.vertical_offset
+    );
+    assert_eq!(
+        ch1["vertical_scale"].as_float().unwrap(),
+        ch1_meta.vertical_scale
+    );
     assert_eq!(ch1["preamble_raw"].as_str().unwrap(), ch1_meta.preamble_raw);
 }
 
@@ -302,6 +312,27 @@ fn csv_and_raw_outputs_are_finalized_after_streaming_succeeds() {
         fs::read_to_string(csv_out).unwrap(),
         "time (s),ch1\n0,2\n0.5,4\n"
     );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn canonical_both_output_writes_waveform_csv_inside_acquisition_staging() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+    let staging_dir = dir.join(".acquisition.tmp");
+    fs::create_dir_all(staging_dir.join("waveforms")).unwrap();
+    fs::write(staging_dir.join("waveforms/ch1.u16le"), [2_u8, 0, 4, 0]).unwrap();
+
+    let raw_out = dir.join("acquisition.incomplete");
+    let csv_out = raw_out.join("waveforms/waveform.csv");
+    let metadata = single_channel_raw_metadata("waveforms/ch1.u16le", 2);
+    write_waveform_csv_into_staging(&csv_out, &raw_out, &staging_dir, &[1], &metadata).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(staging_dir.join("waveforms/waveform.csv")).unwrap(),
+        "time (s),ch1\n0,2\n0.5,4\n"
+    );
+    assert!(!raw_out.exists());
     fs::remove_dir_all(dir).unwrap();
 }
 

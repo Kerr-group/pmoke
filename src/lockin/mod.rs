@@ -29,7 +29,13 @@ pub struct LockinProcessOutput {
     pub provenance: LockinProvenance,
 }
 
-type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>, LockinProvenance);
+type LockinRunOutput = (
+    Vec<f64>,
+    Vec<Vec<f64>>,
+    Vec<Vec<f64>>,
+    Vec<Vec<Vec<f64>>>,
+    LockinProvenance,
+);
 
 pub fn run(cfg: &Config) -> Result<()> {
     let pb = ui::spinner("reading fetched waveform data");

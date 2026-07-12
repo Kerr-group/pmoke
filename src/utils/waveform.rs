@@ -25,7 +25,6 @@ struct CsvColumns {
     column_count: usize,
 }
 
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(from = "RawWaveformMetadataRaw")]
 struct RawWaveformMetadata {
@@ -75,7 +74,8 @@ impl ChannelsFormat {
                     let ch = item.index.unwrap_or_else(|| {
                         if let Some(pos) = item.file.find("ch") {
                             let s = &item.file[pos + 2..];
-                            let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+                            let digits: String =
+                                s.chars().take_while(|c| c.is_ascii_digit()).collect();
                             digits.parse::<u8>().unwrap_or(1)
                         } else {
                             1
@@ -358,7 +358,7 @@ pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvE
 }
 
 fn raw_manifest_sha256(base_dir: &Path) -> Result<String> {
-    let path = base_dir.join(RAW_METADATA_FNAME);
+    let path = raw_metadata_path(base_dir);
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("raw metadata not found: {}", path.display()))?;
     if !metadata.file_type().is_file() {
@@ -423,7 +423,7 @@ fn export_temporary_path(output: &Path) -> PathBuf {
 }
 
 fn read_raw_metadata(base_dir: &Path) -> Result<RawWaveformMetadata> {
-    let metadata_path = base_dir.join(RAW_METADATA_FNAME);
+    let metadata_path = raw_metadata_path(base_dir);
     let metadata = fs::symlink_metadata(&metadata_path)
         .with_context(|| format!("raw metadata not found: {}", metadata_path.display()))?;
     if !metadata.file_type().is_file() {
@@ -914,11 +914,11 @@ fn validate_voltage_range(
 fn resolve_raw_channel_path(base_dir: &Path, file: &str, key: &str) -> Result<PathBuf> {
     let relative = Path::new(file);
     if relative.is_absolute() {
-        bail!("raw channel file must be a plain file name for {key}: {file}");
+        bail!("raw channel file must be a safe relative path for {key}: {file}");
     }
     for component in relative.components() {
         if !matches!(component, Component::Normal(_)) {
-            bail!("raw channel file must be a plain file name for {key}: {file}");
+            bail!("raw channel file must be a safe relative path for {key}: {file}");
         }
     }
     Ok(base_dir.join(relative))
@@ -950,7 +950,7 @@ fn raw_status(cfg: &Config, channels: &[u8]) -> Result<RawStatus> {
 }
 
 fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
-    let metadata_path = base_dir.join(RAW_METADATA_FNAME);
+    let metadata_path = raw_metadata_path(base_dir);
     if !path_entry_exists(&metadata_path)? {
         return if path_entry_exists(base_dir)? {
             Ok(RawStatus::Invalid(format!(
@@ -960,6 +960,9 @@ fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
         } else {
             Ok(RawStatus::Missing)
         };
+    }
+    if manifest_declares_csv(&metadata_path)? {
+        return Ok(RawStatus::Missing);
     }
 
     let metadata = match read_raw_metadata(base_dir) {
@@ -985,6 +988,26 @@ fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
     }
 
     Ok(RawStatus::Complete)
+}
+
+fn raw_metadata_path(base_dir: &Path) -> PathBuf {
+    let canonical = base_dir.join("manifest.toml");
+    if canonical.exists() {
+        canonical
+    } else {
+        base_dir.join(RAW_METADATA_FNAME)
+    }
+}
+
+fn manifest_declares_csv(path: &Path) -> Result<bool> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read acquisition manifest: {}", path.display()))?;
+    let value: toml::Value = toml::from_str(&text)
+        .with_context(|| format!("failed to parse acquisition manifest: {}", path.display()))?;
+    Ok(value
+        .get("waveform_format")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|format| format.eq_ignore_ascii_case("csv")))
 }
 
 fn path_entry_exists(path: &Path) -> Result<bool> {

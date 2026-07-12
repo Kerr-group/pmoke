@@ -97,7 +97,7 @@ fn run_with(args: Cli) -> Result<()> {
 
     let (cfg, warnings) = load.into_ready()?;
 
-    if args.run_dir.is_some() && command_writes_artifacts(args.command.as_ref()) {
+    if command_writes_artifacts(args.command.as_ref()) {
         if let Some(target) = command_validation_target(args.command.as_ref()) {
             config::validate_for_target(&cfg, target)?;
         }

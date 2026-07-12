@@ -1,12 +1,12 @@
 use crate::cli::FetchFormat;
 use crate::commands::screenshot::{
-    capture_screenshot, prepare_screenshot, report_saved_screenshot,
+    capture_screenshot, prepare_screenshot, prepare_screenshot_path, report_saved_screenshot,
 };
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::{Config, Connection, FetchOutput, render_normalized_config};
-use crate::constants::{
-    RAW_METADATA_FNAME, RAW_METADATA_VERSION, T_HEADER,
-};
+#[cfg(test)]
+use crate::constants::RAW_METADATA_FNAME;
+use crate::constants::{RAW_METADATA_VERSION, T_HEADER};
 use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::checksum::{finalize_sha256_hex, sha256_hex};
@@ -115,6 +115,18 @@ struct RawChannelMetadata {
     vertical_scale: f64,
 }
 
+#[derive(Serialize)]
+struct CsvAcquisitionManifest {
+    schema_version: u32,
+    pmoke_version: &'static str,
+    timestamp: String,
+    waveform_format: &'static str,
+    file: String,
+    sha256: String,
+    rows: usize,
+    columns: usize,
+}
+
 pub fn fetch(cfg: &Config) -> Result<()> {
     fetch_with_options(cfg, None, None)
 }
@@ -152,6 +164,23 @@ pub fn fetch_with_options(
     format: Option<FetchFormat>,
     out: Option<&Path>,
 ) -> Result<()> {
+    crate::commands::run_dir::prepare(cfg)?;
+    crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
+    let result = fetch_with_options_inner(cfg, format, out);
+    match &result {
+        Ok(()) => crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?,
+        Err(error) => {
+            crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(error))?
+        }
+    }
+    result
+}
+
+fn fetch_with_options_inner(
+    cfg: &Config,
+    format: Option<FetchFormat>,
+    out: Option<&Path>,
+) -> Result<()> {
     check_acquisition_exists(cfg)?;
 
     let mut cfg_staging = cfg.clone();
@@ -174,7 +203,7 @@ pub fn fetch_with_options(
         Some(FetchFormat::Raw) => fetch_raw(&cfg_staging, out.unwrap_or(&default_raw)),
         Some(FetchFormat::CsvAndRaw) if out.is_some() => {
             bail!(
-                "--out cannot be used with --format csv-and-raw; use the default raw.csv and raw_waveform outputs"
+                "--out cannot be used with --format csv-and-raw; use the canonical acquisition layout"
             )
         }
         _ => match (output, out) {
@@ -186,9 +215,7 @@ pub fn fetch_with_options(
                 } else {
                     "fetch.output = \"csv_and_raw\""
                 };
-                bail!(
-                    "--out cannot be used with {setting}; use the default raw.csv and raw_waveform outputs"
-                )
+                bail!("--out cannot be used with {setting}; use the canonical acquisition layout")
             }
             (FetchOutput::CsvAndRaw, None) => {
                 fetch_csv_and_raw(&cfg_staging, &default_csv, &default_raw)
@@ -198,19 +225,16 @@ pub fn fetch_with_options(
 
     result?;
 
-    let canonical_acquisition = cfg.paths().acquisition_dir();
-    if canonical_acquisition.exists() {
-        if cfg.force {
-            std::fs::remove_dir_all(&canonical_acquisition)?;
-        } else {
-            bail!(
-                "acquisition directory already exists: {}",
-                canonical_acquisition.display()
-            );
-        }
+    if out.is_some() {
+        return Ok(());
     }
-    std::fs::rename(&staging_acquisition, &canonical_acquisition)
-        .context("failed to rename staging directory to canonical acquisition directory")?;
+
+    let canonical_acquisition = cfg.paths().acquisition_dir();
+    crate::commands::run_dir::publish_staged_directory(
+        &staging_acquisition,
+        &canonical_acquisition,
+        cfg.force,
+    )?;
 
     Ok(())
 }
@@ -243,19 +267,45 @@ fn initialize_fetch_handler(cfg: &Config) -> Result<OscilloscopeHandler> {
 }
 
 fn initialize_staged_fetch_handler(cfg: &Config, tmp_dir: &Path) -> Result<OscilloscopeHandler> {
-    initialize_fetch_handler(cfg).inspect_err(|_| {
-        let _ = fs::remove_dir(tmp_dir);
-    })
+    let screenshot_plan = cfg
+        .screenshot
+        .enabled
+        .then(|| prepare_screenshot_path(&tmp_dir.join("screenshots").join("oscilloscope.png")))
+        .transpose()?;
+    let mut handler = OscilloscopeHandler::initialize(cfg)
+        .context("failed to initialize oscilloscope handler")
+        .inspect_err(|_| {
+            let _ = fs::remove_dir(tmp_dir);
+        })?;
+    if let Some(plan) = screenshot_plan {
+        let saved = capture_screenshot(&mut handler, &plan, true)?;
+        report_saved_screenshot(&saved);
+    }
+    Ok(handler)
 }
 
 fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
     ensure_output_parent(out)?;
     let data = run_fetch_to_csv_path(cfg, out)?;
     write_fetched_csv(cfg, out, &data)?;
+    write_csv_acquisition_manifest(cfg, out, &data)?;
     Ok(())
 }
 
 pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
+    crate::commands::run_dir::prepare(cfg)?;
+    crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
+    let result = run_fetch_for_process_inner(cfg);
+    match &result {
+        Ok(_) => crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?,
+        Err(error) => {
+            crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(error))?
+        }
+    }
+    result
+}
+
+fn run_fetch_for_process_inner(cfg: &Config) -> Result<WaveformData> {
     check_acquisition_exists(cfg)?;
 
     let mut cfg_staging = cfg.clone();
@@ -274,6 +324,7 @@ pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
             ensure_output_parent(&csv_out)?;
             let data = run_fetch_to_csv_path(&cfg_staging, &csv_out)?;
             write_fetched_csv(&cfg_staging, &csv_out, &data)?;
+            write_csv_acquisition_manifest(&cfg_staging, &csv_out, &data)?;
             data
         }
         FetchOutput::Raw => fetch_raw_collect(&cfg_staging, &raw_out)?,
@@ -281,20 +332,36 @@ pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
     };
 
     let canonical_acquisition = cfg.paths().acquisition_dir();
-    if canonical_acquisition.exists() {
-        if cfg.force {
-            std::fs::remove_dir_all(&canonical_acquisition)?;
-        } else {
-            bail!(
-                "acquisition directory already exists: {}",
-                canonical_acquisition.display()
-            );
-        }
-    }
-    std::fs::rename(&staging_acquisition, &canonical_acquisition)
-        .context("failed to rename staging directory to canonical acquisition directory")?;
+    crate::commands::run_dir::publish_staged_directory(
+        &staging_acquisition,
+        &canonical_acquisition,
+        cfg.force,
+    )?;
 
     Ok(data)
+}
+
+fn write_csv_acquisition_manifest(cfg: &Config, csv: &Path, data: &WaveformData) -> Result<()> {
+    let acquisition = cfg.paths().acquisition_dir();
+    let relative = csv.strip_prefix(&acquisition).with_context(|| {
+        format!(
+            "waveform CSV {} is outside acquisition directory {}",
+            csv.display(),
+            acquisition.display()
+        )
+    })?;
+    let manifest = CsvAcquisitionManifest {
+        schema_version: 1,
+        pmoke_version: env!("CARGO_PKG_VERSION"),
+        timestamp: jiff::Timestamp::now().to_string(),
+        waveform_format: "csv",
+        file: relative.to_string_lossy().replace('\\', "/"),
+        sha256: crate::utils::checksum::file_sha256(csv)?,
+        rows: data.t.len(),
+        columns: data.channels.len() + 1,
+    };
+    let encoded = toml::to_string_pretty(&manifest)?;
+    write_synced_file(&cfg.paths().acquisition_manifest(), encoded.as_bytes())
 }
 
 fn run_fetch_to_csv_path(cfg: &Config, out: &Path) -> Result<WaveformData> {
@@ -407,8 +474,6 @@ fn fetch_raw_collect(cfg: &Config, out: &Path) -> Result<WaveformData> {
 }
 
 fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()> {
-    ensure_output_parent(csv_out)?;
-    ensure_path_not_exists(csv_out)?;
     ensure_path_not_exists(raw_out)?;
     ensure_output_parent(raw_out)?;
 
@@ -426,7 +491,8 @@ fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()>
     match fetch_raw_into_dir(cfg, &tmp_dir, &mut handler) {
         Ok((channels, metadata)) => {
             let t_write_start = Instant::now();
-            write_raw_csv_and_finalize_outputs(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            write_waveform_csv_into_staging(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            finalize_temp_dir(&tmp_dir, raw_out)?;
             let t_write_end = Instant::now();
 
             ui::saved(format!(
@@ -445,8 +511,6 @@ fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()>
 }
 
 fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<WaveformData> {
-    ensure_output_parent(csv_out)?;
-    ensure_path_not_exists(csv_out)?;
     ensure_path_not_exists(raw_out)?;
     ensure_output_parent(raw_out)?;
 
@@ -464,7 +528,8 @@ fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Re
     match fetch_raw_into_dir(cfg, &tmp_dir, &mut handler) {
         Ok((channels, metadata)) => {
             let t_write_start = Instant::now();
-            write_raw_csv_and_finalize_outputs(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            write_waveform_csv_into_staging(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            finalize_temp_dir(&tmp_dir, raw_out)?;
             let t_write_end = Instant::now();
 
             ui::saved(format!(
@@ -489,6 +554,42 @@ fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Re
     }
 }
 
+fn write_waveform_csv_into_staging(
+    csv_out: &Path,
+    raw_out: &Path,
+    tmp_dir: &Path,
+    channels: &[u8],
+    metadata: &RawFetchMetadata,
+) -> Result<()> {
+    let relative_csv = csv_out.strip_prefix(raw_out).with_context(|| {
+        format!(
+            "waveform CSV {} must be inside acquisition directory {}",
+            csv_out.display(),
+            raw_out.display()
+        )
+    })?;
+    let staged_csv = tmp_dir.join(relative_csv);
+    ensure_output_parent(&staged_csv)?;
+    let headers: Vec<String> = std::iter::once(T_HEADER.to_string())
+        .chain(channels.iter().map(|ch| format!("ch{ch}")))
+        .collect();
+    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let tmp_csv = write_raw_csv_temp(&staged_csv, &header_refs, tmp_dir, channels, metadata)
+        .with_context(|| {
+            format!(
+                "raw waveform staging directory was preserved at {}",
+                tmp_dir.display()
+            )
+        })?;
+
+    if let Err(error) = finalize_temp_file(&tmp_csv, &staged_csv) {
+        let _ = fs::remove_file(&tmp_csv);
+        return Err(error.context("failed to finalize staged waveform CSV"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn write_raw_csv_and_finalize_outputs(
     csv_out: &Path,
     raw_out: &Path,
@@ -507,7 +608,6 @@ fn write_raw_csv_and_finalize_outputs(
                 tmp_dir.display()
             )
         })?;
-
     if let Err(error) = finalize_temp_dir(tmp_dir, raw_out) {
         let _ = fs::remove_file(&tmp_csv);
         return Err(error.context(format!(
@@ -522,10 +622,8 @@ fn write_raw_csv_and_finalize_outputs(
                 "failed to finalize csv output; raw waveform staging directory was restored at {}",
                 tmp_dir.display()
             ))),
-            Err(rollback_error) => Err(error.context(format!(
-                "failed to finalize csv output and failed to restore raw waveform staging directory from {} to {}: {rollback_error}",
-                raw_out.display(),
-                tmp_dir.display()
+            Err(rollback) => Err(error.context(format!(
+                "failed to finalize csv output and restore staging: {rollback}"
             ))),
         };
     }
@@ -558,7 +656,10 @@ fn fetch_raw_into_dir(
     dir: &Path,
     handler: &mut OscilloscopeHandler,
 ) -> Result<(Vec<u8>, RawFetchMetadata)> {
-    let config_snapshots = snapshot_configs(cfg, dir)?;
+    let config_snapshots = snapshot_configs(cfg, &cfg.paths().run_dir)?;
+    let waveform_dir = dir.join("waveforms");
+    fs::create_dir_all(&waveform_dir)
+        .with_context(|| format!("failed to create {}", waveform_dir.display()))?;
     let idn_raw = handler
         .identify()
         .context("failed to identify oscilloscope before raw fetch")?;
@@ -591,8 +692,9 @@ fn fetch_raw_into_dir(
     let t_fetch_start = Instant::now();
     for &ch in &channels {
         pb.set_message(format!("fetching ch{ch} raw WORD"));
-        let mut channel_metadata = write_raw_channel_streamed(handler, dir, ch, depth)?;
+        let mut channel_metadata = write_raw_channel_streamed(handler, &waveform_dir, ch, depth)?;
         channel_metadata.index = Some(ch);
+        channel_metadata.file = format!("waveforms/{}", channel_metadata.file);
         validate_fetch_voltage_range(
             channel_metadata.y_increment,
             channel_metadata.y_origin,
@@ -654,9 +756,9 @@ fn build_raw_metadata(
         timestamp: jiff::Timestamp::now().to_string(),
         created_at_unix_seconds,
         config_version: cfg.version,
-        config_file: "config.source.toml",
+        config_file: "../config.source.toml",
         sha256: config_snapshots.source,
-        resolved_config_file: "config.resolved.toml",
+        resolved_config_file: "../config.resolved.toml",
         resolved_config_sha256: config_snapshots.resolved,
         oscilloscope: RawOscilloscopeMetadata {
             firmware: idn_firmware(&idn_raw),
@@ -719,6 +821,17 @@ fn snapshot_configs(cfg: &Config, dir: &Path) -> Result<ConfigSnapshotHashes> {
 
 fn write_snapshot(dir: &Path, name: &str, contents: &[u8]) -> Result<()> {
     let final_path = dir.join(name);
+    if final_path.exists() {
+        let existing = fs::read(&final_path)
+            .with_context(|| format!("failed to read {}", final_path.display()))?;
+        if existing != contents {
+            bail!(
+                "run config snapshot differs from current config: {}",
+                final_path.display()
+            );
+        }
+        return Ok(());
+    }
     let tmp_path = dir.join(format!("{name}.tmp"));
     write_synced_file(&tmp_path, contents)?;
     fs::rename(&tmp_path, &final_path).with_context(|| {
@@ -1076,8 +1189,8 @@ fn write_raw_csv_temp(
 }
 
 fn write_raw_metadata(dir: &Path, metadata: &RawFetchMetadata) -> Result<()> {
-    let final_path = dir.join(RAW_METADATA_FNAME);
-    let tmp_path = dir.join(format!("{RAW_METADATA_FNAME}.tmp"));
+    let final_path = dir.join("manifest.toml");
+    let tmp_path = dir.join("manifest.toml.tmp");
     let encoded = toml::to_string_pretty(metadata).context("failed to encode raw metadata")?;
 
     write_synced_file(&tmp_path, encoded.as_bytes())

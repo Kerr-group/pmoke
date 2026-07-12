@@ -437,12 +437,12 @@ pub(super) fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
     if let Some(cfg) = cfg {
         let resolver = cfg.resolver();
         files.push((
-            "raw".to_string(),
+            "waveform CSV".to_string(),
             resolver.waveform_csv().display().to_string(),
         ));
         if uses_raw_waveform_artifact(cfg) {
             files.push((
-                "raw word".to_string(),
+                "acquisition".to_string(),
                 resolver.acquisition_manifest().display().to_string(),
             ));
         }

@@ -28,10 +28,10 @@ pub fn run(cfg: &Config) -> Result<()> {
         ch
     ));
 
-    let paths = cfg.paths();
+    let resolver = cfg.resolver();
     let all_data: Vec<Vec<Vec<f64>>> = ch
         .par_iter()
-        .map(|channel| read_csv(paths.lockin_rotated_csv(*channel)))
+        .map(|channel| read_csv(resolver.lockin_rotated_csv(*channel)))
         .collect::<Result<Vec<_>, _>>()?;
 
     let elapsed_read = t0.elapsed();

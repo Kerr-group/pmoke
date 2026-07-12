@@ -79,20 +79,62 @@ pub fn export(cfg: &Config, output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn export_into(cfg: &Config, staging: &Path) -> Result<ExportMetadata> {
+pub fn export_canonical(cfg: &Config) -> Result<()> {
     let paths = cfg.paths();
+    let resolver = cfg.resolver();
+    let mut pairs = Vec::new();
+    for &channel in cfg.phase_signal_ch() {
+        pairs.push((
+            resolver.lockin_xy_csv(channel),
+            paths.lockin_xy_npy(channel),
+        ));
+        pairs.push((
+            resolver.lockin_rotated_csv(channel),
+            paths.lockin_rotated_npy(channel),
+        ));
+    }
+    pairs.push((resolver.kerr_csv(), paths.kerr_npy()));
+
+    for (_, destination) in &pairs {
+        ensure_missing(destination, "NPY output")?;
+    }
+    let mut created = Vec::new();
+    let result: Result<()> = (|| {
+        for (source, destination) in &pairs {
+            let table = read_csv_table(source)?;
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            created.push(destination.clone());
+            write_npy_table(destination, &table.columns, table.rows)?;
+        }
+        crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        for path in created {
+            let _ = fs::remove_file(path);
+        }
+    }
+    result?;
+    ui::success("analysis NumPy export completed");
+    Ok(())
+}
+
+fn export_into(cfg: &Config, staging: &Path) -> Result<ExportMetadata> {
+    let resolver = cfg.resolver();
     let mut sources = Vec::new();
     for &channel in cfg.phase_signal_ch() {
         sources.push((
-            paths.lockin_xy_csv(channel),
+            resolver.lockin_xy_csv(channel),
             format!("{LI_RESULTS_NAME}_ch{channel}.csv"),
         ));
         sources.push((
-            paths.lockin_rotated_csv(channel),
+            resolver.lockin_rotated_csv(channel),
             format!("{LI_ROTATED_NAME}_ch{channel}.csv"),
         ));
     }
-    sources.push((paths.kerr_csv(), format!("{KERR_NAME}_results.csv")));
+    sources.push((resolver.kerr_csv(), format!("{KERR_NAME}_results.csv")));
 
     let mut arrays = Vec::with_capacity(sources.len());
     for (source, source_name) in sources {
@@ -295,5 +337,37 @@ mod tests {
 
         assert!(error.to_string().contains("no data rows"));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn canonical_export_places_npy_beside_each_analysis_csv() {
+        let root = temporary_file().with_extension("run");
+        fs::create_dir(&root).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(root.clone());
+        let paths = cfg.paths();
+        for csv in [
+            paths.lockin_xy_csv(2),
+            paths.lockin_rotated_csv(2),
+            paths.kerr_csv(),
+        ] {
+            fs::create_dir_all(csv.parent().unwrap()).unwrap();
+            fs::write(csv, "time (s),value\n0,1\n1,2\n").unwrap();
+        }
+        fs::write(
+            paths.analysis_manifest(),
+            "schema_version = 1\noutputs = []\n",
+        )
+        .unwrap();
+
+        export_canonical(&cfg).unwrap();
+
+        assert!(paths.lockin_xy_npy(2).is_file());
+        assert!(paths.lockin_rotated_npy(2).is_file());
+        assert!(paths.kerr_npy().is_file());
+        let manifest = fs::read_to_string(paths.analysis_manifest()).unwrap();
+        assert!(manifest.contains("lockin/ch2_xy.npy"));
+        assert!(manifest.contains("kerr/kerr.npy"));
+        fs::remove_dir_all(root).unwrap();
     }
 }

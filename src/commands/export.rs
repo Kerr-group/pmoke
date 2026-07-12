@@ -11,21 +11,29 @@ pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
     match command {
         ExportCommand::Csv { input, output } => {
             let paths = cfg.paths();
-            let default_input = paths.acquisition_dir();
+            let manifest = cfg.resolver().acquisition_manifest();
+            let default_input = manifest
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
             let default_output = paths.waveform_csv();
-            let input = input.as_deref().unwrap_or(&default_input);
+            let input = input.as_deref().unwrap_or(default_input);
             let output = output.as_deref().unwrap_or(&default_output);
             csv(input, output)
         }
         ExportCommand::Npy { output } => {
-            let paths = cfg.paths();
-            let default_output = paths.analysis_dir().join("analysis_npy");
-            npy::export(cfg, output.as_deref().unwrap_or(&default_output))
+            if let Some(output) = output {
+                npy::export(cfg, output)
+            } else {
+                npy::export_canonical(cfg)
+            }
         }
     }
 }
 
 pub fn csv(input: &std::path::Path, output: &std::path::Path) -> Result<()> {
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let report = export_raw_waveform_csv(input, output)?;
     ui::settings_table(
         "CSV export",

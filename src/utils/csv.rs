@@ -145,15 +145,16 @@ where
         }
     }
 
-    let dictionary = format!(
-        "{{'descr': '<f8', 'fortran_order': False, 'shape': ({nrows}, {ncols}), }}"
-    );
+    let dictionary =
+        format!("{{'descr': '<f8', 'fortran_order': False, 'shape': ({nrows}, {ncols}), }}");
     let prefix_len = 10usize;
     let padding = (64 - ((prefix_len + dictionary.len() + 1) % 64)) % 64;
     let header = format!("{dictionary}{}\n", " ".repeat(padding));
-    let header_len = u16::try_from(header.len()).map_err(|_| anyhow::anyhow!("NPY header is too large"))?;
+    let header_len =
+        u16::try_from(header.len()).map_err(|_| anyhow::anyhow!("NPY header is too large"))?;
 
-    let file = File::create(path).with_context(|| format!("failed to create NPY file: {}", path.display()))?;
+    let file = File::create(path)
+        .with_context(|| format!("failed to create NPY file: {}", path.display()))?;
     let mut writer = BufWriter::new(file);
 
     writer.write_all(b"\x93NUMPY")?;
