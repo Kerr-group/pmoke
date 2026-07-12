@@ -916,12 +916,40 @@ fn resolve_raw_channel_path(base_dir: &Path, file: &str, key: &str) -> Result<Pa
     if relative.is_absolute() {
         bail!("raw channel file must be a safe relative path for {key}: {file}");
     }
+
+    let mut resolved = base_dir.to_path_buf();
     for component in relative.components() {
-        if !matches!(component, Component::Normal(_)) {
+        match component {
+            Component::Normal(c) => resolved.push(c),
+            Component::ParentDir => {
+                if !resolved.pop() {
+                    bail!("raw channel file escapes base directory parent for {key}: {file}");
+                }
+            }
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => {
+                bail!("raw channel file must be a safe relative path for {key}: {file}");
+            }
+        }
+    }
+
+    let is_config = key == "config.source.toml" || key == "config.resolved.toml";
+    if is_config {
+        if let Some(run_dir) = base_dir.parent() {
+            if !resolved.starts_with(run_dir) {
+                bail!("raw channel file escapes run directory for {key}: {file}");
+            }
+        } else if !resolved.starts_with(base_dir) {
+            bail!("raw channel file escapes base directory for {key}: {file}");
+        }
+    } else {
+        // Raw channel files must be strictly inside the base_dir
+        if !resolved.starts_with(base_dir) {
             bail!("raw channel file must be a safe relative path for {key}: {file}");
         }
     }
-    Ok(base_dir.join(relative))
+
+    Ok(resolved)
 }
 
 fn raw_channel_file_size(path: &Path, key: &str) -> Result<u64> {
