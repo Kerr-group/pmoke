@@ -603,3 +603,98 @@ fn test_fetch_out_denied_and_export_properties() {
 
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn test_force_fetch_analysis_invalidation_and_transaction() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+
+    // 1. Create canonical analysis and legacy files
+    let canonical = run_dir.join("analysis");
+    fs::create_dir_all(&canonical).unwrap();
+    fs::write(canonical.join("manifest.toml"), b"manifest").unwrap();
+
+    let legacy_npy = run_dir.join("analysis_npy");
+    fs::create_dir_all(&legacy_npy).unwrap();
+    fs::write(legacy_npy.join("test.npy"), b"npy").unwrap();
+
+    let legacy_meta = run_dir.join("analysis_metadata.toml");
+    fs::write(&legacy_meta, b"meta").unwrap();
+
+    let legacy_kerr = run_dir.join("kerr_results.csv");
+    fs::write(&legacy_kerr, b"kerr").unwrap();
+
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let lockin_rot_2 = run_dir.join("lockin_rotated_ch2.csv");
+    fs::write(&lockin_rot_2, b"rot2").unwrap();
+
+    // 2. Create backup
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+
+    // Verify they are moved to backup
+    assert!(!canonical.exists());
+    assert!(!legacy_npy.exists());
+    assert!(!legacy_meta.exists());
+    assert!(!legacy_kerr.exists());
+    assert!(!lockin_res_1.exists());
+    assert!(!lockin_rot_2.exists());
+    assert!(run_dir.join(".analysis.backup").exists());
+
+    // 3. Commit backup
+    backup.commit(run_dir).unwrap();
+
+    assert!(!run_dir.join(".analysis.backup").exists());
+
+    // Verify legacy_analysis.invalidated.<timestamp> exists and contains the files
+    let mut invalidated_found = false;
+    for entry in fs::read_dir(run_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        if name.starts_with("legacy_analysis.invalidated.") {
+            invalidated_found = true;
+            let path = entry.path();
+            assert!(path.join("analysis/manifest.toml").is_file());
+            assert!(path.join("analysis_npy/test.npy").is_file());
+            assert!(path.join("analysis_metadata.toml").is_file());
+            assert!(path.join("kerr_results.csv").is_file());
+            assert!(path.join("lockin_results_ch1.csv").is_file());
+            assert!(path.join("lockin_rotated_ch2.csv").is_file());
+        }
+    }
+    assert!(invalidated_found);
+
+    // 4. Test restore
+    // Create new files
+    let canonical2 = run_dir.join("analysis");
+    fs::create_dir_all(&canonical2).unwrap();
+    fs::write(canonical2.join("manifest.toml"), b"manifest").unwrap();
+
+    let backup2 = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!canonical2.exists());
+
+    // Restore backup
+    backup2.restore().unwrap();
+    assert!(canonical2.exists());
+    assert!(canonical2.join("manifest.toml").is_file());
+
+    // 5. Test force fetch on new directory (should not fail on directory/lock creation)
+    let new_dir = unique_test_dir().join("nested_new_run");
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(new_dir.clone());
+    config.source_path = new_dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+    config.force = true;
+
+    let result = fetch_with_options(&config, Some(FetchFormat::Csv), None);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(!err_msg.contains("failed to open lock file"));
+    assert!(!err_msg.contains("failed to create run directory"));
+
+    fs::remove_dir_all(dir).unwrap();
+    let _ = fs::remove_dir_all(new_dir);
+}

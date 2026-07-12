@@ -159,6 +159,103 @@ fn check_acquisition_exists(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
+struct AnalysisBackup {
+    backup_dir: PathBuf,
+    moved_items: Vec<(PathBuf, PathBuf)>,
+}
+
+impl AnalysisBackup {
+    fn create(run_dir: &Path) -> Result<Self> {
+        let backup_dir = run_dir.join(".analysis.backup");
+        if backup_dir.exists() {
+            std::fs::remove_dir_all(&backup_dir)?;
+        }
+        std::fs::create_dir_all(&backup_dir)?;
+
+        let mut moved_items = Vec::new();
+
+        // 1. Check canonical analysis/
+        let canonical = run_dir.join("analysis");
+        if canonical.exists() {
+            moved_items.push((canonical.clone(), PathBuf::from("analysis")));
+        }
+
+        // 2. Check legacy folders/files
+        let legacy_npy = run_dir.join("analysis_npy");
+        if legacy_npy.exists() {
+            moved_items.push((legacy_npy.clone(), PathBuf::from("analysis_npy")));
+        }
+
+        let legacy_meta = run_dir.join("analysis_metadata.toml");
+        if legacy_meta.exists() {
+            moved_items.push((legacy_meta.clone(), PathBuf::from("analysis_metadata.toml")));
+        }
+
+        let legacy_kerr = run_dir.join("kerr_results.csv");
+        if legacy_kerr.exists() {
+            moved_items.push((legacy_kerr.clone(), PathBuf::from("kerr_results.csv")));
+        }
+
+        // Wildcards for lockin results
+        if let Ok(entries) = std::fs::read_dir(run_dir) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if (name.starts_with("lockin_results_ch") || name.starts_with("lockin_rotated_ch"))
+                            && name.ends_with(".csv")
+                        {
+                            moved_items.push((path.clone(), PathBuf::from(name)));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Move all items into backup_dir
+        for (orig, rel) in &moved_items {
+            let dest = backup_dir.join(rel);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::rename(orig, &dest)
+                .with_context(|| format!("failed to move {} to backup", orig.display()))?;
+        }
+
+        Ok(Self { backup_dir, moved_items })
+    }
+
+    fn restore(self) -> Result<()> {
+        for (orig, rel) in self.moved_items.into_iter().rev() {
+            let backup_path = self.backup_dir.join(rel);
+            if backup_path.exists() {
+                if let Some(parent) = orig.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&backup_path, &orig)
+                    .with_context(|| format!("failed to restore backup to {}", orig.display()))?;
+            }
+        }
+        let _ = std::fs::remove_dir_all(&self.backup_dir);
+        Ok(())
+    }
+
+    fn commit(self, run_dir: &Path) -> Result<()> {
+        if self.moved_items.is_empty() {
+            let _ = std::fs::remove_dir_all(&self.backup_dir);
+            return Ok(());
+        }
+        let timestamp = jiff::Timestamp::now()
+            .to_string()
+            .replace(':', "-")
+            .replace('.', "-");
+        let dest_dir = run_dir.join(format!("legacy_analysis.invalidated.{}", timestamp));
+        std::fs::rename(&self.backup_dir, &dest_dir)
+            .with_context(|| format!("failed to move analysis backup to invalidated folder: {}", dest_dir.display()))?;
+        Ok(())
+    }
+}
+
 pub fn fetch_with_options(
     cfg: &Config,
     format: Option<FetchFormat>,
@@ -170,6 +267,7 @@ pub fn fetch_with_options(
              canonical output is acquisition/waveforms/waveform.csv"
         );
     }
+    crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
     let _lock = if cfg.force {
         Some(crate::commands::run_dir::AnalysisLock::acquire(
             &cfg.paths().run_dir,
@@ -179,19 +277,26 @@ pub fn fetch_with_options(
         None
     };
     crate::commands::run_dir::prepare(cfg)?;
+
+    let backup = if cfg.force {
+        Some(AnalysisBackup::create(&cfg.paths().run_dir)?)
+    } else {
+        None
+    };
+
     crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
     let result = fetch_with_options_inner(cfg, format, out);
     match &result {
         Ok(()) => {
-            if cfg.force {
-                let analysis_dir = cfg.paths().analysis_dir();
-                if analysis_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&analysis_dir);
-                }
+            if let Some(b) = backup {
+                b.commit(&cfg.paths().run_dir)?;
             }
             crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?
         }
         Err(error) => {
+            if let Some(b) = backup {
+                let _ = b.restore();
+            }
             crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(error))?
         }
     }

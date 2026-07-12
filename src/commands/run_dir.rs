@@ -357,7 +357,6 @@ pub(crate) fn publish_analysis_staging(cfg: &Config, staging_cfg: &Config) -> Re
 
 pub struct AnalysisLock {
     file: fs::File,
-    path: PathBuf,
 }
 
 impl AnalysisLock {
@@ -375,8 +374,7 @@ impl AnalysisLock {
         if file.try_lock_exclusive().is_err() {
             let content = fs::read_to_string(&path).unwrap_or_default();
             bail!(
-                "Another analysis is currently running in this directory (lock file exists: {}).\nLock info:\n{}\n\n\
-                The lock may be stale. Verify no pmoke process is running, then remove .analysis.lock.",
+                "Another analysis is currently running in this directory (lock file exists: {}).\nLock info:\n{}",
                 path.display(),
                 content
             );
@@ -391,14 +389,13 @@ impl AnalysisLock {
         writeln!(file, "started_at = \"{now}\"")?;
         file.sync_all()?;
 
-        Ok(Self { file, path })
+        Ok(Self { file })
     }
 }
 
 impl Drop for AnalysisLock {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.file);
-        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -483,7 +480,7 @@ fn sync_parent(path: &Path) -> Result<()> {
     sync_directory(parent)
 }
 
-fn ensure_run_directory(root: &Path) -> Result<()> {
+pub(crate) fn ensure_run_directory(root: &Path) -> Result<()> {
     match fs::symlink_metadata(root) {
         Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
         Ok(_) => bail!(
@@ -675,5 +672,80 @@ mod tests {
         );
         assert_eq!(run["error_summary"].as_str(), Some("network disconnected"));
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn test_analysis_lock_exclusive_advisory() {
+        let directory = temporary_directory();
+        let run_dir = &directory;
+        fs::create_dir_all(run_dir).unwrap();
+
+        // 1. Process A acquires lock
+        let lock_a = AnalysisLock::acquire(run_dir, "stage_a").unwrap();
+
+        // 2. Process B try to acquire lock (should fail)
+        let lock_b_err = AnalysisLock::acquire(run_dir, "stage_b");
+        assert!(lock_b_err.is_err());
+
+        // 3. Drop A, then B acquires lock successfully
+        std::mem::drop(lock_a);
+        let lock_b = AnalysisLock::acquire(run_dir, "stage_b");
+        assert!(lock_b.is_ok());
+
+        // 4. lock file still exists
+        let lock_path = run_dir.join(".analysis.lock");
+        assert!(lock_path.exists());
+
+        // 5. Drop B
+        std::mem::drop(lock_b);
+
+        // 6. Stress test with multiple threads trying to acquire lock
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let run_dir_arc = Arc::new(run_dir.clone());
+        let active_count = Arc::new(Mutex::new(0));
+        let max_concurrency = Arc::new(Mutex::new(0));
+        let mut threads = Vec::new();
+
+        for i in 0..10 {
+            let run_dir_c = Arc::clone(&run_dir_arc);
+            let active_count_c = Arc::clone(&active_count);
+            let max_concurrency_c = Arc::clone(&max_concurrency);
+            threads.push(thread::spawn(move || {
+                for _ in 0..20 {
+                    if let Ok(_lock) = AnalysisLock::acquire(&run_dir_c, &format!("thread_{}", i)) {
+                        {
+                            let mut active = active_count_c.lock().unwrap();
+                            *active += 1;
+                            let mut max_c = max_concurrency_c.lock().unwrap();
+                            if *active > *max_c {
+                                *max_c = *active;
+                            }
+                            assert!(*active <= 1, "Exclusion violated! Concurrency count: {}", *active);
+                        }
+                        thread::sleep(std::time::Duration::from_millis(2));
+                        {
+                            let mut active = active_count_c.lock().unwrap();
+                            *active -= 1;
+                        }
+                    }
+                    thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }));
+        }
+
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        let max_observed = *max_concurrency.lock().unwrap();
+        assert!(max_observed <= 1);
+
+        // 7. Verify lock file can be reacquired without manual deletion
+        let lock_final = AnalysisLock::acquire(run_dir, "final");
+        assert!(lock_final.is_ok());
+
+        fs::remove_dir_all(&directory).unwrap();
     }
 }
