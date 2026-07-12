@@ -18,7 +18,7 @@ pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
             let default_output = paths.waveform_csv();
             let input = input.as_deref().unwrap_or(default_input);
             let output = output.as_deref().unwrap_or(&default_output);
-            csv(input, output, cfg.force)
+            csv_with_canonical_lock(input, output, cfg.force)
         }
         ExportCommand::Npy { output } => {
             if let Some(output) = output {
@@ -28,6 +28,40 @@ pub fn run(cfg: &Config, command: &ExportCommand) -> Result<()> {
             }
         }
     }
+}
+
+pub fn csv_with_canonical_lock(
+    input: &std::path::Path,
+    output: &std::path::Path,
+    force: bool,
+) -> Result<()> {
+    let Some(run_dir) = canonical_waveform_run_dir(output) else {
+        return csv(input, output, force);
+    };
+    crate::commands::run_dir::ensure_run_directory(&run_dir)?;
+    let _lock = crate::commands::run_dir::RunMutationLock::acquire(&run_dir, "export_csv")?;
+    csv(input, output, force)
+}
+
+fn canonical_waveform_run_dir(output: &std::path::Path) -> Option<std::path::PathBuf> {
+    if output.file_name()? != "waveform.csv" {
+        return None;
+    }
+    let waveforms = output.parent()?;
+    if waveforms.file_name()? != "waveforms" {
+        return None;
+    }
+    let acquisition = waveforms.parent()?;
+    if acquisition.file_name()? != "acquisition" {
+        return None;
+    }
+    acquisition.parent().map(|parent| {
+        if parent.as_os_str().is_empty() {
+            std::path::PathBuf::from(".")
+        } else {
+            parent.to_path_buf()
+        }
+    })
 }
 
 pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Result<()> {
@@ -76,4 +110,55 @@ fn validate_replaceable_file(path: &std::path::Path) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonical_waveform_run_dir, csv_with_canonical_lock};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn canonical_csv_path_resolves_its_run_directory() {
+        assert_eq!(
+            canonical_waveform_run_dir(Path::new(
+                "shot with space/acquisition/waveforms/waveform.csv"
+            )),
+            Some(PathBuf::from("shot with space"))
+        );
+        assert_eq!(
+            canonical_waveform_run_dir(Path::new("exports/waveform.csv")),
+            None
+        );
+        assert_eq!(
+            canonical_waveform_run_dir(Path::new("acquisition/waveforms/waveform.csv")),
+            Some(PathBuf::from("."))
+        );
+        assert_eq!(
+            canonical_waveform_run_dir(Path::new("shot/acquisition/waveforms/custom.csv")),
+            None
+        );
+    }
+
+    #[test]
+    fn canonical_csv_export_uses_the_run_mutation_lock() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let run_dir = std::env::temp_dir().join(format!(
+            "pmoke-canonical-export-lock-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&run_dir).unwrap();
+        let lock = crate::commands::run_dir::RunMutationLock::acquire(&run_dir, "test").unwrap();
+        let output = run_dir.join("acquisition/waveforms/waveform.csv");
+
+        let error = csv_with_canonical_lock(Path::new("missing-raw"), &output, false).unwrap_err();
+        assert!(error.to_string().contains("run-mutating operation"));
+
+        drop(lock);
+        fs::remove_dir_all(run_dir).unwrap();
+    }
 }

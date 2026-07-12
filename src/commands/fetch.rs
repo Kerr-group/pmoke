@@ -127,6 +127,7 @@ struct CsvAcquisitionManifest {
     columns: usize,
 }
 
+#[allow(dead_code)]
 pub fn fetch(cfg: &Config) -> Result<()> {
     fetch_with_options(cfg, None, None)
 }
@@ -136,27 +137,36 @@ fn check_acquisition_exists(cfg: &Config) -> Result<()> {
         return Ok(());
     }
     let paths = cfg.paths();
-    if paths.acquisition_dir().exists() {
+    if path_exists_for_preflight(&paths.acquisition_dir())? {
         bail!(
             "acquisition directory already exists: {} (use --force to overwrite)",
             paths.acquisition_dir().display()
         );
     }
     let legacy_raw = paths.run_dir.join("raw_waveform");
-    if legacy_raw.exists() {
+    if path_exists_for_preflight(&legacy_raw)? {
         bail!(
             "legacy raw_waveform directory already exists: {} (use --force to overwrite)",
             legacy_raw.display()
         );
     }
     let legacy_csv = paths.run_dir.join("raw.csv");
-    if legacy_csv.exists() {
+    if path_exists_for_preflight(&legacy_csv)? {
         bail!(
             "legacy raw.csv already exists: {} (use --force to overwrite)",
             legacy_csv.display()
         );
     }
     Ok(())
+}
+
+fn path_exists_for_preflight(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to inspect fetch artifact: {}", path.display())),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -398,31 +408,52 @@ fn rename_file(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 fn has_any_analysis_artifact(run_dir: &Path) -> Result<bool> {
-    if run_dir.join("analysis").exists() {
-        return Ok(true);
+    for artifact in [
+        run_dir.join("analysis"),
+        run_dir.join("analysis_npy"),
+        run_dir.join("analysis_metadata.toml"),
+        run_dir.join("kerr_results.csv"),
+    ] {
+        if path_exists_for_preflight(&artifact)? {
+            return Ok(true);
+        }
     }
-    if run_dir.join("analysis_npy").exists() {
-        return Ok(true);
-    }
-    if run_dir.join("analysis_metadata.toml").exists() {
-        return Ok(true);
-    }
-    if run_dir.join("kerr_results.csv").exists() {
-        return Ok(true);
-    }
-    if let Ok(entries) = std::fs::read_dir(run_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if (name_str.starts_with("lockin_results_ch")
-                || name_str.starts_with("lockin_rotated_ch"))
-                && name_str.ends_with(".csv")
-            {
-                return Ok(true);
-            }
+    let entries = match std::fs::read_dir(run_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to inspect run directory: {}", run_dir.display())
+            });
+        }
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to inspect entry in run directory: {}",
+                run_dir.display()
+            )
+        })?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if (name_str.starts_with("lockin_results_ch") || name_str.starts_with("lockin_rotated_ch"))
+            && name_str.ends_with(".csv")
+        {
+            return Ok(true);
         }
     }
     Ok(false)
+}
+
+pub(crate) fn preflight_fetch_locked(cfg: &Config) -> Result<()> {
+    check_acquisition_exists(cfg)?;
+    if !cfg.force && has_any_analysis_artifact(&cfg.paths().run_dir)? {
+        bail!(
+            "analysis artifacts already exist without a valid acquisition; \
+             use --force to invalidate them or choose a new run directory"
+        );
+    }
+    Ok(())
 }
 
 pub fn fetch_with_options(
@@ -440,15 +471,7 @@ pub fn fetch_with_options(
     let _lock = crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "fetch")?;
 
     // Preflight checks before modifying state or directory
-    if !cfg.force {
-        check_acquisition_exists(cfg)?;
-        if has_any_analysis_artifact(&cfg.paths().run_dir)? {
-            bail!(
-                "analysis artifacts already exist without a valid acquisition; \
-                 use --force to invalidate them or choose a new run directory"
-            );
-        }
-    }
+    preflight_fetch_locked(cfg)?;
 
     crate::commands::run_dir::prepare(cfg)?;
 
@@ -608,9 +631,12 @@ fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run_fetch_for_process_locked(cfg: &Config) -> Result<WaveformData> {
+pub(crate) fn begin_fetch_after_preflight_locked(cfg: &Config) -> Result<()> {
     crate::commands::run_dir::prepare(cfg)?;
-    crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
+    crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)
+}
+
+pub(crate) fn run_fetch_after_preflight_locked(cfg: &Config) -> Result<WaveformData> {
     let result = run_fetch_for_process_inner(cfg);
     match &result {
         Ok(_) => crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?,

@@ -16,11 +16,53 @@ pub(crate) struct ScreenshotPlan {
 }
 
 pub fn screenshot(cfg: &Config) -> Result<()> {
+    crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
+    let _lock =
+        crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "screenshot")?;
+    crate::config::validate_for_target(cfg, crate::config::ValidationTarget::Screenshot)?;
+    preflight_standalone_screenshot(cfg)?;
+    crate::commands::run_dir::prepare(cfg)?;
+    screenshot_locked(cfg)
+}
+
+fn screenshot_locked(cfg: &Config) -> Result<()> {
     let plan = prepare_screenshot(cfg)?;
     let mut handler = OscilloscopeHandler::initialize(cfg)
         .context("failed to initialize oscilloscope handler")?;
     let saved = capture_screenshot(&mut handler, &plan, false)?;
     report_saved_screenshot(&saved);
+    Ok(())
+}
+
+fn preflight_standalone_screenshot(cfg: &Config) -> Result<()> {
+    let paths = cfg.paths();
+    let acquisition = paths.acquisition_dir();
+    let acquisition_metadata = fs::symlink_metadata(&acquisition).with_context(|| {
+        format!(
+            "standalone screenshot requires an existing canonical acquisition: {}; \
+             run fetch first or enable screenshots during fetch",
+            acquisition.display()
+        )
+    })?;
+    if !acquisition_metadata.file_type().is_dir() {
+        bail!(
+            "canonical acquisition is not a directory: {}",
+            acquisition.display()
+        );
+    }
+    let manifest = paths.acquisition_manifest();
+    let manifest_metadata = fs::symlink_metadata(&manifest).with_context(|| {
+        format!(
+            "standalone screenshot requires a completed acquisition manifest: {}",
+            manifest.display()
+        )
+    })?;
+    if !manifest_metadata.file_type().is_file() {
+        bail!(
+            "acquisition manifest is not a regular file: {}",
+            manifest.display()
+        );
+    }
     Ok(())
 }
 
@@ -167,6 +209,22 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn standalone_screenshot_requires_a_completed_canonical_acquisition() {
+        let dir = unique_test_dir();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(dir.clone());
+        fs::create_dir_all(&dir).unwrap();
+
+        assert!(preflight_standalone_screenshot(&cfg).is_err());
+        fs::create_dir_all(cfg.paths().acquisition_dir()).unwrap();
+        assert!(preflight_standalone_screenshot(&cfg).is_err());
+        fs::write(cfg.paths().acquisition_manifest(), b"schema_version = 1\n").unwrap();
+        preflight_standalone_screenshot(&cfg).unwrap();
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn screenshot_output_uses_config_sibling_directory_and_refuses_existing_outputs() {

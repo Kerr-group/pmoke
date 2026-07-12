@@ -12,6 +12,8 @@ pub fn analyze(cfg: &Config) -> Result<()> {
     crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
     let _lock =
         crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "analyze")?;
+    crate::config::validate_for_target(cfg, crate::config::ValidationTarget::Analyze)?;
+    crate::commands::run_dir::prepare(cfg)?;
 
     let pb = ui::spinner("reading fetched waveform data");
     let t0 = std::time::Instant::now();

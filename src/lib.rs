@@ -67,7 +67,7 @@ fn run_with(args: Cli) -> Result<()> {
             },
     }) = args.command.as_ref()
     {
-        return commands::export::csv(input, output, args.force);
+        return commands::export::csv_with_canonical_lock(input, output, args.force);
     }
 
     let mut load = config::load_from_path(&args.config);
@@ -96,13 +96,6 @@ fn run_with(args: Cli) -> Result<()> {
     }
 
     let (cfg, warnings) = load.into_ready()?;
-
-    if command_writes_artifacts(args.command.as_ref()) {
-        if let Some(target) = command_validation_target(args.command.as_ref()) {
-            config::validate_for_target(&cfg, target)?;
-        }
-        commands::run_dir::prepare(&cfg)?;
-    }
 
     if let Some(Command::Raw { command }) = args.command.as_ref() {
         commands::show::print_warnings(&warnings);
@@ -214,56 +207,6 @@ fn run_with(args: Cli) -> Result<()> {
             Some(Command::Completions { .. }) => Ok(()),
             None => unreachable!(),
         }
-    }
-}
-
-fn command_writes_artifacts(command: Option<&Command>) -> bool {
-    match command {
-        Some(
-            Command::Reference
-            | Command::Sensor
-            | Command::Li
-            | Command::Phase
-            | Command::Kerr
-            | Command::Analyze,
-        ) => true,
-        #[cfg(feature = "hw")]
-        Some(
-            Command::Fetch { .. }
-            | Command::Screenshot
-            | Command::Automeasure
-            | Command::Process
-            | Command::Auto,
-        ) => true,
-        _ => false,
-    }
-}
-
-fn command_validation_target(command: Option<&Command>) -> Option<ValidationTarget> {
-    match command? {
-        #[cfg(feature = "hw")]
-        Command::Single => Some(ValidationTarget::Single),
-        #[cfg(feature = "hw")]
-        Command::Trigger => Some(ValidationTarget::Trigger),
-        #[cfg(feature = "hw")]
-        Command::Autoshot => Some(ValidationTarget::Autoshot),
-        #[cfg(feature = "hw")]
-        Command::Fetch { .. } => Some(ValidationTarget::Fetch),
-        #[cfg(feature = "hw")]
-        Command::Screenshot => Some(ValidationTarget::Screenshot),
-        #[cfg(feature = "hw")]
-        Command::Automeasure => Some(ValidationTarget::Automeasure),
-        Command::Reference => Some(ValidationTarget::Reference),
-        Command::Sensor => Some(ValidationTarget::Sensor),
-        Command::Li => Some(ValidationTarget::Li),
-        Command::Phase => Some(ValidationTarget::Phase),
-        Command::Kerr => Some(ValidationTarget::Kerr),
-        Command::Analyze => Some(ValidationTarget::Analyze),
-        #[cfg(feature = "hw")]
-        Command::Process => Some(ValidationTarget::Process),
-        #[cfg(feature = "hw")]
-        Command::Auto => Some(ValidationTarget::Auto),
-        _ => None,
     }
 }
 

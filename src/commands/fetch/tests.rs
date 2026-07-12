@@ -935,6 +935,65 @@ fn test_normal_fetch_rejects_orphan_analysis() {
 }
 
 #[test]
+fn process_auto_and_automeasure_preflight_before_state_or_hardware() {
+    let dir = unique_test_dir();
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(dir.clone());
+    config.source_path = dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+    config.instruments = Some(crate::config::Instruments {
+        oscilloscope: crate::config::Oscilloscope {
+            connection: crate::config::Connection::Tcpip {
+                ip: "127.0.0.1".to_string(),
+                port: 1,
+            },
+            model: "DHO5108".to_string(),
+        },
+        function_generator: Some(crate::config::FunctionGenerator {
+            connection: crate::config::Connection::Gpib {
+                board: 0,
+                address: 1,
+            },
+            model: "WF1946B".to_string(),
+        }),
+    });
+    crate::commands::run_dir::ensure_run_directory(&config.paths().run_dir).unwrap();
+    fs::create_dir_all(config.paths().acquisition_dir()).unwrap();
+    let original_state = b"schema_version = 1\nstatus = \"complete\"\nstage = \"analysis\"\n";
+
+    for command in [
+        crate::commands::process::process as fn(&Config) -> Result<()>,
+        crate::commands::auto::auto,
+        crate::commands::automeasure::automeasure,
+    ] {
+        fs::write(config.paths().run_manifest(), original_state).unwrap();
+        let error = command(&config).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("acquisition directory already exists")
+        );
+        assert_eq!(
+            fs::read(config.paths().run_manifest()).unwrap(),
+            original_state
+        );
+    }
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn analysis_artifact_scan_propagates_directory_errors() {
+    let dir = unique_test_dir();
+    fs::write(&dir, b"not a directory").unwrap();
+
+    let error = has_any_analysis_artifact(&dir).unwrap_err();
+    assert!(format!("{error:#}").contains("failed to inspect run directory"));
+
+    fs::remove_file(dir).unwrap();
+}
+
+#[test]
 fn test_stale_backup_is_not_deleted() {
     let dir = unique_test_dir();
     fs::create_dir(&dir).unwrap();
@@ -968,7 +1027,7 @@ fn test_process_and_auto_reject_force() {
         result_process
             .unwrap_err()
             .to_string()
-            .contains("--force is not yet supported for process/auto")
+            .contains("--force is not supported for process/auto")
     );
 
     let result_auto = crate::commands::auto::auto(&config);
@@ -977,6 +1036,6 @@ fn test_process_and_auto_reject_force() {
         result_auto
             .unwrap_err()
             .to_string()
-            .contains("--force is not yet supported for process/auto")
+            .contains("--force is not supported for process/auto")
     );
 }

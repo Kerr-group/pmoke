@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AnalysisStage {
+    Reference,
+    Sensor,
     Li,
     Phase,
     Kerr,
@@ -277,20 +279,16 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
         )
     })?;
 
-    if stage == AnalysisStage::ExportNpy {
-        let canonical_dir = cfg.paths().analysis_dir();
-        if canonical_dir.exists() {
-            for entry in fs::read_dir(&canonical_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                let target = staging_dir.join(entry.file_name());
-                let metadata = fs::symlink_metadata(&path)?;
-                if metadata.file_type().is_dir() {
-                    copy_optional_tree(&path, &target)?;
-                } else if metadata.file_type().is_file() {
-                    copy_file(&path, &target)?;
-                }
-            }
+    if matches!(
+        stage,
+        AnalysisStage::Reference | AnalysisStage::Sensor | AnalysisStage::ExportNpy
+    ) {
+        copy_optional_tree(&cfg.paths().analysis_dir(), &staging_dir)?;
+        if matches!(stage, AnalysisStage::Reference | AnalysisStage::Sensor) {
+            remove_optional_tree(&staging.reference_plot_dir())?;
+        }
+        if stage == AnalysisStage::Sensor {
+            remove_optional_tree(&staging.sensor_plot_dir())?;
         }
         return Ok(staging_cfg);
     }
@@ -347,6 +345,20 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
     Ok(staging_cfg)
 }
 
+fn remove_optional_tree(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => fs::remove_dir_all(path)
+            .with_context(|| format!("failed to remove stale artifact tree: {}", path.display())),
+        Ok(_) => bail!(
+            "artifact tree is not a regular directory: {}",
+            path.display()
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to inspect artifact tree: {}", path.display())),
+    }
+}
+
 pub(crate) fn publish_analysis_staging(cfg: &Config, staging_cfg: &Config) -> Result<()> {
     publish_staged_directory(
         &staging_cfg.paths().analysis_dir(),
@@ -371,13 +383,21 @@ impl RunMutationLock {
             .with_context(|| format!("failed to open lock file: {}", path.display()))?;
 
         use fs2::FileExt;
-        if file.try_lock_exclusive().is_err() {
-            let content = fs::read_to_string(&path).unwrap_or_default();
-            bail!(
-                "Another run mutation operation is currently running in this directory (lock file exists: {}).\nLock info:\n{}",
-                path.display(),
-                content
-            );
+        match file.try_lock_exclusive() {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                let content = fs::read_to_string(&path).unwrap_or_default();
+                bail!(
+                    "another run-mutating operation is already running in this directory (lock file: {}).\nLock info:\n{}",
+                    path.display(),
+                    content
+                );
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to acquire run mutation lock: {}", path.display())
+                });
+            }
         }
 
         file.set_len(0)?;
@@ -671,6 +691,47 @@ mod tests {
             Some("acquisition/manifest.toml")
         );
         assert_eq!(run["error_summary"].as_str(), Some("network disconnected"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn diagnostic_plot_stages_replace_only_their_owned_plot_trees() {
+        let directory = temporary_directory();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        let paths = cfg.paths();
+        for file in [
+            paths.reference_plot_dir().join("old.png"),
+            paths.sensor_plot_dir().join("old.png"),
+            paths.lockin_plot_dir().join("old.png"),
+        ] {
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, b"old").unwrap();
+        }
+
+        let reference = prepare_analysis_staging(&cfg, AnalysisStage::Reference).unwrap();
+        assert!(!reference.paths().reference_plot_dir().exists());
+        assert!(
+            reference
+                .paths()
+                .sensor_plot_dir()
+                .join("old.png")
+                .is_file()
+        );
+        assert!(
+            reference
+                .paths()
+                .lockin_plot_dir()
+                .join("old.png")
+                .is_file()
+        );
+        fs::remove_dir_all(reference.paths().analysis_dir()).unwrap();
+
+        let sensor = prepare_analysis_staging(&cfg, AnalysisStage::Sensor).unwrap();
+        assert!(!sensor.paths().reference_plot_dir().exists());
+        assert!(!sensor.paths().sensor_plot_dir().exists());
+        assert!(sensor.paths().lockin_plot_dir().join("old.png").is_file());
+
         fs::remove_dir_all(directory).unwrap();
     }
 
