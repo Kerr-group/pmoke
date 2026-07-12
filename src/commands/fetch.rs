@@ -159,20 +159,24 @@ fn check_acquisition_exists(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackupState {
+    RollbackArmed,
+    Invalidated,
+    Restored,
+}
+
 struct AnalysisBackup {
     backup_dir: PathBuf,
     moved_items: Vec<(PathBuf, PathBuf)>,
-    committed: bool,
+    state: BackupState,
 }
 
 impl AnalysisBackup {
     fn create(run_dir: &Path) -> Result<Self> {
         static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let pid = std::process::id();
-        let timestamp = jiff::Timestamp::now()
-            .to_string()
-            .replace(':', "-")
-            .replace('.', "-");
+        let timestamp = jiff::Timestamp::now().to_string().replace([':', '.'], "-");
         let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let backup_dir = run_dir.join(format!(
             ".analysis.backup.{}.{}.{}",
@@ -183,15 +187,13 @@ impl AnalysisBackup {
 
     fn create_internal(run_dir: &Path, backup_dir: PathBuf) -> Result<Self> {
         if let Ok(entries) = std::fs::read_dir(run_dir) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let name = entry.file_name().into_string().unwrap_or_default();
-                    if name.starts_with(".analysis.backup.") && entry.path() != backup_dir {
-                        crate::ui::warn(format!(
-                            "Stale analysis backup directory detected: {}. Manual recovery of previous analysis files may be possible.",
-                            entry.path().display()
-                        ));
-                    }
+            for entry in entries.flatten() {
+                let name = entry.file_name().into_string().unwrap_or_default();
+                if name.starts_with(".analysis.backup.") && entry.path() != backup_dir {
+                    crate::ui::warn(format!(
+                        "Stale analysis backup directory detected: {}. Manual recovery of previous analysis files may be possible.",
+                        entry.path().display()
+                    ));
                 }
             }
         }
@@ -201,7 +203,7 @@ impl AnalysisBackup {
         let mut backup = Self {
             backup_dir,
             moved_items: Vec::new(),
-            committed: false,
+            state: BackupState::RollbackArmed,
         };
 
         let mut candidates = Vec::new();
@@ -230,16 +232,13 @@ impl AnalysisBackup {
 
         // Wildcards for lockin results
         if let Ok(entries) = std::fs::read_dir(run_dir) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if (name.starts_with("lockin_results_ch")
-                            || name.starts_with("lockin_rotated_ch"))
-                            && name.ends_with(".csv")
-                        {
-                            candidates.push((path.clone(), PathBuf::from(name)));
-                        }
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    let is_lockin = name.starts_with("lockin_results_ch")
+                        || name.starts_with("lockin_rotated_ch");
+                    if is_lockin && name.ends_with(".csv") {
+                        candidates.push((path.clone(), PathBuf::from(name)));
                     }
                 }
             }
@@ -252,13 +251,18 @@ impl AnalysisBackup {
                 std::fs::create_dir_all(parent)?;
             }
             if let Err(err) = std::fs::rename(&orig, &dest) {
-                return Err(err).with_context(|| {
-                    format!(
-                        "failed to move {} to backup directory: {}",
-                        orig.display(),
-                        backup.backup_dir.display()
-                    )
-                });
+                let rollback_res = backup.restore_internal();
+                return match rollback_res {
+                    Ok(()) => Err(err).with_context(|| {
+                        "failed to create analysis backup; previous analysis was restored".to_string()
+                    }),
+                    Err(rollback_err) => Err(err).with_context(|| {
+                        format!(
+                            "failed to create analysis backup and rollback failed: {rollback_err}; recovery data remains at {}",
+                            backup.backup_dir.display()
+                        )
+                    }),
+                };
             }
             backup.moved_items.push((orig, rel));
         }
@@ -267,26 +271,61 @@ impl AnalysisBackup {
     }
 
     fn restore_internal(&mut self) -> Result<()> {
+        if self.state == BackupState::Restored || self.state == BackupState::Invalidated {
+            return Ok(());
+        }
+
+        let mut failed_items = Vec::new();
         let mut errors = Vec::new();
-        for (orig, rel) in self.moved_items.drain(..).rev() {
-            let backup_path = self.backup_dir.join(&rel);
-            if backup_path.exists() {
-                if let Some(parent) = orig.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                if let Err(err) = std::fs::rename(&backup_path, &orig) {
+
+        let items = std::mem::take(&mut self.moved_items);
+
+        for (original, relative) in items.into_iter().rev() {
+            let backup_path = self.backup_dir.join(&relative);
+
+            if !backup_path.exists() {
+                continue;
+            }
+
+            if let Some(parent) = original.parent() {
+                let create_res = std::fs::create_dir_all(parent);
+                if let Err(error) = create_res {
                     errors.push(format!(
-                        "failed to restore {} from backup: {}",
-                        orig.display(),
-                        err
+                        "failed to create restore parent for {}: {}",
+                        original.display(),
+                        error
                     ));
+                    failed_items.push((original, relative));
+                    continue;
                 }
             }
+
+            if let Err(error) = std::fs::rename(&backup_path, &original) {
+                errors.push(format!(
+                    "failed to restore {} from backup: {}",
+                    original.display(),
+                    error
+                ));
+                failed_items.push((original, relative));
+            }
         }
-        let _ = std::fs::remove_dir_all(&self.backup_dir);
+
+        failed_items.reverse();
+        self.moved_items = failed_items;
+
+        if self.moved_items.is_empty() {
+            let _ = std::fs::remove_dir_all(&self.backup_dir);
+            self.state = BackupState::Restored;
+        }
+
         if !errors.is_empty() {
-            anyhow::bail!("{}", errors.join("; "));
+            anyhow::bail!(
+                "{}; remaining backup: {}",
+                errors.join("; "),
+                self.backup_dir.display()
+            );
         }
+
         Ok(())
     }
 
@@ -295,15 +334,13 @@ impl AnalysisBackup {
     }
 
     fn commit(mut self, run_dir: &Path) -> Result<()> {
+        self.state = BackupState::Invalidated;
+
         if self.moved_items.is_empty() {
             let _ = std::fs::remove_dir_all(&self.backup_dir);
-            self.committed = true;
             return Ok(());
         }
-        let timestamp = jiff::Timestamp::now()
-            .to_string()
-            .replace(':', "-")
-            .replace('.', "-");
+        let timestamp = jiff::Timestamp::now().to_string().replace([':', '.'], "-");
         let dest_dir = run_dir.join(format!("legacy_analysis.invalidated.{}", timestamp));
         std::fs::rename(&self.backup_dir, &dest_dir).with_context(|| {
             format!(
@@ -311,15 +348,15 @@ impl AnalysisBackup {
                 dest_dir.display()
             )
         })?;
-        self.committed = true;
         Ok(())
     }
 }
 
 impl Drop for AnalysisBackup {
     fn drop(&mut self) {
-        if !self.committed {
-            if let Err(err) = self.restore_internal() {
+        if matches!(self.state, BackupState::RollbackArmed) {
+            let res = self.restore_internal();
+            if let Err(err) = res {
                 crate::ui::warn(format!(
                     "Failed to automatically restore analysis backup during drop rollback: {}",
                     err

@@ -748,6 +748,17 @@ fn test_analysis_backup_partial_move_failure_and_rollback() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+fn find_analysis_backup(run_dir: &Path) -> PathBuf {
+    for entry in fs::read_dir(run_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        if name.starts_with(".analysis.backup.") {
+            return entry.path();
+        }
+    }
+    panic!("No analysis backup directory found!");
+}
+
 #[test]
 fn test_analysis_backup_restore_failure() {
     let dir = unique_test_dir();
@@ -774,8 +785,54 @@ fn test_analysis_backup_restore_failure() {
             .contains("failed to restore")
     );
 
+    // 元の場所には戻っていない (ディレクトリのままである)
+    assert!(lockin_res_1.is_dir());
+
+    // ただしbackupデータは絶対に失われない
+    let backup_dir_path = find_analysis_backup(run_dir);
+    let backup_file = backup_dir_path.join("lockin_results_ch1.csv");
+    assert!(backup_file.is_file());
+    assert_eq!(fs::read(backup_file).unwrap(), b"res1");
+
     // Cleanup directory
     let _ = fs::remove_dir_all(&lockin_res_1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+#[allow(clippy::permissions_set_readonly_false)]
+fn test_backup_commit_failure_warning() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!lockin_res_1.exists());
+
+    // Make run_dir read-only to cause commit rename to fail
+    let mut perms = fs::metadata(run_dir).unwrap().permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(run_dir, perms.clone()).unwrap();
+
+    // Call commit (should fail)
+    let commit_res = backup.commit(run_dir);
+    assert!(commit_res.is_err());
+
+    // Restore write permissions so we can clean up
+    perms.set_readonly(false);
+    fs::set_permissions(run_dir, perms).unwrap();
+
+    // Verify that the old analysis was NOT restored to the original position
+    assert!(!lockin_res_1.exists());
+
+    // Verify that the backup directory still exists on disk and is not deleted
+    let backup_dir_path = find_analysis_backup(run_dir);
+    assert!(backup_dir_path.exists());
+    assert!(backup_dir_path.join("lockin_results_ch1.csv").is_file());
+
     fs::remove_dir_all(dir).unwrap();
 }
 
