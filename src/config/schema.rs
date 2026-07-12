@@ -243,7 +243,7 @@ pub(super) enum PlotErrorModeV4 {
 #[serde(default, deny_unknown_fields)]
 pub(super) struct PlotV4 {
     pub(super) mode: PlotModeV4,
-    pub(super) output_dir: String,
+    pub(super) output_dir: Option<String>,
     pub(super) max_points: usize,
     pub(super) decimation: PlotDecimation,
     pub(super) on_error: PlotErrorModeV4,
@@ -254,7 +254,7 @@ impl Default for PlotV4 {
         let default = Plot::default();
         Self {
             mode: PlotModeV4::Save,
-            output_dir: default.output_dir,
+            output_dir: None,
             max_points: default.max_points,
             decimation: default.decimation,
             on_error: PlotErrorModeV4::Warn,
@@ -387,7 +387,6 @@ pub(super) struct KerrOutputV4 {
 #[derive(Serialize)]
 pub(super) struct PlotOutputV4 {
     pub(super) mode: PlotModeV4,
-    pub(super) output_dir: String,
     pub(super) max_points: usize,
     pub(super) decimation: PlotDecimation,
     pub(super) on_error: PlotErrorModeV4,

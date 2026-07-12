@@ -154,7 +154,6 @@ fn plot_output_v4(plot: &Plot) -> PlotOutputV4 {
     };
     PlotOutputV4 {
         mode,
-        output_dir: plot.output_dir.clone(),
         max_points: plot.max_points,
         decimation: plot.decimation,
         on_error: if plot.fail_on_error {

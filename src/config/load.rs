@@ -23,14 +23,6 @@ pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
     if let ConfigLoad::Ready { config, .. } = &mut load {
         config.source_path = path.to_path_buf();
         config.source_text = Some(text);
-        if config.version >= 4 {
-            let output_dir = PathBuf::from(&config.plot.output_dir);
-            config.plot_output_relative = (!output_dir.is_absolute()).then_some(output_dir);
-            config.plot.output_dir = config
-                .artifact_path(&config.plot.output_dir)
-                .to_string_lossy()
-                .into_owned();
-        }
     }
     load
 }
@@ -432,6 +424,7 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
 
 fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
     let mut errors = Vec::new();
+    let deprecated_plot_output_dir = raw.plot.output_dir.is_some();
 
     let scope_connection = match parse_connection_v4(&raw.scope.connection, "scope.connection") {
         Ok(connection) => Some(connection),
@@ -601,7 +594,12 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         },
     };
 
-    let validation = remap_v4_validation(validate_common(&mut cfg));
+    let mut validation = remap_v4_validation(validate_common(&mut cfg));
+    if deprecated_plot_output_dir {
+        validation.warnings.push(ConfigWarning::new(
+            "plot.output_dir is deprecated and ignored; canonical plots are written under analysis/plots",
+        ));
+    }
     errors.extend(validation.errors);
     if errors.is_empty() {
         ConfigLoad::Ready {

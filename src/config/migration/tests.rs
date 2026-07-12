@@ -58,6 +58,18 @@ fn v3_plan_generates_readable_v4_and_preserves_sensor_scale() {
 }
 
 #[test]
+fn v3_custom_plot_directory_is_reported_and_omitted_from_v4() {
+    let config = format!("{}\n[plot]\noutput_dir = \"custom-plots\"\n", v3_config());
+    let fixture = TempConfig::new(&config);
+    let plan = plan_migration(&fixture.path, Some(&fixture.path), 4).unwrap();
+
+    assert!(!plan.target_toml.contains("output_dir"));
+    assert!(plan.issues.iter().any(|issue| {
+        issue.message.contains("plot.output_dir") && issue.message.contains("analysis/plots")
+    }));
+}
+
+#[test]
 fn v2_without_recorded_time_stays_at_latest_executable_version() {
     let v2 = v3_config().replacen(
         "version = 3",
