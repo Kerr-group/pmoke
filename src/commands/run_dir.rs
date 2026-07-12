@@ -388,21 +388,31 @@ impl RunMutationLock {
         use fs2::FileExt;
         match file.try_lock_exclusive() {
             Ok(()) => {}
-            Err(error)
-                if error.kind() == io::ErrorKind::WouldBlock
-                    || error.kind() == io::ErrorKind::PermissionDenied =>
-            {
-                let content = fs::read_to_string(&path).unwrap_or_default();
-                bail!(
-                    "another run-mutating operation is already running in this directory (lock file: {}).\nLock info:\n{}",
-                    path.display(),
-                    content
-                );
-            }
             Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("failed to acquire run mutation lock: {}", path.display())
-                });
+                let is_lock_collision = {
+                    #[cfg(windows)]
+                    {
+                        error.raw_os_error() == Some(32) || error.raw_os_error() == Some(33)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        false
+                    }
+                } || error.kind() == io::ErrorKind::WouldBlock
+                    || error.kind() == io::ErrorKind::PermissionDenied;
+
+                if is_lock_collision {
+                    let content = fs::read_to_string(&path).unwrap_or_default();
+                    bail!(
+                        "another run-mutating operation is already running in this directory (lock file: {}).\nLock info:\n{}",
+                        path.display(),
+                        content
+                    );
+                } else {
+                    return Err(error).with_context(|| {
+                        format!("failed to acquire run mutation lock: {}", path.display())
+                    });
+                }
             }
         }
 
