@@ -8,60 +8,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 
-fn check_analysis_exists(cfg: &Config) -> Result<()> {
-    if cfg.force {
-        return Ok(());
-    }
-    let paths = cfg.paths();
-    if paths.analysis_dir().exists() {
-        bail!(
-            "analysis directory already exists: {} (use --force to overwrite)",
-            paths.analysis_dir().display()
-        );
-    }
-    let legacy_metadata = paths.run_dir.join("analysis_metadata.toml");
-    if legacy_metadata.exists() {
-        bail!(
-            "legacy analysis_metadata.toml already exists: {} (use --force to overwrite)",
-            legacy_metadata.display()
-        );
-    }
-    let legacy_kerr = paths.run_dir.join("kerr_results.csv");
-    if legacy_kerr.exists() {
-        bail!(
-            "legacy kerr_results.csv already exists: {} (use --force to overwrite)",
-            legacy_kerr.display()
-        );
-    }
-    for ch in cfg.phase_signal_ch() {
-        let legacy_li = paths.run_dir.join(format!("lockin_results_ch{ch}.csv"));
-        if legacy_li.exists() {
-            bail!(
-                "legacy lockin results already exist: {} (use --force to overwrite)",
-                legacy_li.display()
-            );
-        }
-        let legacy_rotated = paths.run_dir.join(format!("lockin_rotated_ch{ch}.csv"));
-        if legacy_rotated.exists() {
-            bail!(
-                "legacy lockin rotated results already exist: {} (use --force to overwrite)",
-                legacy_rotated.display()
-            );
-        }
-    }
-    let legacy_npy = paths.run_dir.join("analysis_npy");
-    if legacy_npy.exists() {
-        bail!(
-            "legacy analysis_npy directory already exists: {} (use --force to overwrite)",
-            legacy_npy.display()
-        );
-    }
-    Ok(())
-}
-
 pub fn analyze(cfg: &Config) -> Result<()> {
-    check_analysis_exists(cfg)?;
-
     let pb = ui::spinner("reading fetched waveform data");
     let t0 = std::time::Instant::now();
     let data = read_all_fetched_waveforms(cfg)?;
@@ -98,8 +45,6 @@ pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
 }
 
 fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
-    check_analysis_exists(cfg)?;
-
     let mut cfg_staging = cfg.clone();
     cfg_staging.staging_active = true;
     cfg_staging.plot.output_dir = cfg_staging
@@ -149,7 +94,7 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     crate::commands::run_dir::publish_staged_directory(
         &staging_analysis,
         &canonical_analysis,
-        cfg.force,
+        true, // Always allow overwrite for analysis results
     )?;
 
     Ok(())
@@ -386,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn run_analyze_prevents_overwrite_and_supports_force() {
+    fn run_analyze_supports_repeated_runs_without_force() {
         let directory = TemporaryDirectory::new();
         let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
         cfg.version = 4;
@@ -476,17 +421,7 @@ mod tests {
         run_analyze(&cfg, &data).unwrap();
         assert!(cfg.paths().analysis_manifest().is_file());
 
-        // Second run without force fails
-        let result = run_analyze(&cfg, &data);
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("analysis directory already exists")
-                || err_msg.contains("already exists")
-        );
-
-        // Third run with force succeeds
-        cfg.force = true;
+        // Second run without force succeeds
         run_analyze(&cfg, &data).unwrap();
         assert!(cfg.paths().analysis_manifest().is_file());
         assert!(!cfg.paths().kerr_csv().with_extension("npy").exists());
@@ -523,7 +458,7 @@ mod tests {
                 .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy")
         );
 
-        // Fourth run with save_npy = true and force = true succeeds
+        // Third run with save_npy = true succeeds
         cfg.lockin.save_npy = true;
         run_analyze(&cfg, &data).unwrap();
 
