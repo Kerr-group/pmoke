@@ -120,6 +120,7 @@ pub fn run_phase_analysis(
             sensor_rate_ch,
             sensor_integral_ch,
             &phase_output.rotated_result,
+            cfg.lockin.save_npy,
         )?;
         rotated_results.push(phase_output.rotated_result);
         pb.inc(1);

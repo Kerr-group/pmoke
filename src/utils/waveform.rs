@@ -25,7 +25,9 @@ struct CsvColumns {
     column_count: usize,
 }
 
-#[derive(Debug, Deserialize)]
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(from = "RawWaveformMetadataRaw")]
 struct RawWaveformMetadata {
     version: u32,
     status: Option<String>,
@@ -40,6 +42,71 @@ struct RawWaveformMetadata {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawWaveformMetadataRaw {
+    #[serde(alias = "schema_version", alias = "version")]
+    version: u32,
+    status: Option<String>,
+    pmoke_version: Option<String>,
+    #[serde(alias = "timestamp", alias = "created_at")]
+    created_at: Option<String>,
+    config_file: Option<String>,
+    #[serde(alias = "sha256", alias = "config_sha256")]
+    config_sha256: Option<String>,
+    resolved_config_file: Option<String>,
+    resolved_config_sha256: Option<String>,
+    oscilloscope: RawOscilloscopeMetadata,
+    channels: ChannelsFormat,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+enum ChannelsFormat {
+    Map(BTreeMap<String, RawChannelMetadata>),
+    List(Vec<RawChannelMetadata>),
+}
+
+impl ChannelsFormat {
+    fn into_map(self) -> BTreeMap<String, RawChannelMetadata> {
+        match self {
+            ChannelsFormat::Map(map) => map,
+            ChannelsFormat::List(list) => {
+                let mut map = BTreeMap::new();
+                for item in list {
+                    let ch = item.index.unwrap_or_else(|| {
+                        if let Some(pos) = item.file.find("ch") {
+                            let s = &item.file[pos + 2..];
+                            let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+                            digits.parse::<u8>().unwrap_or(1)
+                        } else {
+                            1
+                        }
+                    });
+                    map.insert(format!("ch{ch}"), item);
+                }
+                map
+            }
+        }
+    }
+}
+
+impl From<RawWaveformMetadataRaw> for RawWaveformMetadata {
+    fn from(raw: RawWaveformMetadataRaw) -> Self {
+        Self {
+            version: raw.version,
+            status: raw.status,
+            pmoke_version: raw.pmoke_version,
+            created_at: raw.created_at,
+            config_file: raw.config_file,
+            config_sha256: raw.config_sha256,
+            resolved_config_file: raw.resolved_config_file,
+            resolved_config_sha256: raw.resolved_config_sha256,
+            oscilloscope: raw.oscilloscope,
+            channels: raw.channels.into_map(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct RawOscilloscopeMetadata {
     idn_raw: Option<String>,
     waveform_format: String,
@@ -49,8 +116,9 @@ struct RawOscilloscopeMetadata {
     channels: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct RawChannelMetadata {
+    index: Option<u8>,
     file: String,
     bytes: Option<usize>,
     sha256: Option<String>,

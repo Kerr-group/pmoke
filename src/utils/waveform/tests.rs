@@ -777,6 +777,7 @@ fn raw_metadata_with_channels<const N: usize>(
         channels.insert(
             format!("ch{ch}"),
             RawChannelMetadata {
+                index: Some(ch),
                 file: file.into(),
                 bytes: None,
                 sha256: None,

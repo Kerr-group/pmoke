@@ -172,16 +172,16 @@ fn fetch_scaling_rejects_invalid_time_and_degenerate_voltage_mapping() {
 
 #[test]
 fn raw_metadata_serializes_horizontal_settings() {
-    let mut metadata = RawFetchMetadata {
-        version: RAW_METADATA_VERSION,
+    let metadata = RawFetchMetadata {
+        schema_version: RAW_METADATA_VERSION,
         status: "complete",
         pmoke_version: "test",
         git_commit: None,
-        created_at: "1970-01-01T00:00:00Z".to_string(),
+        timestamp: "1970-01-01T00:00:00Z".to_string(),
         created_at_unix_seconds: 0,
         config_version: 3,
         config_file: "config.source.toml",
-        config_sha256: "0".repeat(64),
+        sha256: "0".repeat(64),
         resolved_config_file: "config.resolved.toml",
         resolved_config_sha256: "1".repeat(64),
         oscilloscope: RawOscilloscopeMetadata {
@@ -203,11 +203,8 @@ fn raw_metadata_serializes_horizontal_settings() {
             horizontal_offset: -0.03,
             horizontal_scale: 0.005,
         },
-        channels: BTreeMap::new(),
-    };
-    metadata.channels.insert(
-        "ch1".to_string(),
-        RawChannelMetadata {
+        channels: vec![RawChannelMetadata {
+            index: Some(1),
             file: "ch1.u16le".to_string(),
             bytes: 400_000_000,
             sha256: "0".repeat(64),
@@ -221,67 +218,39 @@ fn raw_metadata_serializes_horizontal_settings() {
             y_reference: 32_768.0,
             vertical_offset: 0.258_56,
             vertical_scale: 0.202,
-        },
-    );
+        }],
+    };
 
     let encoded = toml::to_string_pretty(&metadata).unwrap();
     let decoded: toml::Value = toml::from_str(&encoded).unwrap();
 
     assert!(encoded.contains("horizontal_offset = -0.03"));
     assert!(encoded.contains("horizontal_scale = 0.005"));
-    for (path, expected) in [
-        (
-            &["oscilloscope", "horizontal_offset"][..],
-            metadata.oscilloscope.horizontal_offset,
-        ),
-        (
-            &["oscilloscope", "horizontal_scale"][..],
-            metadata.oscilloscope.horizontal_scale,
-        ),
-        (
-            &["channels", "ch1", "x_increment"][..],
-            metadata.channels["ch1"].x_increment,
-        ),
-        (
-            &["channels", "ch1", "x_origin"][..],
-            metadata.channels["ch1"].x_origin,
-        ),
-        (
-            &["channels", "ch1", "x_reference"][..],
-            metadata.channels["ch1"].x_reference,
-        ),
-        (
-            &["channels", "ch1", "y_increment"][..],
-            metadata.channels["ch1"].y_increment,
-        ),
-        (
-            &["channels", "ch1", "y_origin"][..],
-            metadata.channels["ch1"].y_origin,
-        ),
-        (
-            &["channels", "ch1", "y_reference"][..],
-            metadata.channels["ch1"].y_reference,
-        ),
-        (
-            &["channels", "ch1", "vertical_offset"][..],
-            metadata.channels["ch1"].vertical_offset,
-        ),
-        (
-            &["channels", "ch1", "vertical_scale"][..],
-            metadata.channels["ch1"].vertical_scale,
-        ),
-    ] {
-        let actual = path
-            .iter()
-            .fold(&decoded, |value, key| &value[*key])
-            .as_float()
-            .unwrap();
-        assert_eq!(actual.to_bits(), expected.to_bits(), "path={path:?}");
-    }
+
+    // Verify oscilloscope fields
     assert_eq!(
-        decoded["channels"]["ch1"]["preamble_raw"].as_str(),
-        Some(metadata.channels["ch1"].preamble_raw.as_str())
+        decoded["oscilloscope"]["horizontal_offset"].as_float().unwrap(),
+        metadata.oscilloscope.horizontal_offset
     );
+    assert_eq!(
+        decoded["oscilloscope"]["horizontal_scale"].as_float().unwrap(),
+        metadata.oscilloscope.horizontal_scale
+    );
+
+    // Verify channel fields
+    let ch1 = &decoded["channels"].as_array().unwrap()[0];
+    let ch1_meta = &metadata.channels[0];
+
+    assert_eq!(ch1["index"].as_integer().unwrap(), 1);
+    assert_eq!(ch1["x_increment"].as_float().unwrap(), ch1_meta.x_increment);
+    assert_eq!(ch1["x_origin"].as_float().unwrap(), ch1_meta.x_origin);
+    assert_eq!(ch1["x_reference"].as_float().unwrap(), ch1_meta.x_reference);
+    assert_eq!(ch1["y_increment"].as_float().unwrap(), ch1_meta.y_increment);
+    assert_eq!(ch1["y_origin"].as_float().unwrap(), ch1_meta.y_origin);
+    assert_eq!(ch1["y_reference"].as_float().unwrap(), ch1_meta.y_reference);
+    assert_eq!(ch1["vertical_offset"].as_float().unwrap(), ch1_meta.vertical_offset);
+    assert_eq!(ch1["vertical_scale"].as_float().unwrap(), ch1_meta.vertical_scale);
+    assert_eq!(ch1["preamble_raw"].as_str().unwrap(), ch1_meta.preamble_raw);
 }
 
 #[test]
@@ -482,34 +451,32 @@ fn ensure_path_not_exists_rejects_dangling_symbolic_link() {
 }
 
 fn single_channel_raw_metadata(file: &str, sample_count: usize) -> RawFetchMetadata {
-    let channels = BTreeMap::from([(
-        "ch1".to_string(),
-        RawChannelMetadata {
-            file: file.to_string(),
-            bytes: sample_count * 2,
-            sha256: "0".repeat(64),
-            sample_count,
-            preamble_raw: "preamble ch1".to_string(),
-            x_increment: 0.5,
-            x_origin: 0.0,
-            x_reference: 0.0,
-            y_increment: 1.0,
-            y_origin: 0.0,
-            y_reference: 0.0,
-            vertical_offset: 0.0,
-            vertical_scale: 0.1,
-        },
-    )]);
+    let channels = vec![RawChannelMetadata {
+        index: Some(1),
+        file: file.to_string(),
+        bytes: sample_count * 2,
+        sha256: "0".repeat(64),
+        sample_count,
+        preamble_raw: "preamble ch1".to_string(),
+        x_increment: 0.5,
+        x_origin: 0.0,
+        x_reference: 0.0,
+        y_increment: 1.0,
+        y_origin: 0.0,
+        y_reference: 0.0,
+        vertical_offset: 0.0,
+        vertical_scale: 0.1,
+    }];
     RawFetchMetadata {
-        version: RAW_METADATA_VERSION,
+        schema_version: RAW_METADATA_VERSION,
         status: "complete",
         pmoke_version: "test",
         git_commit: None,
-        created_at: "1970-01-01T00:00:00Z".to_string(),
+        timestamp: "1970-01-01T00:00:00Z".to_string(),
         created_at_unix_seconds: 0,
         config_version: 3,
         config_file: "config.source.toml",
-        config_sha256: "0".repeat(64),
+        sha256: "0".repeat(64),
         resolved_config_file: "config.resolved.toml",
         resolved_config_sha256: "1".repeat(64),
         oscilloscope: RawOscilloscopeMetadata {

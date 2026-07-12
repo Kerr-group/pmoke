@@ -76,6 +76,7 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                     lpf_debug_overwrite: false,
                     snr_background_window: None,
                     snr_signal_window: None,
+                    save_npy: false,
                 },
                 phase: Phase {
                     m_omega_t0_offset: Vec::new(),

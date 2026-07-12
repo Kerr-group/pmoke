@@ -20,8 +20,9 @@ pub fn write_kerr_results<P: AsRef<Path>>(
     s_rate: &[Vec<f64>],
     s_integral: &[Vec<f64>],
     kerr_results: &[Vec<f64>],
+    save_npy: bool,
 ) -> Result<()> {
-    write_analysis_results(fname, headers, t, s_rate, s_integral, kerr_results)
+    write_analysis_results(fname, headers, t, s_rate, s_integral, kerr_results, save_npy)
 }
 
 #[cfg(test)]

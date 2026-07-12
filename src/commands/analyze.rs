@@ -98,33 +98,35 @@ pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
     }
 
     validate_waveform_data(data)?;
-    let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results) =
+    let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results, provenance) =
         run_li(&cfg_staging, &data.t, &data.channels)?;
 
     // run phase analysis here
     let ch = cfg_staging.phase_signal_ch();
 
-    if ch.is_empty() {
-        ui::skipped("phase analysis: no channels specified");
-        return Ok(());
-    }
-    let li_rotated_results = run_phase_analysis(
-        &cfg_staging,
-        &t_stride,
-        &sensor_rate_stride,
-        &sensor_integral_stride,
-        &li_results,
-    )?;
-    drop(li_results);
+    if !ch.is_empty() {
+        let li_rotated_results = run_phase_analysis(
+            &cfg_staging,
+            &t_stride,
+            &sensor_rate_stride,
+            &sensor_integral_stride,
+            &li_results,
+        )?;
+        drop(li_results);
 
-    // run Kerr analysis here
-    run_kerr_analysis(
-        &cfg_staging,
-        &t_stride,
-        &sensor_rate_stride,
-        &sensor_integral_stride,
-        &li_rotated_results,
-    )?;
+        // run Kerr analysis here
+        run_kerr_analysis(
+            &cfg_staging,
+            &t_stride,
+            &sensor_rate_stride,
+            &sensor_integral_stride,
+            &li_rotated_results,
+        )?;
+    } else {
+        ui::skipped("phase analysis: no channels specified");
+    }
+
+    crate::lockin::provenance::write_analysis_metadata(&cfg_staging, &provenance)?;
 
     let canonical_analysis = cfg.paths().analysis_dir();
     if canonical_analysis.exists() {
@@ -477,5 +479,29 @@ mod tests {
         cfg.force = true;
         run_analyze(&cfg, &data).unwrap();
         assert!(cfg.paths().analysis_manifest().is_file());
+        assert!(!cfg.paths().kerr_csv().with_extension("npy").exists());
+
+        // Parse manifest to verify content
+        let manifest_content = std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap();
+        let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
+        assert_eq!(manifest["schema_version"].as_integer().unwrap(), 4);
+        assert!(manifest["timestamp"].as_str().is_some());
+        assert!(manifest["lockin"].as_table().is_some());
+
+        let outputs = manifest["outputs"].as_array().unwrap();
+        assert!(outputs.iter().any(|v| v["file"].as_str().unwrap() == "kerr/kerr.csv"));
+        assert!(!outputs.iter().any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy"));
+
+        // Fourth run with save_npy = true and force = true succeeds
+        cfg.lockin.save_npy = true;
+        run_analyze(&cfg, &data).unwrap();
+
+        // Verify NPY is generated
+        assert!(cfg.paths().kerr_csv().with_extension("npy").exists());
+        let manifest_content_2 = std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap();
+        let manifest_2: toml::Value = toml::from_str(&manifest_content_2).unwrap();
+        let outputs_2 = manifest_2["outputs"].as_array().unwrap();
+        assert!(outputs_2.iter().any(|v| v["file"].as_str().unwrap() == "kerr/kerr.csv"));
+        assert!(outputs_2.iter().any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy"));
     }
 }

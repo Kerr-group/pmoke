@@ -146,6 +146,7 @@ pub fn run_kerr_analysis(
         sensor_rate_ch,
         sensor_integral_ch,
         &kerr_results,
+        cfg.lockin.save_npy,
     )?;
 
     ui::finish_saved(pb, format!("Kerr analysis results for channels {:?}", ch));

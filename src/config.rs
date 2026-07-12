@@ -370,6 +370,7 @@ pub struct Lockin {
     pub lpf_debug_overwrite: bool,
     pub snr_background_window: Option<Window>,
     pub snr_signal_window: Option<Window>,
+    pub save_npy: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -618,6 +619,7 @@ impl From<LockinV4> for Lockin {
             lpf_debug_overwrite: value.debug_overwrite,
             snr_background_window: value.snr_background_window,
             snr_signal_window: value.snr_signal_window,
+            save_npy: value.save_npy,
         };
         match value.filter {
             LockinFilterV4::BoxcarLegacy { half_window_cycles } => {

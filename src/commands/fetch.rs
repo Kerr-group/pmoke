@@ -5,7 +5,7 @@ use crate::commands::screenshot::{
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::{Config, Connection, FetchOutput, render_normalized_config};
 use crate::constants::{
-    FETCHED_FNAME, RAW_METADATA_FNAME, RAW_METADATA_VERSION, RAW_WAVEFORM_DIR, T_HEADER,
+    RAW_METADATA_FNAME, RAW_METADATA_VERSION, T_HEADER,
 };
 use crate::ui;
 use crate::utils::channels::build_channel_list;
@@ -21,7 +21,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use instruments::rigol::{DhoHorizontalSettings, DhoRawWaveform, DhoTriggerStatus};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -60,25 +59,25 @@ impl<W: Write> Write for HashingWriter<W> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct RawFetchMetadata {
-    version: u32,
+    schema_version: u32,
     status: &'static str,
     pmoke_version: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     git_commit: Option<&'static str>,
-    created_at: String,
+    timestamp: String,
     created_at_unix_seconds: u64,
     config_version: u32,
     config_file: &'static str,
-    config_sha256: String,
+    sha256: String,
     resolved_config_file: &'static str,
     resolved_config_sha256: String,
     oscilloscope: RawOscilloscopeMetadata,
-    channels: BTreeMap<String, RawChannelMetadata>,
+    channels: Vec<RawChannelMetadata>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct RawOscilloscopeMetadata {
     idn_raw: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -97,8 +96,10 @@ struct RawOscilloscopeMetadata {
     horizontal_scale: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct RawChannelMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index: Option<u8>,
     file: String,
     bytes: usize,
     sha256: String,
@@ -590,7 +591,8 @@ fn fetch_raw_into_dir(
     let t_fetch_start = Instant::now();
     for &ch in &channels {
         pb.set_message(format!("fetching ch{ch} raw WORD"));
-        let channel_metadata = write_raw_channel_streamed(handler, dir, ch, depth)?;
+        let mut channel_metadata = write_raw_channel_streamed(handler, dir, ch, depth)?;
+        channel_metadata.index = Some(ch);
         validate_fetch_voltage_range(
             channel_metadata.y_increment,
             channel_metadata.y_origin,
@@ -598,9 +600,7 @@ fn fetch_raw_into_dir(
             ch,
         )?;
         update_metadata_time_axis(&mut time_axis, &channel_metadata, ch)?;
-        metadata
-            .channels
-            .insert(format!("ch{ch}"), channel_metadata);
+        metadata.channels.push(channel_metadata);
         pb.inc(1);
     }
     ensure_scope_stopped(handler, "after all channel transfers")?;
@@ -647,15 +647,15 @@ fn build_raw_metadata(
         .as_secs();
 
     Ok(RawFetchMetadata {
-        version: RAW_METADATA_VERSION,
+        schema_version: RAW_METADATA_VERSION,
         status: "complete",
         pmoke_version: env!("CARGO_PKG_VERSION"),
         git_commit: option_env!("PMOKE_GIT_COMMIT"),
-        created_at: jiff::Timestamp::now().to_string(),
+        timestamp: jiff::Timestamp::now().to_string(),
         created_at_unix_seconds,
         config_version: cfg.version,
         config_file: "config.source.toml",
-        config_sha256: config_snapshots.source,
+        sha256: config_snapshots.source,
         resolved_config_file: "config.resolved.toml",
         resolved_config_sha256: config_snapshots.resolved,
         oscilloscope: RawOscilloscopeMetadata {
@@ -677,7 +677,7 @@ fn build_raw_metadata(
             horizontal_offset: horizontal.offset,
             horizontal_scale: horizontal.scale,
         },
-        channels: BTreeMap::new(),
+        channels: Vec::new(),
     })
 }
 
@@ -802,6 +802,7 @@ fn write_raw_channel(
     })?;
 
     Ok(RawChannelMetadata {
+        index: None,
         file: fname,
         bytes: raw.data.len(),
         sha256,
@@ -863,6 +864,7 @@ fn write_raw_channel_streamed(
     })?;
 
     Ok(RawChannelMetadata {
+        index: None,
         file: fname,
         bytes: written.byte_count,
         sha256,
@@ -1040,7 +1042,8 @@ fn write_raw_csv_temp(
             let key = format!("ch{ch}");
             let channel = metadata
                 .channels
-                .get(&key)
+                .iter()
+                .find(|c| c.index == Some(ch))
                 .ok_or_else(|| anyhow!("raw channel missing in metadata: {key}"))?;
             Ok(RawCsvChannel {
                 file: &channel.file,

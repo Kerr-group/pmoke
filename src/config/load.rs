@@ -273,6 +273,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
             snr_background_window: raw.lockin.snr_background_window,
             snr_signal_window: raw.lockin.snr_signal_window,
+            save_npy: raw.lockin.save_npy,
         },
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
@@ -340,6 +341,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
             snr_background_window: raw.lockin.snr_background_window,
             snr_signal_window: raw.lockin.snr_signal_window,
+            save_npy: raw.lockin.save_npy,
         },
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
@@ -404,6 +406,7 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
             snr_background_window: raw.lockin.snr_background_window,
             snr_signal_window: raw.lockin.snr_signal_window,
+            save_npy: raw.lockin.save_npy,
         },
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,

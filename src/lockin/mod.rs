@@ -11,7 +11,7 @@ pub mod stride;
 
 use crate::config::Config;
 use crate::constants::{HARMONICS, LI_HEADER};
-use crate::lockin::provenance::{LockinProvenance, write_analysis_metadata};
+use crate::lockin::provenance::LockinProvenance;
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
@@ -29,7 +29,7 @@ pub struct LockinProcessOutput {
     pub provenance: LockinProvenance,
 }
 
-type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>);
+type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>, LockinProvenance);
 
 pub fn run(cfg: &Config) -> Result<()> {
     let pb = ui::spinner("reading fetched waveform data");
@@ -116,9 +116,9 @@ pub fn run_li<'a>(
             &sensor_rate_stride,
             &sensor_integral_stride,
             li_result,
+            cfg.lockin.save_npy,
         )?;
     }
-    write_analysis_metadata(cfg, &lockin_output.provenance)?;
     let elapsed_save = t0.elapsed();
     ui::saved(format!(
         "lock-in results for signals {:?} ({})",
@@ -154,6 +154,7 @@ pub fn run_li<'a>(
         sensor_rate_stride,
         sensor_integral_stride,
         lockin_output.result,
+        lockin_output.provenance,
     ))
 }
 

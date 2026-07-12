@@ -69,6 +69,7 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
             lpf_debug_overwrite: false,
             snr_background_window: None,
             snr_signal_window: None,
+            save_npy: false,
         },
         phase: Phase {
             m_omega_t0_offset: Vec::new(),

@@ -56,23 +56,72 @@ impl LockinProvenance {
 }
 
 #[derive(Serialize)]
+struct OutputFileInfo {
+    file: String,
+    sha256: String,
+}
+
+#[derive(Serialize)]
 struct AnalysisMetadata<'a> {
     schema_version: u32,
     pmoke_version: &'static str,
-    created_at: String,
+    timestamp: String,
     lockin: &'a LockinProvenance,
+    outputs: Vec<OutputFileInfo>,
+}
+
+fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
+    let mut outputs = Vec::new();
+    if !dir.exists() {
+        return Ok(outputs);
+    }
+
+    fn traverse(base_dir: &Path, current_dir: &Path, outputs: &mut Vec<OutputFileInfo>) -> Result<()> {
+        for entry in std::fs::read_dir(current_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                traverse(base_dir, &path, outputs)?;
+            } else if path.is_file() {
+                let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if filename == "manifest.toml" || filename.starts_with('.') {
+                    continue;
+                }
+                let relative = path.strip_prefix(base_dir)
+                    .context("failed to strip prefix from output file path")?;
+                let relative_str = relative.to_str()
+                    .ok_or_else(|| anyhow::anyhow!("non-utf8 path in output files"))?
+                    .to_string();
+                let sha256 = crate::utils::checksum::file_sha256(&path)?;
+                outputs.push(OutputFileInfo {
+                    file: relative_str,
+                    sha256,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    traverse(dir, dir, &mut outputs)?;
+    outputs.sort_by(|a, b| a.file.cmp(&b.file));
+    Ok(outputs)
 }
 
 pub fn write_analysis_metadata(cfg: &Config, lockin: &LockinProvenance) -> Result<()> {
     let path = cfg.paths().analysis_manifest();
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+    let parent = path.parent().ok_or_else(|| anyhow::anyhow!("analysis manifest has no parent directory"))?;
+    if !parent.exists() {
         fs::create_dir_all(parent).context("failed to create directory for analysis manifest")?;
     }
+
+    let outputs = scan_outputs(parent)?;
+
     let metadata = AnalysisMetadata {
-        schema_version: 1,
+        schema_version: 4,
         pmoke_version: env!("CARGO_PKG_VERSION"),
-        created_at: jiff::Timestamp::now().to_string(),
+        timestamp: jiff::Timestamp::now().to_string(),
         lockin,
+        outputs,
     };
     let encoded =
         toml::to_string_pretty(&metadata).context("failed to encode analysis metadata")?;

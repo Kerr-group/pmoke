@@ -554,6 +554,7 @@ fn benchmark_lockin() -> Lockin {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     }
 }
 

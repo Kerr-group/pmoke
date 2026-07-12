@@ -50,6 +50,7 @@ fn legacy_boxcar_low_stride_fallback_matches_direct_integration() {
             lpf_debug_overwrite: false,
             snr_background_window: None,
             snr_signal_window: None,
+            save_npy: false,
         };
         let dt = 1.0e-4;
         let f_ref = 100.0;
@@ -99,6 +100,7 @@ fn legacy_boxcar_recovers_known_fundamental_amplitude_and_phase() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
     let dt = 1.0e-5;
     let f_ref = 1_000.0;
@@ -279,6 +281,7 @@ fn fir_fast_path_matches_debug_full_mixed_path() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
     let dt = 1.0e-5;
     let f_ref = 1_000.0;
@@ -332,6 +335,7 @@ fn sync_iir_real_imag_fast_path_matches_complex_debug_path() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
     let dt = 1.0e-5;
     let f_ref = 1_000.0;
@@ -385,6 +389,7 @@ fn legacy_boxcar_prefix_path_matches_direct_integration() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
     let dt = 1.0e-5;
     let f_ref = 1_000.0;
@@ -439,6 +444,7 @@ fn legacy_boxcar_range_path_matches_full_prefix_path_across_phase_resync() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
     let dt = 1.0e-5;
     let f_ref = 1_000.0;
@@ -484,6 +490,7 @@ fn legacy_boxcar_range_path_matches_full_prefix_path_from_nonzero_anchor() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
     let dt = 1.0e-5;
     let f_ref = 1_000.0;
@@ -524,6 +531,7 @@ fn legacy_boxcar_range_path_matches_full_prefix_path_at_nonzero_anchor() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
     let dt = 1.0e-5;
     let f_ref = 1_000.0;
@@ -705,6 +713,7 @@ fn rejects_empty_output_range_after_iir_settling_trim() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
     let dt = 1.0e-4;
     let t = (0..1000).map(|idx| idx as f64 * dt).collect::<Vec<_>>();
@@ -737,6 +746,7 @@ fn rejects_short_or_misaligned_input_without_panicking() {
         lpf_debug_overwrite: false,
         snr_background_window: None,
         snr_signal_window: None,
+        save_npy: false,
     };
 
     let short = LockinProcessor::new(&[0.0], &[1.0], 1_000.0, 0.0, &lockin)
