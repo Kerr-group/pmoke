@@ -14,7 +14,6 @@ pub fn analyze(cfg: &Config) -> Result<()> {
         crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "analyze")?;
     crate::config::validate_for_target(cfg, crate::config::ValidationTarget::Analyze)?;
     crate::commands::run_dir::prepare_analysis_run(cfg)?;
-    crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "analysis", None)?;
     let result = (|| {
         let pb = ui::spinner("reading fetched waveform data");
@@ -49,7 +48,6 @@ pub fn run_analyze(cfg: &Config, data: &WaveformData) -> Result<()> {
 }
 
 pub fn run_analyze_locked(cfg: &Config, data: &WaveformData) -> Result<()> {
-    crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "analysis", None)?;
     let result = run_analyze_inner(cfg, data);
     record_analysis_result(cfg, &result)?;
@@ -510,7 +508,10 @@ mod tests {
         // Parse manifest to verify content
         let manifest_content = std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap();
         let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
-        assert_eq!(manifest["schema_version"].as_integer().unwrap(), 2);
+        assert_eq!(
+            manifest["schema_version"].as_integer().unwrap(),
+            i64::from(crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION)
+        );
         assert_eq!(manifest["generation"].as_integer(), Some(2));
         assert_eq!(manifest["published_through"].as_str(), Some("kerr"));
         assert_eq!(

@@ -324,7 +324,7 @@ fail_on_error = true"#,
     );
 
     match load_from_str(&text) {
-        ConfigLoad::Ready { config, .. } => {
+        ConfigLoad::Ready { config, warnings } => {
             assert!(!config.plot.enabled);
             assert!(!config.plot.save);
             assert!(config.plot.interactive);
@@ -332,6 +332,41 @@ fail_on_error = true"#,
             assert_eq!(config.plot.max_points, 1234);
             assert_eq!(config.plot.decimation, PlotDecimation::Stride);
             assert!(config.plot.fail_on_error);
+            assert!(warnings.iter().any(|warning| {
+                warning.message.contains("plot.output_dir") && warning.message.contains("ignored")
+            }));
+        }
+        other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[test]
+fn v3_custom_plot_output_dir_warns_once_during_load() {
+    let text = v3_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 3",
+        r#"version = 3
+
+[plot]
+output_dir = "figures""#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Ready { warnings, .. } => {
+            assert_eq!(
+                warnings
+                    .iter()
+                    .filter(|warning| warning.message.contains("plot.output_dir"))
+                    .count(),
+                1
+            );
         }
         other => panic!("expected ready load, got {other:?}"),
     }

@@ -67,7 +67,15 @@ pub(crate) fn ensure_analysis_config_snapshots(cfg: &Config) -> Result<()> {
     let resolved_exists = paths.analysis_resolved_config().is_file();
     match (source_exists, resolved_exists) {
         (true, true) => verify_analysis_config_snapshots(cfg),
-        (false, false) => write_analysis_config_snapshots(cfg),
+        (false, false) => {
+            if analysis_contains_published_artifacts(&paths.analysis_dir())? {
+                bail!(
+                    "existing analysis results have no config snapshots under {}; rerun pmoke analyze or pmoke li instead of attributing legacy results to the current config",
+                    paths.analysis_dir().display()
+                );
+            }
+            write_analysis_config_snapshots(cfg)
+        }
         _ => bail!(
             "analysis config snapshots are incomplete under {}; rerun pmoke analyze or pmoke li",
             paths.analysis_dir().display()
@@ -83,23 +91,74 @@ pub(crate) fn verify_analysis_config_snapshots(cfg: &Config) -> Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error).context("failed to read analysis manifest"),
     };
+    let schema_version = analysis_manifest_schema_version(&manifest)?;
+    let strict =
+        schema_version >= i64::from(crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION);
     verify_recorded_checksum(
         &manifest,
         "config_source_sha256",
         &paths.analysis_source_config(),
+        strict,
     )?;
-    let resolved_key = if manifest.get("config_resolved_sha256").is_some() {
+    let resolved_key = if strict || manifest.get("config_resolved_sha256").is_some() {
         "config_resolved_sha256"
     } else {
         "config_sha256"
     };
-    verify_recorded_checksum(&manifest, resolved_key, &paths.analysis_resolved_config())
+    verify_recorded_checksum(
+        &manifest,
+        resolved_key,
+        &paths.analysis_resolved_config(),
+        strict,
+    )
 }
 
-fn verify_recorded_checksum(manifest: &toml::Value, key: &str, path: &Path) -> Result<()> {
-    let Some(expected) = manifest.get(key).and_then(toml::Value::as_str) else {
-        return Ok(());
+fn analysis_manifest_schema_version(manifest: &toml::Value) -> Result<i64> {
+    let current = i64::from(crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION);
+    let version = match manifest.get("schema_version") {
+        Some(value) => value.as_integer().ok_or_else(|| {
+            anyhow::anyhow!("analysis manifest schema_version must be an integer")
+        })?,
+        None if [
+            "generation",
+            "published_through",
+            "config_source",
+            "config_resolved",
+            "config_sha256",
+            "config_source_sha256",
+            "config_resolved_sha256",
+            "diagnostics",
+        ]
+        .iter()
+        .any(|key| manifest.get(key).is_some()) =>
+        {
+            bail!("analysis manifest uses versioned fields but has no schema_version")
+        }
+        None => 1,
     };
+    if !(1..=current).contains(&version) {
+        bail!("unsupported analysis manifest schema_version: {version}");
+    }
+    Ok(version)
+}
+
+fn verify_recorded_checksum(
+    manifest: &toml::Value,
+    key: &str,
+    path: &Path,
+    required: bool,
+) -> Result<()> {
+    let expected = match manifest.get(key) {
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("analysis manifest {key} must be a string"))?,
+        None if required => bail!(
+            "analysis manifest schema v{} requires {key}",
+            crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION
+        ),
+        None => return Ok(()),
+    };
+    validate_sha256(expected, key)?;
     let actual = crate::utils::checksum::file_sha256(path)
         .with_context(|| format!("failed to checksum analysis config: {}", path.display()))?;
     if actual != expected {
@@ -107,6 +166,103 @@ fn verify_recorded_checksum(manifest: &toml::Value, key: &str, path: &Path) -> R
             "analysis config snapshot checksum mismatch for {}: expected {expected}, got {actual}",
             path.display()
         );
+    }
+    Ok(())
+}
+
+fn validate_sha256(value: &str, label: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("{label} must be a 64-character SHA-256 hexadecimal digest");
+    }
+    Ok(())
+}
+
+fn analysis_contains_published_artifacts(directory: &Path) -> Result<bool> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).context("failed to inspect existing analysis results"),
+    };
+    for entry in entries {
+        let entry = entry.context("failed to inspect existing analysis result")?;
+        let name = entry.file_name();
+        if name != "config.source.toml" && name != "config.resolved.toml" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn verify_analysis_diagnostic_snapshots(
+    cfg: &Config,
+    replacing_stage: Option<&str>,
+) -> Result<()> {
+    let manifest_path = cfg.paths().analysis_manifest();
+    let contents = match fs::read_to_string(&manifest_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("failed to read analysis manifest"),
+    };
+    let manifest: toml::Value = toml::from_str(&contents)
+        .context("failed to parse analysis manifest while verifying diagnostics")?;
+    let Some(diagnostics) = manifest.get("diagnostics") else {
+        return Ok(());
+    };
+    let diagnostics = diagnostics
+        .as_table()
+        .ok_or_else(|| anyhow::anyhow!("diagnostics in analysis manifest must be a table"))?;
+    for (stage, value) in diagnostics {
+        if replacing_stage == Some(stage.as_str()) {
+            continue;
+        }
+        if !matches!(stage.as_str(), "reference" | "sensor") {
+            bail!("unknown diagnostic stage in analysis manifest: {stage}");
+        }
+        let table = value
+            .as_table()
+            .ok_or_else(|| anyhow::anyhow!("diagnostic {stage} provenance must be a table"))?;
+        let expected_source = format!("diagnostics/{stage}/config.source.toml");
+        let expected_resolved = format!("diagnostics/{stage}/config.resolved.toml");
+        for (path_key, checksum_key, expected_path, actual_path) in [
+            (
+                "config_source",
+                "config_source_sha256",
+                expected_source.as_str(),
+                cfg.paths().diagnostic_source_config(stage),
+            ),
+            (
+                "config_resolved",
+                "config_resolved_sha256",
+                expected_resolved.as_str(),
+                cfg.paths().diagnostic_resolved_config(stage),
+            ),
+        ] {
+            let recorded_path = table
+                .get(path_key)
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("diagnostic {stage} requires {path_key}"))?;
+            if recorded_path != expected_path {
+                bail!("diagnostic {stage} {path_key} must be {expected_path}");
+            }
+            let expected_checksum = table
+                .get(checksum_key)
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("diagnostic {stage} requires {checksum_key}"))?;
+            validate_sha256(expected_checksum, checksum_key)?;
+            let actual_checksum =
+                crate::utils::checksum::file_sha256(&actual_path).with_context(|| {
+                    format!(
+                        "failed to verify diagnostic config: {}",
+                        actual_path.display()
+                    )
+                })?;
+            if actual_checksum != expected_checksum {
+                bail!(
+                    "diagnostic config checksum mismatch for {}: expected {expected_checksum}, got {actual_checksum}",
+                    actual_path.display()
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -1250,6 +1406,7 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
                 model: "dummy".to_string(),
             },
         });
+        write_analysis_config_snapshots(&cfg).unwrap();
         write_run_state(&cfg, "complete", "analysis", None).unwrap();
 
         // Save reference plot hash before sensor execution
@@ -1352,5 +1509,99 @@ sha256 = "2f0cde9b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088fa52e"
         assert_eq!(run["stage"].as_str(), Some("analysis"));
 
         fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_results_without_config_snapshots_are_not_attributed_to_current_config() {
+        let directory = temporary_directory();
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        fs::write(
+            directory.join("analysis/manifest.toml"),
+            "schema_version = 1\n",
+        )
+        .unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+
+        let error = ensure_analysis_config_snapshots(&cfg).unwrap_err();
+
+        assert!(error.to_string().contains("no config snapshots"));
+        assert!(!cfg.paths().analysis_source_config().exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn current_schema_requires_well_formed_config_checksums() {
+        let directory = temporary_directory();
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        write_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                "schema_version = {}\nconfig_source_sha256 = 123\n",
+                crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION
+            ),
+        )
+        .unwrap();
+
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+
+        assert!(error.to_string().contains("must be a string"));
+        fs::write(cfg.paths().analysis_manifest(), "schema_version = 2\n").unwrap();
+        verify_analysis_config_snapshots(&cfg).unwrap();
+
+        fs::write(cfg.paths().analysis_manifest(), "schema_version = \"3\"\n").unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(error.to_string().contains("must be an integer"));
+
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            "config_source_sha256 = \"0000000000000000000000000000000000000000000000000000000000000000\"\n",
+        )
+        .unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(error.to_string().contains("has no schema_version"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn carried_diagnostic_config_checksum_is_verified() {
+        let directory = temporary_directory();
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        write_diagnostic_config_snapshots(&cfg, "sensor").unwrap();
+        let source_hash =
+            crate::utils::checksum::file_sha256(&cfg.paths().diagnostic_source_config("sensor"))
+                .unwrap();
+        let resolved_hash =
+            crate::utils::checksum::file_sha256(&cfg.paths().diagnostic_resolved_config("sensor"))
+                .unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                r#"schema_version = 2
+
+[diagnostics.sensor]
+config_source = "diagnostics/sensor/config.source.toml"
+config_resolved = "diagnostics/sensor/config.resolved.toml"
+config_source_sha256 = "{source_hash}"
+config_resolved_sha256 = "{resolved_hash}"
+"#
+            ),
+        )
+        .unwrap();
+        fs::write(
+            cfg.paths().diagnostic_source_config("sensor"),
+            b"tampered\n",
+        )
+        .unwrap();
+
+        let error = verify_analysis_diagnostic_snapshots(&cfg, None).unwrap_err();
+        assert!(error.to_string().contains("checksum mismatch"));
+        verify_analysis_diagnostic_snapshots(&cfg, Some("sensor")).unwrap();
+        fs::remove_dir_all(directory).unwrap();
     }
 }

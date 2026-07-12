@@ -7,7 +7,6 @@ pub fn phase(cfg: &Config) -> Result<()> {
     let _lock = crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "phase")?;
     crate::config::validate_for_target(cfg, crate::config::ValidationTarget::Phase)?;
     crate::commands::run_dir::prepare_analysis_run(cfg)?;
-    crate::plot::warn_canonical_plot_layout(cfg);
     crate::commands::run_dir::write_run_state(cfg, "analyzing", "phase", None)?;
     let result = phase_inner(cfg);
     match &result {

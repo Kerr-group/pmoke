@@ -57,7 +57,12 @@ mod tests {
         refresh_manifest_if_present(&cfg, "reference").unwrap();
         let manifest = std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap();
         let manifest: toml::Value = toml::from_str(&manifest).unwrap();
-        assert_eq!(manifest["schema_version"].as_integer(), Some(2));
+        assert_eq!(
+            manifest["schema_version"].as_integer(),
+            Some(i64::from(
+                crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION
+            ))
+        );
         assert!(manifest["diagnostics"]["reference"].is_table());
         assert!(manifest["diagnostics"]["reference"]["config_sha256"].is_str());
 

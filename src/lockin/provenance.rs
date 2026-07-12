@@ -9,6 +9,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
+pub(crate) const ANALYSIS_MANIFEST_SCHEMA_VERSION: u32 = 3;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LockinProvenance {
     kind: LockinLpfKind,
@@ -572,6 +574,7 @@ fn analysis_channels(cfg: &Config) -> Vec<&crate::config::Channel> {
 
 pub fn validate_upstream_stage_config(cfg: &Config, stage: &str) -> Result<()> {
     crate::commands::run_dir::verify_analysis_config_snapshots(cfg)?;
+    crate::commands::run_dir::verify_analysis_diagnostic_snapshots(cfg, None)?;
     let manifest = cfg.resolver().analysis_manifest();
     let contents = fs::read_to_string(&manifest)
         .with_context(|| format!("failed to read analysis manifest: {}", manifest.display()))?;
@@ -732,7 +735,7 @@ pub fn write_analysis_metadata(
     }
 
     let metadata = AnalysisMetadata {
-        schema_version: 2,
+        schema_version: ANALYSIS_MANIFEST_SCHEMA_VERSION,
         generation: next_generation(&output_paths.run_dir)?,
         pmoke_version: env!("CARGO_PKG_VERSION"),
         git_commit: option_env!("PMOKE_GIT_COMMIT"),
@@ -808,6 +811,10 @@ fn relative_analysis_source(run_dir: &Path, source: &Path) -> Result<String> {
 }
 
 pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()> {
+    crate::commands::run_dir::verify_analysis_diagnostic_snapshots(
+        cfg,
+        matches!(stage, "reference" | "sensor").then_some(stage),
+    )?;
     let path = cfg.paths().analysis_manifest();
     let parent = path
         .parent()
@@ -846,7 +853,10 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("analysis manifest root must be a table"))?;
     let now = jiff::Timestamp::now().to_string();
-    table.insert("schema_version".to_string(), toml::Value::Integer(2));
+    table.insert(
+        "schema_version".to_string(),
+        toml::Value::Integer(i64::from(ANALYSIS_MANIFEST_SCHEMA_VERSION)),
+    );
     table.insert(
         "generation".to_string(),
         toml::Value::Integer(i64::try_from(next_generation(&cfg.paths().run_dir)?)?),

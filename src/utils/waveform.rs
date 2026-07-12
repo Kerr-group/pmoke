@@ -137,13 +137,15 @@ pub struct WaveformData {
     pub channels: Vec<Vec<f64>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawVerification {
     pub metadata_version: u32,
     pub channel_count: usize,
     pub sample_count: usize,
     pub total_bytes: u64,
     pub checksums_verified: bool,
+    pub config_snapshot_verified: bool,
+    pub config_snapshot_warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +251,15 @@ pub fn read_raw_waveform_channels_from_dir(
 pub fn verify_raw_waveform_dir(base_dir: &Path) -> Result<RawVerification> {
     let metadata = read_raw_metadata(base_dir)?;
     validate_raw_format(&metadata)?;
-    validate_manifest_config(base_dir, &metadata)?;
+    let (config_snapshot_verified, config_snapshot_warning) =
+        if metadata.version == RAW_METADATA_VERSION {
+            match validate_manifest_config(base_dir, &metadata) {
+                Ok(()) => (true, None),
+                Err(error) => (false, Some(format!("{error:#}"))),
+            }
+        } else {
+            (false, None)
+        };
 
     let declared_channels = declared_raw_channels(&metadata)?;
     if declared_channels.is_empty() {
@@ -284,6 +294,8 @@ pub fn verify_raw_waveform_dir(base_dir: &Path) -> Result<RawVerification> {
         sample_count,
         total_bytes,
         checksums_verified: metadata.version == RAW_METADATA_VERSION,
+        config_snapshot_verified,
+        config_snapshot_warning,
     })
 }
 

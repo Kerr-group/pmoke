@@ -599,6 +599,8 @@ y_reference = 0.0
             sample_count: 2,
             total_bytes: 4,
             checksums_verified: true,
+            config_snapshot_verified: true,
+            config_snapshot_warning: None,
         }
     );
 
@@ -613,13 +615,16 @@ y_reference = 0.0
         RawStatus::Complete
     ));
     read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap();
-    let error = verify_raw_waveform_dir(&dir).unwrap_err();
+    let verification = verify_raw_waveform_dir(&dir).unwrap();
     assert!(
-        error
-            .to_string()
+        verification
+            .config_snapshot_warning
+            .as_deref()
+            .unwrap()
             .contains("config snapshot checksum mismatch"),
-        "{error:#}"
+        "{verification:#?}"
     );
+    assert!(!verification.config_snapshot_verified);
     fs::write(dir.join("config.source.toml"), config).unwrap();
     fs::write(
         dir.join("config.resolved.toml"),
@@ -627,13 +632,30 @@ y_reference = 0.0
     )
     .unwrap();
     read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap();
-    let error = verify_raw_waveform_dir(&dir).unwrap_err();
+    let verification = verify_raw_waveform_dir(&dir).unwrap();
     assert!(
-        error
-            .to_string()
+        verification
+            .config_snapshot_warning
+            .as_deref()
+            .unwrap()
             .contains("config snapshot checksum mismatch"),
-        "{error:#}"
+        "{verification:#?}"
     );
+    assert!(!verification.config_snapshot_verified);
+
+    fs::remove_file(dir.join("config.source.toml")).unwrap();
+    let verification = verify_raw_waveform_dir(&dir).unwrap();
+    assert!(
+        verification
+            .config_snapshot_warning
+            .as_deref()
+            .unwrap()
+            .contains("config snapshot not found"),
+        "{verification:#?}"
+    );
+    fs::write(dir.join("ch1.u16le"), [0_u8, 0, 2, 0]).unwrap();
+    let error = verify_raw_waveform_dir(&dir).unwrap_err();
+    assert!(error.to_string().contains("checksum mismatch"), "{error:#}");
     fs::remove_dir_all(dir).unwrap();
 }
 
