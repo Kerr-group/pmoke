@@ -538,8 +538,9 @@ mod tests {
         let alias = run_dir_a.join("alias");
         fs::create_dir_all(&run_dir_a).unwrap();
 
-        if let Err(_) = std::os::windows::fs::symlink_dir(&subdir_b, &alias) {
-            if let Err(err) = create_directory_junction(&subdir_b, &alias) {
+        if std::os::windows::fs::symlink_dir(&subdir_b, &alias).is_err() {
+            let res = create_directory_junction(&subdir_b, &alias);
+            if let Err(err) = res {
                 println!(
                     "Skipping Windows directory symlink/junction test because creation failed: {:?}",
                     err
@@ -587,8 +588,9 @@ mod tests {
         // Create alias pointing to subdir_a
         let alias = run_dir_a.join("alias");
 
-        if let Err(_) = std::os::windows::fs::symlink_dir(&subdir_a, &alias) {
-            if let Err(err) = create_directory_junction(&subdir_a, &alias) {
+        if std::os::windows::fs::symlink_dir(&subdir_a, &alias).is_err() {
+            let res = create_directory_junction(&subdir_a, &alias);
+            if let Err(err) = res {
                 println!(
                     "Skipping Windows directory symlink/junction test because creation failed: {:?}",
                     err
@@ -623,7 +625,7 @@ mod tests {
     #[cfg(windows)]
     fn create_directory_junction(target: &Path, link: &Path) -> std::io::Result<()> {
         let status = std::process::Command::new("cmd")
-            .args(&[
+            .args([
                 "/c",
                 "mklink",
                 "/j",
@@ -638,10 +640,7 @@ mod tests {
         if status.success() {
             Ok(())
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "cmd mklink /j failed",
-            ))
+            Err(std::io::Error::other("cmd mklink /j failed"))
         }
     }
 }
