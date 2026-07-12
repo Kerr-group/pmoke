@@ -1,5 +1,5 @@
 use super::{
-    Config, ConfigLoad, FetchAnalysisInput, load_from_path, load_from_str, render_config_v4,
+    Config, ConfigLoad, FetchAnalysisInput, Plot, load_from_path, load_from_str, render_config_v4,
 };
 use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR};
 use anyhow::{Context, Result, anyhow, bail};
@@ -242,6 +242,11 @@ pub fn plan_migration(
     }
 
     inspect_channel_losses(&config, &mut issues);
+    if config.plot.output_dir != Plot::default().output_dir {
+        issues.push(MigrationIssue::notice(
+            "plot.output_dir is omitted because canonical plots are written under analysis/plots",
+        ));
+    }
     inspect_artifact_base_change(source_path, &destination_path, &mut issues)?;
 
     let target_toml = render_config_v4(&config)
@@ -576,7 +581,7 @@ fn inspect_artifact_base_change(
     }
     if source_parent != destination_parent {
         issues.push(MigrationIssue::lossy(format!(
-            "the migrated config is being relocated from {} to {}; relative plot and artifact paths will use the new directory",
+            "the migrated config is being relocated from {} to {}; relative artifact paths will use the new directory",
             source_parent.display(),
             destination_parent.display()
         )));
@@ -643,6 +648,8 @@ fn canonicalize_for_v4(config: &mut Config) {
     config.plot.enabled = enabled;
     config.plot.save = save;
     config.plot.interactive = interactive;
+    config.plot.output_dir = Plot::default().output_dir;
+    config.plot_output_relative = None;
 }
 
 #[cfg(test)]

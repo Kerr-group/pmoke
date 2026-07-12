@@ -13,7 +13,7 @@ pub fn warn_canonical_plot_layout(cfg: &Config) {
         return;
     }
     let canonical = cfg.paths().plot_dir();
-    if Path::new(&cfg.plot.output_dir) != canonical {
+    if cfg.version < 4 && Path::new(&cfg.plot.output_dir) != canonical {
         ui::warn(format!(
             "plot.output_dir is ignored for canonical run artifacts; plots are written under {}",
             canonical.display()

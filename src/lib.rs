@@ -147,9 +147,9 @@ fn run_with(args: Cli) -> Result<()> {
                 ValidationTarget::Autoshot,
                 commands::autoshot::autoshot,
             ),
-            Some(Command::Fetch { format, out }) => {
+            Some(Command::Fetch { format }) => {
                 config::validate_for_target(&cfg, ValidationTarget::Fetch)?;
-                commands::fetch::fetch_with_options(&cfg, *format, out.as_deref())
+                commands::fetch::fetch_with_options(&cfg, *format)
             }
             Some(Command::Screenshot) => run_validated(
                 &cfg,

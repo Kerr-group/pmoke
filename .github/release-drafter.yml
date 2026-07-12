@@ -2,6 +2,9 @@ name-template: 'v$RESOLVED_VERSION 🌈'
 tag-template: 'v$RESOLVED_VERSION'
 
 categories:
+  - title: '⚠️ Breaking Changes'
+    labels:
+      - 'breaking'
   - title: '🚀 Features'
     labels:
       - 'feature'
@@ -44,6 +47,12 @@ template: |
   $CHANGES
 
 autolabeler:
+  - label: minor
+    branch:
+      - '/^release[/]v0[.][0-9]+([/-].*)?$/'
+  - label: breaking
+    branch:
+      - '/^release[/]v0[.][0-9]+([/-].*)?$/'
   - label: feature
     branch:
       - '/^feat(ure)?[/-].+/'

@@ -199,13 +199,15 @@ impl Config {
     }
 
     pub fn set_artifact_root(&mut self, root: PathBuf) {
-        let plot_path = PathBuf::from(&self.plot.output_dir);
-        let relative = self
-            .plot_output_relative
-            .clone()
-            .or_else(|| (!plot_path.is_absolute()).then_some(plot_path));
-        if let Some(relative) = relative {
-            self.plot.output_dir = root.join(relative).to_string_lossy().into_owned();
+        if self.version < 4 {
+            let plot_path = PathBuf::from(&self.plot.output_dir);
+            let relative = self
+                .plot_output_relative
+                .clone()
+                .or_else(|| (!plot_path.is_absolute()).then_some(plot_path));
+            if let Some(relative) = relative {
+                self.plot.output_dir = root.join(relative).to_string_lossy().into_owned();
+            }
         }
         self.artifact_root = Some(root);
     }
@@ -594,7 +596,7 @@ impl From<PlotV4> for Plot {
             enabled,
             save,
             interactive,
-            output_dir: value.output_dir,
+            output_dir: Plot::default().output_dir,
             max_points: value.max_points,
             decimation: value.decimation,
             fail_on_error: value.on_error == PlotErrorModeV4::Fail,

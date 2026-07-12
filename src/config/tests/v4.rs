@@ -102,6 +102,7 @@ fn v4_normalized_output_uses_v4_schema_and_round_trips() {
     assert!(!rendered.contains("[instruments]"));
     assert!(!rendered.contains("[roles]"));
     assert!(!rendered.contains("[channels]"));
+    assert!(!rendered.contains("output_dir"));
 
     let ConfigLoad::Ready {
         config: round_trip, ..
@@ -164,7 +165,7 @@ fn v4_artifacts_are_relative_to_config_directory() {
         config.artifact_path("raw_waveform"),
         dir.join("raw_waveform")
     );
-    assert_eq!(config.plot.output_dir, dir.join("plots").to_string_lossy());
+    assert_eq!(config.plot.output_dir, "plots");
 
     fs::remove_dir_all(dir).unwrap();
 }
@@ -378,7 +379,7 @@ fn v4_plot_decimation_modes_are_explicit() {
 }
 
 #[test]
-fn artifact_root_is_an_opt_in_override_for_relative_outputs() {
+fn artifact_root_does_not_rewrite_ignored_v4_plot_output() {
     let ConfigLoad::Ready { mut config, .. } = load_from_str(&v4_base()) else {
         panic!("expected ready v4 config");
     };
@@ -390,12 +391,12 @@ fn artifact_root_is_an_opt_in_override_for_relative_outputs() {
     );
     assert_eq!(
         PathBuf::from(&config.plot.output_dir),
-        PathBuf::from("shot_000123").join("plots")
+        PathBuf::from("plots")
     );
 }
 
 #[test]
-fn artifact_root_does_not_rewrite_an_absolute_plot_directory() {
+fn deprecated_v4_plot_output_dir_is_ignored_with_a_warning() {
     let absolute = std::env::temp_dir().join("pmoke-absolute-plots");
     let text = v4_base().replace(
         "mode = \"both\"",
@@ -404,10 +405,20 @@ fn artifact_root_does_not_rewrite_an_absolute_plot_directory() {
             absolute.to_string_lossy()
         ),
     );
-    let ConfigLoad::Ready { mut config, .. } = load_from_str(&text) else {
+    let ConfigLoad::Ready {
+        mut config,
+        warnings,
+    } = load_from_str(&text)
+    else {
         panic!("expected ready v4 config");
     };
     config.set_artifact_root(PathBuf::from("shot_000123"));
 
-    assert_eq!(PathBuf::from(config.plot.output_dir), absolute);
+    assert_eq!(
+        PathBuf::from(config.plot.output_dir),
+        PathBuf::from("plots")
+    );
+    assert!(warnings.iter().any(|warning| {
+        warning.message.contains("plot.output_dir") && warning.message.contains("ignored")
+    }));
 }

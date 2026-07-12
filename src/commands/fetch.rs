@@ -131,7 +131,7 @@ struct CsvAcquisitionManifest {
 
 #[allow(dead_code)]
 pub fn fetch(cfg: &Config) -> Result<()> {
-    fetch_with_options(cfg, None, None)
+    fetch_with_options(cfg, None)
 }
 
 fn check_acquisition_exists(cfg: &Config) -> Result<()> {
@@ -465,17 +465,7 @@ pub(crate) fn preflight_fetch_locked(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn fetch_with_options(
-    cfg: &Config,
-    format: Option<FetchFormat>,
-    out: Option<&Path>,
-) -> Result<()> {
-    if out.is_some() {
-        bail!(
-            "--out is not supported for fetch; \
-             canonical output is acquisition/waveforms/waveform.csv"
-        );
-    }
+pub fn fetch_with_options(cfg: &Config, format: Option<FetchFormat>) -> Result<()> {
     crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
     let _lock = crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "fetch")?;
 
@@ -491,7 +481,7 @@ pub fn fetch_with_options(
     };
 
     crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
-    let result = fetch_with_options_inner(cfg, format, out);
+    let result = fetch_with_options_inner(cfg, format);
     if let Err(error) = result {
         let final_err = if let Some(b) = backup {
             let backup_path = b.backup_dir.clone();
@@ -524,11 +514,7 @@ pub fn fetch_with_options(
     Ok(())
 }
 
-fn fetch_with_options_inner(
-    cfg: &Config,
-    format: Option<FetchFormat>,
-    out: Option<&Path>,
-) -> Result<()> {
+fn fetch_with_options_inner(cfg: &Config, format: Option<FetchFormat>) -> Result<()> {
     check_acquisition_exists(cfg)?;
 
     let mut cfg_staging = cfg.clone();
@@ -546,36 +532,13 @@ fn fetch_with_options_inner(
     let paths = cfg_staging.paths();
     let default_csv = paths.waveform_csv();
     let default_raw = paths.acquisition_dir();
-    let result = match format {
-        Some(FetchFormat::Csv) => fetch_csv(&cfg_staging, out.unwrap_or(&default_csv)),
-        Some(FetchFormat::Raw) => fetch_raw(&cfg_staging, out.unwrap_or(&default_raw)),
-        Some(FetchFormat::CsvAndRaw) if out.is_some() => {
-            bail!(
-                "--out cannot be used with --format csv-and-raw; use the canonical acquisition layout"
-            )
-        }
-        _ => match (output, out) {
-            (FetchOutput::Csv, out) => fetch_csv(&cfg_staging, out.unwrap_or(&default_csv)),
-            (FetchOutput::Raw, out) => fetch_raw(&cfg_staging, out.unwrap_or(&default_raw)),
-            (FetchOutput::CsvAndRaw, Some(_)) => {
-                let setting = if cfg_staging.version >= 4 {
-                    "data.output = \"both\""
-                } else {
-                    "fetch.output = \"csv_and_raw\""
-                };
-                bail!("--out cannot be used with {setting}; use the canonical acquisition layout")
-            }
-            (FetchOutput::CsvAndRaw, None) => {
-                fetch_csv_and_raw(&cfg_staging, &default_csv, &default_raw)
-            }
-        },
+    let result = match output {
+        FetchOutput::Csv => fetch_csv(&cfg_staging, &default_csv),
+        FetchOutput::Raw => fetch_raw(&cfg_staging, &default_raw),
+        FetchOutput::CsvAndRaw => fetch_csv_and_raw(&cfg_staging, &default_csv, &default_raw),
     };
 
     result?;
-
-    if out.is_some() {
-        return Ok(());
-    }
 
     let canonical_acquisition = cfg.paths().acquisition_dir();
     crate::commands::run_dir::publish_staged_directory(

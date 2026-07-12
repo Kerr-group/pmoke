@@ -548,7 +548,7 @@ fn unique_test_dir() -> PathBuf {
 }
 
 #[test]
-fn test_fetch_out_denied_and_export_properties() {
+fn test_export_properties() {
     let dir = unique_test_dir();
     fs::create_dir(&dir).unwrap();
 
@@ -557,19 +557,7 @@ fn test_fetch_out_denied_and_export_properties() {
     config.source_path = dir.join("config.toml");
     config.source_text = Some("version = 4\n".to_string());
 
-    // 1. fetch --out is explicitly denied
-    let out_file = dir.join("custom_out.csv");
-    let result = fetch_with_options(&config, Some(FetchFormat::Csv), Some(&out_file));
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("--out is not supported for fetch"));
-
-    // 2. No output files are created when denied (no run.toml or custom_out.csv created)
-    assert!(!out_file.exists());
-    assert!(!dir.join("run.toml").exists());
-    assert!(!dir.join("acquisition").exists());
-
-    // 3. Export CSV --output does not change canonical acquisition
+    // Export CSV --output does not change canonical acquisition
     let acq_dir = dir.join("acquisition");
     fs::create_dir_all(acq_dir.join("waveforms")).unwrap();
     let u16le_bytes = b"\x00\x00";
@@ -702,7 +690,7 @@ fn test_force_fetch_analysis_invalidation_and_transaction() {
     config.source_text = Some("version = 4\n".to_string());
     config.force = true;
 
-    let result = fetch_with_options(&config, Some(FetchFormat::Csv), None);
+    let result = fetch_with_options(&config, Some(FetchFormat::Csv));
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(!err_msg.contains("failed to open lock file"));
@@ -898,7 +886,7 @@ fn test_normal_fetch_fails_before_modifying_state() {
     fs::create_dir_all(config.paths().acquisition_dir()).unwrap();
 
     // Call fetch (should fail preflight check)
-    let fetch_res = fetch_with_options(&config, None, None);
+    let fetch_res = fetch_with_options(&config, None);
     assert!(fetch_res.is_err());
 
     // Verify run.toml does not exist (meaning we didn't prepare/write state before checking!)
@@ -922,7 +910,7 @@ fn test_normal_fetch_rejects_orphan_analysis() {
     fs::create_dir_all(config.paths().analysis_dir()).unwrap();
 
     // Call fetch (should fail on orphan analysis check)
-    let fetch_res = fetch_with_options(&config, None, None);
+    let fetch_res = fetch_with_options(&config, None);
     assert!(fetch_res.is_err());
     assert!(
         fetch_res

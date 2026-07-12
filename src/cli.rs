@@ -78,10 +78,6 @@ pub enum Command {
         /// Override output format from config [fetch].output
         #[arg(long, value_enum)]
         format: Option<FetchFormat>,
-        /// Output path. CSV defaults to acquisition/waveforms/waveform.csv;
-        /// RAW defaults to acquisition/
-        #[arg(long, value_name = "PATH")]
-        out: Option<PathBuf>,
     },
     /// Capture an oscilloscope screenshot directly to the PC
     #[cfg(feature = "hw")]
@@ -187,6 +183,18 @@ mod tests {
         let cli = Cli::try_parse_from(["pmoke", "screenshot"]).unwrap();
         assert!(matches!(cli.command, Some(Command::Screenshot)));
         assert!(Cli::try_parse_from(["pmoke", "image"]).is_err());
+    }
+
+    #[test]
+    fn fetch_uses_only_canonical_outputs() {
+        let cli = Cli::try_parse_from(["pmoke", "fetch", "--format", "raw"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Fetch {
+                format: Some(FetchFormat::Raw)
+            })
+        ));
+        assert!(Cli::try_parse_from(["pmoke", "fetch", "--out", "custom.csv"]).is_err());
     }
 }
 
