@@ -12,7 +12,7 @@ reference -> sensor integral -> lock-in -> phase rotation -> Kerr angle
 The current workflow is tuned for Rigol DHO5000-series oscilloscopes, large
 WORD waveform captures, and reproducible TOML-based analysis.
 
-See [CHANGELOG.md](CHANGELOG.md) for the upcoming v0.3.0 compatibility notes.
+See [CHANGELOG.md](CHANGELOG.md) for the v0.3.0 release and compatibility notes.
 
 ## ✨ What It Does
 
