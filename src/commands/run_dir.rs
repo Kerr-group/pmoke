@@ -385,7 +385,10 @@ impl RunMutationLock {
         use fs2::FileExt;
         match file.try_lock_exclusive() {
             Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock || error.kind() == io::ErrorKind::PermissionDenied => {
+            Err(error)
+                if error.kind() == io::ErrorKind::WouldBlock
+                    || error.kind() == io::ErrorKind::PermissionDenied =>
+            {
                 let content = fs::read_to_string(&path).unwrap_or_default();
                 bail!(
                     "another run-mutating operation is already running in this directory (lock file: {}).\nLock info:\n{}",
