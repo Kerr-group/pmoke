@@ -69,6 +69,17 @@ pmoke --config config.toml auto       # single + trigger + fetch + analyze
 
 If no command is provided, `pmoke` opens `monitor`.
 
+Install shell completion with:
+
+```powershell
+pmoke completions powershell
+```
+
+PowerShell completion is stored in `pmoke_completion.ps1` next to the profile;
+the profile contains only a managed dot-source entry. Re-running the command
+updates the completion without duplicating the entry and migrates the older
+inline pmoke completion when it is the final profile block.
+
 Use `--run-dir` to isolate one shot without changing config schema v4:
 
 ```sh

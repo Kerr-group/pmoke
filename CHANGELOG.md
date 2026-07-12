@@ -17,3 +17,7 @@
 - Config versions 1–3 remain readable and can be migrated to the latest executable schema when their recorded data is sufficient.
 - Legacy `raw_waveform/`, `raw.csv`, legacy analysis CSV names, and `analysis_npy/` remain supported as fallback inputs.
 - Config migration remains preview-only by default and requires explicit acceptance for lossy changes.
+
+### Fixes
+
+- PowerShell completion is loaded from a standalone script so its required `using namespace` statements no longer invalidate an existing profile.
