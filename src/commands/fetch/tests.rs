@@ -172,16 +172,16 @@ fn fetch_scaling_rejects_invalid_time_and_degenerate_voltage_mapping() {
 
 #[test]
 fn raw_metadata_serializes_horizontal_settings() {
-    let mut metadata = RawFetchMetadata {
-        version: RAW_METADATA_VERSION,
+    let metadata = RawFetchMetadata {
+        schema_version: RAW_METADATA_VERSION,
         status: "complete",
         pmoke_version: "test",
         git_commit: None,
-        created_at: "1970-01-01T00:00:00Z".to_string(),
+        timestamp: "1970-01-01T00:00:00Z".to_string(),
         created_at_unix_seconds: 0,
         config_version: 3,
         config_file: "config.source.toml",
-        config_sha256: "0".repeat(64),
+        sha256: "0".repeat(64),
         resolved_config_file: "config.resolved.toml",
         resolved_config_sha256: "1".repeat(64),
         oscilloscope: RawOscilloscopeMetadata {
@@ -203,11 +203,8 @@ fn raw_metadata_serializes_horizontal_settings() {
             horizontal_offset: -0.03,
             horizontal_scale: 0.005,
         },
-        channels: BTreeMap::new(),
-    };
-    metadata.channels.insert(
-        "ch1".to_string(),
-        RawChannelMetadata {
+        channels: vec![RawChannelMetadata {
+            index: Some(1),
             file: "ch1.u16le".to_string(),
             bytes: 400_000_000,
             sha256: "0".repeat(64),
@@ -221,67 +218,49 @@ fn raw_metadata_serializes_horizontal_settings() {
             y_reference: 32_768.0,
             vertical_offset: 0.258_56,
             vertical_scale: 0.202,
-        },
-    );
+        }],
+    };
 
     let encoded = toml::to_string_pretty(&metadata).unwrap();
     let decoded: toml::Value = toml::from_str(&encoded).unwrap();
 
     assert!(encoded.contains("horizontal_offset = -0.03"));
     assert!(encoded.contains("horizontal_scale = 0.005"));
-    for (path, expected) in [
-        (
-            &["oscilloscope", "horizontal_offset"][..],
-            metadata.oscilloscope.horizontal_offset,
-        ),
-        (
-            &["oscilloscope", "horizontal_scale"][..],
-            metadata.oscilloscope.horizontal_scale,
-        ),
-        (
-            &["channels", "ch1", "x_increment"][..],
-            metadata.channels["ch1"].x_increment,
-        ),
-        (
-            &["channels", "ch1", "x_origin"][..],
-            metadata.channels["ch1"].x_origin,
-        ),
-        (
-            &["channels", "ch1", "x_reference"][..],
-            metadata.channels["ch1"].x_reference,
-        ),
-        (
-            &["channels", "ch1", "y_increment"][..],
-            metadata.channels["ch1"].y_increment,
-        ),
-        (
-            &["channels", "ch1", "y_origin"][..],
-            metadata.channels["ch1"].y_origin,
-        ),
-        (
-            &["channels", "ch1", "y_reference"][..],
-            metadata.channels["ch1"].y_reference,
-        ),
-        (
-            &["channels", "ch1", "vertical_offset"][..],
-            metadata.channels["ch1"].vertical_offset,
-        ),
-        (
-            &["channels", "ch1", "vertical_scale"][..],
-            metadata.channels["ch1"].vertical_scale,
-        ),
-    ] {
-        let actual = path
-            .iter()
-            .fold(&decoded, |value, key| &value[*key])
-            .as_float()
-            .unwrap();
-        assert_eq!(actual.to_bits(), expected.to_bits(), "path={path:?}");
-    }
+
+    // Verify oscilloscope fields
     assert_eq!(
-        decoded["channels"]["ch1"]["preamble_raw"].as_str(),
-        Some(metadata.channels["ch1"].preamble_raw.as_str())
+        decoded["oscilloscope"]["horizontal_offset"]
+            .as_float()
+            .unwrap(),
+        metadata.oscilloscope.horizontal_offset
     );
+    assert_eq!(
+        decoded["oscilloscope"]["horizontal_scale"]
+            .as_float()
+            .unwrap(),
+        metadata.oscilloscope.horizontal_scale
+    );
+
+    // Verify channel fields
+    let ch1 = &decoded["channels"].as_array().unwrap()[0];
+    let ch1_meta = &metadata.channels[0];
+
+    assert_eq!(ch1["index"].as_integer().unwrap(), 1);
+    assert_eq!(ch1["x_increment"].as_float().unwrap(), ch1_meta.x_increment);
+    assert_eq!(ch1["x_origin"].as_float().unwrap(), ch1_meta.x_origin);
+    assert_eq!(ch1["x_reference"].as_float().unwrap(), ch1_meta.x_reference);
+    assert_eq!(ch1["y_increment"].as_float().unwrap(), ch1_meta.y_increment);
+    assert_eq!(ch1["y_origin"].as_float().unwrap(), ch1_meta.y_origin);
+    assert_eq!(ch1["y_reference"].as_float().unwrap(), ch1_meta.y_reference);
+    assert_eq!(
+        ch1["vertical_offset"].as_float().unwrap(),
+        ch1_meta.vertical_offset
+    );
+    assert_eq!(
+        ch1["vertical_scale"].as_float().unwrap(),
+        ch1_meta.vertical_scale
+    );
+    assert_eq!(ch1["preamble_raw"].as_str().unwrap(), ch1_meta.preamble_raw);
 }
 
 #[test]
@@ -333,6 +312,27 @@ fn csv_and_raw_outputs_are_finalized_after_streaming_succeeds() {
         fs::read_to_string(csv_out).unwrap(),
         "time (s),ch1\n0,2\n0.5,4\n"
     );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn canonical_both_output_writes_waveform_csv_inside_acquisition_staging() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+    let staging_dir = dir.join(".acquisition.tmp");
+    fs::create_dir_all(staging_dir.join("waveforms")).unwrap();
+    fs::write(staging_dir.join("waveforms/ch1.u16le"), [2_u8, 0, 4, 0]).unwrap();
+
+    let raw_out = dir.join("acquisition.incomplete");
+    let csv_out = raw_out.join("waveforms/waveform.csv");
+    let metadata = single_channel_raw_metadata("waveforms/ch1.u16le", 2);
+    write_waveform_csv_into_staging(&csv_out, &raw_out, &staging_dir, &[1], &metadata).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(staging_dir.join("waveforms/waveform.csv")).unwrap(),
+        "time (s),ch1\n0,2\n0.5,4\n"
+    );
+    assert!(!raw_out.exists());
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -482,34 +482,32 @@ fn ensure_path_not_exists_rejects_dangling_symbolic_link() {
 }
 
 fn single_channel_raw_metadata(file: &str, sample_count: usize) -> RawFetchMetadata {
-    let channels = BTreeMap::from([(
-        "ch1".to_string(),
-        RawChannelMetadata {
-            file: file.to_string(),
-            bytes: sample_count * 2,
-            sha256: "0".repeat(64),
-            sample_count,
-            preamble_raw: "preamble ch1".to_string(),
-            x_increment: 0.5,
-            x_origin: 0.0,
-            x_reference: 0.0,
-            y_increment: 1.0,
-            y_origin: 0.0,
-            y_reference: 0.0,
-            vertical_offset: 0.0,
-            vertical_scale: 0.1,
-        },
-    )]);
+    let channels = vec![RawChannelMetadata {
+        index: Some(1),
+        file: file.to_string(),
+        bytes: sample_count * 2,
+        sha256: "0".repeat(64),
+        sample_count,
+        preamble_raw: "preamble ch1".to_string(),
+        x_increment: 0.5,
+        x_origin: 0.0,
+        x_reference: 0.0,
+        y_increment: 1.0,
+        y_origin: 0.0,
+        y_reference: 0.0,
+        vertical_offset: 0.0,
+        vertical_scale: 0.1,
+    }];
     RawFetchMetadata {
-        version: RAW_METADATA_VERSION,
+        schema_version: RAW_METADATA_VERSION,
         status: "complete",
         pmoke_version: "test",
         git_commit: None,
-        created_at: "1970-01-01T00:00:00Z".to_string(),
+        timestamp: "1970-01-01T00:00:00Z".to_string(),
         created_at_unix_seconds: 0,
         config_version: 3,
         config_file: "config.source.toml",
-        config_sha256: "0".repeat(64),
+        sha256: "0".repeat(64),
         resolved_config_file: "config.resolved.toml",
         resolved_config_sha256: "1".repeat(64),
         oscilloscope: RawOscilloscopeMetadata {
@@ -547,4 +545,497 @@ fn unique_test_dir() -> PathBuf {
         nanos,
         sequence
     ))
+}
+
+#[test]
+fn test_fetch_out_denied_and_export_properties() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(dir.clone());
+    config.source_path = dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+
+    // 1. fetch --out is explicitly denied
+    let out_file = dir.join("custom_out.csv");
+    let result = fetch_with_options(&config, Some(FetchFormat::Csv), Some(&out_file));
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("--out is not supported for fetch"));
+
+    // 2. No output files are created when denied (no run.toml or custom_out.csv created)
+    assert!(!out_file.exists());
+    assert!(!dir.join("run.toml").exists());
+    assert!(!dir.join("acquisition").exists());
+
+    // 3. Export CSV --output does not change canonical acquisition
+    let acq_dir = dir.join("acquisition");
+    fs::create_dir_all(acq_dir.join("waveforms")).unwrap();
+    let u16le_bytes = b"\x00\x00";
+    let mut metadata = single_channel_raw_metadata("waveforms/ch1.u16le", 1);
+    metadata.channels[0].sha256 = sha256_hex(u16le_bytes);
+    let source_config = b"version = 4\n";
+    let resolved_config = b"version = 4\n";
+    fs::write(dir.join("config.source.toml"), source_config).unwrap();
+    fs::write(dir.join("config.resolved.toml"), resolved_config).unwrap();
+    metadata.config_file = "../config.source.toml";
+    metadata.sha256 = sha256_hex(source_config);
+    metadata.resolved_config_file = "../config.resolved.toml";
+    metadata.resolved_config_sha256 = sha256_hex(resolved_config);
+    let toml_str = toml::to_string_pretty(&metadata).unwrap();
+    fs::write(acq_dir.join("manifest.toml"), toml_str).unwrap();
+    fs::write(acq_dir.join("waveforms/ch1.u16le"), u16le_bytes).unwrap();
+
+    let export_out = dir.join("exported_waveform.csv");
+    crate::commands::export::csv(&acq_dir, &export_out, false).unwrap();
+    assert!(export_out.is_file());
+
+    // Verify canonical acquisition is unchanged
+    assert!(acq_dir.join("waveforms/ch1.u16le").is_file());
+
+    // 4. Custom export failure does not leave partial files
+    let bad_input = dir.join("nonexistent_acq");
+    let bad_out = dir.join("bad_export_out.csv");
+    let export_err = crate::commands::export::csv(&bad_input, &bad_out, false);
+    assert!(export_err.is_err());
+    assert!(!bad_out.exists());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_force_fetch_analysis_invalidation_and_transaction() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+
+    // 1. Create canonical analysis and legacy files
+    let canonical = run_dir.join("analysis");
+    fs::create_dir_all(&canonical).unwrap();
+    fs::write(canonical.join("manifest.toml"), b"manifest").unwrap();
+
+    let legacy_npy = run_dir.join("analysis_npy");
+    fs::create_dir_all(&legacy_npy).unwrap();
+    fs::write(legacy_npy.join("test.npy"), b"npy").unwrap();
+
+    let legacy_meta = run_dir.join("analysis_metadata.toml");
+    fs::write(&legacy_meta, b"meta").unwrap();
+
+    let legacy_kerr = run_dir.join("kerr_results.csv");
+    fs::write(&legacy_kerr, b"kerr").unwrap();
+
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let lockin_rot_2 = run_dir.join("lockin_rotated_ch2.csv");
+    fs::write(&lockin_rot_2, b"rot2").unwrap();
+
+    // 2. Create backup
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+
+    // Verify they are moved to backup
+    assert!(!canonical.exists());
+    assert!(!legacy_npy.exists());
+    assert!(!legacy_meta.exists());
+    assert!(!legacy_kerr.exists());
+    assert!(!lockin_res_1.exists());
+    assert!(!lockin_rot_2.exists());
+
+    let backup_exists = fs::read_dir(run_dir).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".analysis.backup.")
+    });
+    assert!(backup_exists);
+
+    // 3. Commit backup
+    backup.commit(run_dir).unwrap();
+
+    let backup_exists_after = fs::read_dir(run_dir).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".analysis.backup.")
+    });
+    assert!(!backup_exists_after);
+
+    // Verify legacy_analysis.invalidated.<timestamp> exists and contains the files
+    let mut invalidated_found = false;
+    for entry in fs::read_dir(run_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        if name.starts_with("legacy_analysis.invalidated.") {
+            invalidated_found = true;
+            let path = entry.path();
+            assert!(path.join("analysis/manifest.toml").is_file());
+            assert!(path.join("analysis_npy/test.npy").is_file());
+            assert!(path.join("analysis_metadata.toml").is_file());
+            assert!(path.join("kerr_results.csv").is_file());
+            assert!(path.join("lockin_results_ch1.csv").is_file());
+            assert!(path.join("lockin_rotated_ch2.csv").is_file());
+        }
+    }
+    assert!(invalidated_found);
+
+    // 4. Test restore
+    // Create new files
+    let canonical2 = run_dir.join("analysis");
+    fs::create_dir_all(&canonical2).unwrap();
+    fs::write(canonical2.join("manifest.toml"), b"manifest").unwrap();
+
+    let backup2 = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!canonical2.exists());
+
+    // Restore backup
+    backup2.restore().unwrap();
+    assert!(canonical2.exists());
+    assert!(canonical2.join("manifest.toml").is_file());
+
+    // 5. Test force fetch on new directory (should not fail on directory/lock creation)
+    let new_dir = unique_test_dir().join("nested_new_run");
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(new_dir.clone());
+    config.source_path = new_dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+    config.force = true;
+
+    let result = fetch_with_options(&config, Some(FetchFormat::Csv), None);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(!err_msg.contains("failed to open lock file"));
+    assert!(!err_msg.contains("failed to create run directory"));
+
+    fs::remove_dir_all(dir).unwrap();
+    let _ = fs::remove_dir_all(new_dir);
+}
+
+#[test]
+fn test_analysis_backup_partial_move_failure_and_rollback() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+    let custom_backup = run_dir.join("my_custom_backup");
+    fs::create_dir_all(&custom_backup).unwrap();
+
+    // Pre-create a conflicting directory inside the custom backup path for lockin_results_ch1.csv
+    // This will cause rename to fail for that specific item!
+    fs::create_dir(custom_backup.join("lockin_results_ch1.csv")).unwrap();
+
+    // Create 1st item (analysis/) and 2nd item (lockin_results_ch1.csv)
+    let canonical = run_dir.join("analysis");
+    fs::create_dir_all(&canonical).unwrap();
+    fs::write(canonical.join("manifest.toml"), b"manifest").unwrap();
+
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    // Call create_internal with custom backup dir (this should fail on 2nd item rename)
+    let result = AnalysisBackup::create_internal(run_dir, custom_backup.clone());
+    assert!(result.is_err());
+
+    // Verify RAII automatically rolled back the 1st item (analysis/)
+    assert!(canonical.exists());
+    assert!(canonical.join("manifest.toml").is_file());
+    assert!(lockin_res_1.exists());
+
+    // Verify custom backup directory is removed on drop restore
+    assert!(!custom_backup.exists());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+fn find_analysis_backup(run_dir: &Path) -> PathBuf {
+    for entry in fs::read_dir(run_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        if name.starts_with(".analysis.backup.") {
+            return entry.path();
+        }
+    }
+    panic!("No analysis backup directory found!");
+}
+
+#[test]
+fn test_analysis_backup_restore_failure() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!lockin_res_1.exists());
+
+    // Before restoring, create a directory at lockin_res_1 to cause restore to fail
+    fs::create_dir(&lockin_res_1).unwrap();
+
+    // Call restore (should fail)
+    let restore_err = backup.restore();
+    assert!(restore_err.is_err());
+    assert!(
+        restore_err
+            .unwrap_err()
+            .to_string()
+            .contains("failed to restore")
+    );
+
+    // 元の場所には戻っていない (ディレクトリのままである)
+    assert!(lockin_res_1.is_dir());
+
+    // ただしbackupデータは絶対に失われない
+    let backup_dir_path = find_analysis_backup(run_dir);
+    let backup_file = backup_dir_path.join("lockin_results_ch1.csv");
+    assert!(backup_file.is_file());
+    assert_eq!(fs::read(backup_file).unwrap(), b"res1");
+
+    // Cleanup directory
+    let _ = fs::remove_dir_all(&lockin_res_1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_backup_commit_failure_warning() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!lockin_res_1.exists());
+
+    // Enable mock rename error
+    MOCK_RENAME_ERROR.with(|m| m.set(true));
+
+    // Call commit (should fail)
+    let commit_res = backup.commit(run_dir);
+    assert!(commit_res.is_err());
+
+    // Disable mock rename error
+    MOCK_RENAME_ERROR.with(|m| m.set(false));
+
+    // Verify that the old analysis was NOT restored to the original position
+    assert!(!lockin_res_1.exists());
+
+    // Verify that the backup directory still exists on disk and is not deleted
+    let backup_dir_path = find_analysis_backup(run_dir);
+    assert!(backup_dir_path.exists());
+    assert!(backup_dir_path.join("lockin_results_ch1.csv").is_file());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_restore_missing_backup_item_already_restored() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!lockin_res_1.exists());
+
+    // Remove the file from backup_dir, but write it back to its original location
+    let backup_dir_path = find_analysis_backup(run_dir);
+    fs::remove_file(backup_dir_path.join("lockin_results_ch1.csv")).unwrap();
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    // Call restore (should succeed because it's already restored)
+    assert!(backup.restore().is_ok());
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_restore_missing_backup_item_not_restored_fails() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+    let lockin_res_1 = run_dir.join("lockin_results_ch1.csv");
+    fs::write(&lockin_res_1, b"res1").unwrap();
+
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+    assert!(!lockin_res_1.exists());
+
+    // Remove the file from backup_dir and ensure original doesn't exist
+    let backup_dir_path = find_analysis_backup(run_dir);
+    fs::remove_file(backup_dir_path.join("lockin_results_ch1.csv")).unwrap();
+
+    // Call restore (should fail because both backup and original are missing)
+    let restore_err = backup.restore();
+    assert!(restore_err.is_err());
+    assert!(
+        restore_err
+            .unwrap_err()
+            .to_string()
+            .contains("backup item is missing and original was not restored")
+    );
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_normal_fetch_fails_before_modifying_state() {
+    let dir = unique_test_dir();
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(dir.clone());
+    config.source_path = dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+    config.force = false;
+
+    // Create the run directory and pre-create an acquisition directory to trigger exists failure
+    crate::commands::run_dir::ensure_run_directory(&config.paths().run_dir).unwrap();
+    fs::create_dir_all(config.paths().acquisition_dir()).unwrap();
+
+    // Call fetch (should fail preflight check)
+    let fetch_res = fetch_with_options(&config, None, None);
+    assert!(fetch_res.is_err());
+
+    // Verify run.toml does not exist (meaning we didn't prepare/write state before checking!)
+    let run_toml = config.paths().run_manifest();
+    assert!(!run_toml.exists());
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_normal_fetch_rejects_orphan_analysis() {
+    let dir = unique_test_dir();
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(dir.clone());
+    config.source_path = dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+    config.force = false;
+
+    // Create run directory and pre-create analysis directory (no acquisition exists, so it's an orphan analysis)
+    crate::commands::run_dir::ensure_run_directory(&config.paths().run_dir).unwrap();
+    fs::create_dir_all(config.paths().analysis_dir()).unwrap();
+
+    // Call fetch (should fail on orphan analysis check)
+    let fetch_res = fetch_with_options(&config, None, None);
+    assert!(fetch_res.is_err());
+    assert!(
+        fetch_res
+            .unwrap_err()
+            .to_string()
+            .contains("analysis artifacts already exist without a valid acquisition")
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn process_auto_and_automeasure_preflight_before_state_or_hardware() {
+    let dir = unique_test_dir();
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.set_artifact_root(dir.clone());
+    config.source_path = dir.join("config.toml");
+    config.source_text = Some("version = 4\n".to_string());
+    config.instruments = Some(crate::config::Instruments {
+        oscilloscope: crate::config::Oscilloscope {
+            connection: crate::config::Connection::Tcpip {
+                ip: "127.0.0.1".to_string(),
+                port: 1,
+            },
+            model: "DHO5108".to_string(),
+        },
+        function_generator: Some(crate::config::FunctionGenerator {
+            connection: crate::config::Connection::Gpib {
+                board: 0,
+                address: 1,
+            },
+            model: "WF1946B".to_string(),
+        }),
+    });
+    crate::commands::run_dir::ensure_run_directory(&config.paths().run_dir).unwrap();
+    fs::create_dir_all(config.paths().acquisition_dir()).unwrap();
+    let original_state = b"schema_version = 1\nstatus = \"complete\"\nstage = \"analysis\"\n";
+
+    for command in [
+        crate::commands::process::process as fn(&Config) -> Result<()>,
+        crate::commands::auto::auto,
+        crate::commands::automeasure::automeasure,
+    ] {
+        fs::write(config.paths().run_manifest(), original_state).unwrap();
+        let error = command(&config).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("acquisition directory already exists")
+        );
+        assert_eq!(
+            fs::read(config.paths().run_manifest()).unwrap(),
+            original_state
+        );
+    }
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn analysis_artifact_scan_propagates_directory_errors() {
+    let dir = unique_test_dir();
+    fs::write(&dir, b"not a directory").unwrap();
+
+    let error = has_any_analysis_artifact(&dir).unwrap_err();
+    assert!(format!("{error:#}").contains("failed to inspect run directory"));
+
+    fs::remove_file(dir).unwrap();
+}
+
+#[test]
+fn test_stale_backup_is_not_deleted() {
+    let dir = unique_test_dir();
+    fs::create_dir(&dir).unwrap();
+
+    let run_dir = &dir;
+
+    // Create a stale backup directory
+    let stale_backup = run_dir.join(".analysis.backup.12345.2026-07-12.0");
+    fs::create_dir_all(&stale_backup).unwrap();
+    fs::write(stale_backup.join("stale.txt"), b"stale").unwrap();
+
+    // Create a new backup
+    let backup = AnalysisBackup::create(run_dir).unwrap();
+
+    // Stale backup must not be deleted!
+    assert!(stale_backup.exists());
+    assert!(stale_backup.join("stale.txt").is_file());
+
+    std::mem::drop(backup);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn test_process_and_auto_reject_force() {
+    let mut config = crate::test_support::test_config(vec![1], vec![2]);
+    config.force = true;
+
+    let result_process = crate::commands::process::process(&config);
+    assert!(result_process.is_err());
+    assert!(
+        result_process
+            .unwrap_err()
+            .to_string()
+            .contains("--force is not supported for process/auto")
+    );
+
+    let result_auto = crate::commands::auto::auto(&config);
+    assert!(result_auto.is_err());
+    assert!(
+        result_auto
+            .unwrap_err()
+            .to_string()
+            .contains("--force is not supported for process/auto")
+    );
 }

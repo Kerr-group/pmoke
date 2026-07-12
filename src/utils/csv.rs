@@ -66,9 +66,14 @@ where
     P: AsRef<Path>,
     C: AsRef<[f64]>,
 {
+    let path_ref = path.as_ref();
+    if let Some(parent) = path_ref.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).context("failed to create directory for csv output")?;
+    }
+
     let ncols = columns.len();
     if ncols == 0 {
-        File::create(path.as_ref())?;
+        File::create(path_ref)?;
         return Ok(());
     }
 
@@ -114,5 +119,54 @@ where
     }
 
     w.flush()?;
+    Ok(())
+}
+
+pub fn write_npy<P, C>(path: P, columns: &[C]) -> Result<()>
+where
+    P: AsRef<Path>,
+    C: AsRef<[f64]>,
+{
+    let path = path.as_ref();
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).context("failed to create directory for npy output")?;
+    }
+
+    let ncols = columns.len();
+    if ncols == 0 {
+        anyhow::bail!("cannot write an NPY table without columns");
+    }
+
+    let column_refs: Vec<&[f64]> = columns.iter().map(|col| col.as_ref()).collect();
+    let nrows = column_refs[0].len();
+    for (i, col) in column_refs.iter().enumerate() {
+        if col.len() != nrows {
+            anyhow::bail!("column {i} has length {}, expected {nrows}", col.len());
+        }
+    }
+
+    let dictionary =
+        format!("{{'descr': '<f8', 'fortran_order': False, 'shape': ({nrows}, {ncols}), }}");
+    let prefix_len = 10usize;
+    let padding = (64 - ((prefix_len + dictionary.len() + 1) % 64)) % 64;
+    let header = format!("{dictionary}{}\n", " ".repeat(padding));
+    let header_len =
+        u16::try_from(header.len()).map_err(|_| anyhow::anyhow!("NPY header is too large"))?;
+
+    let file = File::create(path)
+        .with_context(|| format!("failed to create NPY file: {}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+
+    writer.write_all(b"\x93NUMPY")?;
+    writer.write_all(&[1, 0])?;
+    writer.write_all(&header_len.to_le_bytes())?;
+    writer.write_all(header.as_bytes())?;
+    for row in 0..nrows {
+        for column in &column_refs {
+            writer.write_all(&column[row].to_le_bytes())?;
+        }
+    }
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
     Ok(())
 }

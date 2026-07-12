@@ -25,10 +25,12 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
             ..Plot::default()
         },
         source_path: "config.toml".into(),
-        source_text: None,
+        source_text: Some("version = 3\n".to_string()),
         artifact_root: None,
         plot_output_relative: None,
         legacy_timebase: None,
+        force: false,
+        staging_active: false,
         roles: Roles {
             sensor_ch,
             reference_ch: 1,
@@ -67,6 +69,7 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
             lpf_debug_overwrite: false,
             snr_background_window: None,
             snr_signal_window: None,
+            save_npy: false,
         },
         phase: Phase {
             m_omega_t0_offset: Vec::new(),

@@ -248,6 +248,8 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
         artifact_root: None,
         plot_output_relative: None,
         legacy_timebase: Some(raw.timebase.into()),
+        force: false,
+        staging_active: false,
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
             reference_ch,
@@ -271,6 +273,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
             snr_background_window: raw.lockin.snr_background_window,
             snr_signal_window: raw.lockin.snr_signal_window,
+            save_npy: raw.lockin.save_npy,
         },
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
@@ -313,6 +316,8 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         artifact_root: None,
         plot_output_relative: None,
         legacy_timebase: Some(legacy_timebase),
+        force: false,
+        staging_active: false,
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
             reference_ch: raw.roles.reference_ch,
@@ -336,6 +341,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
             snr_background_window: raw.lockin.snr_background_window,
             snr_signal_window: raw.lockin.snr_signal_window,
+            save_npy: raw.lockin.save_npy,
         },
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
@@ -375,6 +381,8 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
         artifact_root: None,
         plot_output_relative: None,
         legacy_timebase: None,
+        force: false,
+        staging_active: false,
         roles: Roles {
             sensor_ch: raw.roles.sensor_ch,
             reference_ch: raw.roles.reference_ch,
@@ -398,6 +406,7 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
             snr_background_window: raw.lockin.snr_background_window,
             snr_signal_window: raw.lockin.snr_signal_window,
+            save_npy: raw.lockin.save_npy,
         },
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
@@ -568,6 +577,8 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         artifact_root: None,
         plot_output_relative: None,
         legacy_timebase: None,
+        force: false,
+        staging_active: false,
         roles: Roles {
             sensor_ch,
             reference_ch: raw.reference.channel,

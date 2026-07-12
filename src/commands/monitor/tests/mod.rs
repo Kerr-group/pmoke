@@ -36,6 +36,8 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                 artifact_root: None,
                 plot_output_relative: None,
                 legacy_timebase: None,
+                force: false,
+                staging_active: false,
                 roles: Roles {
                     sensor_ch: vec![1],
                     reference_ch: 1,
@@ -74,6 +76,7 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                     lpf_debug_overwrite: false,
                     snr_background_window: None,
                     snr_signal_window: None,
+                    save_npy: false,
                 },
                 phase: Phase {
                     m_omega_t0_offset: Vec::new(),

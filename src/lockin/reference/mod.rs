@@ -16,6 +16,14 @@ pub fn run(cfg: &Config) -> Result<()> {
 }
 
 pub fn run_fit_ref(cfg: &Config) -> Result<RefFitParams> {
+    run_fit_ref_with_plot(cfg, true)
+}
+
+pub fn run_fit_ref_without_plot(cfg: &Config) -> Result<RefFitParams> {
+    run_fit_ref_with_plot(cfg, false)
+}
+
+fn run_fit_ref_with_plot(cfg: &Config, should_plot: bool) -> Result<RefFitParams> {
     let ref_ch = extract_single_reference_ch(cfg)?;
 
     let pb = ui::spinner(format!("reading reference channel {ref_ch}"));
@@ -35,8 +43,8 @@ pub fn run_fit_ref(cfg: &Config) -> Result<RefFitParams> {
         ),
     );
 
-    let results =
-        run_fit_ref_core(cfg, &waveform.t, &ref_data).context("failed to fit reference signal")?;
+    let results = run_fit_ref_core_with_plot(cfg, &waveform.t, &ref_data, should_plot)
+        .context("failed to fit reference signal")?;
 
     Ok(results)
 }
@@ -68,6 +76,23 @@ pub fn run_fit_ref_core<'a>(
     cfg: &Config,
     t: impl Into<TimeAxisRef<'a>>,
     ref_data: &[f64],
+) -> Result<RefFitParams> {
+    run_fit_ref_core_with_plot(cfg, t, ref_data, true)
+}
+
+pub fn run_fit_ref_core_without_plot<'a>(
+    cfg: &Config,
+    t: impl Into<TimeAxisRef<'a>>,
+    ref_data: &[f64],
+) -> Result<RefFitParams> {
+    run_fit_ref_core_with_plot(cfg, t, ref_data, false)
+}
+
+pub fn run_fit_ref_core_with_plot<'a>(
+    cfg: &Config,
+    t: impl Into<TimeAxisRef<'a>>,
+    ref_data: &[f64],
+    should_plot: bool,
 ) -> Result<RefFitParams> {
     let t = t.into();
     if t.len() != ref_data.len() {
@@ -114,8 +139,10 @@ pub fn run_fit_ref_core<'a>(
             ],
         ],
     );
-    plot_fit_results(cfg, &fit_t, &fit_ref_data, &results)
-        .context("failed to plot reference signal")?;
+    if should_plot {
+        plot_fit_results(cfg, &fit_t, &fit_ref_data, &results)
+            .context("failed to plot reference signal")?;
+    }
     Ok(results)
 }
 
@@ -183,9 +210,10 @@ fn plot_fit_results(
 
     plot::run_plot(
         &cfg.plot,
+        &cfg.paths().reference_fit_plot(),
         "plotting reference fit",
         "reference plot completed",
-        || {
+        |output| {
             let f = results.f_ref;
             let a = results.a_ref;
             let omegat = results.omega_tref;
@@ -210,7 +238,7 @@ fn plot_fit_results(
                 .collect();
 
             ref_plot::ReferencePlotter {}
-                .plot(&cfg.plot, t_plot, ref_plot, &fit_plot)
+                .plot(&cfg.plot, output, t_plot, ref_plot, &fit_plot)
                 .context("failed to plot reference signal")
         },
     )?;

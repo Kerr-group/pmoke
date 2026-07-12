@@ -1,8 +1,5 @@
 use crate::config::{Config, FetchAnalysisInput};
-use crate::constants::{
-    FETCHED_FNAME, RAW_METADATA_FNAME, RAW_METADATA_LEGACY_VERSION, RAW_METADATA_VERSION,
-    RAW_WAVEFORM_DIR,
-};
+use crate::constants::{RAW_METADATA_FNAME, RAW_METADATA_LEGACY_VERSION, RAW_METADATA_VERSION};
 use crate::utils::channels::build_channel_list;
 use crate::utils::checksum::{finalize_sha256_hex, sha256_hex};
 use crate::utils::csv::read_selected_columns;
@@ -28,7 +25,8 @@ struct CsvColumns {
     column_count: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(from = "RawWaveformMetadataRaw")]
 struct RawWaveformMetadata {
     version: u32,
     status: Option<String>,
@@ -43,6 +41,72 @@ struct RawWaveformMetadata {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawWaveformMetadataRaw {
+    #[serde(alias = "schema_version", alias = "version")]
+    version: u32,
+    status: Option<String>,
+    pmoke_version: Option<String>,
+    #[serde(alias = "timestamp", alias = "created_at")]
+    created_at: Option<String>,
+    config_file: Option<String>,
+    #[serde(alias = "sha256", alias = "config_sha256")]
+    config_sha256: Option<String>,
+    resolved_config_file: Option<String>,
+    resolved_config_sha256: Option<String>,
+    oscilloscope: RawOscilloscopeMetadata,
+    channels: ChannelsFormat,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+enum ChannelsFormat {
+    Map(BTreeMap<String, RawChannelMetadata>),
+    List(Vec<RawChannelMetadata>),
+}
+
+impl ChannelsFormat {
+    fn into_map(self) -> BTreeMap<String, RawChannelMetadata> {
+        match self {
+            ChannelsFormat::Map(map) => map,
+            ChannelsFormat::List(list) => {
+                let mut map = BTreeMap::new();
+                for item in list {
+                    let ch = item.index.unwrap_or_else(|| {
+                        if let Some(pos) = item.file.find("ch") {
+                            let s = &item.file[pos + 2..];
+                            let digits: String =
+                                s.chars().take_while(|c| c.is_ascii_digit()).collect();
+                            digits.parse::<u8>().unwrap_or(1)
+                        } else {
+                            1
+                        }
+                    });
+                    map.insert(format!("ch{ch}"), item);
+                }
+                map
+            }
+        }
+    }
+}
+
+impl From<RawWaveformMetadataRaw> for RawWaveformMetadata {
+    fn from(raw: RawWaveformMetadataRaw) -> Self {
+        Self {
+            version: raw.version,
+            status: raw.status,
+            pmoke_version: raw.pmoke_version,
+            created_at: raw.created_at,
+            config_file: raw.config_file,
+            config_sha256: raw.config_sha256,
+            resolved_config_file: raw.resolved_config_file,
+            resolved_config_sha256: raw.resolved_config_sha256,
+            oscilloscope: raw.oscilloscope,
+            channels: raw.channels.into_map(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct RawOscilloscopeMetadata {
     idn_raw: Option<String>,
     waveform_format: String,
@@ -52,8 +116,9 @@ struct RawOscilloscopeMetadata {
     channels: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct RawChannelMetadata {
+    index: Option<u8>,
     file: String,
     bytes: Option<usize>,
     sha256: Option<String>,
@@ -101,7 +166,8 @@ pub fn read_waveform_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformD
 }
 
 fn read_csv_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
-    let csv_path = cfg.artifact_path(FETCHED_FNAME);
+    let resolver = cfg.resolver();
+    let csv_path = resolver.waveform_csv();
     let (time_index, column_indices) = csv_column_indices(&csv_path, channels)?;
     let mut read_indices =
         Vec::with_capacity(column_indices.len() + usize::from(time_index.is_some()));
@@ -149,7 +215,10 @@ fn read_auto_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
 }
 
 fn read_raw_channels(cfg: &Config, channels: &[u8]) -> Result<WaveformData> {
-    read_raw_waveform_channels_from_dir(&cfg.artifact_path(RAW_WAVEFORM_DIR), channels)
+    let resolver = cfg.resolver();
+    let manifest = resolver.acquisition_manifest();
+    let base_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
+    read_raw_waveform_channels_from_dir(base_dir, channels)
 }
 
 pub fn read_raw_waveform_channels_from_dir(
@@ -289,7 +358,7 @@ pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvE
 }
 
 fn raw_manifest_sha256(base_dir: &Path) -> Result<String> {
-    let path = base_dir.join(RAW_METADATA_FNAME);
+    let path = raw_metadata_path(base_dir);
     let metadata = fs::symlink_metadata(&path)
         .with_context(|| format!("raw metadata not found: {}", path.display()))?;
     if !metadata.file_type().is_file() {
@@ -354,7 +423,7 @@ fn export_temporary_path(output: &Path) -> PathBuf {
 }
 
 fn read_raw_metadata(base_dir: &Path) -> Result<RawWaveformMetadata> {
-    let metadata_path = base_dir.join(RAW_METADATA_FNAME);
+    let metadata_path = raw_metadata_path(base_dir);
     let metadata = fs::symlink_metadata(&metadata_path)
         .with_context(|| format!("raw metadata not found: {}", metadata_path.display()))?;
     if !metadata.file_type().is_file() {
@@ -844,11 +913,43 @@ fn validate_voltage_range(
 
 fn resolve_raw_channel_path(base_dir: &Path, file: &str, key: &str) -> Result<PathBuf> {
     let relative = Path::new(file);
-    let mut components = relative.components();
-    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
-        bail!("raw channel file must be a plain file name for {key}: {file}");
+    if relative.is_absolute() {
+        bail!("raw channel file must be a safe relative path for {key}: {file}");
     }
-    Ok(base_dir.join(relative))
+
+    let mut resolved = base_dir.to_path_buf();
+    for component in relative.components() {
+        match component {
+            Component::Normal(c) => resolved.push(c),
+            Component::ParentDir => {
+                if !resolved.pop() {
+                    bail!("raw channel file escapes base directory parent for {key}: {file}");
+                }
+            }
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => {
+                bail!("raw channel file must be a safe relative path for {key}: {file}");
+            }
+        }
+    }
+
+    let is_config = key == "config.source.toml" || key == "config.resolved.toml";
+    if is_config {
+        if let Some(run_dir) = base_dir.parent() {
+            if !resolved.starts_with(run_dir) {
+                bail!("raw channel file escapes run directory for {key}: {file}");
+            }
+        } else if !resolved.starts_with(base_dir) {
+            bail!("raw channel file escapes base directory for {key}: {file}");
+        }
+    } else {
+        // Raw channel files must be strictly inside the base_dir
+        if !resolved.starts_with(base_dir) {
+            bail!("raw channel file must be a safe relative path for {key}: {file}");
+        }
+    }
+
+    Ok(resolved)
 }
 
 fn raw_channel_file_size(path: &Path, key: &str) -> Result<u64> {
@@ -870,11 +971,14 @@ enum RawStatus {
 }
 
 fn raw_status(cfg: &Config, channels: &[u8]) -> Result<RawStatus> {
-    raw_status_in_dir(&cfg.artifact_path(RAW_WAVEFORM_DIR), channels)
+    let resolver = cfg.resolver();
+    let manifest = resolver.acquisition_manifest();
+    let base_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
+    raw_status_in_dir(base_dir, channels)
 }
 
 fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
-    let metadata_path = base_dir.join(RAW_METADATA_FNAME);
+    let metadata_path = raw_metadata_path(base_dir);
     if !path_entry_exists(&metadata_path)? {
         return if path_entry_exists(base_dir)? {
             Ok(RawStatus::Invalid(format!(
@@ -884,6 +988,9 @@ fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
         } else {
             Ok(RawStatus::Missing)
         };
+    }
+    if manifest_declares_csv(&metadata_path)? {
+        return Ok(RawStatus::Missing);
     }
 
     let metadata = match read_raw_metadata(base_dir) {
@@ -909,6 +1016,26 @@ fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
     }
 
     Ok(RawStatus::Complete)
+}
+
+fn raw_metadata_path(base_dir: &Path) -> PathBuf {
+    let canonical = base_dir.join("manifest.toml");
+    if canonical.exists() {
+        canonical
+    } else {
+        base_dir.join(RAW_METADATA_FNAME)
+    }
+}
+
+fn manifest_declares_csv(path: &Path) -> Result<bool> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read acquisition manifest: {}", path.display()))?;
+    let value: toml::Value = toml::from_str(&text)
+        .with_context(|| format!("failed to parse acquisition manifest: {}", path.display()))?;
+    Ok(value
+        .get("waveform_format")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|format| format.eq_ignore_ascii_case("csv")))
 }
 
 fn path_entry_exists(path: &Path) -> Result<bool> {

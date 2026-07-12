@@ -4,12 +4,12 @@ pub mod rotator;
 pub mod save;
 
 use crate::analysis_results::parse_analysis_result_files;
-use crate::constants::{LI_HEADER, LI_ROTATED_HEADER, LI_ROTATED_NAME};
+use crate::constants::{LI_HEADER, LI_ROTATED_HEADER};
 use crate::phase::omega_t0_analysis::OT0Analyser;
 use crate::phase::phase_rotation_plot::PhaseRotationPlotter;
 use crate::phase::rotator::rotate_phase;
 use crate::phase::save::{get_li_rotated_headers, write_li_rotated_results};
-use crate::{config::Config, constants::LI_RESULTS_NAME, utils::csv::read_csv};
+use crate::{config::Config, utils::csv::read_csv};
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
@@ -34,12 +34,10 @@ pub fn run(cfg: &Config) -> Result<()> {
     let t0 = Instant::now();
     let pb = ui::spinner(format!("reading lock-in results for channels {:?}", ch));
 
+    let resolver = cfg.resolver();
     let all_data: Vec<Vec<Vec<f64>>> = ch
         .par_iter()
-        .map(|channel| {
-            let fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, channel);
-            read_csv(cfg.artifact_path(fname))
-        })
+        .map(|channel| read_csv(resolver.lockin_xy_csv(*channel)))
         .collect::<Result<Vec<_>, _>>()?;
 
     let elapsed_read = t0.elapsed();
@@ -81,6 +79,7 @@ pub fn run_phase_analysis(
         .iter()
         .map(|s| s.trim().replace("(V)", ""))
         .collect();
+    let paths = cfg.paths();
     let ch = cfg.phase_signal_ch();
 
     let pb = ui::progress(
@@ -112,9 +111,7 @@ pub fn run_phase_analysis(
                 ],
             );
         });
-        let li_rotated_name = LI_ROTATED_NAME;
-        let fname = format!("{}_ch{}.csv", li_rotated_name, ch_i);
-        let path = cfg.artifact_path(&fname);
+        let path = paths.lockin_rotated_csv(*ch_i);
         let headers = get_li_rotated_headers(cfg)?;
         write_li_rotated_results(
             &path,
@@ -123,6 +120,7 @@ pub fn run_phase_analysis(
             sensor_rate_ch,
             sensor_integral_ch,
             &phase_output.rotated_result,
+            cfg.lockin.save_npy,
         )?;
         rotated_results.push(phase_output.rotated_result);
         pb.inc(1);
@@ -132,11 +130,12 @@ pub fn run_phase_analysis(
 
     plot::run_plot(
         &cfg.plot,
+        &cfg.paths().phase_rotated_combined_plot(),
         "plotting phase-rotated results",
         "phase plot completed",
-        || {
+        |output| {
             PhaseRotationPlotter {}
-                .plot(&cfg.plot, t, &rotated_results, ch, &labels)
+                .plot(&cfg.plot, output, t, &rotated_results, ch, &labels)
                 .context("failed to plot phase-rotated results")
         },
     )?;
@@ -225,6 +224,7 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
     let omega_t0: f64 = OT0Analyser {}
         .analyse(
             &cfg.plot,
+            &cfg.paths().phase_offset_plot(),
             [
                 &m_omega_t0_1,
                 &m_omega_t0_2,

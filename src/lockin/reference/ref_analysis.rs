@@ -9,6 +9,7 @@ const REF_ANALYSIS_PY: &str = include_str!("pytools/ref_analysis.py");
 static REF_ANALYSIS_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 
 #[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
 pub struct RefFitParams {
     pub f_ref: f64,
     pub a_ref: f64,

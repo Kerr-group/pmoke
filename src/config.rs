@@ -1,6 +1,3 @@
-use crate::constants::{
-    FETCHED_FNAME, LI_RESULTS_NAME, LI_ROTATED_NAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR,
-};
 use anyhow::{Result, anyhow, bail};
 use fasteval::Evaler;
 use serde::{Deserialize, Serialize};
@@ -14,11 +11,13 @@ use std::{
 
 mod load;
 mod migration;
+mod paths;
 mod render;
 mod schema;
 mod validation;
 pub use load::{load_from_path, load_from_str};
 pub use migration::{MigrationPlan, plan_latest_executable_migration, plan_migration};
+pub use paths::{ArtifactPaths, ArtifactResolver};
 use render::render_config_v4;
 pub use render::render_normalized_config;
 use schema::*;
@@ -137,6 +136,10 @@ pub struct Config {
     pub plot_output_relative: Option<PathBuf>,
     #[serde(skip_serializing)]
     pub legacy_timebase: Option<Timebase>,
+    #[serde(skip_serializing)]
+    pub force: bool,
+    #[serde(skip_serializing)]
+    pub staging_active: bool,
     pub roles: Roles,
     pub channels: Vec<Channel>,
     pub pulse: Pulse,
@@ -154,6 +157,27 @@ pub struct Screenshot {
 impl Config {
     pub fn phase_signal_ch(&self) -> &[u8] {
         &self.roles.signal_ch
+    }
+
+    pub fn resolver(&self) -> ArtifactResolver {
+        ArtifactResolver::new(self.paths().run_dir)
+    }
+
+    pub fn paths(&self) -> ArtifactPaths {
+        let mut paths = if let Some(root) = &self.artifact_root {
+            ArtifactPaths::new(root)
+        } else if self.version >= 4 {
+            let parent = self
+                .source_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            ArtifactPaths::new(parent)
+        } else {
+            ArtifactPaths::new(".")
+        };
+        paths.is_staging = self.staging_active;
+        paths
     }
 
     pub fn artifact_path(&self, path: impl AsRef<Path>) -> PathBuf {
@@ -346,6 +370,7 @@ pub struct Lockin {
     pub lpf_debug_overwrite: bool,
     pub snr_background_window: Option<Window>,
     pub snr_signal_window: Option<Window>,
+    pub save_npy: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -594,6 +619,7 @@ impl From<LockinV4> for Lockin {
             lpf_debug_overwrite: value.debug_overwrite,
             snr_background_window: value.snr_background_window,
             snr_signal_window: value.snr_signal_window,
+            save_npy: value.save_npy,
         };
         match value.filter {
             LockinFilterV4::BoxcarLegacy { half_window_cycles } => {

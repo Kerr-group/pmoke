@@ -1,6 +1,6 @@
 use crate::cli::RawCommand;
 use crate::config::Config;
-use crate::constants::RAW_WAVEFORM_DIR;
+
 use crate::ui;
 use crate::utils::waveform::verify_raw_waveform_dir;
 use anyhow::Result;
@@ -9,8 +9,9 @@ use std::path::Path;
 pub fn run(cfg: &Config, command: &RawCommand) -> Result<()> {
     match command {
         RawCommand::Verify { input } => {
-            let default_path = cfg.artifact_path(RAW_WAVEFORM_DIR);
-            verify(input.as_deref().unwrap_or(&default_path))
+            let manifest = cfg.resolver().acquisition_manifest();
+            let default_path = manifest.parent().unwrap_or_else(|| Path::new("."));
+            verify(input.as_deref().unwrap_or(default_path))
         }
     }
 }

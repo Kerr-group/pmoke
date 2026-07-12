@@ -249,7 +249,7 @@ fn read_raw_channel_rejects_invalid_time_and_degenerate_voltage_mapping() {
 
     let metadata = raw_metadata_with_channel(2, "../outside.u16le", 1);
     let error = raw_channel_spec(&dir, &metadata, 2, &mut None).unwrap_err();
-    assert!(error.to_string().contains("plain file name"));
+    assert!(error.to_string().contains("safe relative path"));
 
     fs::remove_dir_all(dir).unwrap();
 }
@@ -346,12 +346,29 @@ fn raw_status_invalid_when_directory_exists_without_metadata() {
 }
 
 #[test]
+fn csv_acquisition_manifest_is_not_misclassified_as_invalid_raw() {
+    let dir = unique_test_dir("csv_acquisition_manifest");
+    fs::create_dir(&dir).unwrap();
+    fs::write(
+        dir.join("manifest.toml"),
+        "schema_version = 1\nwaveform_format = \"csv\"\n",
+    )
+    .unwrap();
+
+    assert!(matches!(
+        raw_status_in_dir(&dir, &[1]).unwrap(),
+        RawStatus::Missing
+    ));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn raw_status_complete_when_metadata_and_requested_files_match() {
     let dir = unique_test_dir("raw_complete");
-    fs::create_dir(&dir).unwrap();
-    fs::write(dir.join("ch1.u16le"), [0x00, 0x00, 0x01, 0x00]).unwrap();
+    fs::create_dir_all(dir.join("waveforms")).unwrap();
+    fs::write(dir.join("waveforms/ch1.u16le"), [0x00, 0x00, 0x01, 0x00]).unwrap();
     fs::write(
-        dir.join(RAW_METADATA_FNAME),
+        dir.join("manifest.toml"),
         r#"
 version = 1
 
@@ -360,7 +377,7 @@ waveform_format = "WORD"
 byte_order = "little-endian"
 
 [channels.ch1]
-file = "ch1.u16le"
+file = "waveforms/ch1.u16le"
 sample_count = 2
 x_increment = 0.5
 x_origin = 1.0
@@ -445,7 +462,7 @@ y_reference = 0.0
 
     assert!(matches!(
         status,
-        RawStatus::Invalid(message) if message.contains("plain file name")
+        RawStatus::Invalid(message) if message.contains("safe relative path")
     ));
     fs::remove_dir_all(dir).unwrap();
 }
@@ -777,6 +794,7 @@ fn raw_metadata_with_channels<const N: usize>(
         channels.insert(
             format!("ch{ch}"),
             RawChannelMetadata {
+                index: Some(ch),
                 file: file.into(),
                 bytes: None,
                 sha256: None,

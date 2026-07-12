@@ -171,6 +171,8 @@ pub(super) struct LockinV4 {
     pub(super) snr_background_window: Option<Window>,
     #[serde(default)]
     pub(super) snr_signal_window: Option<Window>,
+    #[serde(default)]
+    pub(super) save_npy: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -611,6 +613,8 @@ pub(super) struct LockinV1 {
     pub(super) snr_background_window: Option<Window>,
     #[serde(default)]
     pub(super) snr_signal_window: Option<Window>,
+    #[serde(default)]
+    pub(super) save_npy: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -641,6 +645,8 @@ pub(super) struct LockinV2 {
     pub(super) snr_background_window: Option<Window>,
     #[serde(default)]
     pub(super) snr_signal_window: Option<Window>,
+    #[serde(default)]
+    pub(super) save_npy: bool,
 }
 
 #[derive(Debug, Deserialize)]

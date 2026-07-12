@@ -1,8 +1,9 @@
 use crate::config::Plot;
 use crate::python;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use std::path::Path;
 use std::sync::OnceLock;
 
 #[allow(dead_code)]
@@ -20,10 +21,12 @@ pub struct KerrStandardAnalysisInput<'a> {
     pub factor: f64,
     pub xlabel: &'a String,
     pub fig_name: String,
+    pub output_path: &'a Path,
 }
 
 impl KerrStandardAnalyser {
     pub fn analyse(&self, input: KerrStandardAnalysisInput<'_>) -> Result<Vec<f64>> {
+        let output = crate::plot::prepare_plot_output(input.plot, input.output_path)?;
         Python::attach(|py| {
             let analysis_mod = python::cached_module(
                 py,
@@ -36,6 +39,7 @@ impl KerrStandardAnalyser {
             let t_obj = python::f64_array1(py, input.t);
             let x_obj = python::f64_array1(py, input.x);
             let ys_obj = python::f64_array2(py, input.ys)?;
+            let output_string = output.map(|path| path.to_string_lossy().into_owned());
 
             let analyser = analysis_mod
                 .getattr("KerrStandardAnalyser")?
@@ -52,9 +56,9 @@ impl KerrStandardAnalyser {
                         input.factor,
                         input.xlabel,
                         input.fig_name,
-                        input.plot.save && input.plot.enabled,
+                        output_string.is_some(),
                         input.plot.interactive && input.plot.enabled,
-                        &input.plot.output_dir,
+                        output_string,
                         input.plot.max_points,
                         input.plot.decimation.as_str(),
                     ),
@@ -63,12 +67,7 @@ impl KerrStandardAnalyser {
 
             let kerr = python::extract_f64_array1(&res.get_item("kerr")?)?;
             let plot_error: Option<String> = res.get_item("plot_error")?.extract()?;
-            if let Some(plot_error) = plot_error {
-                if input.plot.fail_on_error {
-                    bail!("failed to plot Kerr standard analysis: {plot_error}");
-                }
-                crate::ui::warn(format!("Kerr standard plot skipped: {plot_error}"));
-            }
+            crate::plot::finish_embedded_plot(input.plot, output, plot_error, "Kerr standard")?;
 
             Ok(kerr)
         })

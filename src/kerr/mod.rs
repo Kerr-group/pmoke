@@ -4,7 +4,7 @@ pub mod save;
 
 use crate::analysis_results::parse_analysis_result_files;
 use crate::config::{Channel, KerrType};
-use crate::constants::{KERR_NAME, LI_ROTATED_HEADER, LI_ROTATED_NAME};
+use crate::constants::{KERR_NAME, LI_ROTATED_HEADER};
 use crate::kerr::kerr_harmonics_analysis::{KerrHarmonicsAnalyser, KerrHarmonicsAnalysisInput};
 use crate::kerr::kerr_standard_analysis::{KerrStandardAnalyser, KerrStandardAnalysisInput};
 use crate::kerr::save::{get_kerr_headers, write_kerr_results};
@@ -28,12 +28,10 @@ pub fn run(cfg: &Config) -> Result<()> {
         ch
     ));
 
+    let resolver = cfg.resolver();
     let all_data: Vec<Vec<Vec<f64>>> = ch
         .par_iter()
-        .map(|channel| {
-            let fname = format!("{}_ch{}.csv", LI_ROTATED_NAME, channel);
-            read_csv(cfg.artifact_path(fname))
-        })
+        .map(|channel| read_csv(resolver.lockin_rotated_csv(*channel)))
         .collect::<Result<Vec<_>, _>>()?;
 
     let elapsed_read = t0.elapsed();
@@ -71,6 +69,7 @@ pub fn run_kerr_analysis(
     sensor_integral_ch: &[Vec<f64>],
     li_rotated_results: &[Vec<Vec<f64>>],
 ) -> Result<()> {
+    let paths = cfg.paths();
     let kerr_sensor_ch_index = cfg.kerr.use_sensor_ch;
 
     let ch_conf: &Channel = cfg
@@ -109,6 +108,11 @@ pub fn run_kerr_analysis(
     for (ch_i, li_rotated_result) in ch.iter().zip(li_rotated_results.iter()) {
         pb.set_message(format!("Kerr analysis ch{ch_i}"));
         let fig_name = format!("{}_ch{}", KERR_NAME, ch_i);
+        let output_path = if ch.len() == 1 {
+            paths.kerr_plot()
+        } else {
+            paths.kerr_channel_plot(*ch_i)
+        };
 
         let kerr_i = match kerr_type {
             KerrType::Standard => KerrStandardAnalyser {}
@@ -120,6 +124,7 @@ pub fn run_kerr_analysis(
                     factor,
                     xlabel: &concat_label,
                     fig_name,
+                    output_path: &output_path,
                 })
                 .context("failed to run Kerr analysis")?,
             KerrType::Harmonics => KerrHarmonicsAnalyser {}
@@ -131,6 +136,7 @@ pub fn run_kerr_analysis(
                     factor,
                     xlabel: &concat_label,
                     fig_name,
+                    output_path: &output_path,
                 })
                 .context("failed to run Kerr harmonics analysis")?,
         };
@@ -138,8 +144,7 @@ pub fn run_kerr_analysis(
         kerr_results.push(kerr_i);
         pb.inc(1);
     }
-    let fname = format!("{}_results.csv", KERR_NAME);
-    let path = cfg.artifact_path(&fname);
+    let path = paths.kerr_csv();
     let headers = get_kerr_headers(cfg)?;
     write_kerr_results(
         &path,
@@ -148,6 +153,7 @@ pub fn run_kerr_analysis(
         sensor_rate_ch,
         sensor_integral_ch,
         &kerr_results,
+        cfg.lockin.save_npy,
     )?;
 
     ui::finish_saved(pb, format!("Kerr analysis results for channels {:?}", ch));

@@ -432,32 +432,33 @@ pub(super) struct ArtifactRow {
 }
 
 pub(super) fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
-    let resolve = |path: String| {
-        cfg.map(|config| config.artifact_path(&path).display().to_string())
-            .unwrap_or(path)
-    };
-    let mut files = vec![("raw".to_string(), resolve(FETCHED_FNAME.to_string()))];
+    let mut files: Vec<(String, String)> = Vec::new();
 
     if let Some(cfg) = cfg {
+        let resolver = cfg.resolver();
+        files.push((
+            "waveform CSV".to_string(),
+            resolver.waveform_csv().display().to_string(),
+        ));
         if uses_raw_waveform_artifact(cfg) {
             files.push((
-                "raw word".to_string(),
-                resolve(format!("{RAW_WAVEFORM_DIR}/{RAW_METADATA_FNAME}")),
+                "acquisition".to_string(),
+                resolver.acquisition_manifest().display().to_string(),
             ));
         }
-        for ch in cfg.phase_signal_ch() {
+        for &ch in cfg.phase_signal_ch() {
             files.push((
                 format!("li ch{ch}"),
-                resolve(format!("{}_ch{}.csv", LI_RESULTS_NAME, ch)),
+                resolver.lockin_xy_csv(ch).display().to_string(),
             ));
             files.push((
                 format!("rotated ch{ch}"),
-                resolve(format!("{}_ch{}.csv", LI_ROTATED_NAME, ch)),
+                resolver.lockin_rotated_csv(ch).display().to_string(),
             ));
         }
         files.push((
             "kerr".to_string(),
-            resolve(format!("{}_results.csv", KERR_NAME)),
+            resolver.kerr_csv().display().to_string(),
         ));
     }
 

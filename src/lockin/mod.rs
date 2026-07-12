@@ -10,8 +10,8 @@ pub mod sensor;
 pub mod stride;
 
 use crate::config::Config;
-use crate::constants::{HARMONICS, LI_HEADER, LI_RESULTS_NAME};
-use crate::lockin::provenance::{LockinProvenance, write_analysis_metadata};
+use crate::constants::{HARMONICS, LI_HEADER};
+use crate::lockin::provenance::LockinProvenance;
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
@@ -29,7 +29,14 @@ pub struct LockinProcessOutput {
     pub provenance: LockinProvenance,
 }
 
-type LockinRunOutput = (Vec<f64>, Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<Vec<Vec<f64>>>);
+type LockinRunOutput = (
+    Vec<f64>,
+    Vec<Vec<f64>>,
+    Vec<Vec<f64>>,
+    Vec<Vec<Vec<f64>>>,
+    RefFitParams,
+    LockinProvenance,
+);
 
 pub fn run(cfg: &Config) -> Result<()> {
     let pb = ui::spinner("reading fetched waveform data");
@@ -61,6 +68,7 @@ pub fn run_li<'a>(
     t: impl Into<TimeAxisRef<'a>>,
     data: &[Vec<f64>],
 ) -> Result<LockinRunOutput> {
+    let paths = cfg.paths();
     let t = t.into();
     let (sensor_ch, sensor_idx) = resolve::sensor_column_indices(cfg)?;
     let (_, ref_idx) = resolve::reference_column_index(cfg)?;
@@ -107,8 +115,7 @@ pub fn run_li<'a>(
     let headers = get_li_headers(cfg)?;
     let t0 = std::time::Instant::now();
     for (sig_ch, li_result) in signal_ch.iter().zip(lockin_output.result.iter()) {
-        let li_result_fname = format!("{}_ch{}.csv", LI_RESULTS_NAME, sig_ch);
-        let li_result_path = cfg.artifact_path(&li_result_fname);
+        let li_result_path = paths.lockin_xy_csv(*sig_ch);
         write_li_results(
             &li_result_path,
             &headers,
@@ -116,9 +123,9 @@ pub fn run_li<'a>(
             &sensor_rate_stride,
             &sensor_integral_stride,
             li_result,
+            cfg.lockin.save_npy,
         )?;
     }
-    write_analysis_metadata(cfg, &lockin_output.provenance)?;
     let elapsed_save = t0.elapsed();
     ui::saved(format!(
         "lock-in results for signals {:?} ({})",
@@ -134,12 +141,14 @@ pub fn run_li<'a>(
 
     plot::run_plot(
         &cfg.plot,
+        &cfg.paths().lockin_xy_combined_plot(),
         "plotting lock-in results",
         "lock-in plot completed",
-        || {
+        |output| {
             lockin_plot::LIPlotter {}
                 .plot(
                     &cfg.plot,
+                    output,
                     &t_stride,
                     &lockin_output.result,
                     &signal_ch,
@@ -154,6 +163,8 @@ pub fn run_li<'a>(
         sensor_rate_stride,
         sensor_integral_stride,
         lockin_output.result,
+        ref_fit_params,
+        lockin_output.provenance,
     ))
 }
 

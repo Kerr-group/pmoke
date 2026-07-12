@@ -1,5 +1,4 @@
 use crate::config::{self, ConfigLoad, ValidationTarget};
-use crate::constants::RAW_WAVEFORM_DIR;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ActionGroup {
@@ -100,8 +99,8 @@ impl MonitorAction {
                 "Fit reference frequency and phase from the configured waveform input."
             }
             Self::Sensor => "Integrate sensor pulse channels.",
-            Self::Li => "Run numerical lock-in and write lockin_results.",
-            Self::Phase => "Rotate lock-in phase and write lockin_rotated.",
+            Self::Li => "Run numerical lock-in and write analysis/lockin/chN_xy.csv.",
+            Self::Phase => "Rotate lock-in phase and write analysis/lockin/chN_rotated.csv.",
             Self::Kerr => "Calculate Kerr angle from rotated lock-in data.",
             Self::Analyze => "Run reference, sensor, lock-in, phase, and Kerr.",
             Self::Doctor => "Check config, storage, Python, and available instruments.",
@@ -276,7 +275,7 @@ pub(super) fn action_readiness(action: MonitorAction, load: &ConfigLoad) -> Resu
     };
 
     if matches!(action, MonitorAction::RawVerify) {
-        let raw = config.artifact_path(RAW_WAVEFORM_DIR);
+        let raw = config.paths().acquisition_dir();
         return raw
             .is_dir()
             .then_some(())

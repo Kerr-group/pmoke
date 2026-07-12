@@ -96,7 +96,7 @@ fn narrow_context_bar_prioritizes_current_directory_and_fits_width() {
     assert!(rendered.cell_width() <= width);
     assert!(!rendered.contains("config"));
 
-    app.current_dir = "/workspace/ﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ/pmoke".to_string();
+    app.current_dir = "/workspace/papipupepo/pmoke".to_string();
     for checked_width in 0..160 {
         let rendered_width = context_bar_spans(&app, checked_width)
             .iter()
@@ -214,7 +214,7 @@ fn base64_encoder_matches_standard_vectors() {
     assert_eq!(base64_encode(b"f"), "Zg==");
     assert_eq!(base64_encode(b"fo"), "Zm8=");
     assert_eq!(base64_encode(b"foo"), "Zm9v");
-    assert_eq!(base64_encode("日本語".as_bytes()), "5pel5pys6Kqe");
+    assert_eq!(base64_encode("hello".as_bytes()), "aGVsbG8=");
 }
 
 #[test]

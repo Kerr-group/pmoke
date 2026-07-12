@@ -15,8 +15,17 @@ pub fn write_li_rotated_results<P: AsRef<Path>>(
     s_rate: &[Vec<f64>],
     s_integral: &[Vec<f64>],
     li_rotated_result: &[Vec<f64>],
+    save_npy: bool,
 ) -> Result<()> {
-    write_analysis_results(fname, headers, t, s_rate, s_integral, li_rotated_result)
+    write_analysis_results(
+        fname,
+        headers,
+        t,
+        s_rate,
+        s_integral,
+        li_rotated_result,
+        save_npy,
+    )
 }
 
 #[cfg(test)]

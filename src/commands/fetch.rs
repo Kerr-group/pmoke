@@ -1,12 +1,12 @@
 use crate::cli::FetchFormat;
 use crate::commands::screenshot::{
-    capture_screenshot, prepare_screenshot, report_saved_screenshot,
+    capture_screenshot, prepare_screenshot, prepare_screenshot_path, report_saved_screenshot,
 };
 use crate::communications::oscilloscope::OscilloscopeHandler;
 use crate::config::{Config, Connection, FetchOutput, render_normalized_config};
-use crate::constants::{
-    FETCHED_FNAME, RAW_METADATA_FNAME, RAW_METADATA_VERSION, RAW_WAVEFORM_DIR, T_HEADER,
-};
+#[cfg(test)]
+use crate::constants::RAW_METADATA_FNAME;
+use crate::constants::{RAW_METADATA_VERSION, T_HEADER};
 use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::checksum::{finalize_sha256_hex, sha256_hex};
@@ -21,7 +21,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use instruments::rigol::{DhoHorizontalSettings, DhoRawWaveform, DhoTriggerStatus};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -60,25 +59,26 @@ impl<W: Write> Write for HashingWriter<W> {
     }
 }
 
-#[derive(Debug, Serialize)]
+/// Waveform-only acquisition manifest for raw waveform data (does not include screenshot files).
+#[derive(Debug, Serialize, Clone)]
 struct RawFetchMetadata {
-    version: u32,
+    schema_version: u32,
     status: &'static str,
     pmoke_version: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     git_commit: Option<&'static str>,
-    created_at: String,
+    timestamp: String,
     created_at_unix_seconds: u64,
     config_version: u32,
     config_file: &'static str,
-    config_sha256: String,
+    sha256: String,
     resolved_config_file: &'static str,
     resolved_config_sha256: String,
     oscilloscope: RawOscilloscopeMetadata,
-    channels: BTreeMap<String, RawChannelMetadata>,
+    channels: Vec<RawChannelMetadata>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct RawOscilloscopeMetadata {
     idn_raw: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -97,8 +97,10 @@ struct RawOscilloscopeMetadata {
     horizontal_scale: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct RawChannelMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index: Option<u8>,
     file: String,
     bytes: usize,
     sha256: String,
@@ -114,8 +116,353 @@ struct RawChannelMetadata {
     vertical_scale: f64,
 }
 
+/// Waveform-only acquisition manifest for CSV waveform data (does not include screenshot files).
+#[derive(Serialize)]
+struct CsvAcquisitionManifest {
+    schema_version: u32,
+    pmoke_version: &'static str,
+    timestamp: String,
+    waveform_format: &'static str,
+    file: String,
+    sha256: String,
+    rows: usize,
+    columns: usize,
+}
+
+#[allow(dead_code)]
 pub fn fetch(cfg: &Config) -> Result<()> {
     fetch_with_options(cfg, None, None)
+}
+
+fn check_acquisition_exists(cfg: &Config) -> Result<()> {
+    if cfg.force {
+        return Ok(());
+    }
+    let paths = cfg.paths();
+    if path_exists_for_preflight(&paths.acquisition_dir())? {
+        bail!(
+            "acquisition directory already exists: {} (use --force to overwrite)",
+            paths.acquisition_dir().display()
+        );
+    }
+    let legacy_raw = paths.run_dir.join("raw_waveform");
+    if path_exists_for_preflight(&legacy_raw)? {
+        bail!(
+            "legacy raw_waveform directory already exists: {} (use --force to overwrite)",
+            legacy_raw.display()
+        );
+    }
+    let legacy_csv = paths.run_dir.join("raw.csv");
+    if path_exists_for_preflight(&legacy_csv)? {
+        bail!(
+            "legacy raw.csv already exists: {} (use --force to overwrite)",
+            legacy_csv.display()
+        );
+    }
+    Ok(())
+}
+
+fn path_exists_for_preflight(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to inspect fetch artifact: {}", path.display())),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackupState {
+    RollbackArmed,
+    RecoveryFailed,
+    Invalidated,
+    Restored,
+}
+
+struct AnalysisBackup {
+    backup_dir: PathBuf,
+    moved_items: Vec<(PathBuf, PathBuf)>,
+    state: BackupState,
+}
+
+impl AnalysisBackup {
+    fn create(run_dir: &Path) -> Result<Self> {
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let pid = std::process::id();
+        let timestamp = jiff::Timestamp::now().to_string().replace([':', '.'], "-");
+        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let backup_dir = run_dir.join(format!(
+            ".analysis.backup.{}.{}.{}",
+            pid, timestamp, counter
+        ));
+        Self::create_internal(run_dir, backup_dir)
+    }
+
+    fn create_internal(run_dir: &Path, backup_dir: PathBuf) -> Result<Self> {
+        if let Ok(entries) = std::fs::read_dir(run_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().into_string().unwrap_or_default();
+                if name.starts_with(".analysis.backup.") && entry.path() != backup_dir {
+                    crate::ui::warn(format!(
+                        "Stale analysis backup directory detected: {}. Manual recovery of previous analysis files may be possible.",
+                        entry.path().display()
+                    ));
+                }
+            }
+        }
+
+        std::fs::create_dir_all(&backup_dir)?;
+
+        let mut backup = Self {
+            backup_dir,
+            moved_items: Vec::new(),
+            state: BackupState::RollbackArmed,
+        };
+
+        let mut candidates = Vec::new();
+
+        // 1. Check canonical analysis/
+        let canonical = run_dir.join("analysis");
+        if canonical.exists() {
+            candidates.push((canonical.clone(), PathBuf::from("analysis")));
+        }
+
+        // 2. Check legacy folders/files
+        let legacy_npy = run_dir.join("analysis_npy");
+        if legacy_npy.exists() {
+            candidates.push((legacy_npy.clone(), PathBuf::from("analysis_npy")));
+        }
+
+        let legacy_meta = run_dir.join("analysis_metadata.toml");
+        if legacy_meta.exists() {
+            candidates.push((legacy_meta.clone(), PathBuf::from("analysis_metadata.toml")));
+        }
+
+        let legacy_kerr = run_dir.join("kerr_results.csv");
+        if legacy_kerr.exists() {
+            candidates.push((legacy_kerr.clone(), PathBuf::from("kerr_results.csv")));
+        }
+
+        // Wildcards for lockin results
+        if let Ok(entries) = std::fs::read_dir(run_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    let is_lockin = name.starts_with("lockin_results_ch")
+                        || name.starts_with("lockin_rotated_ch");
+                    if is_lockin && name.ends_with(".csv") {
+                        candidates.push((path.clone(), PathBuf::from(name)));
+                    }
+                }
+            }
+        }
+
+        // Move all items into backup_dir
+        for (orig, rel) in candidates {
+            let dest = backup.backup_dir.join(&rel);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if let Err(err) = rename_file(&orig, &dest) {
+                let rollback_res = backup.restore_internal();
+                return match rollback_res {
+                    Ok(()) => Err(err).with_context(|| {
+                        "failed to create analysis backup; previous analysis was restored".to_string()
+                    }),
+                    Err(rollback_err) => Err(err).with_context(|| {
+                        format!(
+                            "failed to create analysis backup and rollback failed: {rollback_err}; recovery data remains at {}",
+                            backup.backup_dir.display()
+                        )
+                    }),
+                };
+            }
+            backup.moved_items.push((orig, rel));
+        }
+
+        Ok(backup)
+    }
+
+    fn restore_internal(&mut self) -> Result<()> {
+        if self.state == BackupState::Restored || self.state == BackupState::Invalidated {
+            return Ok(());
+        }
+
+        let mut failed_items = Vec::new();
+        let mut errors = Vec::new();
+
+        let items = std::mem::take(&mut self.moved_items);
+
+        for (original, relative) in items.into_iter().rev() {
+            let backup_path = self.backup_dir.join(&relative);
+
+            if !backup_path.exists() {
+                if original.exists() {
+                    continue;
+                }
+                errors.push(format!(
+                    "backup item is missing and original was not restored: {}",
+                    original.display()
+                ));
+                failed_items.push((original, relative));
+                continue;
+            }
+
+            if let Some(parent) = original.parent() {
+                let create_res = std::fs::create_dir_all(parent);
+                if let Err(error) = create_res {
+                    errors.push(format!(
+                        "failed to create restore parent for {}: {}",
+                        original.display(),
+                        error
+                    ));
+                    failed_items.push((original, relative));
+                    continue;
+                }
+            }
+
+            if let Err(error) = rename_file(&backup_path, &original) {
+                errors.push(format!(
+                    "failed to restore {} from backup: {}",
+                    original.display(),
+                    error
+                ));
+                failed_items.push((original, relative));
+            }
+        }
+
+        failed_items.reverse();
+        self.moved_items = failed_items;
+
+        if self.moved_items.is_empty() {
+            let _ = std::fs::remove_dir_all(&self.backup_dir);
+            self.state = BackupState::Restored;
+        }
+
+        if !errors.is_empty() {
+            anyhow::bail!(
+                "{}; remaining backup: {}",
+                errors.join("; "),
+                self.backup_dir.display()
+            );
+        }
+
+        Ok(())
+    }
+
+    fn restore(mut self) -> Result<()> {
+        match self.restore_internal() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.state = BackupState::RecoveryFailed;
+                Err(error)
+            }
+        }
+    }
+
+    fn commit(mut self, run_dir: &Path) -> Result<()> {
+        self.state = BackupState::Invalidated;
+
+        if self.moved_items.is_empty() {
+            let _ = std::fs::remove_dir_all(&self.backup_dir);
+            return Ok(());
+        }
+        let timestamp = jiff::Timestamp::now().to_string().replace([':', '.'], "-");
+        let dest_dir = run_dir.join(format!("legacy_analysis.invalidated.{}", timestamp));
+        rename_file(&self.backup_dir, &dest_dir).with_context(|| {
+            format!(
+                "failed to move analysis backup to invalidated folder: {}",
+                dest_dir.display()
+            )
+        })?;
+        Ok(())
+    }
+}
+
+impl Drop for AnalysisBackup {
+    fn drop(&mut self) {
+        if matches!(self.state, BackupState::RollbackArmed) {
+            let res = self.restore_internal();
+            if let Err(err) = res {
+                crate::ui::warn(format!(
+                    "Failed to automatically restore analysis backup during drop rollback: {}",
+                    err
+                ));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static MOCK_RENAME_ERROR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn rename_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if MOCK_RENAME_ERROR.with(|m| m.get()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "mock rename error",
+        ));
+    }
+    std::fs::rename(from, to)
+}
+
+fn has_any_analysis_artifact(run_dir: &Path) -> Result<bool> {
+    if run_dir.exists() && !run_dir.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a directory",
+        ))
+        .with_context(|| format!("failed to inspect run directory: {}", run_dir.display()));
+    }
+    for artifact in [
+        run_dir.join("analysis"),
+        run_dir.join("analysis_npy"),
+        run_dir.join("analysis_metadata.toml"),
+        run_dir.join("kerr_results.csv"),
+    ] {
+        if path_exists_for_preflight(&artifact)? {
+            return Ok(true);
+        }
+    }
+    let entries = match std::fs::read_dir(run_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to inspect run directory: {}", run_dir.display())
+            });
+        }
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to inspect entry in run directory: {}",
+                run_dir.display()
+            )
+        })?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if (name_str.starts_with("lockin_results_ch") || name_str.starts_with("lockin_rotated_ch"))
+            && name_str.ends_with(".csv")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn preflight_fetch_locked(cfg: &Config) -> Result<()> {
+    check_acquisition_exists(cfg)?;
+    if !cfg.force && has_any_analysis_artifact(&cfg.paths().run_dir)? {
+        bail!(
+            "analysis artifacts already exist without a valid acquisition; \
+             use --force to invalidate them or choose a new run directory"
+        );
+    }
+    Ok(())
 }
 
 pub fn fetch_with_options(
@@ -123,33 +470,121 @@ pub fn fetch_with_options(
     format: Option<FetchFormat>,
     out: Option<&Path>,
 ) -> Result<()> {
-    let output = format.map(FetchOutput::from).unwrap_or(cfg.fetch.output);
-    let default_csv = cfg.artifact_path(FETCHED_FNAME);
-    let default_raw = cfg.artifact_path(RAW_WAVEFORM_DIR);
-    match format {
-        Some(FetchFormat::Csv) => fetch_csv(cfg, out.unwrap_or(&default_csv)),
-        Some(FetchFormat::Raw) => fetch_raw(cfg, out.unwrap_or(&default_raw)),
+    if out.is_some() {
+        bail!(
+            "--out is not supported for fetch; \
+             canonical output is acquisition/waveforms/waveform.csv"
+        );
+    }
+    crate::commands::run_dir::ensure_run_directory(&cfg.paths().run_dir)?;
+    let _lock = crate::commands::run_dir::RunMutationLock::acquire(&cfg.paths().run_dir, "fetch")?;
+
+    // Preflight checks before modifying state or directory
+    preflight_fetch_locked(cfg)?;
+
+    crate::commands::run_dir::prepare(cfg)?;
+
+    let backup = if cfg.force {
+        Some(AnalysisBackup::create(&cfg.paths().run_dir)?)
+    } else {
+        None
+    };
+
+    crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
+    let result = fetch_with_options_inner(cfg, format, out);
+    if let Err(error) = result {
+        let final_err = if let Some(b) = backup {
+            let backup_path = b.backup_dir.clone();
+            match b.restore() {
+                Ok(()) => error,
+                Err(restore_err) => {
+                    error.context(format!(
+                        "fetch failed and previous analysis could not be restored: {restore_err}; backup remains at {}",
+                        backup_path.display()
+                    ))
+                }
+            }
+        } else {
+            error
+        };
+        crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(&final_err))?;
+        return Err(final_err);
+    }
+
+    if let Some(b) = backup {
+        let backup_path = b.backup_dir.clone();
+        if let Err(commit_err) = b.commit(&cfg.paths().run_dir) {
+            crate::ui::warn(format!(
+                "new acquisition was published, but invalidated analysis could not be archived: {commit_err}; backup remains at {}",
+                backup_path.display()
+            ));
+        }
+    }
+    crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?;
+    Ok(())
+}
+
+fn fetch_with_options_inner(
+    cfg: &Config,
+    format: Option<FetchFormat>,
+    out: Option<&Path>,
+) -> Result<()> {
+    check_acquisition_exists(cfg)?;
+
+    let mut cfg_staging = cfg.clone();
+    cfg_staging.staging_active = true;
+
+    let staging_acquisition = cfg_staging.paths().acquisition_dir();
+    if staging_acquisition.exists() {
+        std::fs::remove_dir_all(&staging_acquisition)
+            .context("failed to clean up previous incomplete staging directory")?;
+    }
+
+    let output = format
+        .map(FetchOutput::from)
+        .unwrap_or(cfg_staging.fetch.output);
+    let paths = cfg_staging.paths();
+    let default_csv = paths.waveform_csv();
+    let default_raw = paths.acquisition_dir();
+    let result = match format {
+        Some(FetchFormat::Csv) => fetch_csv(&cfg_staging, out.unwrap_or(&default_csv)),
+        Some(FetchFormat::Raw) => fetch_raw(&cfg_staging, out.unwrap_or(&default_raw)),
         Some(FetchFormat::CsvAndRaw) if out.is_some() => {
             bail!(
-                "--out cannot be used with --format csv-and-raw; use the default raw.csv and raw_waveform outputs"
+                "--out cannot be used with --format csv-and-raw; use the canonical acquisition layout"
             )
         }
         _ => match (output, out) {
-            (FetchOutput::Csv, out) => fetch_csv(cfg, out.unwrap_or(&default_csv)),
-            (FetchOutput::Raw, out) => fetch_raw(cfg, out.unwrap_or(&default_raw)),
+            (FetchOutput::Csv, out) => fetch_csv(&cfg_staging, out.unwrap_or(&default_csv)),
+            (FetchOutput::Raw, out) => fetch_raw(&cfg_staging, out.unwrap_or(&default_raw)),
             (FetchOutput::CsvAndRaw, Some(_)) => {
-                let setting = if cfg.version >= 4 {
+                let setting = if cfg_staging.version >= 4 {
                     "data.output = \"both\""
                 } else {
                     "fetch.output = \"csv_and_raw\""
                 };
-                bail!(
-                    "--out cannot be used with {setting}; use the default raw.csv and raw_waveform outputs"
-                )
+                bail!("--out cannot be used with {setting}; use the canonical acquisition layout")
             }
-            (FetchOutput::CsvAndRaw, None) => fetch_csv_and_raw(cfg, &default_csv, &default_raw),
+            (FetchOutput::CsvAndRaw, None) => {
+                fetch_csv_and_raw(&cfg_staging, &default_csv, &default_raw)
+            }
         },
+    };
+
+    result?;
+
+    if out.is_some() {
+        return Ok(());
     }
+
+    let canonical_acquisition = cfg.paths().acquisition_dir();
+    crate::commands::run_dir::publish_staged_directory(
+        &staging_acquisition,
+        &canonical_acquisition,
+        cfg.force,
+    )?;
+
+    Ok(())
 }
 
 impl From<FetchFormat> for FetchOutput {
@@ -180,31 +615,104 @@ fn initialize_fetch_handler(cfg: &Config) -> Result<OscilloscopeHandler> {
 }
 
 fn initialize_staged_fetch_handler(cfg: &Config, tmp_dir: &Path) -> Result<OscilloscopeHandler> {
-    initialize_fetch_handler(cfg).inspect_err(|_| {
-        let _ = fs::remove_dir(tmp_dir);
-    })
+    let screenshot_plan = cfg
+        .screenshot
+        .enabled
+        .then(|| prepare_screenshot_path(&tmp_dir.join("screenshots").join("oscilloscope.png")))
+        .transpose()?;
+    let mut handler = OscilloscopeHandler::initialize(cfg)
+        .context("failed to initialize oscilloscope handler")
+        .inspect_err(|_| {
+            let _ = fs::remove_dir(tmp_dir);
+        })?;
+    if let Some(plan) = screenshot_plan {
+        let saved = capture_screenshot(&mut handler, &plan, true)?;
+        report_saved_screenshot(&saved);
+    }
+    Ok(handler)
 }
 
 fn fetch_csv(cfg: &Config, out: &Path) -> Result<()> {
     ensure_output_parent(out)?;
     let data = run_fetch_to_csv_path(cfg, out)?;
     write_fetched_csv(cfg, out, &data)?;
+    write_csv_acquisition_manifest(cfg, out, &data)?;
     Ok(())
 }
 
-pub fn run_fetch_for_process(cfg: &Config) -> Result<WaveformData> {
-    let csv_out = cfg.artifact_path(FETCHED_FNAME);
-    let raw_out = cfg.artifact_path(RAW_WAVEFORM_DIR);
-    match cfg.fetch.output {
+pub(crate) fn begin_fetch_after_preflight_locked(cfg: &Config) -> Result<()> {
+    crate::commands::run_dir::prepare(cfg)?;
+    crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)
+}
+
+pub(crate) fn run_fetch_after_preflight_locked(cfg: &Config) -> Result<WaveformData> {
+    let result = run_fetch_for_process_inner(cfg);
+    match &result {
+        Ok(_) => crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?,
+        Err(error) => {
+            crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(error))?
+        }
+    }
+    result
+}
+
+fn run_fetch_for_process_inner(cfg: &Config) -> Result<WaveformData> {
+    check_acquisition_exists(cfg)?;
+
+    let mut cfg_staging = cfg.clone();
+    cfg_staging.staging_active = true;
+
+    let staging_acquisition = cfg_staging.paths().acquisition_dir();
+    if staging_acquisition.exists() {
+        std::fs::remove_dir_all(&staging_acquisition)?;
+    }
+
+    let paths = cfg_staging.paths();
+    let csv_out = paths.waveform_csv();
+    let raw_out = paths.acquisition_dir();
+    let data = match cfg_staging.fetch.output {
         FetchOutput::Csv => {
             ensure_output_parent(&csv_out)?;
-            let data = run_fetch_to_csv_path(cfg, &csv_out)?;
-            write_fetched_csv(cfg, &csv_out, &data)?;
-            Ok(data)
+            let data = run_fetch_to_csv_path(&cfg_staging, &csv_out)?;
+            write_fetched_csv(&cfg_staging, &csv_out, &data)?;
+            write_csv_acquisition_manifest(&cfg_staging, &csv_out, &data)?;
+            data
         }
-        FetchOutput::Raw => fetch_raw_collect(cfg, &raw_out),
-        FetchOutput::CsvAndRaw => fetch_csv_and_raw_collect(cfg, &csv_out, &raw_out),
-    }
+        FetchOutput::Raw => fetch_raw_collect(&cfg_staging, &raw_out)?,
+        FetchOutput::CsvAndRaw => fetch_csv_and_raw_collect(&cfg_staging, &csv_out, &raw_out)?,
+    };
+
+    let canonical_acquisition = cfg.paths().acquisition_dir();
+    crate::commands::run_dir::publish_staged_directory(
+        &staging_acquisition,
+        &canonical_acquisition,
+        cfg.force,
+    )?;
+
+    Ok(data)
+}
+
+fn write_csv_acquisition_manifest(cfg: &Config, csv: &Path, data: &WaveformData) -> Result<()> {
+    let acquisition = cfg.paths().acquisition_dir();
+    let relative = csv.strip_prefix(&acquisition).with_context(|| {
+        format!(
+            "waveform CSV {} is outside acquisition directory {}",
+            csv.display(),
+            acquisition.display()
+        )
+    })?;
+    let manifest = CsvAcquisitionManifest {
+        schema_version: 1,
+        pmoke_version: env!("CARGO_PKG_VERSION"),
+        timestamp: jiff::Timestamp::now().to_string(),
+        waveform_format: "csv",
+        file: relative.to_string_lossy().replace('\\', "/"),
+        sha256: crate::utils::checksum::file_sha256(csv)?,
+        rows: data.t.len(),
+        columns: data.channels.len() + 1,
+    };
+    let encoded = toml::to_string_pretty(&manifest)?;
+    write_synced_file(&cfg.paths().acquisition_manifest(), encoded.as_bytes())
 }
 
 fn run_fetch_to_csv_path(cfg: &Config, out: &Path) -> Result<WaveformData> {
@@ -317,8 +825,6 @@ fn fetch_raw_collect(cfg: &Config, out: &Path) -> Result<WaveformData> {
 }
 
 fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()> {
-    ensure_output_parent(csv_out)?;
-    ensure_path_not_exists(csv_out)?;
     ensure_path_not_exists(raw_out)?;
     ensure_output_parent(raw_out)?;
 
@@ -336,7 +842,8 @@ fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()>
     match fetch_raw_into_dir(cfg, &tmp_dir, &mut handler) {
         Ok((channels, metadata)) => {
             let t_write_start = Instant::now();
-            write_raw_csv_and_finalize_outputs(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            write_waveform_csv_into_staging(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            finalize_temp_dir(&tmp_dir, raw_out)?;
             let t_write_end = Instant::now();
 
             ui::saved(format!(
@@ -355,8 +862,6 @@ fn fetch_csv_and_raw(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<()>
 }
 
 fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Result<WaveformData> {
-    ensure_output_parent(csv_out)?;
-    ensure_path_not_exists(csv_out)?;
     ensure_path_not_exists(raw_out)?;
     ensure_output_parent(raw_out)?;
 
@@ -374,7 +879,8 @@ fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Re
     match fetch_raw_into_dir(cfg, &tmp_dir, &mut handler) {
         Ok((channels, metadata)) => {
             let t_write_start = Instant::now();
-            write_raw_csv_and_finalize_outputs(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            write_waveform_csv_into_staging(csv_out, raw_out, &tmp_dir, &channels, &metadata)?;
+            finalize_temp_dir(&tmp_dir, raw_out)?;
             let t_write_end = Instant::now();
 
             ui::saved(format!(
@@ -399,6 +905,42 @@ fn fetch_csv_and_raw_collect(cfg: &Config, csv_out: &Path, raw_out: &Path) -> Re
     }
 }
 
+fn write_waveform_csv_into_staging(
+    csv_out: &Path,
+    raw_out: &Path,
+    tmp_dir: &Path,
+    channels: &[u8],
+    metadata: &RawFetchMetadata,
+) -> Result<()> {
+    let relative_csv = csv_out.strip_prefix(raw_out).with_context(|| {
+        format!(
+            "waveform CSV {} must be inside acquisition directory {}",
+            csv_out.display(),
+            raw_out.display()
+        )
+    })?;
+    let staged_csv = tmp_dir.join(relative_csv);
+    ensure_output_parent(&staged_csv)?;
+    let headers: Vec<String> = std::iter::once(T_HEADER.to_string())
+        .chain(channels.iter().map(|ch| format!("ch{ch}")))
+        .collect();
+    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let tmp_csv = write_raw_csv_temp(&staged_csv, &header_refs, tmp_dir, channels, metadata)
+        .with_context(|| {
+            format!(
+                "raw waveform staging directory was preserved at {}",
+                tmp_dir.display()
+            )
+        })?;
+
+    if let Err(error) = finalize_temp_file(&tmp_csv, &staged_csv) {
+        let _ = fs::remove_file(&tmp_csv);
+        return Err(error.context("failed to finalize staged waveform CSV"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn write_raw_csv_and_finalize_outputs(
     csv_out: &Path,
     raw_out: &Path,
@@ -417,7 +959,6 @@ fn write_raw_csv_and_finalize_outputs(
                 tmp_dir.display()
             )
         })?;
-
     if let Err(error) = finalize_temp_dir(tmp_dir, raw_out) {
         let _ = fs::remove_file(&tmp_csv);
         return Err(error.context(format!(
@@ -432,10 +973,8 @@ fn write_raw_csv_and_finalize_outputs(
                 "failed to finalize csv output; raw waveform staging directory was restored at {}",
                 tmp_dir.display()
             ))),
-            Err(rollback_error) => Err(error.context(format!(
-                "failed to finalize csv output and failed to restore raw waveform staging directory from {} to {}: {rollback_error}",
-                raw_out.display(),
-                tmp_dir.display()
+            Err(rollback) => Err(error.context(format!(
+                "failed to finalize csv output and restore staging: {rollback}"
             ))),
         };
     }
@@ -468,7 +1007,10 @@ fn fetch_raw_into_dir(
     dir: &Path,
     handler: &mut OscilloscopeHandler,
 ) -> Result<(Vec<u8>, RawFetchMetadata)> {
-    let config_snapshots = snapshot_configs(cfg, dir)?;
+    let config_snapshots = snapshot_configs(cfg, &cfg.paths().run_dir)?;
+    let waveform_dir = dir.join("waveforms");
+    fs::create_dir_all(&waveform_dir)
+        .with_context(|| format!("failed to create {}", waveform_dir.display()))?;
     let idn_raw = handler
         .identify()
         .context("failed to identify oscilloscope before raw fetch")?;
@@ -501,7 +1043,9 @@ fn fetch_raw_into_dir(
     let t_fetch_start = Instant::now();
     for &ch in &channels {
         pb.set_message(format!("fetching ch{ch} raw WORD"));
-        let channel_metadata = write_raw_channel_streamed(handler, dir, ch, depth)?;
+        let mut channel_metadata = write_raw_channel_streamed(handler, &waveform_dir, ch, depth)?;
+        channel_metadata.index = Some(ch);
+        channel_metadata.file = format!("waveforms/{}", channel_metadata.file);
         validate_fetch_voltage_range(
             channel_metadata.y_increment,
             channel_metadata.y_origin,
@@ -509,9 +1053,7 @@ fn fetch_raw_into_dir(
             ch,
         )?;
         update_metadata_time_axis(&mut time_axis, &channel_metadata, ch)?;
-        metadata
-            .channels
-            .insert(format!("ch{ch}"), channel_metadata);
+        metadata.channels.push(channel_metadata);
         pb.inc(1);
     }
     ensure_scope_stopped(handler, "after all channel transfers")?;
@@ -558,16 +1100,16 @@ fn build_raw_metadata(
         .as_secs();
 
     Ok(RawFetchMetadata {
-        version: RAW_METADATA_VERSION,
+        schema_version: RAW_METADATA_VERSION,
         status: "complete",
         pmoke_version: env!("CARGO_PKG_VERSION"),
         git_commit: option_env!("PMOKE_GIT_COMMIT"),
-        created_at: jiff::Timestamp::now().to_string(),
+        timestamp: jiff::Timestamp::now().to_string(),
         created_at_unix_seconds,
         config_version: cfg.version,
-        config_file: "config.source.toml",
-        config_sha256: config_snapshots.source,
-        resolved_config_file: "config.resolved.toml",
+        config_file: "../config.source.toml",
+        sha256: config_snapshots.source,
+        resolved_config_file: "../config.resolved.toml",
         resolved_config_sha256: config_snapshots.resolved,
         oscilloscope: RawOscilloscopeMetadata {
             firmware: idn_firmware(&idn_raw),
@@ -588,7 +1130,7 @@ fn build_raw_metadata(
             horizontal_offset: horizontal.offset,
             horizontal_scale: horizontal.scale,
         },
-        channels: BTreeMap::new(),
+        channels: Vec::new(),
     })
 }
 
@@ -630,6 +1172,17 @@ fn snapshot_configs(cfg: &Config, dir: &Path) -> Result<ConfigSnapshotHashes> {
 
 fn write_snapshot(dir: &Path, name: &str, contents: &[u8]) -> Result<()> {
     let final_path = dir.join(name);
+    if final_path.exists() {
+        let existing = fs::read(&final_path)
+            .with_context(|| format!("failed to read {}", final_path.display()))?;
+        if existing != contents {
+            bail!(
+                "run config snapshot differs from current config: {}",
+                final_path.display()
+            );
+        }
+        return Ok(());
+    }
     let tmp_path = dir.join(format!("{name}.tmp"));
     write_synced_file(&tmp_path, contents)?;
     fs::rename(&tmp_path, &final_path).with_context(|| {
@@ -713,6 +1266,7 @@ fn write_raw_channel(
     })?;
 
     Ok(RawChannelMetadata {
+        index: None,
         file: fname,
         bytes: raw.data.len(),
         sha256,
@@ -774,6 +1328,7 @@ fn write_raw_channel_streamed(
     })?;
 
     Ok(RawChannelMetadata {
+        index: None,
         file: fname,
         bytes: written.byte_count,
         sha256,
@@ -951,7 +1506,8 @@ fn write_raw_csv_temp(
             let key = format!("ch{ch}");
             let channel = metadata
                 .channels
-                .get(&key)
+                .iter()
+                .find(|c| c.index == Some(ch))
                 .ok_or_else(|| anyhow!("raw channel missing in metadata: {key}"))?;
             Ok(RawCsvChannel {
                 file: &channel.file,
@@ -984,8 +1540,8 @@ fn write_raw_csv_temp(
 }
 
 fn write_raw_metadata(dir: &Path, metadata: &RawFetchMetadata) -> Result<()> {
-    let final_path = dir.join(RAW_METADATA_FNAME);
-    let tmp_path = dir.join(format!("{RAW_METADATA_FNAME}.tmp"));
+    let final_path = dir.join("manifest.toml");
+    let tmp_path = dir.join("manifest.toml.tmp");
     let encoded = toml::to_string_pretty(metadata).context("failed to encode raw metadata")?;
 
     write_synced_file(&tmp_path, encoded.as_bytes())

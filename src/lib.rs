@@ -67,12 +67,30 @@ fn run_with(args: Cli) -> Result<()> {
             },
     }) = args.command.as_ref()
     {
-        return commands::export::csv(input, output);
+        let mut load = config::load_from_path(&args.config);
+        let mut cfg = match &mut load {
+            ConfigLoad::Ready { config, .. } => config.clone(),
+            ConfigLoad::Diagnostics(diag) => {
+                if let Some(cfg) = &diag.normalized {
+                    cfg.clone()
+                } else {
+                    return Err(anyhow::anyhow!("failed to parse configuration file"));
+                }
+            }
+        };
+        cfg.force = args.force;
+        if let Some(run_dir) = &args.run_dir {
+            cfg.set_artifact_root(run_dir.clone());
+        }
+        return commands::export::csv_with_canonical_lock(&cfg, input, output, args.force);
     }
 
     let mut load = config::load_from_path(&args.config);
-    if let (Some(run_dir), ConfigLoad::Ready { config, .. }) = (&args.run_dir, &mut load) {
-        config.set_artifact_root(run_dir.clone());
+    if let ConfigLoad::Ready { config, .. } = &mut load {
+        config.force = args.force;
+        if let Some(run_dir) = &args.run_dir {
+            config.set_artifact_root(run_dir.clone());
+        }
     }
 
     match args.command.as_ref() {
@@ -93,13 +111,6 @@ fn run_with(args: Cli) -> Result<()> {
     }
 
     let (cfg, warnings) = load.into_ready()?;
-
-    if args.run_dir.is_some() && command_writes_artifacts(args.command.as_ref()) {
-        if let Some(target) = command_validation_target(args.command.as_ref()) {
-            config::validate_for_target(&cfg, target)?;
-        }
-        commands::run_dir::prepare(&cfg)?;
-    }
 
     if let Some(Command::Raw { command }) = args.command.as_ref() {
         commands::show::print_warnings(&warnings);
@@ -211,56 +222,6 @@ fn run_with(args: Cli) -> Result<()> {
             Some(Command::Completions { .. }) => Ok(()),
             None => unreachable!(),
         }
-    }
-}
-
-fn command_writes_artifacts(command: Option<&Command>) -> bool {
-    match command {
-        Some(
-            Command::Reference
-            | Command::Sensor
-            | Command::Li
-            | Command::Phase
-            | Command::Kerr
-            | Command::Analyze,
-        ) => true,
-        #[cfg(feature = "hw")]
-        Some(
-            Command::Fetch { .. }
-            | Command::Screenshot
-            | Command::Automeasure
-            | Command::Process
-            | Command::Auto,
-        ) => true,
-        _ => false,
-    }
-}
-
-fn command_validation_target(command: Option<&Command>) -> Option<ValidationTarget> {
-    match command? {
-        #[cfg(feature = "hw")]
-        Command::Single => Some(ValidationTarget::Single),
-        #[cfg(feature = "hw")]
-        Command::Trigger => Some(ValidationTarget::Trigger),
-        #[cfg(feature = "hw")]
-        Command::Autoshot => Some(ValidationTarget::Autoshot),
-        #[cfg(feature = "hw")]
-        Command::Fetch { .. } => Some(ValidationTarget::Fetch),
-        #[cfg(feature = "hw")]
-        Command::Screenshot => Some(ValidationTarget::Screenshot),
-        #[cfg(feature = "hw")]
-        Command::Automeasure => Some(ValidationTarget::Automeasure),
-        Command::Reference => Some(ValidationTarget::Reference),
-        Command::Sensor => Some(ValidationTarget::Sensor),
-        Command::Li => Some(ValidationTarget::Li),
-        Command::Phase => Some(ValidationTarget::Phase),
-        Command::Kerr => Some(ValidationTarget::Kerr),
-        Command::Analyze => Some(ValidationTarget::Analyze),
-        #[cfg(feature = "hw")]
-        Command::Process => Some(ValidationTarget::Process),
-        #[cfg(feature = "hw")]
-        Command::Auto => Some(ValidationTarget::Auto),
-        _ => None,
     }
 }
 

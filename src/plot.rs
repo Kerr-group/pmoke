@@ -1,16 +1,83 @@
-use crate::config::{Plot, PlotDecimation};
+use crate::config::{Config, Plot, PlotDecimation};
 use crate::ui;
 use anyhow::{Context, Result, bail};
 use std::fs;
+use std::io::Read;
+use std::path::Path;
 
 pub type DecimatedSeries2d = (Vec<f64>, Vec<Vec<f64>>);
 pub type DecimatedSeries3d = (Vec<f64>, Vec<Vec<Vec<f64>>>);
 
+pub fn warn_canonical_plot_layout(cfg: &Config) {
+    if !cfg.plot.enabled {
+        return;
+    }
+    let canonical = cfg.paths().plot_dir();
+    if Path::new(&cfg.plot.output_dir) != canonical {
+        ui::warn(format!(
+            "plot.output_dir is ignored for canonical run artifacts; plots are written under {}",
+            canonical.display()
+        ));
+    }
+    let legacy = cfg.paths().run_dir.join("plots");
+    if legacy.exists() && legacy != canonical {
+        ui::warn(format!(
+            "legacy plot directory exists at {}; new plots are written under {}",
+            legacy.display(),
+            canonical.display()
+        ));
+    }
+}
+
+pub fn prepare_plot_output<'a>(plot: &Plot, output_path: &'a Path) -> Result<Option<&'a Path>> {
+    if !(plot.enabled && plot.save) {
+        return Ok(None);
+    }
+    let parent = output_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("plot output has no parent: {}", output_path.display()))?;
+    match fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create plot output dir: {}", parent.display()))
+    {
+        Ok(()) => Ok(Some(output_path)),
+        Err(error) if plot.fail_on_error => Err(error),
+        Err(error) => {
+            ui::warn(format!("plot save skipped: {error:#}"));
+            Ok(None)
+        }
+    }
+}
+
+pub fn finish_embedded_plot(
+    plot: &Plot,
+    output: Option<&Path>,
+    error: Option<String>,
+    label: &str,
+) -> Result<()> {
+    let result = match error {
+        Some(error) => Err(anyhow::anyhow!(error)),
+        None => output.map_or(Ok(()), validate_plot_file),
+    };
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if plot.fail_on_error => {
+            remove_partial_plot(output);
+            Err(error).with_context(|| format!("failed to plot {label}"))
+        }
+        Err(error) => {
+            remove_partial_plot(output);
+            ui::warn(format!("{label} plot skipped: {error:#}"));
+            Ok(())
+        }
+    }
+}
+
 pub fn run_plot(
     plot: &Plot,
+    output_path: &Path,
     progress: impl Into<String>,
     completed: impl Into<String>,
-    f: impl FnOnce() -> Result<()>,
+    f: impl FnOnce(Option<&Path>) -> Result<()>,
 ) -> Result<()> {
     let progress = progress.into();
     let completed = completed.into();
@@ -23,9 +90,10 @@ pub fn run_plot(
         ui::skipped(format!("{progress}: save=false and interactive=false"));
         return Ok(());
     }
-    if plot.save {
-        fs::create_dir_all(&plot.output_dir)
-            .with_context(|| format!("failed to create plot output dir: {}", plot.output_dir))?;
+    let output = prepare_plot_output(plot, output_path)?;
+    if output.is_none() && !plot.interactive {
+        ui::skipped(format!("{progress}: no writable output"));
+        return Ok(());
     }
 
     let progress_message = if plot.interactive {
@@ -34,21 +102,82 @@ pub fn run_plot(
         progress.clone()
     };
     let pb = ui::spinner(progress_message);
-    match f().with_context(|| progress.clone()) {
+    let result = f(output)
+        .and_then(|()| {
+            if let Some(path) = output {
+                validate_plot_file(path)?;
+            }
+            Ok(())
+        })
+        .with_context(|| progress.clone());
+    match result {
         Ok(()) => {
             ui::finish_success(pb, completed);
             Ok(())
         }
         Err(err) if plot.fail_on_error => {
             pb.finish_and_clear();
+            remove_partial_plot(output);
             Err(err)
         }
         Err(err) => {
             pb.finish_and_clear();
+            remove_partial_plot(output);
             ui::warn(format!("{progress} skipped: {err:#}"));
             Ok(())
         }
     }
+}
+
+fn remove_partial_plot(output: Option<&Path>) {
+    if let Some(path) = output {
+        let _ = fs::remove_file(path);
+    }
+}
+
+pub fn validate_plot_file(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("saved plot is missing: {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!("saved plot is not a regular file: {}", path.display());
+    }
+    if metadata.len() == 0 {
+        bail!("saved plot is empty: {}", path.display());
+    }
+    let mut file = fs::File::open(path)?;
+    let mut header = [0_u8; 4096];
+    let read = file.read(&mut header)?;
+    let bytes = &header[..read];
+    match path.extension().and_then(|value| value.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("png") => {
+            if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                bail!(
+                    "saved plot has an invalid PNG signature: {}",
+                    path.display()
+                );
+            }
+        }
+        Some(ext) if ext.eq_ignore_ascii_case("pdf") => {
+            if !bytes.starts_with(b"%PDF-") {
+                bail!(
+                    "saved plot has an invalid PDF signature: {}",
+                    path.display()
+                );
+            }
+        }
+        Some(ext) if ext.eq_ignore_ascii_case("svg") => {
+            let text = std::str::from_utf8(bytes)
+                .with_context(|| format!("saved SVG is not UTF-8: {}", path.display()))?;
+            if !text.contains("<svg") {
+                bail!(
+                    "saved plot does not contain an SVG root: {}",
+                    path.display()
+                );
+            }
+        }
+        _ => bail!("unsupported plot format: {}", path.display()),
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -240,12 +369,131 @@ fn global_extreme_index(values: &[&[f64]], len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn plot(max_points: usize) -> Plot {
         Plot {
             max_points,
             ..Plot::default()
         }
+    }
+
+    fn temporary_plot() -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("pmoke plot {} {nonce}", std::process::id()))
+            .join("analysis/plots/test.png")
+    }
+
+    #[test]
+    fn plot_modes_create_only_valid_saved_artifacts() {
+        let output = temporary_plot();
+        let mut settings = Plot {
+            enabled: true,
+            save: false,
+            interactive: true,
+            ..Plot::default()
+        };
+        run_plot(&settings, &output, "plot", "done", |path| {
+            assert!(path.is_none());
+            Ok(())
+        })
+        .unwrap();
+        assert!(!output.parent().unwrap().exists());
+
+        settings.interactive = false;
+        settings.save = true;
+        run_plot(&settings, &output, "plot", "done", |path| {
+            fs::write(path.unwrap(), b"\x89PNG\r\n\x1a\n")?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(output.is_file());
+        fs::remove_dir_all(
+            output
+                .ancestors()
+                .nth(3)
+                .expect("temporary plot has a run root"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn failed_or_invalid_plot_is_not_published_as_an_artifact() {
+        let output = temporary_plot();
+        let settings = Plot {
+            enabled: true,
+            save: true,
+            interactive: false,
+            fail_on_error: false,
+            ..Plot::default()
+        };
+        run_plot(&settings, &output, "plot", "done", |path| {
+            fs::write(path.unwrap(), b"not a png")?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(!output.exists());
+        if let Some(root) = output.ancestors().nth(3) {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn strict_plot_failure_leaves_existing_analysis_untouched() {
+        let output = temporary_plot();
+        let run_root = output.ancestors().nth(3).unwrap();
+        let canonical = run_root.join("analysis/old.txt");
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::write(&canonical, b"old analysis").unwrap();
+        let staging_output = run_root.join("analysis.incomplete/plots/test.png");
+        let settings = Plot {
+            enabled: true,
+            save: true,
+            interactive: false,
+            fail_on_error: true,
+            ..Plot::default()
+        };
+
+        let error = run_plot(&settings, &staging_output, "plot", "done", |path| {
+            fs::write(path.unwrap(), b"partial")?;
+            anyhow::bail!("renderer failed")
+        })
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("renderer failed"));
+        assert_eq!(fs::read(&canonical).unwrap(), b"old analysis");
+        assert!(!staging_output.exists());
+        fs::remove_dir_all(run_root).unwrap();
+    }
+
+    #[test]
+    fn unwritable_plot_parent_obeys_failure_policy() {
+        let output = temporary_plot();
+        let run_root = output.ancestors().nth(3).unwrap();
+        let blocker = run_root.join("not-a-directory");
+        fs::create_dir_all(run_root).unwrap();
+        fs::write(&blocker, b"file").unwrap();
+        let blocked_output = blocker.join("plot.png");
+
+        let mut settings = Plot {
+            enabled: true,
+            save: true,
+            interactive: false,
+            fail_on_error: false,
+            ..Plot::default()
+        };
+        run_plot(&settings, &blocked_output, "plot", "done", |_| {
+            panic!("renderer must not run without an output or interactive mode")
+        })
+        .unwrap();
+
+        settings.fail_on_error = true;
+        assert!(run_plot(&settings, &blocked_output, "plot", "done", |_| Ok(())).is_err());
+        fs::remove_dir_all(run_root).unwrap();
     }
 
     #[test]

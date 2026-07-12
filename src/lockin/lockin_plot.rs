@@ -4,6 +4,7 @@ use crate::python;
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use std::path::Path;
 use std::sync::OnceLock;
 
 const LI_PLOT_PY: &str = include_str!("pytools/lockin_plot.py");
@@ -16,6 +17,7 @@ impl LIPlotter {
     pub fn plot(
         &self,
         plot: &Plot,
+        output: Option<&Path>,
         t: &[f64],
         y: &[Vec<Vec<f64>>],
         index_arr: &[u8],
@@ -33,6 +35,7 @@ impl LIPlotter {
             let (t_plot, y_plot) = decimate_xy_3d(plot, t, y)?;
             let t_obj = python::f64_array1(py, &t_plot);
             let y_obj = python::f64_array3(py, &y_plot)?;
+            let output = output.map(|path| path.to_string_lossy().into_owned());
 
             let plotter = plot_mod
                 .getattr("LIPlotter")?
@@ -47,9 +50,9 @@ impl LIPlotter {
                         y_obj,
                         index_arr,
                         labels,
-                        plot.save,
+                        output.is_some(),
                         plot.interactive,
-                        &plot.output_dir,
+                        output,
                     ),
                 )
                 .context("python LIPlotter.plot(...) failed")?;

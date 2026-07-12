@@ -247,9 +247,15 @@ fn voltage_scale(channel: RawCsvChannel<'_>) -> RawVoltageScale {
 
 fn resolve_raw_channel_path(raw_dir: &Path, file: &str, idx: usize) -> Result<PathBuf> {
     let relative = Path::new(file);
-    let mut components = relative.components();
-    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
-        bail!("raw csv channel file must be a plain file name for channel index {idx}: {file}");
+    if relative.is_absolute() {
+        bail!("raw csv channel file must be a safe relative path for channel index {idx}: {file}");
+    }
+    for component in relative.components() {
+        if !matches!(component, Component::Normal(_)) {
+            bail!(
+                "raw csv channel file must be a safe relative path for channel index {idx}: {file}"
+            );
+        }
     }
     Ok(raw_dir.join(relative))
 }
