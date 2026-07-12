@@ -359,39 +359,36 @@ pub fn fetch_with_options(
 
     crate::commands::run_dir::write_run_state(cfg, "acquiring", "fetch", None)?;
     let result = fetch_with_options_inner(cfg, format, out);
-    match &result {
-        Ok(()) => {
-            if let Some(b) = backup {
-                let backup_path = b.backup_dir.clone();
-                if let Err(commit_err) = b.commit(&cfg.paths().run_dir) {
-                    crate::ui::warn(format!(
-                        "new acquisition was published, but invalidated analysis could not be archived: {commit_err}; backup remains at {}",
+    if let Err(error) = result {
+        let final_err = if let Some(b) = backup {
+            let backup_path = b.backup_dir.clone();
+            match b.restore() {
+                Ok(()) => error,
+                Err(restore_err) => {
+                    error.context(format!(
+                        "fetch failed and previous analysis could not be restored: {restore_err}; backup remains at {}",
                         backup_path.display()
-                    ));
+                    ))
                 }
             }
-            crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?
-        }
-        Err(error) => {
-            let final_err = if let Some(b) = backup {
-                let backup_path = b.backup_dir.clone();
-                match b.restore() {
-                    Ok(()) => error.clone(),
-                    Err(restore_err) => {
-                        error.context(format!(
-                            "fetch failed and previous analysis could not be restored: {restore_err}; backup remains at {}",
-                            backup_path.display()
-                        ))
-                    }
-                }
-            } else {
-                error.clone()
-            };
-            crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(&final_err))?;
-            return Err(final_err);
+        } else {
+            error
+        };
+        crate::commands::run_dir::write_run_state(cfg, "failed", "fetch", Some(&final_err))?;
+        return Err(final_err);
+    }
+
+    if let Some(b) = backup {
+        let backup_path = b.backup_dir.clone();
+        if let Err(commit_err) = b.commit(&cfg.paths().run_dir) {
+            crate::ui::warn(format!(
+                "new acquisition was published, but invalidated analysis could not be archived: {commit_err}; backup remains at {}",
+                backup_path.display()
+            ));
         }
     }
-    result
+    crate::commands::run_dir::write_run_state(cfg, "acquired", "fetch", None)?;
+    Ok(())
 }
 
 fn fetch_with_options_inner(
