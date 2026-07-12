@@ -43,6 +43,26 @@ fn tui_tick_uses_60fps_while_command_is_running() {
 }
 
 #[test]
+fn reduced_and_disabled_motion_lower_the_running_tick_rate() {
+    let mut app = test_app();
+    let (_event_tx, event_rx) = mpsc::channel();
+    let (cancel_tx, _cancel_rx) = mpsc::channel();
+    app.active_run = Some(ActiveRun {
+        action: MonitorAction::Analyze,
+        label: "Analyze all",
+        started_at: Instant::now(),
+        receiver: event_rx,
+        cancel: cancel_tx,
+        cancel_requested: false,
+    });
+
+    app.motion_mode = MotionMode::Reduced;
+    assert_eq!(tui_frame_tick(&app), TUI_REDUCED_MOTION_TICK);
+    app.motion_mode = MotionMode::Off;
+    assert_eq!(tui_frame_tick(&app), TUI_IDLE_TICK);
+}
+
+#[test]
 fn escape_does_not_cancel_running_command() {
     let mut app = test_app();
     let (_event_tx, event_rx) = mpsc::channel();

@@ -30,6 +30,7 @@ pub(super) struct MonitorApp {
     pub(super) show_help: bool,
     pub(super) effects: EffectManager<MonitorEffect>,
     pub(super) last_effect_frame: Instant,
+    pub(super) motion_mode: MotionMode,
 }
 
 impl MonitorApp {
@@ -69,6 +70,7 @@ impl MonitorApp {
             show_help: false,
             effects: EffectManager::default(),
             last_effect_frame: Instant::now(),
+            motion_mode: MotionMode::from_env(),
         }
     }
 
@@ -379,6 +381,39 @@ impl MonitorApp {
 
     pub(super) fn push_structured_output(&mut self, event: UiEvent) {
         let entries = LogEntry::from_event(&event);
+        if let Some(progress_id) = event.progress_id.as_deref()
+            && let Some(start) = self
+                .run_output
+                .iter()
+                .position(|entry| entry.progress_id.as_deref() == Some(progress_id))
+        {
+            let end = self.run_output[start..]
+                .iter()
+                .position(|entry| entry.progress_id.as_deref() != Some(progress_id))
+                .map_or(self.run_output.len(), |offset| start + offset);
+            let old_len = end - start;
+            let new_len = entries.len();
+            self.run_output.splice(start..end, entries);
+            if self.history_view.is_none() && self.run_output_scroll > 0 {
+                self.run_output_scroll = if new_len >= old_len {
+                    self.run_output_scroll.saturating_add(new_len - old_len)
+                } else {
+                    self.run_output_scroll.saturating_sub(old_len - new_len)
+                };
+            }
+            self.output_selected =
+                shift_index_after_replacement(self.output_selected, start, old_len, new_len);
+            self.output_selection_anchor = shift_index_after_replacement(
+                self.output_selection_anchor,
+                start,
+                old_len,
+                new_len,
+            );
+            if event.kind != EventKind::Progress {
+                self.trigger_event_feed_effect();
+            }
+            return;
+        }
         let appended = entries.len();
         self.run_output.extend(entries);
         self.after_output_appended(appended, 1);
@@ -434,6 +469,12 @@ impl MonitorApp {
     }
 
     pub(super) fn trigger_event_feed_effect(&mut self) {
+        if self.motion_mode != MotionMode::Full
+            || self.history_view.is_some()
+            || self.run_output_scroll > 0
+        {
+            return;
+        }
         let effect = fx::parallel(&[
             fx::sweep_in(
                 Motion::LeftToRight,
@@ -713,6 +754,25 @@ fn complete_event_drain_count(entries: &[LogEntry], minimum: usize) -> usize {
 
 pub(super) fn shift_log_index_after_drain(index: Option<usize>, drained: usize) -> Option<usize> {
     index.and_then(|idx| idx.checked_sub(drained))
+}
+
+fn shift_index_after_replacement(
+    index: Option<usize>,
+    start: usize,
+    old_len: usize,
+    new_len: usize,
+) -> Option<usize> {
+    index.map(|index| {
+        if index < start {
+            index
+        } else if index < start + old_len {
+            start + new_len.saturating_sub(1)
+        } else if new_len >= old_len {
+            index.saturating_add(new_len - old_len)
+        } else {
+            index.saturating_sub(old_len - new_len)
+        }
+    })
 }
 
 fn logical_event_count(entries: &[LogEntry], include: impl Fn(&LogEntry) -> bool) -> usize {

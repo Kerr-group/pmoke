@@ -15,6 +15,10 @@ fn structured_events_keep_one_logical_count_and_render_elapsed_time() {
             ("output rate".to_string(), "500 kHz".to_string()),
             ("window".to_string(), "1.71 us".to_string()),
         ],
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
     });
 
     assert_eq!(app.run_output.len(), 3);
@@ -47,6 +51,10 @@ fn structured_event_line_count_matches_rendering_with_elapsed_prefix() {
         stage: None,
         message: "a message that wraps once the elapsed prefix is reserved".to_string(),
         fields: Vec::new(),
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
     };
     let entries = LogEntry::from_event(&event);
     let rendered = visual_output_lines(&entries, 52, None, None);
@@ -72,6 +80,10 @@ fn system_events_align_with_the_elapsed_column() {
         stage: None,
         message: "complete".to_string(),
         fields: Vec::new(),
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
     };
     let mut entries = LogEntry::from_event(&event);
     entries.push(LogEntry::new(OutputStream::System, "command finished"));
@@ -112,6 +124,53 @@ fn carriage_return_progress_replaces_the_previous_transient_line() {
     app.push_output(OutputStream::Stdout, "fetch complete");
     app.push_progress(OutputStream::Stdout, "next 1%");
     assert_eq!(app.run_output.len(), 3);
+}
+
+#[test]
+fn structured_progress_updates_in_place_and_completes_the_same_event() {
+    let mut app = test_app();
+    let progress = |sequence, current| UiEvent {
+        event_type: "event".to_string(),
+        sequence,
+        elapsed_ms: current * 100,
+        level: EventLevel::Info,
+        kind: EventKind::Progress,
+        stage: Some("lockin".to_string()),
+        message: "Lock-in ch3".to_string(),
+        fields: Vec::new(),
+        progress_id: Some("lockin:ch3".to_string()),
+        progress_current: Some(current),
+        progress_total: Some(6),
+        duration_ms: None,
+    };
+    app.push_structured_output(progress(1, 1));
+    app.run_output_scroll = 1;
+    app.push_structured_output(progress(2, 4));
+
+    assert_eq!(app.run_output.len(), 1);
+    assert_eq!(app.visible_event_count(), 1);
+    assert_eq!(app.new_output_events, 0);
+    assert!(app.run_output[0].text.contains("4/6 · 66%"));
+
+    app.push_structured_output(UiEvent {
+        event_type: "event".to_string(),
+        sequence: 3,
+        elapsed_ms: 700,
+        level: EventLevel::Success,
+        kind: EventKind::Status,
+        stage: Some("lockin".to_string()),
+        message: "Lock-in ch3 completed".to_string(),
+        fields: Vec::new(),
+        progress_id: Some("lockin:ch3".to_string()),
+        progress_current: None,
+        progress_total: None,
+        duration_ms: Some(700),
+    });
+
+    assert_eq!(app.run_output.len(), 1);
+    assert_eq!(app.run_output[0].kind, LogKind::Success);
+    assert!(!app.run_output[0].transient);
+    assert!(app.run_output[0].text.contains("completed · 0.7s"));
 }
 
 #[test]

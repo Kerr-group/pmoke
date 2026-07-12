@@ -127,24 +127,6 @@ fn context_bar_only_adds_config_when_cwd_keeps_useful_space() {
 }
 
 #[test]
-fn output_header_uses_a_compact_live_log_label_at_every_width() {
-    let narrow_text = output_header_spans(24)
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    let wide_text = output_header_spans(80)
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-
-    assert!(narrow_text.contains("EVENT LOG"));
-    assert!(wide_text.contains("EVENT LOG"));
-    assert!(!wide_text.contains("analysis output"));
-    assert!(!wide_text.contains("warn"));
-    assert!(!wide_text.contains("error"));
-}
-
-#[test]
 fn activity_title_distinguishes_live_and_paused_states() {
     let mut app = test_app();
     assert!(activity_title(&app, 0, 80).contains("ACTIVITY · LIVE · READY"));
@@ -158,19 +140,23 @@ fn activity_title_distinguishes_live_and_paused_states() {
 }
 
 #[test]
-fn event_feed_header_animates_when_running() {
-    let first = output_header_spans_with_motion(80, true, 0)
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    let second = output_header_spans_with_motion(80, true, 1)
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
+fn activity_header_uses_a_static_frame_when_motion_is_off() {
+    let mut app = test_app();
+    let (_event_tx, event_rx) = mpsc::channel();
+    let (cancel_tx, _cancel_rx) = mpsc::channel();
+    app.active_run = Some(ActiveRun {
+        action: MonitorAction::Analyze,
+        label: "Analyze all",
+        started_at: Instant::now(),
+        receiver: event_rx,
+        cancel: cancel_tx,
+        cancel_requested: false,
+    });
+    app.motion_mode = MotionMode::Off;
 
-    assert!(first.contains("| live"));
-    assert!(second.contains("/ live"));
-    assert_ne!(first, second);
+    let title = activity_title(&app, 0, 80);
+    assert!(title.contains("| LIVE · Analyze all"));
+    assert!(!title.contains("LIVE LOG"));
 }
 
 #[test]

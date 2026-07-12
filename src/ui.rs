@@ -58,6 +58,14 @@ pub(crate) struct UiEvent {
     pub(crate) message: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) fields: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) progress_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) progress_current: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) progress_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) duration_ms: Option<u64>,
 }
 
 impl UiEvent {
@@ -77,6 +85,10 @@ impl UiEvent {
             stage: std::env::var(OUTPUT_STAGE_ENV).ok(),
             message: message.to_string(),
             fields,
+            progress_id: None,
+            progress_current: None,
+            progress_total: None,
+            duration_ms: None,
         }
     }
 }
@@ -396,6 +408,10 @@ mod tests {
             stage: Some("lockin".to_string()),
             message: "Lock-in settings".to_string(),
             fields: vec![("output rate".to_string(), "500 kHz".to_string())],
+            progress_id: Some("lockin:ch3".to_string()),
+            progress_current: Some(4),
+            progress_total: Some(6),
+            duration_ms: None,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         assert_eq!(parse_jsonl_event(&encoded), Some(event));

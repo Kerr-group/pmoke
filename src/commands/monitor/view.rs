@@ -575,7 +575,10 @@ pub(super) fn render_run_output(
             log_width,
             app.output_selection_range(),
             app.output_selected,
-            app.command_running() && app.history_view.is_none(),
+            app.motion_mode.animates()
+                && app.command_running()
+                && app.history_view.is_none()
+                && effective_scroll == 0,
             timeline_motion_frame(app),
         );
         let end = visual_lines.len().saturating_sub(effective_scroll);
@@ -587,34 +590,15 @@ pub(super) fn render_run_output(
             .map(|line| line.line)
             .collect()
     };
-    let log_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(log_area);
-    frame.render_widget(
-        output_header(
-            log_chunks[0].width,
-            effective_scroll == 0 && app.history_view.is_none(),
-            timeline_motion_frame(app),
-        ),
-        log_chunks[0],
-    );
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        log_chunks[1],
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
 
-    let effect_area = latest_event_feed_effect_area(
-        log_chunks[1],
-        visual_line_count,
-        visible_rows,
-        effective_scroll,
-    );
+    let effect_area =
+        latest_event_feed_effect_area(log_area, visual_line_count, visible_rows, effective_scroll);
     process_event_feed_effects(app, effect_delta, frame.buffer_mut(), effect_area);
 
     render_output_scrollbar(
         frame.buffer_mut(),
-        log_chunks[1],
+        log_area,
         visual_line_count,
         visible_rows,
         effective_scroll,
@@ -631,16 +615,20 @@ pub(super) fn activity_title(app: &MonitorApp, effective_scroll: usize, width: u
             "PAUSED · G follow".to_string()
         }
     } else if let Some(run) = &app.active_run {
-        let state = if run.cancel_requested {
-            "STOPPING"
+        if run.cancel_requested {
+            format!(
+                "STOPPING · {} · {}",
+                run.label,
+                format_live_duration(run.started_at.elapsed())
+            )
         } else {
-            "RUNNING"
-        };
-        format!(
-            "LIVE · {state} · {} · {}",
-            run.label,
-            format_live_duration(run.started_at.elapsed())
-        )
+            format!(
+                "{} LIVE · {} · {}",
+                event_feed_spinner_symbol(timeline_motion_frame(app)),
+                run.label,
+                format_live_duration(run.started_at.elapsed())
+            )
+        }
     } else if app.last_run.as_ref().is_some_and(|run| !run.ok) {
         "LIVE · FAILED".to_string()
     } else {
@@ -711,45 +699,6 @@ pub(super) fn output_scrollbar_thumb(
         .unwrap_or(0);
 
     Some((thumb_start, thumb_len))
-}
-
-pub(super) fn output_header(width: u16, running: bool, frame: usize) -> Paragraph<'static> {
-    Paragraph::new(Line::from(output_header_spans_with_motion(
-        width, running, frame,
-    )))
-}
-
-#[cfg(test)]
-pub(super) fn output_header_spans(width: u16) -> Vec<Span<'static>> {
-    output_header_spans_with_motion(width, false, 0)
-}
-
-pub(super) fn output_header_spans_with_motion(
-    _width: u16,
-    live: bool,
-    frame: usize,
-) -> Vec<Span<'static>> {
-    let scanner = event_feed_spinner_symbol(frame);
-    let scanner_style = Style::default()
-        .fg(event_feed_pulse_color(frame))
-        .add_modifier(Modifier::BOLD);
-    let spans = vec![
-        Span::styled(
-            if live { " LIVE LOG " } else { " EVENT LOG " },
-            Style::default()
-                .fg(Color::Black)
-                .bg(if live { Color::Cyan } else { Color::Gray })
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-        if live {
-            Span::styled(format!("{scanner} live"), scanner_style)
-        } else {
-            Span::styled("paused", Style::default().fg(Color::Gray))
-        },
-    ];
-
-    spans
 }
 
 pub(super) fn event_feed_spinner_symbol(frame: usize) -> char {

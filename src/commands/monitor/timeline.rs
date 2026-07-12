@@ -190,6 +190,9 @@ pub(super) fn timeline_separator(width: u16) -> Line<'static> {
 }
 
 pub(super) fn timeline_motion_frame(app: &MonitorApp) -> usize {
+    if !app.motion_mode.animates() {
+        return 0;
+    }
     app.active_run
         .as_ref()
         .map(|run| (run.started_at.elapsed().as_millis() / 150) as usize)
