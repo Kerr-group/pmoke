@@ -55,8 +55,13 @@ pub fn csv_with_canonical_lock(
     if let Some(parent) = resolved_output.parent() {
         let parent_path = parent.to_path_buf();
         if resolved_paths_equal(&parent_path, &resolved_waveforms) {
-            // Same waveform directory as current run but different filename –
-            // still lock-protect it.
+            let filename = resolved_output.file_name();
+            anyhow::ensure!(
+                is_canonical_waveform_filename(filename),
+                "custom CSV exports cannot be written inside the canonical \
+                 acquisition/waveforms directory"
+            );
+
             let run_dir = &cfg.paths().run_dir;
             crate::commands::run_dir::ensure_run_directory(run_dir)?;
             let _lock = crate::commands::run_dir::RunMutationLock::acquire(run_dir, "export_csv")?;
@@ -150,13 +155,28 @@ fn resolve_for_comparison(p: &std::path::Path) -> Result<std::path::PathBuf> {
 }
 
 fn resolved_paths_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
         a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         a == b
+    }
+}
+
+fn is_canonical_waveform_filename(name: Option<&std::ffi::OsStr>) -> bool {
+    let Some(name) = name else {
+        return false;
+    };
+    let name_str = name.to_string_lossy();
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        name_str.eq_ignore_ascii_case("waveform.csv")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        name_str == "waveform.csv"
     }
 }
 
@@ -518,14 +538,16 @@ mod tests {
         let alias = run_dir_a.join("alias");
         fs::create_dir_all(&run_dir_a).unwrap();
 
-        if let Err(err) = std::os::windows::fs::symlink_dir(&subdir_b, &alias) {
-            println!(
-                "Skipping Windows directory symlink test because creation failed: {:?}",
-                err
-            );
-            fs::remove_dir_all(run_dir_a).unwrap();
-            fs::remove_dir_all(run_dir_b).unwrap();
-            return;
+        if let Err(_) = std::os::windows::fs::symlink_dir(&subdir_b, &alias) {
+            if let Err(err) = create_directory_junction(&subdir_b, &alias) {
+                println!(
+                    "Skipping Windows directory symlink/junction test because creation failed: {:?}",
+                    err
+                );
+                fs::remove_dir_all(run_dir_a).unwrap();
+                fs::remove_dir_all(run_dir_b).unwrap();
+                return;
+            }
         }
 
         // Config is for shot A
@@ -565,13 +587,15 @@ mod tests {
         // Create alias pointing to subdir_a
         let alias = run_dir_a.join("alias");
 
-        if let Err(err) = std::os::windows::fs::symlink_dir(&subdir_a, &alias) {
-            println!(
-                "Skipping Windows directory symlink test because creation failed: {:?}",
-                err
-            );
-            fs::remove_dir_all(run_dir_a).unwrap();
-            return;
+        if let Err(_) = std::os::windows::fs::symlink_dir(&subdir_a, &alias) {
+            if let Err(err) = create_directory_junction(&subdir_a, &alias) {
+                println!(
+                    "Skipping Windows directory symlink/junction test because creation failed: {:?}",
+                    err
+                );
+                fs::remove_dir_all(run_dir_a).unwrap();
+                return;
+            }
         }
 
         // Lock is acquired on run_dir_a
@@ -594,5 +618,30 @@ mod tests {
 
         drop(lock);
         fs::remove_dir_all(run_dir_a).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn create_directory_junction(target: &Path, link: &Path) -> std::io::Result<()> {
+        let status = std::process::Command::new("cmd")
+            .args(&[
+                "/c",
+                "mklink",
+                "/j",
+                link.to_str().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid link path")
+                })?,
+                target.to_str().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid target path")
+                })?,
+            ])
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "cmd mklink /j failed",
+            ))
+        }
     }
 }
