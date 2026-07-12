@@ -71,46 +71,46 @@ fn looks_like_canonical_waveform_path(output: &std::path::Path) -> bool {
     has_canonical_suffix().unwrap_or(false)
 }
 
-fn paths_equivalent(a: &std::path::Path, b: &std::path::Path) -> Result<bool> {
-    let resolve = |p: &std::path::Path| -> Result<std::path::PathBuf> {
-        let absolute = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .context("failed to get current working directory")?
-                .join(p)
-        };
-
-        // Clean lexically first to handle non-existent relative dots
-        let cleaned = clean_path(&absolute);
-
-        let mut existing = cleaned.as_path();
-        let mut remainder = Vec::new();
-
-        while !existing.exists() {
-            let name = match existing.file_name() {
-                Some(n) => n,
-                None => break,
-            };
-            remainder.push(name.to_os_string());
-            existing = match existing.parent() {
-                Some(parent_dir) => parent_dir,
-                None => break,
-            };
-        }
-
-        let mut resolved = existing
-            .canonicalize()
-            .unwrap_or_else(|_| existing.to_path_buf());
-        for component in remainder.into_iter().rev() {
-            resolved.push(component);
-        }
-
-        Ok(clean_path(&resolved))
+fn resolve_for_comparison(p: &std::path::Path) -> Result<std::path::PathBuf> {
+    let absolute = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("failed to get current working directory")?
+            .join(p)
     };
 
-    let resolved_a = resolve(a)?;
-    let resolved_b = resolve(b)?;
+    // Clean lexically first to handle non-existent relative dots
+    let cleaned = clean_path(&absolute);
+
+    let mut existing = cleaned.as_path();
+    let mut remainder = Vec::new();
+
+    while !existing.exists() {
+        let name = match existing.file_name() {
+            Some(n) => n,
+            None => break,
+        };
+        remainder.push(name.to_os_string());
+        existing = match existing.parent() {
+            Some(parent_dir) => parent_dir,
+            None => break,
+        };
+    }
+
+    let mut resolved = existing
+        .canonicalize()
+        .unwrap_or_else(|_| existing.to_path_buf());
+    for component in remainder.into_iter().rev() {
+        resolved.push(component);
+    }
+
+    Ok(clean_path(&resolved))
+}
+
+fn paths_equivalent(a: &std::path::Path, b: &std::path::Path) -> Result<bool> {
+    let resolved_a = resolve_for_comparison(a)?;
+    let resolved_b = resolve_for_comparison(b)?;
 
     #[cfg(windows)]
     {
@@ -247,9 +247,23 @@ mod tests {
         let mut config = crate::test_support::test_config(vec![1], vec![2]);
         config.set_artifact_root(run_dir.clone());
 
+        let canonical = config.paths().waveform_csv();
         let error =
             csv_with_canonical_lock(&config, Path::new("missing-raw"), &output, false).unwrap_err();
-        assert!(error.to_string().contains("run-mutating operation"));
+        assert!(
+            error.to_string().contains("run-mutating operation"),
+            "Error did not contain 'run-mutating operation'.\n\
+             Error: {}\n\
+             output: {:?}\n\
+             canonical: {:?}\n\
+             resolved output: {:?}\n\
+             resolved canonical: {:?}",
+            error,
+            output,
+            canonical,
+            super::resolve_for_comparison(&output),
+            super::resolve_for_comparison(&canonical)
+        );
 
         drop(lock);
         fs::remove_dir_all(run_dir).unwrap();
