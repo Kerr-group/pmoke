@@ -49,7 +49,7 @@ fn tiny_dashboard_hides_inspector_but_preserves_workflow_and_activity() {
 }
 
 #[test]
-fn header_omits_pipeline_counter() {
+fn header_omits_legacy_pipeline_counter() {
     let app = test_app();
     let rendered = header_spans(&app, 120)
         .iter()

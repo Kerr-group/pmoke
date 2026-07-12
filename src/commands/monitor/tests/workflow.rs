@@ -26,6 +26,19 @@ fn workflow_groups_can_be_collapsed_and_expanded() {
 }
 
 #[test]
+fn end_to_end_group_has_an_explicit_user_facing_label() {
+    assert_eq!(ActionGroup::EndToEnd.label(), "END-TO-END");
+}
+
+#[cfg(feature = "hw")]
+#[test]
+fn workflow_groups_measurement_by_its_terminal_stage() {
+    assert_eq!(MonitorAction::Automeasure.group(), ActionGroup::Acquisition);
+    assert_eq!(MonitorAction::Process.group(), ActionGroup::EndToEnd);
+    assert_eq!(MonitorAction::Auto.group(), ActionGroup::EndToEnd);
+}
+
+#[test]
 fn workflow_search_selects_an_action_and_ignores_collapsed_groups() {
     let mut app = test_app();
     app.collapsed_groups.insert(ActionGroup::Analysis);

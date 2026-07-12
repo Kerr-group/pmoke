@@ -4,7 +4,7 @@ use crate::config::{self, ConfigLoad, ValidationTarget};
 pub(super) enum ActionGroup {
     Acquisition,
     Analysis,
-    Pipeline,
+    EndToEnd,
     Utilities,
 }
 
@@ -13,14 +13,14 @@ impl ActionGroup {
         Self::Utilities,
         Self::Acquisition,
         Self::Analysis,
-        Self::Pipeline,
+        Self::EndToEnd,
     ];
 
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::Acquisition => "ACQUISITION",
             Self::Analysis => "ANALYSIS",
-            Self::Pipeline => "PIPELINE",
+            Self::EndToEnd => "END-TO-END",
             Self::Utilities => "UTILITIES",
         }
     }
@@ -229,7 +229,7 @@ impl MonitorAction {
             | Self::Kerr
             | Self::Analyze => ActionGroup::Analysis,
             #[cfg(feature = "hw")]
-            Self::Process | Self::Auto => ActionGroup::Pipeline,
+            Self::Process | Self::Auto => ActionGroup::EndToEnd,
             Self::Show | Self::Doctor | Self::RawVerify => ActionGroup::Utilities,
         }
     }
