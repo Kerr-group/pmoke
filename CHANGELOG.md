@@ -6,7 +6,7 @@
 
 - Analysis commands are safely rerunnable as new transactional generations, including when analysis-only config values change.
 - Each published analysis stores its own `analysis/config.source.toml` and `analysis/config.resolved.toml`; root config snapshots remain immutable acquisition provenance.
-- Analysis manifest schema 2 records generation numbers, config and acquisition checksums, the published stage, and stage-scoped config fingerprints.
+- Analysis manifest schema 3 records generation numbers, config and acquisition checksums, the published stage, and stage-scoped config fingerprints.
 - `phase` and `kerr` reject stale upstream results with an explicit command to rerun, while standalone `reference` and `sensor` create diagnostic-only manifests when needed.
 - Canonical NPY export is idempotent and replaces only generated NPY artifacts transactionally.
 
