@@ -661,6 +661,11 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
             "exported_at".to_string(),
             toml::Value::String(jiff::Timestamp::now().to_string()),
         );
+    } else if stage == "reference" || stage == "sensor" {
+        table.insert(
+            "plots_updated_at".to_string(),
+            toml::Value::String(jiff::Timestamp::now().to_string()),
+        );
     } else {
         table.insert(
             "analyzed_at".to_string(),
@@ -672,6 +677,7 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         "li" | "phase" | "kerr" => {
             table.remove("exported_at");
         }
+        "reference" | "sensor" => {}
         "export_npy" => {}
         _ => bail!("unknown analysis stage: {stage}"),
     }
@@ -696,7 +702,7 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         "kerr" => {
             stages_table.remove("export_npy");
         }
-        "export_npy" => {}
+        "reference" | "sensor" | "export_npy" => {}
         _ => bail!("unknown analysis stage: {stage}"),
     }
 

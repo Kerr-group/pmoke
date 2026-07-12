@@ -67,7 +67,22 @@ fn run_with(args: Cli) -> Result<()> {
             },
     }) = args.command.as_ref()
     {
-        return commands::export::csv_with_canonical_lock(input, output, args.force);
+        let mut load = config::load_from_path(&args.config);
+        let mut cfg = match &mut load {
+            ConfigLoad::Ready { config, .. } => config.clone(),
+            ConfigLoad::Diagnostics(diag) => {
+                if let Some(cfg) = &diag.normalized {
+                    cfg.clone()
+                } else {
+                    return Err(anyhow::anyhow!("failed to parse configuration file"));
+                }
+            }
+        };
+        cfg.force = args.force;
+        if let Some(run_dir) = &args.run_dir {
+            cfg.set_artifact_root(run_dir.clone());
+        }
+        return commands::export::csv_with_canonical_lock(&cfg, input, output, args.force);
     }
 
     let mut load = config::load_from_path(&args.config);

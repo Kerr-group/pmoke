@@ -284,11 +284,14 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
         AnalysisStage::Reference | AnalysisStage::Sensor | AnalysisStage::ExportNpy
     ) {
         copy_optional_tree(&cfg.paths().analysis_dir(), &staging_dir)?;
-        if matches!(stage, AnalysisStage::Reference | AnalysisStage::Sensor) {
-            remove_optional_tree(&staging.reference_plot_dir())?;
-        }
-        if stage == AnalysisStage::Sensor {
-            remove_optional_tree(&staging.sensor_plot_dir())?;
+        match stage {
+            AnalysisStage::Reference => {
+                remove_optional_tree(&staging.reference_plot_dir())?;
+            }
+            AnalysisStage::Sensor => {
+                remove_optional_tree(&staging.sensor_plot_dir())?;
+            }
+            _ => {}
         }
         return Ok(staging_cfg);
     }
@@ -731,7 +734,13 @@ mod tests {
         fs::remove_dir_all(reference.paths().analysis_dir()).unwrap();
 
         let sensor = prepare_analysis_staging(&cfg, AnalysisStage::Sensor).unwrap();
-        assert!(!sensor.paths().reference_plot_dir().exists());
+        assert!(
+            sensor
+                .paths()
+                .reference_plot_dir()
+                .join("old.png")
+                .is_file()
+        );
         assert!(!sensor.paths().sensor_plot_dir().exists());
         assert!(sensor.paths().lockin_plot_dir().join("old.png").is_file());
 

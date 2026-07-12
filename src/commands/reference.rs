@@ -20,8 +20,13 @@ pub fn reference(cfg: &Config) -> Result<()> {
 }
 
 pub(crate) fn refresh_manifest_if_present(cfg: &Config, stage: &str) -> Result<()> {
-    if cfg.paths().analysis_manifest().is_file() {
-        crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg, stage)?;
+    let manifest = cfg.paths().analysis_manifest();
+    if !manifest.is_file() {
+        anyhow::bail!(
+            "standalone reference/sensor requires an existing \
+             analysis manifest; run pmoke li first"
+        );
     }
+    crate::lockin::provenance::refresh_analysis_manifest_outputs(cfg, stage)?;
     Ok(())
 }

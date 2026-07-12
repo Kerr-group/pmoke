@@ -59,6 +59,7 @@ impl<W: Write> Write for HashingWriter<W> {
     }
 }
 
+/// Waveform-only acquisition manifest for raw waveform data (does not include screenshot files).
 #[derive(Debug, Serialize, Clone)]
 struct RawFetchMetadata {
     schema_version: u32,
@@ -115,6 +116,7 @@ struct RawChannelMetadata {
     vertical_scale: f64,
 }
 
+/// Waveform-only acquisition manifest for CSV waveform data (does not include screenshot files).
 #[derive(Serialize)]
 struct CsvAcquisitionManifest {
     schema_version: u32,
