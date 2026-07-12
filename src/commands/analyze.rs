@@ -503,11 +503,15 @@ mod tests {
         // 1. Canonical RAW
         let canonical_raw_dir = root.join("acquisition");
         std::fs::create_dir_all(&canonical_raw_dir).unwrap();
-        std::fs::write(canonical_raw_dir.join("manifest.toml"), b"schema_version = 1\n").unwrap();
+        std::fs::write(
+            canonical_raw_dir.join("manifest.toml"),
+            b"schema_version = 1\n",
+        )
+        .unwrap();
 
-
-        let resolver = crate::config::ArtifactResolver::new(&root);
-        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        let resolver = crate::config::ArtifactResolver::new(root);
+        let (source_acq, source_wf) =
+            crate::lockin::provenance::analysis_sources(root, &resolver).unwrap();
         assert_eq!(source_acq.as_deref(), Some("../acquisition/manifest.toml"));
         assert!(source_wf.is_none());
 
@@ -517,9 +521,13 @@ mod tests {
         std::fs::create_dir_all(&canonical_csv_dir).unwrap();
         std::fs::write(canonical_csv_dir.join("waveform.csv"), b"time,ch1\n").unwrap();
 
-        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        let (source_acq, source_wf) =
+            crate::lockin::provenance::analysis_sources(root, &resolver).unwrap();
         assert!(source_acq.is_none());
-        assert_eq!(source_wf.as_deref(), Some("../acquisition/waveforms/waveform.csv"));
+        assert_eq!(
+            source_wf.as_deref(),
+            Some("../acquisition/waveforms/waveform.csv")
+        );
 
         // 3. Legacy RAW
         std::fs::remove_dir_all(root.join("acquisition")).unwrap();
@@ -527,7 +535,8 @@ mod tests {
         std::fs::create_dir_all(&legacy_raw_dir).unwrap();
         std::fs::write(legacy_raw_dir.join("metadata.toml"), b"version = 1\n").unwrap();
 
-        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        let (source_acq, source_wf) =
+            crate::lockin::provenance::analysis_sources(root, &resolver).unwrap();
         assert_eq!(source_acq.as_deref(), Some("../raw_waveform/metadata.toml"));
         assert!(source_wf.is_none());
 
@@ -535,7 +544,8 @@ mod tests {
         std::fs::remove_dir_all(&legacy_raw_dir).unwrap();
         std::fs::write(root.join("raw.csv"), b"time,ch1\n").unwrap();
 
-        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        let (source_acq, source_wf) =
+            crate::lockin::provenance::analysis_sources(root, &resolver).unwrap();
         assert!(source_acq.is_none());
         assert_eq!(source_wf.as_deref(), Some("../raw.csv"));
 
@@ -546,7 +556,8 @@ mod tests {
         std::fs::write(acq_dir.join("manifest.toml"), b"schema_version = 1\n").unwrap();
         std::fs::write(acq_dir.join("waveforms/waveform.csv"), b"time,ch1\n").unwrap();
 
-        let (source_acq, source_wf) = crate::lockin::provenance::analysis_sources(&root, &resolver).unwrap();
+        let (source_acq, source_wf) =
+            crate::lockin::provenance::analysis_sources(root, &resolver).unwrap();
         assert_eq!(source_acq.as_deref(), Some("../acquisition/manifest.toml"));
         assert!(source_wf.is_none());
 
@@ -556,6 +567,5 @@ mod tests {
             assert!(!path.contains('\\'));
             assert!(path.starts_with("../"));
         }
-
     }
 }

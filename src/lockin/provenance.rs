@@ -1,4 +1,4 @@
-use crate::config::{Config, LockinLpfKind, ArtifactPaths, ArtifactResolver};
+use crate::config::{ArtifactPaths, ArtifactResolver, Config, LockinLpfKind};
 
 use crate::lockin::lockin_core::{LockinProcessor, legacy_boxcar_enbw_hz};
 use crate::lockin::reference::ref_analysis::RefFitParams;
@@ -270,7 +270,8 @@ pub fn write_analysis_metadata(
 
     let outputs = scan_outputs(parent)?;
     let (column_sets, artifacts) = describe_analysis_artifacts(parent)?;
-    let (source_acquisition, source_waveform) = analysis_sources(&output_paths.run_dir, source_resolver)?;
+    let (source_acquisition, source_waveform) =
+        analysis_sources(&output_paths.run_dir, source_resolver)?;
 
     let metadata = AnalysisMetadata {
         schema_version: 1,
