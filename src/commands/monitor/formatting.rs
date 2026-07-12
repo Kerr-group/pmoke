@@ -2,17 +2,6 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use std::time::Duration;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub(super) fn centered_text(text: &str, width: usize) -> String {
-    let len = text.width_cjk();
-    if len >= width {
-        return text.to_string();
-    }
-    let padding = width - len;
-    let left = padding / 2;
-    let right = padding - left;
-    format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
-}
-
 pub(super) fn pad_display_width(text: &str, width: usize) -> String {
     let len = text.width_cjk();
     if len >= width {

@@ -168,8 +168,8 @@ fn event_feed_header_animates_when_running() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(first.contains("▁ live"));
-    assert!(second.contains("▃ live"));
+    assert!(first.contains("| live"));
+    assert!(second.contains("/ live"));
     assert_ne!(first, second);
 }
 

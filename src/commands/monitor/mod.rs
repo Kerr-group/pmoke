@@ -28,7 +28,6 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use tachyonfx::{CellFilter, Duration as FxDuration, EffectManager, Interpolation, Motion, fx};
-use tui_spinner::FluxFrames;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 mod actions;
@@ -49,8 +48,8 @@ use app::*;
 use clipboard::base64_encode;
 use clipboard::{ClipboardMethod, copy_text_to_clipboard};
 use formatting::{
-    bordered_inner, centered_rect, centered_text, contains, fit_path, fit_text, format_age,
-    format_duration, format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
+    bordered_inner, centered_rect, contains, fit_path, fit_text, format_age, format_duration,
+    format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
 };
 #[cfg(test)]
 use layout::workflow_panel_width;
@@ -65,14 +64,13 @@ use timeline::{
     StageProgressState, TimelineStep, TimelineStepState, timeline_badge_cell, timeline_for_action,
     timeline_separator, timeline_step_lines, timeline_step_spans,
 };
-use timeline::{render_run_timeline, spinner_frame, timeline_motion_frame};
+use timeline::{render_run_timeline, timeline_motion_frame};
 use view::*;
 
 const TUI_IDLE_TICK: Duration = Duration::from_millis(150);
 const TUI_ANIMATION_TICK: Duration = Duration::from_millis(16);
 const CONTEXT_DETAILS_MIN_WIDTH: usize = 60;
 const OUTPUT_PREFIX_WIDTH: u16 = 12;
-const EVENT_BADGE_WIDTH: usize = 6;
 const TIMELINE_BADGE_WIDTH: usize = 5;
 const EVENT_FEED_EFFECT_MS: u32 = 520;
 
@@ -258,6 +256,14 @@ struct LogEntry {
     event_head: bool,
     stream: OutputStream,
     transient: bool,
+    field: Option<StructuredField>,
+}
+
+#[derive(Clone)]
+struct StructuredField {
+    key: String,
+    value: String,
+    last: bool,
 }
 
 impl LogEntry {
@@ -273,6 +279,7 @@ impl LogEntry {
             event_head: false,
             stream,
             transient: false,
+            field: None,
         }
     }
 
@@ -285,6 +292,7 @@ impl LogEntry {
             event_head: false,
             stream,
             transient: false,
+            field: None,
         }
     }
 
@@ -303,16 +311,29 @@ impl LogEntry {
             event_head: true,
             stream: OutputStream::Stdout,
             transient: event.kind == EventKind::Progress,
+            field: None,
         }];
-        entries.extend(event.fields.iter().map(|(key, value)| Self {
-            text: format!("│ {key}  {value}"),
-            kind: LogKind::Metric,
-            sequence: Some(event.sequence),
-            elapsed_ms: Some(event.elapsed_ms),
-            event_head: false,
-            stream: OutputStream::Stdout,
-            transient: false,
-        }));
+        let field_count = event.fields.len();
+        entries.extend(
+            event
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(index, (key, value))| Self {
+                    text: format!("{key}  {value}"),
+                    kind: LogKind::Metric,
+                    sequence: Some(event.sequence),
+                    elapsed_ms: Some(event.elapsed_ms),
+                    event_head: false,
+                    stream: OutputStream::Stdout,
+                    transient: false,
+                    field: Some(StructuredField {
+                        key: key.clone(),
+                        value: value.clone(),
+                        last: index + 1 == field_count,
+                    }),
+                }),
+        );
         entries
     }
 }

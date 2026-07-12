@@ -30,8 +30,10 @@ fn structured_events_keep_one_logical_count_and_render_elapsed_time() {
                 .collect::<String>()
         })
         .collect::<Vec<_>>();
-    assert!(rendered[0].starts_with("+00:01.2 "));
+    assert!(rendered[0].starts_with("00:01.2  "));
     assert!(rendered[1].starts_with("         "));
+    assert!(rendered[1].contains("├─ output rate"));
+    assert!(rendered[2].contains("└─ window"));
 }
 
 #[test]
@@ -56,7 +58,7 @@ fn structured_event_line_count_matches_rendering_with_elapsed_prefix() {
         .iter()
         .map(|span| span.content.as_ref())
         .collect::<String>();
-    assert!(first.starts_with("+99:59.9 "));
+    assert!(first.starts_with("99:59.9  "));
 }
 
 #[test]
@@ -84,8 +86,8 @@ fn system_events_align_with_the_elapsed_column() {
         })
         .collect::<Vec<_>>();
 
-    assert!(rendered[0].starts_with("+00:00.2 "));
-    assert!(rendered[1].starts_with("         ◆  SYS"));
+    assert!(rendered[0].starts_with("00:00.2  "));
+    assert!(rendered[1].starts_with("         ~  command"));
 }
 
 #[test]
@@ -379,18 +381,29 @@ fn visual_output_lines_strip_ansi_and_add_badges() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(rendered.contains("OK"));
+    assert!(rendered.contains('+'));
     assert!(rendered.contains("done"));
     assert!(!rendered.contains("[  OK   ]"));
     assert!(!rendered.contains("\x1b"));
 }
 
 #[test]
-fn event_feed_badges_are_centered_in_fixed_cells() {
-    assert_eq!(event_badge_cell(LogKind::Success), "  OK  ");
-    assert_eq!(event_badge_cell(LogKind::System), " SYS  ");
-    assert_eq!(event_badge_cell(LogKind::Save), " SAVE ");
-    assert_eq!(event_badge_cell(LogKind::Skipped), " SKIP ");
+fn event_icons_have_stable_single_cell_width() {
+    for kind in [
+        LogKind::Plain,
+        LogKind::System,
+        LogKind::Success,
+        LogKind::Info,
+        LogKind::Read,
+        LogKind::Save,
+        LogKind::Fit,
+        LogKind::Skipped,
+        LogKind::Warning,
+        LogKind::Error,
+        LogKind::Section,
+    ] {
+        assert_eq!(kind.marker().width_cjk(), 1, "{:?}", kind);
+    }
 }
 
 #[test]
@@ -418,8 +431,8 @@ fn latest_event_feed_line_animates_when_running() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(first_text.starts_with("▁ "));
-    assert!(second_text.starts_with("▃ "));
+    assert!(first_text.starts_with("|  "));
+    assert!(second_text.starts_with("/  "));
     assert_ne!(first_text, second_text);
 }
 
@@ -558,19 +571,19 @@ fn compact_panel_continuation_renders_without_raw_pipe() {
 fn visual_output_line_count_does_not_overcount_exact_width() {
     let entries = vec![LogEntry::new(OutputStream::Stdout, "abcdefghijklm")];
 
-    assert_eq!(visual_output_line_count(&entries, 26), 1);
-    assert_eq!(visual_output_line_count(&entries, 25), 2);
+    assert_eq!(visual_output_line_count(&entries, 16), 1);
+    assert_eq!(visual_output_line_count(&entries, 15), 2);
 }
 
 #[test]
 fn visual_output_line_count_uses_cjk_display_width() {
     let entries = vec![LogEntry::new(OutputStream::Stdout, "○○○○○○○")];
 
-    assert_eq!(visual_output_line_count(&entries, 27), 1);
-    assert_eq!(visual_output_line_count(&entries, 26), 2);
+    assert_eq!(visual_output_line_count(&entries, 17), 1);
+    assert_eq!(visual_output_line_count(&entries, 16), 2);
     assert_eq!(
-        visual_output_line_count(&entries, 26),
-        visual_output_lines(&entries, 26, None, None).len()
+        visual_output_line_count(&entries, 16),
+        visual_output_lines(&entries, 16, None, None).len()
     );
 }
 

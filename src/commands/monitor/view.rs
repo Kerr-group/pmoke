@@ -753,7 +753,7 @@ pub(super) fn output_header_spans_with_motion(
 }
 
 pub(super) fn event_feed_spinner_symbol(frame: usize) -> char {
-    spinner_frame(FluxFrames::PISTON, frame)
+    ['|', '/', '-', '\\'][frame % 4]
 }
 
 pub(super) fn event_feed_pulse_color(frame: usize) -> Color {
