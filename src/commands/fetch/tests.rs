@@ -572,8 +572,12 @@ fn test_fetch_out_denied_and_export_properties() {
     // 3. Export CSV --output does not change canonical acquisition
     let acq_dir = dir.join("acquisition");
     fs::create_dir_all(acq_dir.join("waveforms")).unwrap();
-    fs::write(acq_dir.join("manifest.toml"), b"schema_version = 1\n").unwrap();
-    fs::write(acq_dir.join("waveforms/ch1.u16le"), b"\x00\x00").unwrap();
+    let u16le_bytes = b"\x00\x00";
+    let mut metadata = single_channel_raw_metadata("waveforms/ch1.u16le", 1);
+    metadata.channels[0].sha256 = sha256_hex(u16le_bytes);
+    let toml_str = toml::to_string_pretty(&metadata).unwrap();
+    fs::write(acq_dir.join("manifest.toml"), toml_str).unwrap();
+    fs::write(acq_dir.join("waveforms/ch1.u16le"), u16le_bytes).unwrap();
 
     let export_out = dir.join("exported_waveform.csv");
     crate::commands::export::csv(&acq_dir, &export_out, false).unwrap();
