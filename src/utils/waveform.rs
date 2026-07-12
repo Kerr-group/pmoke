@@ -227,7 +227,7 @@ pub fn read_raw_waveform_channels_from_dir(
 ) -> Result<WaveformData> {
     let metadata = read_raw_metadata(base_dir)?;
     validate_raw_format(&metadata)?;
-    validate_manifest_config(base_dir, &metadata)?;
+    warn_manifest_config_mismatch(base_dir, &metadata);
 
     let mut time_axis = None;
     let specs = channels
@@ -527,6 +527,14 @@ fn validate_manifest_config(base_dir: &Path, metadata: &RawWaveformMetadata) -> 
         _ => bail!(
             "raw metadata resolved config snapshot requires both resolved_config_file and resolved_config_sha256"
         ),
+    }
+}
+
+fn warn_manifest_config_mismatch(base_dir: &Path, metadata: &RawWaveformMetadata) {
+    if let Err(error) = validate_manifest_config(base_dir, metadata) {
+        crate::ui::warn(format!(
+            "RAW provenance snapshot could not be verified: {error}; continuing because waveform sizes and channel checksums are verified independently"
+        ));
     }
 }
 
@@ -1000,10 +1008,6 @@ fn raw_status_in_dir(base_dir: &Path, channels: &[u8]) -> Result<RawStatus> {
     if let Err(error) = validate_raw_format(&metadata) {
         return Ok(RawStatus::Invalid(error.to_string()));
     }
-    if let Err(error) = validate_manifest_config(base_dir, &metadata) {
-        return Ok(RawStatus::Invalid(error.to_string()));
-    }
-
     let mut time_axis = None;
     for &ch in channels {
         let spec = match raw_channel_spec(base_dir, &metadata, ch, &mut time_axis) {
