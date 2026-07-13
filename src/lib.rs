@@ -22,7 +22,13 @@ use config::{ConfigLoad, ValidationTarget};
 
 /// Parses command-line arguments and runs pmoke.
 pub fn run() -> Result<()> {
+    ui::initialize_output();
     run_with(Cli::parse())
+}
+
+#[doc(hidden)]
+pub fn report_error(error: &anyhow::Error) {
+    ui::error(format!("{error:#}"));
 }
 
 #[doc(hidden)]
@@ -45,7 +51,7 @@ fn run_with(args: Cli) -> Result<()> {
             Ok(outcome) if outcome.exit_code == 0 => return Ok(()),
             Ok(outcome) => std::process::exit(i32::from(outcome.exit_code)),
             Err(error) if check => {
-                eprintln!("Config migration blocked: {error:#}");
+                ui::error(format!("Config migration blocked: {error:#}"));
                 std::process::exit(2);
             }
             Err(error) => return Err(error),

@@ -19,6 +19,7 @@ pub(super) struct MonitorApp {
     pub(super) run_output: Vec<LogEntry>,
     pub(super) last_stderr_kind: Option<LogKind>,
     pub(super) run_output_scroll: usize,
+    pub(super) new_output_events: usize,
     pub(super) output_selected: Option<usize>,
     pub(super) output_selection_anchor: Option<usize>,
     pub(super) output_mouse_drag_active: bool,
@@ -57,6 +58,7 @@ impl MonitorApp {
             run_output: Vec::new(),
             last_stderr_kind: None,
             run_output_scroll: 0,
+            new_output_events: 0,
             output_selected: None,
             output_selection_anchor: None,
             output_mouse_drag_active: false,
@@ -224,6 +226,8 @@ impl MonitorApp {
         for event in events {
             match event {
                 RunEvent::Output(stream, text) => self.push_output(stream, &text),
+                RunEvent::Progress(stream, text) => self.push_progress(stream, &text),
+                RunEvent::Structured(event) => self.push_structured_output(event),
                 RunEvent::Finished { ok, status } => self.finish_run(ok, status),
                 RunEvent::Failed(message) => self.finish_run(false, message),
             }
@@ -283,6 +287,7 @@ impl MonitorApp {
 
     fn reset_output_view(&mut self) {
         self.run_output_scroll = 0;
+        self.new_output_events = 0;
         self.output_selection_anchor = None;
         self.output_mouse_drag_active = false;
         self.output_selected = last_renderable_output_index(self.visible_output());
@@ -343,6 +348,7 @@ impl MonitorApp {
 
     pub(super) fn push_output(&mut self, stream: OutputStream, text: &str) {
         let mut appended = 0;
+        let mut appended_events = 0;
         for line in text.replace('\r', "\n").split('\n') {
             if line.is_empty() {
                 if matches!(stream, OutputStream::Stderr) {
@@ -364,30 +370,67 @@ impl MonitorApp {
                 self.last_stderr_kind = Some(kind);
             }
             self.run_output
-                .push(LogEntry::with_kind(line.to_string(), kind));
+                .push(LogEntry::with_kind(line.to_string(), kind, stream));
             appended += 1;
+            appended_events += usize::from(output_display(kind, &clean_line).is_some());
+        }
+        self.after_output_appended(appended, appended_events);
+    }
+
+    pub(super) fn push_structured_output(&mut self, event: UiEvent) {
+        let entries = LogEntry::from_event(&event);
+        let appended = entries.len();
+        self.run_output.extend(entries);
+        self.after_output_appended(appended, 1);
+    }
+
+    pub(super) fn push_progress(&mut self, stream: OutputStream, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let clean = strip_ansi_codes(text);
+        let kind = classify_log_entry(stream, &clean);
+        if let Some(last) = self.run_output.last_mut()
+            && last.transient
+            && last.stream == stream
+            && last.sequence.is_none()
+        {
+            last.text = text.to_string();
+            last.kind = kind;
+            self.trigger_event_feed_effect();
+            return;
+        }
+        let mut entry = LogEntry::with_kind(text.to_string(), kind, stream);
+        entry.transient = true;
+        self.run_output.push(entry);
+        self.after_output_appended(1, 1);
+    }
+
+    fn after_output_appended(&mut self, appended_entries: usize, appended_events: usize) {
+        if appended_entries == 0 {
+            return;
         }
         if self.history_view.is_none() && self.run_output_scroll > 0 {
-            self.run_output_scroll += appended;
+            self.run_output_scroll += appended_entries;
+            self.new_output_events = self.new_output_events.saturating_add(appended_events);
         }
         const MAX_LOG_LINES: usize = 1_000;
         if self.run_output.len() > MAX_LOG_LINES {
-            let extra = self.run_output.len() - MAX_LOG_LINES;
-            self.run_output.drain(0..extra);
+            let minimum = self.run_output.len() - MAX_LOG_LINES;
+            let drained = complete_event_drain_count(&self.run_output, minimum);
+            self.run_output.drain(0..drained);
             if self.history_view.is_none() {
-                self.run_output_scroll = self.run_output_scroll.saturating_sub(extra);
-                self.output_selected = shift_log_index_after_drain(self.output_selected, extra);
+                self.run_output_scroll = self.run_output_scroll.saturating_sub(drained);
+                self.output_selected = shift_log_index_after_drain(self.output_selected, drained);
                 self.output_selection_anchor =
-                    shift_log_index_after_drain(self.output_selection_anchor, extra);
+                    shift_log_index_after_drain(self.output_selection_anchor, drained);
             }
         }
         if self.run_output.is_empty() {
             self.output_selected = None;
             self.output_selection_anchor = None;
         }
-        if appended > 0 {
-            self.trigger_event_feed_effect();
-        }
+        self.trigger_event_feed_effect();
     }
 
     pub(super) fn trigger_event_feed_effect(&mut self) {
@@ -423,10 +466,28 @@ impl MonitorApp {
 
     pub(super) fn scroll_output_down(&mut self, lines: usize) {
         self.run_output_scroll = self.run_output_scroll.saturating_sub(lines);
+        if self.run_output_scroll == 0 {
+            self.new_output_events = 0;
+        }
     }
 
     pub(super) fn follow_output(&mut self) {
         self.run_output_scroll = 0;
+        self.new_output_events = 0;
+    }
+
+    pub(super) fn visible_event_count(&self) -> usize {
+        logical_event_count(self.visible_output(), |_| true)
+    }
+
+    pub(super) fn visible_warning_count(&self) -> usize {
+        logical_event_count(self.visible_output(), |entry| {
+            entry.kind == LogKind::Warning
+        })
+    }
+
+    pub(super) fn visible_error_count(&self) -> usize {
+        logical_event_count(self.visible_output(), |entry| entry.kind == LogKind::Error)
     }
 
     pub(super) fn focus_actions(&mut self) {
@@ -632,8 +693,42 @@ impl MonitorApp {
     }
 }
 
+fn complete_event_drain_count(entries: &[LogEntry], minimum: usize) -> usize {
+    let Some(sequence) = minimum
+        .checked_sub(1)
+        .and_then(|index| entries.get(index))
+        .and_then(|entry| entry.sequence)
+    else {
+        return minimum;
+    };
+    let mut drained = minimum;
+    while entries
+        .get(drained)
+        .is_some_and(|entry| entry.sequence == Some(sequence))
+    {
+        drained += 1;
+    }
+    drained
+}
+
 pub(super) fn shift_log_index_after_drain(index: Option<usize>, drained: usize) -> Option<usize> {
     index.and_then(|idx| idx.checked_sub(drained))
+}
+
+fn logical_event_count(entries: &[LogEntry], include: impl Fn(&LogEntry) -> bool) -> usize {
+    let mut structured = std::collections::BTreeSet::new();
+    let mut legacy = 0usize;
+    for entry in entries
+        .iter()
+        .filter(|entry| include(entry) && is_renderable_output_entry(entry))
+    {
+        if let Some(sequence) = entry.sequence {
+            structured.insert(sequence);
+        } else {
+            legacy = legacy.saturating_add(1);
+        }
+    }
+    legacy.saturating_add(structured.len())
 }
 
 pub(super) fn is_renderable_output_entry(entry: &LogEntry) -> bool {

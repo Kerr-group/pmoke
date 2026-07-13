@@ -20,7 +20,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the v0.3.0 release and compatibility notes.
 - Stores large captures as raw DHO WORD files with scaling metadata.
 - Reads canonical `acquisition/` data, with `raw_waveform/` and `raw.csv` as legacy fallbacks.
 - Produces lock-in, phase-rotated, Kerr, and PNG plot outputs.
-- Opens a live terminal dashboard with `pmoke monitor`.
+- Opens an Activity-focused terminal dashboard with structured live events,
+  paused-history navigation, and warning/error counters via `pmoke monitor`.
 
 ## ⚡ Install
 
@@ -68,6 +69,11 @@ pmoke --config config.toml auto       # single + trigger + fetch + analyze
 ```
 
 If no command is provided, `pmoke` opens `monitor`.
+
+The Activity panel follows new events while it is at the bottom. Scrolling up
+pauses the view and counts unseen events; press `G` to return to the live tail.
+Child commands emit structured JSONL internally, while direct CLI use keeps the
+same concise human-readable log format.
 
 Install shell completion with:
 

@@ -1,5 +1,6 @@
 use crate::cli::ConfigCommand;
 use crate::config::{MigrationPlan, plan_latest_executable_migration, plan_migration};
+use crate::ui;
 use anyhow::{Context, Result, bail};
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
@@ -84,10 +85,10 @@ fn run_migrate(
             .context("failed to flush migrated config to stdout")?;
     } else if in_place {
         replace_in_place(&plan)?;
-        println!("Migrated {} in place.", source.display());
+        ui::saved(format!("migrated {} in place", source.display()));
     } else if let Some(path) = output {
         write_new_output(path, plan.target_toml.as_bytes())?;
-        println!("Wrote migrated config to {}.", path.display());
+        ui::saved(format!("migrated config to {}", path.display()));
     }
 
     Ok(ConfigCommandOutcome { exit_code: 0 })
