@@ -59,18 +59,17 @@ use output::*;
 use panels::*;
 #[cfg(test)]
 use timeline::{
-    StageProgressState, TimelineStep, TimelineStepState, timeline_badge_cell, timeline_for_action,
-    timeline_separator, timeline_step_lines, timeline_step_spans,
+    StageProgressState, TimelineStep, TimelineStepState, timeline_for_action, timeline_separator,
+    timeline_step_lines, timeline_step_spans,
 };
 use timeline::{render_run_timeline, timeline_motion_frame};
 use view::*;
 
 const TUI_IDLE_TICK: Duration = Duration::from_millis(150);
-const TUI_ANIMATION_TICK: Duration = Duration::from_millis(100);
+const TUI_ANIMATION_TICK: Duration = Duration::from_nanos(16_666_667);
 const TUI_REDUCED_MOTION_TICK: Duration = Duration::from_millis(250);
 const CONTEXT_DETAILS_MIN_WIDTH: usize = 60;
 const OUTPUT_PREFIX_WIDTH: u16 = 12;
-const TIMELINE_BADGE_WIDTH: usize = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MotionMode {

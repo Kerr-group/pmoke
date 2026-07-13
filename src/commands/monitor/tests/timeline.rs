@@ -96,21 +96,39 @@ fn current_timeline_step_keeps_its_label_and_pulses_only_its_color() {
     let second = timeline_step_spans(&step, 1);
 
     assert_eq!(first[0].content, second[0].content);
-    assert_eq!(first[0].content.as_ref(), " RUN ");
-    assert_ne!(first[0].style.bg, second[0].style.bg);
+    assert_eq!(first[0].content.as_ref(), "Lock-in");
+    assert_eq!(first[2].content.as_ref(), "running");
+    assert_eq!(first[0].style.bg, None);
+    assert_ne!(first[0].style.fg, second[0].style.fg);
 }
 
 #[test]
-fn timeline_badges_are_centered_in_fixed_cells() {
-    assert_eq!(timeline_badge_cell("DONE"), "DONE ");
-    assert_eq!(timeline_badge_cell("RUN"), " RUN ");
-    assert_eq!(timeline_badge_cell("NEXT"), "NEXT ");
-    assert_eq!(timeline_badge_cell("FAIL"), "FAIL ");
-    assert_eq!(timeline_badge_cell("STOP"), "STOP ");
+fn timeline_states_use_flat_semantic_labels_without_background_boxes() {
+    for (state, expected) in [
+        (TimelineStepState::Done, "Read"),
+        (TimelineStepState::Current, "Read · running"),
+        (TimelineStepState::Pending, "Read"),
+        (TimelineStepState::Failed, "Read · failed"),
+        (TimelineStepState::Stopping, "Read · stopping"),
+    ] {
+        let spans = timeline_step_spans(
+            &TimelineStep {
+                label: "Read",
+                state,
+            },
+            0,
+        );
+        let rendered = spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(rendered, expected);
+        assert!(spans.iter().all(|span| span.style.bg.is_none()));
+    }
 }
 
 #[test]
-fn pending_timeline_step_is_static_and_explicit() {
+fn pending_timeline_step_is_a_static_muted_stage_without_repeated_next_text() {
     let step = TimelineStep {
         label: "Read",
         state: TimelineStepState::Pending,
@@ -120,7 +138,9 @@ fn pending_timeline_step_is_static_and_explicit() {
     let second = timeline_step_spans(&step, 1);
 
     assert_eq!(first[0].content, second[0].content);
-    assert_eq!(first[0].content.as_ref(), "NEXT ");
+    assert_eq!(first[0].content.as_ref(), "Read");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].style.fg, Some(Color::DarkGray));
 }
 
 #[test]
@@ -170,7 +190,7 @@ fn compact_pending_timeline_step_is_static_and_clear() {
 }
 
 #[test]
-fn compact_current_timeline_step_uses_centered_cell() {
+fn compact_current_timeline_step_uses_plain_status_text() {
     let steps = vec![
         TimelineStep {
             label: "Read",
