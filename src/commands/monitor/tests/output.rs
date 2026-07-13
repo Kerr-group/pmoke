@@ -15,6 +15,10 @@ fn structured_events_keep_one_logical_count_and_render_elapsed_time() {
             ("output rate".to_string(), "500 kHz".to_string()),
             ("window".to_string(), "1.71 us".to_string()),
         ],
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
     });
 
     assert_eq!(app.run_output.len(), 3);
@@ -30,8 +34,10 @@ fn structured_events_keep_one_logical_count_and_render_elapsed_time() {
                 .collect::<String>()
         })
         .collect::<Vec<_>>();
-    assert!(rendered[0].starts_with("+00:01.2 "));
+    assert!(rendered[0].starts_with("00:01.2  "));
     assert!(rendered[1].starts_with("         "));
+    assert!(rendered[1].contains("├─ output rate"));
+    assert!(rendered[2].contains("└─ window"));
 }
 
 #[test]
@@ -45,6 +51,10 @@ fn structured_event_line_count_matches_rendering_with_elapsed_prefix() {
         stage: None,
         message: "a message that wraps once the elapsed prefix is reserved".to_string(),
         fields: Vec::new(),
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
     };
     let entries = LogEntry::from_event(&event);
     let rendered = visual_output_lines(&entries, 52, None, None);
@@ -56,7 +66,7 @@ fn structured_event_line_count_matches_rendering_with_elapsed_prefix() {
         .iter()
         .map(|span| span.content.as_ref())
         .collect::<String>();
-    assert!(first.starts_with("+99:59.9 "));
+    assert!(first.starts_with("99:59.9  "));
 }
 
 #[test]
@@ -70,6 +80,10 @@ fn system_events_align_with_the_elapsed_column() {
         stage: None,
         message: "complete".to_string(),
         fields: Vec::new(),
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
     };
     let mut entries = LogEntry::from_event(&event);
     entries.push(LogEntry::new(OutputStream::System, "command finished"));
@@ -84,8 +98,8 @@ fn system_events_align_with_the_elapsed_column() {
         })
         .collect::<Vec<_>>();
 
-    assert!(rendered[0].starts_with("+00:00.2 "));
-    assert!(rendered[1].starts_with("         ◆  SYS"));
+    assert!(rendered[0].starts_with("00:00.2  "));
+    assert!(rendered[1].starts_with("         SYS   command"));
 }
 
 #[test]
@@ -110,6 +124,83 @@ fn carriage_return_progress_replaces_the_previous_transient_line() {
     app.push_output(OutputStream::Stdout, "fetch complete");
     app.push_progress(OutputStream::Stdout, "next 1%");
     assert_eq!(app.run_output.len(), 3);
+}
+
+#[test]
+fn structured_progress_updates_in_place_and_completes_the_same_event() {
+    let mut app = test_app();
+    let progress = |sequence, current| UiEvent {
+        event_type: "event".to_string(),
+        sequence,
+        elapsed_ms: current * 100,
+        level: EventLevel::Info,
+        kind: EventKind::Progress,
+        stage: Some("lockin".to_string()),
+        message: "Lock-in ch3".to_string(),
+        fields: Vec::new(),
+        progress_id: Some("lockin:ch3".to_string()),
+        progress_current: Some(current),
+        progress_total: Some(6),
+        duration_ms: None,
+    };
+    app.push_structured_output(progress(1, 1));
+    app.run_output_scroll = 1;
+    app.push_structured_output(progress(2, 4));
+
+    assert_eq!(app.run_output.len(), 1);
+    assert_eq!(app.visible_event_count(), 1);
+    assert_eq!(app.new_output_events, 0);
+    assert!(app.run_output[0].text.contains("4/6 · 66%"));
+
+    app.push_structured_output(UiEvent {
+        event_type: "event".to_string(),
+        sequence: 3,
+        elapsed_ms: 700,
+        level: EventLevel::Success,
+        kind: EventKind::Status,
+        stage: Some("lockin".to_string()),
+        message: "Lock-in ch3 completed".to_string(),
+        fields: Vec::new(),
+        progress_id: Some("lockin:ch3".to_string()),
+        progress_current: None,
+        progress_total: None,
+        duration_ms: Some(700),
+    });
+
+    assert_eq!(app.run_output.len(), 1);
+    assert_eq!(app.run_output[0].kind, LogKind::Success);
+    assert!(!app.run_output[0].transient);
+    assert!(app.run_output[0].progress_id.is_none());
+    assert!(app.run_output[0].text.contains("completed · 0.7s"));
+}
+
+#[test]
+fn selecting_a_structured_field_selects_the_whole_logical_event() {
+    let mut app = test_app();
+    app.push_structured_output(UiEvent {
+        event_type: "event".to_string(),
+        sequence: 10,
+        elapsed_ms: 100,
+        level: EventLevel::Info,
+        kind: EventKind::Section,
+        stage: None,
+        message: "Reference".to_string(),
+        fields: vec![
+            ("frequency".to_string(), "1 MHz".to_string()),
+            ("phase".to_string(), "0.1 rad".to_string()),
+        ],
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
+    });
+    app.output_selected = Some(1);
+
+    assert_eq!(app.output_selection_range(), Some((0, 2)));
+    let copied = app.selected_output_text().unwrap();
+    assert!(copied.contains("Reference"));
+    assert!(copied.contains("frequency"));
+    assert!(copied.contains("phase"));
 }
 
 #[test]
@@ -386,11 +477,22 @@ fn visual_output_lines_strip_ansi_and_add_badges() {
 }
 
 #[test]
-fn event_feed_badges_are_centered_in_fixed_cells() {
-    assert_eq!(event_badge_cell(LogKind::Success), "  OK  ");
-    assert_eq!(event_badge_cell(LogKind::System), " SYS  ");
-    assert_eq!(event_badge_cell(LogKind::Save), " SAVE ");
-    assert_eq!(event_badge_cell(LogKind::Skipped), " SKIP ");
+fn event_labels_are_clear_and_fit_the_fixed_tag_column() {
+    for kind in [
+        LogKind::Plain,
+        LogKind::System,
+        LogKind::Success,
+        LogKind::Info,
+        LogKind::Read,
+        LogKind::Save,
+        LogKind::Fit,
+        LogKind::Skipped,
+        LogKind::Warning,
+        LogKind::Error,
+        LogKind::Section,
+    ] {
+        assert!(kind.label().width_cjk() <= 5, "{:?}", kind);
+    }
 }
 
 #[test]
@@ -401,7 +503,9 @@ fn display_padding_uses_cjk_width() {
 
 #[test]
 fn latest_event_feed_line_animates_when_running() {
-    let entries = vec![LogEntry::new(OutputStream::Stdout, "[  OK   ] done")];
+    let mut entry = LogEntry::new(OutputStream::Stdout, "working");
+    entry.transient = true;
+    let entries = vec![entry];
 
     let first = visual_output_lines_with_motion(&entries, 80, None, None, true, 0);
     let second = visual_output_lines_with_motion(&entries, 80, None, None, true, 1);
@@ -418,17 +522,39 @@ fn latest_event_feed_line_animates_when_running() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(first_text.starts_with("▁ "));
-    assert!(second_text.starts_with("▃ "));
-    assert_ne!(first_text, second_text);
+    assert!(first_text.starts_with("RUN   "));
+    assert_eq!(first_text, second_text);
+    assert_ne!(
+        first[0].line.spans[0].style.fg,
+        second[0].line.spans[0].style.fg
+    );
+}
+
+#[test]
+fn completed_latest_event_keeps_its_semantic_label_while_command_is_running() {
+    let entries = vec![LogEntry::new(
+        OutputStream::Stdout,
+        "[ WARN ] check scaling",
+    )];
+    let lines = visual_output_lines_with_motion(&entries, 80, None, None, true, 0);
+    let text = lines[0]
+        .line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(text.starts_with("WARN  "));
 }
 
 #[test]
 fn latest_wrapped_event_line_keeps_live_highlight_on_continuation() {
-    let entries = vec![LogEntry::new(
+    let mut entry = LogEntry::new(
         OutputStream::System,
         "pmoke --config config.toml fetch Fetch oscilloscope data using the configured output format.",
-    )];
+    );
+    entry.transient = true;
+    let entries = vec![entry];
 
     let lines = visual_output_lines_with_motion(&entries, 36, None, None, true, 0);
 
@@ -445,10 +571,12 @@ fn latest_wrapped_event_line_keeps_live_highlight_on_continuation() {
 
 #[test]
 fn latest_wrapped_metric_line_keeps_live_highlight_on_continuation() {
-    let entries = vec![LogEntry::new(
+    let mut entry = LogEntry::new(
         OutputStream::Stdout,
         "│ output     Fetch oscilloscope data using the configured output format.",
-    )];
+    );
+    entry.transient = true;
+    let entries = vec![entry];
 
     let lines = visual_output_lines_with_motion(&entries, 34, None, None, true, 0);
 
@@ -550,7 +678,7 @@ fn compact_panel_continuation_renders_without_raw_pipe() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert!(rendered.contains("↳ stride_samples=100"));
+    assert!(rendered.contains("└─ stride_samples=100"));
     assert!(!rendered.contains("│            stride_samples"));
 }
 
@@ -558,19 +686,19 @@ fn compact_panel_continuation_renders_without_raw_pipe() {
 fn visual_output_line_count_does_not_overcount_exact_width() {
     let entries = vec![LogEntry::new(OutputStream::Stdout, "abcdefghijklm")];
 
-    assert_eq!(visual_output_line_count(&entries, 26), 1);
-    assert_eq!(visual_output_line_count(&entries, 25), 2);
+    assert_eq!(visual_output_line_count(&entries, 19), 1);
+    assert_eq!(visual_output_line_count(&entries, 18), 2);
 }
 
 #[test]
 fn visual_output_line_count_uses_cjk_display_width() {
     let entries = vec![LogEntry::new(OutputStream::Stdout, "○○○○○○○")];
 
-    assert_eq!(visual_output_line_count(&entries, 27), 1);
-    assert_eq!(visual_output_line_count(&entries, 26), 2);
+    assert_eq!(visual_output_line_count(&entries, 20), 1);
+    assert_eq!(visual_output_line_count(&entries, 19), 2);
     assert_eq!(
-        visual_output_line_count(&entries, 26),
-        visual_output_lines(&entries, 26, None, None).len()
+        visual_output_line_count(&entries, 19),
+        visual_output_lines(&entries, 19, None, None).len()
     );
 }
 

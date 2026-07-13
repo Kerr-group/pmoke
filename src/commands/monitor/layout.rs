@@ -133,30 +133,7 @@ pub(super) fn output_inner_layout(area: Rect) -> OutputSections {
 }
 
 pub(super) fn output_visible_rows(log_area: Rect) -> usize {
-    log_area.height.saturating_sub(1).max(1) as usize
-}
-
-pub(super) fn latest_event_feed_effect_area(
-    log_content: Rect,
-    visual_line_count: usize,
-    visible_rows: usize,
-    effective_scroll: usize,
-) -> Option<Rect> {
-    if effective_scroll != 0 || visual_line_count == 0 || log_content.height == 0 {
-        return None;
-    }
-    let visible_count = visual_line_count
-        .min(visible_rows)
-        .min(log_content.height as usize);
-    if visible_count == 0 || log_content.width <= 1 {
-        return None;
-    }
-    Some(Rect {
-        x: log_content.x,
-        y: log_content.y + visible_count as u16 - 1,
-        width: log_content.width.saturating_sub(1),
-        height: 1,
-    })
+    log_area.height.max(1) as usize
 }
 
 pub(super) fn config_panel_layout(area: Rect) -> (Rect, Rect) {

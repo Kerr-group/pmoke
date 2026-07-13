@@ -23,17 +23,6 @@ fn keeps_lockin_settings_in_live_output() {
 }
 
 #[test]
-fn tui_tick_uses_60fps_while_effects_are_running() {
-    let mut app = test_app();
-
-    assert_eq!(tui_frame_tick(&app), TUI_IDLE_TICK);
-    app.push_output(OutputStream::Stdout, "[ INFO ] running");
-
-    assert_eq!(tui_frame_tick(&app), TUI_ANIMATION_TICK);
-    assert_eq!(TUI_ANIMATION_TICK, Duration::from_millis(16));
-}
-
-#[test]
 fn strips_csi_ansi_codes() {
     assert_eq!(strip_ansi_codes("\x1b[1;36mLock-in\x1b[0m"), "Lock-in");
 }
@@ -76,50 +65,17 @@ fn output_layout_uses_status_and_log_regions_only() {
 }
 
 #[test]
+fn activity_uses_every_available_log_row_without_the_removed_inner_header() {
+    assert_eq!(output_visible_rows(Rect::new(0, 0, 80, 8)), 8);
+}
+
+#[test]
 fn output_layout_hides_timeline_when_too_short() {
     let sections = output_inner_layout(Rect::new(0, 0, 80, 6));
 
     assert_eq!(sections.status.height, 1);
     assert_eq!(sections.timeline.height, 0);
     assert!(sections.log.height > 0);
-}
-
-#[test]
-fn latest_event_feed_effect_area_targets_last_visible_row() {
-    let area = latest_event_feed_effect_area(Rect::new(3, 5, 40, 8), 12, 8, 0)
-        .expect("latest row should be visible");
-
-    assert_eq!(area, Rect::new(3, 12, 39, 1));
-    assert_eq!(
-        latest_event_feed_effect_area(Rect::new(3, 5, 40, 8), 12, 8, 1),
-        None
-    );
-}
-
-#[test]
-fn pushing_output_starts_event_feed_effect() {
-    let mut app = test_app();
-
-    app.push_output(OutputStream::Stdout, "[ INFO ] running");
-
-    assert!(app.effects.is_running());
-}
-
-#[test]
-fn hidden_event_feed_effects_advance_to_idle() {
-    let mut app = test_app();
-    app.push_output(OutputStream::Stdout, "[ INFO ] running");
-    let mut buffer = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 4, 1));
-
-    process_event_feed_effects(
-        &mut app,
-        FxDuration::from_millis(EVENT_FEED_EFFECT_MS * 2),
-        &mut buffer,
-        None,
-    );
-
-    assert!(!app.effects.is_running());
-    assert_eq!(tui_frame_tick(&app), TUI_IDLE_TICK);
 }
 
 #[test]
@@ -130,7 +86,7 @@ fn timeline_separator_uses_full_available_width() {
 }
 
 #[test]
-fn current_timeline_step_animates_with_motion_frame() {
+fn current_timeline_step_keeps_its_label_and_pulses_only_its_color() {
     let step = TimelineStep {
         label: "Lock-in",
         state: TimelineStepState::Current,
@@ -139,23 +95,22 @@ fn current_timeline_step_animates_with_motion_frame() {
     let first = timeline_step_spans(&step, 0);
     let second = timeline_step_spans(&step, 1);
 
-    assert_ne!(first[0].content, second[0].content);
-    assert_eq!(first[0].content.as_ref(), "  ◜  ");
-    assert_eq!(second[0].content.as_ref(), "  ◝  ");
+    assert_eq!(first[0].content, second[0].content);
+    assert_eq!(first[0].content.as_ref(), " RUN ");
+    assert_ne!(first[0].style.bg, second[0].style.bg);
 }
 
 #[test]
 fn timeline_badges_are_centered_in_fixed_cells() {
-    assert_eq!(timeline_badge_cell("◜"), "  ◜  ");
-    assert_eq!(timeline_badge_cell("◝"), "  ◝  ");
-    assert_eq!(timeline_badge_cell("✓"), "  ✓  ");
-    assert_eq!(timeline_badge_cell("░"), "  ░  ");
-    assert_eq!(timeline_badge_cell("▒"), "  ▒  ");
-    assert_eq!(timeline_badge_cell("!"), "  !  ");
+    assert_eq!(timeline_badge_cell("DONE"), "DONE ");
+    assert_eq!(timeline_badge_cell("RUN"), " RUN ");
+    assert_eq!(timeline_badge_cell("NEXT"), "NEXT ");
+    assert_eq!(timeline_badge_cell("FAIL"), "FAIL ");
+    assert_eq!(timeline_badge_cell("STOP"), "STOP ");
 }
 
 #[test]
-fn pending_timeline_step_animates_in_centered_cell() {
+fn pending_timeline_step_is_static_and_explicit() {
     let step = TimelineStep {
         label: "Read",
         state: TimelineStepState::Pending,
@@ -164,13 +119,12 @@ fn pending_timeline_step_animates_in_centered_cell() {
     let first = timeline_step_spans(&step, 0);
     let second = timeline_step_spans(&step, 1);
 
-    assert_ne!(first[0].content, second[0].content);
-    assert_eq!(first[0].content.as_ref(), "  ░  ");
-    assert_eq!(second[0].content.as_ref(), "  ▒  ");
+    assert_eq!(first[0].content, second[0].content);
+    assert_eq!(first[0].content.as_ref(), "NEXT ");
 }
 
 #[test]
-fn compact_pending_timeline_step_animates_in_centered_cells() {
+fn compact_pending_timeline_step_is_static_and_clear() {
     let steps = vec![
         TimelineStep {
             label: "Read",
@@ -195,8 +149,8 @@ fn compact_pending_timeline_step_animates_in_centered_cells() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert_eq!(first_text, " ░ ─ ░ ");
-    assert_eq!(second_text, " ▒ ─ ▒ ");
+    assert_eq!(first_text, "...─...");
+    assert_eq!(second_text, "...─...");
     assert_eq!(
         unicode_width::UnicodeWidthStr::width(first[0].spans[0].content.as_ref()),
         3
@@ -235,9 +189,9 @@ fn compact_current_timeline_step_uses_centered_cell() {
         .map(|span| span.content.as_ref())
         .collect::<String>();
 
-    assert_eq!(rendered, " ◜ ─ ░ ");
-    assert_eq!(lines[0].spans[0].content.as_ref(), " ◜ ");
-    assert_eq!(lines[0].spans[2].content.as_ref(), " ░ ");
+    assert_eq!(rendered, "RUN─...");
+    assert_eq!(lines[0].spans[0].content.as_ref(), "RUN");
+    assert_eq!(lines[0].spans[2].content.as_ref(), "...");
     assert_eq!(
         unicode_width::UnicodeWidthStr::width(lines[0].spans[0].content.as_ref()),
         3
@@ -300,9 +254,9 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
             .sum::<usize>()
             <= 14
     }));
-    assert_eq!(rendered.chars().filter(|ch| *ch == '✓').count(), 2);
-    assert_eq!(rendered.chars().filter(|ch| *ch == '░').count(), 3);
-    assert!(rendered.contains('◜'));
+    assert_eq!(rendered.matches("OK").count(), 2);
+    assert_eq!(rendered.matches("...").count(), 3);
+    assert!(rendered.contains("RUN"));
 }
 
 #[test]

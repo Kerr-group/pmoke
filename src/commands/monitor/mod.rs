@@ -27,8 +27,6 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime},
 };
-use tachyonfx::{CellFilter, Duration as FxDuration, EffectManager, Interpolation, Motion, fx};
-use tui_spinner::FluxFrames;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 mod actions;
@@ -49,14 +47,13 @@ use app::*;
 use clipboard::base64_encode;
 use clipboard::{ClipboardMethod, copy_text_to_clipboard};
 use formatting::{
-    bordered_inner, centered_rect, centered_text, contains, fit_path, fit_text, format_age,
-    format_duration, format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
+    bordered_inner, centered_rect, contains, fit_path, fit_text, format_age, format_duration,
+    format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
 };
 #[cfg(test)]
 use layout::workflow_panel_width;
 use layout::{
-    UiLayout, config_panel_layout, latest_event_feed_effect_area, output_inner_layout,
-    output_visible_rows, workflow_layout,
+    UiLayout, config_panel_layout, output_inner_layout, output_visible_rows, workflow_layout,
 };
 use output::*;
 use panels::*;
@@ -65,16 +62,40 @@ use timeline::{
     StageProgressState, TimelineStep, TimelineStepState, timeline_badge_cell, timeline_for_action,
     timeline_separator, timeline_step_lines, timeline_step_spans,
 };
-use timeline::{render_run_timeline, spinner_frame, timeline_motion_frame};
+use timeline::{render_run_timeline, timeline_motion_frame};
 use view::*;
 
 const TUI_IDLE_TICK: Duration = Duration::from_millis(150);
-const TUI_ANIMATION_TICK: Duration = Duration::from_millis(16);
+const TUI_ANIMATION_TICK: Duration = Duration::from_millis(100);
+const TUI_REDUCED_MOTION_TICK: Duration = Duration::from_millis(250);
 const CONTEXT_DETAILS_MIN_WIDTH: usize = 60;
 const OUTPUT_PREFIX_WIDTH: u16 = 12;
-const EVENT_BADGE_WIDTH: usize = 6;
 const TIMELINE_BADGE_WIDTH: usize = 5;
-const EVENT_FEED_EFFECT_MS: u32 = 520;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MotionMode {
+    Full,
+    Reduced,
+    Off,
+}
+
+impl MotionMode {
+    fn from_env() -> Self {
+        match env::var("PMOKE_MOTION")
+            .unwrap_or_else(|_| "full".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "off" => Self::Off,
+            "reduced" => Self::Reduced,
+            _ => Self::Full,
+        }
+    }
+
+    fn animates(self) -> bool {
+        self != Self::Off
+    }
+}
 
 struct TerminalGuard<'a> {
     terminal: &'a mut Terminal<CrosstermBackend<Stdout>>,
@@ -156,17 +177,6 @@ pub fn monitor(config_path: &str, load: ConfigLoad) -> Result<()> {
         Err(error) => Err(error),
         Ok(()) => restore_result,
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-enum MonitorEffect {
-    #[default]
-    EventFeedLatest,
-}
-
-fn fx_duration(elapsed: Duration) -> FxDuration {
-    let millis = elapsed.as_millis().min(u128::from(u32::MAX)) as u32;
-    FxDuration::from_millis(millis)
 }
 
 #[derive(Clone)]
@@ -258,6 +268,15 @@ struct LogEntry {
     event_head: bool,
     stream: OutputStream,
     transient: bool,
+    field: Option<StructuredField>,
+    progress_id: Option<String>,
+}
+
+#[derive(Clone)]
+struct StructuredField {
+    key: String,
+    value: String,
+    last: bool,
 }
 
 impl LogEntry {
@@ -273,6 +292,8 @@ impl LogEntry {
             event_head: false,
             stream,
             transient: false,
+            field: None,
+            progress_id: None,
         }
     }
 
@@ -285,16 +306,31 @@ impl LogEntry {
             event_head: false,
             stream,
             transient: false,
+            field: None,
+            progress_id: None,
         }
     }
 
     fn from_event(event: &UiEvent) -> Vec<Self> {
         let kind = log_kind_for_event(event);
-        let text = if event.kind == EventKind::Section {
+        let active_progress_id = (event.kind == EventKind::Progress)
+            .then(|| event.progress_id.clone())
+            .flatten();
+        let mut text = if event.kind == EventKind::Section {
             format!("╭─ {}", event.message)
         } else {
             event.message.clone()
         };
+        if let (Some(current), Some(total)) = (event.progress_current, event.progress_total) {
+            let percent = if total == 0 {
+                0
+            } else {
+                ((u128::from(current) * 100) / u128::from(total)).min(100) as u64
+            };
+            text.push_str(&format!(" · {current}/{total} · {percent}%"));
+        } else if let Some(duration_ms) = event.duration_ms {
+            text.push_str(&format!(" · {:.1}s", duration_ms as f64 / 1_000.0));
+        }
         let mut entries = vec![Self {
             text,
             kind,
@@ -303,16 +339,31 @@ impl LogEntry {
             event_head: true,
             stream: OutputStream::Stdout,
             transient: event.kind == EventKind::Progress,
+            field: None,
+            progress_id: active_progress_id.clone(),
         }];
-        entries.extend(event.fields.iter().map(|(key, value)| Self {
-            text: format!("│ {key}  {value}"),
-            kind: LogKind::Metric,
-            sequence: Some(event.sequence),
-            elapsed_ms: Some(event.elapsed_ms),
-            event_head: false,
-            stream: OutputStream::Stdout,
-            transient: false,
-        }));
+        let field_count = event.fields.len();
+        entries.extend(
+            event
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(index, (key, value))| Self {
+                    text: format!("{key}  {value}"),
+                    kind: LogKind::Metric,
+                    sequence: Some(event.sequence),
+                    elapsed_ms: Some(event.elapsed_ms),
+                    event_head: false,
+                    stream: OutputStream::Stdout,
+                    transient: false,
+                    field: Some(StructuredField {
+                        key: key.clone(),
+                        value: value.clone(),
+                        last: index + 1 == field_count,
+                    }),
+                    progress_id: active_progress_id.clone(),
+                }),
+        );
         entries
     }
 }
@@ -389,8 +440,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) -> Result<()> {
     loop {
         app.poll_command();
-        let effect_delta = app.effect_delta();
-        terminal.draw(|frame| render(frame, app, effect_delta))?;
+        terminal.draw(|frame| render(frame, app))?;
 
         let tick = tui_frame_tick(app);
         if event::poll(tick)? {
@@ -519,10 +569,10 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
 }
 
 fn tui_frame_tick(app: &MonitorApp) -> Duration {
-    if app.command_running() || app.effects.is_running() {
-        TUI_ANIMATION_TICK
-    } else {
-        TUI_IDLE_TICK
+    match app.motion_mode {
+        MotionMode::Full if app.command_running() => TUI_ANIMATION_TICK,
+        MotionMode::Reduced if app.command_running() => TUI_REDUCED_MOTION_TICK,
+        _ => TUI_IDLE_TICK,
     }
 }
 
@@ -1172,7 +1222,7 @@ fn spawn_stream_reader<R: Read + Send + 'static>(
             } else {
                 RunEvent::Output(kind, text)
             };
-            tx.send(event)
+            tx.send(event).is_ok()
         };
 
         loop {
@@ -1187,14 +1237,14 @@ fn spawn_stream_reader<R: Read + Send + 'static>(
                     for &byte in &read_buf[..read] {
                         if previous_was_cr {
                             if byte == b'\n' {
-                                if emit(&record, false).is_err() {
+                                if !emit(&record, false) {
                                     return;
                                 }
                                 record.clear();
                                 previous_was_cr = false;
                                 continue;
                             }
-                            if emit(&record, true).is_err() {
+                            if !emit(&record, true) {
                                 return;
                             }
                             record.clear();
@@ -1205,7 +1255,7 @@ fn spawn_stream_reader<R: Read + Send + 'static>(
                                 previous_was_cr = true;
                             }
                             b'\n' => {
-                                if emit(&record, false).is_err() {
+                                if !emit(&record, false) {
                                     return;
                                 }
                                 record.clear();

@@ -1660,7 +1660,7 @@ pub fn fetch_all_channels(
     handler: &mut OscilloscopeHandler,
     channels: &[u8],
     depth: usize,
-    progress: &indicatif::ProgressBar,
+    progress: &ui::UiProgress,
 ) -> Result<WaveformData> {
     let mut data: Vec<Vec<f64>> = Vec::with_capacity(channels.len());
     let mut time_axis = None;

@@ -75,6 +75,10 @@ pauses the view and counts unseen events; press `G` to return to the live tail.
 Child commands emit structured JSONL internally, while direct CLI use keeps the
 same concise human-readable log format.
 
+Activity motion defaults to `full`. Set `PMOKE_MOTION=reduced` for slower live
+updates, or `PMOKE_MOTION=off` for a static dashboard. Activity uses calm status
+labels rather than animated arrival effects.
+
 Install shell completion with:
 
 ```powershell

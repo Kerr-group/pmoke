@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn render(frame: &mut Frame<'_>, app: &mut MonitorApp, effect_delta: FxDuration) {
+pub(super) fn render(frame: &mut Frame<'_>, app: &mut MonitorApp) {
     let area = frame.area();
     frame.render_widget(Clear, area);
 
@@ -14,7 +14,7 @@ pub(super) fn render(frame: &mut Frame<'_>, app: &mut MonitorApp, effect_delta: 
         .split(area);
 
     render_header(frame, app, outer[0]);
-    render_body(frame, app, outer[1], effect_delta);
+    render_body(frame, app, outer[1]);
     render_footer(frame, app, outer[2]);
 
     if app.show_help {
@@ -177,16 +177,11 @@ pub(super) fn fit_context_path(path: &str, width: usize) -> String {
     format!("{prefix}{}", tail.into_iter().collect::<String>())
 }
 
-pub(super) fn render_body(
-    frame: &mut Frame<'_>,
-    app: &mut MonitorApp,
-    area: Rect,
-    effect_delta: FxDuration,
-) {
+pub(super) fn render_body(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rect) {
     let layout = UiLayout::new(area);
     render_command_palette(frame, app, layout.workflow);
     render_inspector(frame, app, layout.inspector);
-    render_run_output(frame, app, layout.activity, effect_delta);
+    render_run_output(frame, app, layout.activity);
 }
 
 pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
@@ -209,18 +204,6 @@ pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
         Span::styled(format!("[{focus}]"), Style::default().fg(Color::DarkGray)),
     ]);
     frame.render_widget(Paragraph::new(line), area);
-}
-
-pub(super) fn process_event_feed_effects(
-    app: &mut MonitorApp,
-    effect_delta: FxDuration,
-    buffer: &mut ratatui::buffer::Buffer,
-    area: Option<Rect>,
-) {
-    if app.effects.is_running() {
-        app.effects
-            .process_effects(effect_delta, buffer, area.unwrap_or_default());
-    }
 }
 
 pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
@@ -515,12 +498,7 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
     );
 }
 
-pub(super) fn render_run_output(
-    frame: &mut Frame<'_>,
-    app: &mut MonitorApp,
-    area: Rect,
-    effect_delta: FxDuration,
-) {
+pub(super) fn render_run_output(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rect) {
     let output = app.visible_output();
     let block_base = Block::default()
         .borders(Borders::ALL)
@@ -560,7 +538,6 @@ pub(super) fn render_run_output(
     render_run_timeline(frame, app, output_sections.timeline);
 
     if log_area.height == 0 || log_area.width == 0 {
-        process_event_feed_effects(app, effect_delta, frame.buffer_mut(), None);
         return;
     }
 
@@ -575,7 +552,10 @@ pub(super) fn render_run_output(
             log_width,
             app.output_selection_range(),
             app.output_selected,
-            app.command_running() && app.history_view.is_none(),
+            app.motion_mode.animates()
+                && app.command_running()
+                && app.history_view.is_none()
+                && effective_scroll == 0,
             timeline_motion_frame(app),
         );
         let end = visual_lines.len().saturating_sub(effective_scroll);
@@ -587,34 +567,11 @@ pub(super) fn render_run_output(
             .map(|line| line.line)
             .collect()
     };
-    let log_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(log_area);
-    frame.render_widget(
-        output_header(
-            log_chunks[0].width,
-            effective_scroll == 0 && app.history_view.is_none(),
-            timeline_motion_frame(app),
-        ),
-        log_chunks[0],
-    );
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        log_chunks[1],
-    );
-
-    let effect_area = latest_event_feed_effect_area(
-        log_chunks[1],
-        visual_line_count,
-        visible_rows,
-        effective_scroll,
-    );
-    process_event_feed_effects(app, effect_delta, frame.buffer_mut(), effect_area);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
 
     render_output_scrollbar(
         frame.buffer_mut(),
-        log_chunks[1],
+        log_area,
         visual_line_count,
         visible_rows,
         effective_scroll,
@@ -631,16 +588,19 @@ pub(super) fn activity_title(app: &MonitorApp, effective_scroll: usize, width: u
             "PAUSED · G follow".to_string()
         }
     } else if let Some(run) = &app.active_run {
-        let state = if run.cancel_requested {
-            "STOPPING"
+        if run.cancel_requested {
+            format!(
+                "STOPPING · {} · {}",
+                run.label,
+                format_live_duration(run.started_at.elapsed())
+            )
         } else {
-            "RUNNING"
-        };
-        format!(
-            "LIVE · {state} · {} · {}",
-            run.label,
-            format_live_duration(run.started_at.elapsed())
-        )
+            format!(
+                "LIVE · {} · {}",
+                run.label,
+                format_live_duration(run.started_at.elapsed())
+            )
+        }
     } else if app.last_run.as_ref().is_some_and(|run| !run.ok) {
         "LIVE · FAILED".to_string()
     } else {
@@ -711,49 +671,6 @@ pub(super) fn output_scrollbar_thumb(
         .unwrap_or(0);
 
     Some((thumb_start, thumb_len))
-}
-
-pub(super) fn output_header(width: u16, running: bool, frame: usize) -> Paragraph<'static> {
-    Paragraph::new(Line::from(output_header_spans_with_motion(
-        width, running, frame,
-    )))
-}
-
-#[cfg(test)]
-pub(super) fn output_header_spans(width: u16) -> Vec<Span<'static>> {
-    output_header_spans_with_motion(width, false, 0)
-}
-
-pub(super) fn output_header_spans_with_motion(
-    _width: u16,
-    live: bool,
-    frame: usize,
-) -> Vec<Span<'static>> {
-    let scanner = event_feed_spinner_symbol(frame);
-    let scanner_style = Style::default()
-        .fg(event_feed_pulse_color(frame))
-        .add_modifier(Modifier::BOLD);
-    let spans = vec![
-        Span::styled(
-            if live { " LIVE LOG " } else { " EVENT LOG " },
-            Style::default()
-                .fg(Color::Black)
-                .bg(if live { Color::Cyan } else { Color::Gray })
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-        if live {
-            Span::styled(format!("{scanner} live"), scanner_style)
-        } else {
-            Span::styled("paused", Style::default().fg(Color::Gray))
-        },
-    ];
-
-    spans
-}
-
-pub(super) fn event_feed_spinner_symbol(frame: usize) -> char {
-    spinner_frame(FluxFrames::PISTON, frame)
 }
 
 pub(super) fn event_feed_pulse_color(frame: usize) -> Color {

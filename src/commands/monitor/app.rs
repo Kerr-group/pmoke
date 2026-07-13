@@ -28,8 +28,7 @@ pub(super) struct MonitorApp {
     pub(super) files_scroll: usize,
     pub(super) copy_status: Option<String>,
     pub(super) show_help: bool,
-    pub(super) effects: EffectManager<MonitorEffect>,
-    pub(super) last_effect_frame: Instant,
+    pub(super) motion_mode: MotionMode,
 }
 
 impl MonitorApp {
@@ -67,8 +66,7 @@ impl MonitorApp {
             files_scroll: 0,
             copy_status: None,
             show_help: false,
-            effects: EffectManager::default(),
-            last_effect_frame: Instant::now(),
+            motion_mode: MotionMode::from_env(),
         }
     }
 
@@ -379,6 +377,36 @@ impl MonitorApp {
 
     pub(super) fn push_structured_output(&mut self, event: UiEvent) {
         let entries = LogEntry::from_event(&event);
+        if let Some(progress_id) = event.progress_id.as_deref()
+            && let Some(start) = self
+                .run_output
+                .iter()
+                .position(|entry| entry.progress_id.as_deref() == Some(progress_id))
+        {
+            let end = self.run_output[start..]
+                .iter()
+                .position(|entry| entry.progress_id.as_deref() != Some(progress_id))
+                .map_or(self.run_output.len(), |offset| start + offset);
+            let old_len = end - start;
+            let new_len = entries.len();
+            self.run_output.splice(start..end, entries);
+            if self.history_view.is_none() && self.run_output_scroll > 0 {
+                self.run_output_scroll = if new_len >= old_len {
+                    self.run_output_scroll.saturating_add(new_len - old_len)
+                } else {
+                    self.run_output_scroll.saturating_sub(old_len - new_len)
+                };
+            }
+            self.output_selected =
+                shift_index_after_replacement(self.output_selected, start, old_len, new_len);
+            self.output_selection_anchor = shift_index_after_replacement(
+                self.output_selection_anchor,
+                start,
+                old_len,
+                new_len,
+            );
+            return;
+        }
         let appended = entries.len();
         self.run_output.extend(entries);
         self.after_output_appended(appended, 1);
@@ -397,7 +425,6 @@ impl MonitorApp {
         {
             last.text = text.to_string();
             last.kind = kind;
-            self.trigger_event_feed_effect();
             return;
         }
         let mut entry = LogEntry::with_kind(text.to_string(), kind, stream);
@@ -414,10 +441,10 @@ impl MonitorApp {
             self.run_output_scroll += appended_entries;
             self.new_output_events = self.new_output_events.saturating_add(appended_events);
         }
-        const MAX_LOG_LINES: usize = 1_000;
-        if self.run_output.len() > MAX_LOG_LINES {
-            let minimum = self.run_output.len() - MAX_LOG_LINES;
-            let drained = complete_event_drain_count(&self.run_output, minimum);
+        const MAX_LOG_EVENTS: usize = 1_000;
+        let event_count = stored_event_count(&self.run_output);
+        if event_count > MAX_LOG_EVENTS {
+            let drained = drain_count_for_events(&self.run_output, event_count - MAX_LOG_EVENTS);
             self.run_output.drain(0..drained);
             if self.history_view.is_none() {
                 self.run_output_scroll = self.run_output_scroll.saturating_sub(drained);
@@ -430,34 +457,6 @@ impl MonitorApp {
             self.output_selected = None;
             self.output_selection_anchor = None;
         }
-        self.trigger_event_feed_effect();
-    }
-
-    pub(super) fn trigger_event_feed_effect(&mut self) {
-        let effect = fx::parallel(&[
-            fx::sweep_in(
-                Motion::LeftToRight,
-                10,
-                0,
-                Color::Black,
-                (EVENT_FEED_EFFECT_MS, Interpolation::SineOut),
-            )
-            .with_filter(CellFilter::Text),
-            fx::fade_from_fg(
-                Color::LightCyan,
-                (EVENT_FEED_EFFECT_MS, Interpolation::QuadOut),
-            )
-            .with_filter(CellFilter::Text),
-        ]);
-        self.effects
-            .add_unique_effect(MonitorEffect::EventFeedLatest, effect);
-    }
-
-    pub(super) fn effect_delta(&mut self) -> FxDuration {
-        let now = Instant::now();
-        let elapsed = now.saturating_duration_since(self.last_effect_frame);
-        self.last_effect_frame = now;
-        fx_duration(elapsed)
     }
 
     pub(super) fn scroll_output_up(&mut self, lines: usize) {
@@ -620,7 +619,20 @@ impl MonitorApp {
     pub(super) fn output_selection_range(&self) -> Option<(usize, usize)> {
         let cursor = self.output_selected?;
         let anchor = self.output_selection_anchor.unwrap_or(cursor);
-        Some((anchor.min(cursor), anchor.max(cursor)))
+        let output = self.visible_output();
+        let mut start = anchor.min(cursor);
+        let mut end = anchor.max(cursor);
+        if let Some(sequence) = output.get(start).and_then(|entry| entry.sequence) {
+            while start > 0 && output[start - 1].sequence == Some(sequence) {
+                start -= 1;
+            }
+        }
+        if let Some(sequence) = output.get(end).and_then(|entry| entry.sequence) {
+            while end + 1 < output.len() && output[end + 1].sequence == Some(sequence) {
+                end += 1;
+            }
+        }
+        Some((start, end))
     }
 
     pub(super) fn output_selection_line_count(&self) -> usize {
@@ -693,26 +705,57 @@ impl MonitorApp {
     }
 }
 
-fn complete_event_drain_count(entries: &[LogEntry], minimum: usize) -> usize {
-    let Some(sequence) = minimum
-        .checked_sub(1)
-        .and_then(|index| entries.get(index))
-        .and_then(|entry| entry.sequence)
-    else {
-        return minimum;
-    };
-    let mut drained = minimum;
-    while entries
-        .get(drained)
-        .is_some_and(|entry| entry.sequence == Some(sequence))
-    {
+fn stored_event_count(entries: &[LogEntry]) -> usize {
+    let mut count = 0usize;
+    let mut previous_sequence = None;
+    for entry in entries {
+        if entry.sequence.is_none() || entry.sequence != previous_sequence {
+            count = count.saturating_add(1);
+        }
+        previous_sequence = entry.sequence;
+    }
+    count
+}
+
+fn drain_count_for_events(entries: &[LogEntry], events: usize) -> usize {
+    let mut drained = 0usize;
+    let mut removed = 0usize;
+    while drained < entries.len() && removed < events {
+        let sequence = entries[drained].sequence;
         drained += 1;
+        while sequence.is_some()
+            && entries
+                .get(drained)
+                .is_some_and(|entry| entry.sequence == sequence)
+        {
+            drained += 1;
+        }
+        removed += 1;
     }
     drained
 }
 
 pub(super) fn shift_log_index_after_drain(index: Option<usize>, drained: usize) -> Option<usize> {
     index.and_then(|idx| idx.checked_sub(drained))
+}
+
+fn shift_index_after_replacement(
+    index: Option<usize>,
+    start: usize,
+    old_len: usize,
+    new_len: usize,
+) -> Option<usize> {
+    index.map(|index| {
+        if index < start {
+            index
+        } else if index < start + old_len {
+            start + new_len.saturating_sub(1)
+        } else if new_len >= old_len {
+            index.saturating_add(new_len - old_len)
+        } else {
+            index.saturating_sub(old_len - new_len)
+        }
+    })
 }
 
 fn logical_event_count(entries: &[LogEntry], include: impl Fn(&LogEntry) -> bool) -> usize {

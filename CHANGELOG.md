@@ -10,6 +10,13 @@
   output retains the concise human-readable renderer.
 - Carriage-return progress updates are coalesced instead of filling the Activity
   history, and elapsed event times are shown when the terminal is wide enough.
+- Activity events now use clear, compact status labels and structured tree
+  fields; `PMOKE_MOTION=full|reduced|off` controls calm live motion without
+  animated arrival sweeps.
+- Structured progress identities update in place and transition to completion
+  without increasing event or unread counts.
+- Timeline states use static `DONE/RUN/NEXT/FAIL/STOP` labels; only the current
+  state's color pulses, and failed or skipped progress is explicitly terminated.
 - Analysis commands are safely rerunnable as new transactional generations, including when analysis-only config values change.
 - Each published analysis stores its own `analysis/config.source.toml` and `analysis/config.resolved.toml`; root config snapshots remain immutable acquisition provenance.
 - Analysis manifest schema 3 records generation numbers, config and acquisition checksums, the published stage, and stage-scoped config fingerprints.
