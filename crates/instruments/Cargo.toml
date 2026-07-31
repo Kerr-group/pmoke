@@ -12,7 +12,7 @@ prologix-serial = ["dep:prologix-rs", "prologix-rs/serial"]
 [dependencies]
 gpib-rs = { path = "../gpib-rs", optional = true }
 prologix-rs = { path = "../prologix-rs", optional = true, default-features = false }
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 
 [[example]]
 name = "dummy"
