@@ -141,7 +141,7 @@ pub fn print_warnings(warnings: &[ConfigWarning]) {
     }
 }
 
-fn print_diagnostics(diag: &ConfigDiagnostics) {
+pub fn print_diagnostics(diag: &ConfigDiagnostics) {
     match diag.version {
         Some(version) => println!("Config version: {version}"),
         None => println!("Config version: <unavailable>"),

@@ -113,6 +113,27 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum ConfigCommand {
+    /// Create a starter config file
+    Init {
+        /// Write the template to FILE instead of --config; use '-' for standard output
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        /// Overwrite an existing output file
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Validate the config file without running an analysis command
+    Validate,
+
+    /// Explain config sections and fields
+    Explain {
+        /// Field or section path to explain, for example lockin.filter
+        #[arg(value_name = "PATH")]
+        path: Option<String>,
+    },
+
     /// Migrate the config to the latest executable schema
     Migrate {
         /// Write the migrated TOML to FILE; use '-' for standard output
@@ -232,6 +253,41 @@ mod config_command_tests {
                     accept_lossy: true,
                     ..
                 }
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_config_init_validate_and_explain() {
+        let init = Cli::try_parse_from([
+            "pmoke",
+            "--config",
+            "config.toml",
+            "config",
+            "init",
+            "--force",
+        ])
+        .unwrap();
+        assert!(matches!(
+            init.command,
+            Some(Command::Config {
+                command: ConfigCommand::Init { force: true, .. }
+            })
+        ));
+
+        let validate = Cli::try_parse_from(["pmoke", "config", "validate"]).unwrap();
+        assert!(matches!(
+            validate.command,
+            Some(Command::Config {
+                command: ConfigCommand::Validate
+            })
+        ));
+
+        let explain = Cli::try_parse_from(["pmoke", "config", "explain", "lockin.filter"]).unwrap();
+        assert!(matches!(
+            explain.command,
+            Some(Command::Config {
+                command: ConfigCommand::Explain { path: Some(_) }
             })
         ));
     }

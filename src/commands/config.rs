@@ -1,7 +1,11 @@
 use crate::cli::ConfigCommand;
-use crate::config::{MigrationPlan, plan_latest_executable_migration, plan_migration};
+use crate::commands::show;
+use crate::config::{
+    ConfigLoad, MigrationPlan, load_from_path, load_from_str, plan_latest_executable_migration,
+    plan_migration,
+};
 use crate::ui;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -14,6 +18,11 @@ pub struct ConfigCommandOutcome {
 
 pub fn run(config_path: &str, command: &ConfigCommand) -> Result<ConfigCommandOutcome> {
     match command {
+        ConfigCommand::Init { output, force } => {
+            run_init(Path::new(config_path), output.as_deref(), *force)
+        }
+        ConfigCommand::Validate => run_validate(Path::new(config_path)),
+        ConfigCommand::Explain { path } => run_explain(path.as_deref()),
         ConfigCommand::Migrate {
             output,
             in_place,
@@ -27,6 +36,379 @@ pub fn run(config_path: &str, command: &ConfigCommand) -> Result<ConfigCommandOu
             *check,
             *accept_lossy,
             *to,
+        ),
+    }
+}
+
+const CONFIG_TEMPLATE_V4: &str = r#"# pmoke config v4
+version = 4
+
+[scope]
+model = "DHO5108"
+connection = "tcp://10.249.11.25:55255"
+
+# Uncomment this section when pmoke should control a function generator.
+# [generator]
+# model = "WF1946B"
+# connection = "gpib://0/11"
+
+[data]
+output = "raw"     # csv | raw | both
+input = "auto"     # csv | raw | auto
+screenshot = false
+
+[[sensors]]
+channel = 1
+label = "$B_1$"
+unit = "T"
+scale = { factor = -6411.02720777683 }
+
+[[sensors]]
+channel = 2
+label = "$I_2$"
+unit = "A"
+scale = { factor = 1.0 }
+
+[pulse.background_before]
+start = -0.02
+end = -0.0001
+
+[pulse.background_after]
+start = 0.065
+end = 0.08
+
+[reference]
+channel = 3
+stride_samples = 10000
+window_samples = 1000
+
+[reference.fft_window]
+start = 0.0
+end = 0.005
+
+[lockin]
+signal_channels = [4]
+workers = 4
+stride_samples = 100
+debug_output = false
+debug_overwrite = false
+
+[lockin.filter]
+kind = "sync_iir_zero_phase"
+half_window_cycles = 1.0
+cutoff_ref_ratio = 0.02
+sync_average_cycles = 2.0
+iir_order = 2
+
+[phase]
+offsets = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+[kerr]
+sensor = 1
+method = "harmonics"
+factor = -1.0
+
+[plot]
+mode = "save"      # off | save | interactive | both
+max_points = 50000
+decimation = "min_max"
+on_error = "warn"  # warn | fail
+"#;
+
+#[derive(Debug, Clone, Copy)]
+struct FieldDoc {
+    path: &'static str,
+    summary: &'static str,
+    details: &'static str,
+}
+
+const FIELD_DOCS: &[FieldDoc] = &[
+    FieldDoc {
+        path: "version",
+        summary: "Config schema version. New configs should use 4.",
+        details: "pmoke loads legacy v1-v3 configs, but v4 is the editable schema used by config init and migrate.",
+    },
+    FieldDoc {
+        path: "scope",
+        summary: "Oscilloscope configuration.",
+        details: "Set model and connection. DHO5108 usually uses tcp://IP:PORT and does not require Prologix.",
+    },
+    FieldDoc {
+        path: "scope.model",
+        summary: "Oscilloscope driver name.",
+        details: "Currently expected values include DHO5108.",
+    },
+    FieldDoc {
+        path: "scope.connection",
+        summary: "Oscilloscope transport URI.",
+        details: "Use tcp://host:port for LAN instruments, visa:RESOURCE for NI-VISA on supported builds, or gpib://board/address where available.",
+    },
+    FieldDoc {
+        path: "generator",
+        summary: "Optional function generator configuration.",
+        details: "Remove the section when pmoke should not control a generator. WF1946B can use gpib:// or Prologix URIs.",
+    },
+    FieldDoc {
+        path: "generator.connection",
+        summary: "Function generator transport URI.",
+        details: "Supported forms include gpib://0/11, prologix-tcp://host:1234?addr=11, and prologix-serial:///dev/tty.usbserial?addr=11.",
+    },
+    FieldDoc {
+        path: "data",
+        summary: "Acquisition storage and analysis input policy.",
+        details: "output controls what fetch writes. input controls whether analysis reads CSV, RAW, or automatically chooses available data.",
+    },
+    FieldDoc {
+        path: "data.output",
+        summary: "Fetch output format.",
+        details: "csv is simple, raw is safer for large oscilloscope data, both writes both formats.",
+    },
+    FieldDoc {
+        path: "data.input",
+        summary: "Analysis input source.",
+        details: "auto prefers canonical data available under the run directory. Use raw or csv to force one format.",
+    },
+    FieldDoc {
+        path: "data.screenshot",
+        summary: "Whether fetch captures an oscilloscope screenshot.",
+        details: "Set true when the configured oscilloscope transport supports screenshot capture and you want it in run artifacts.",
+    },
+    FieldDoc {
+        path: "sensors",
+        summary: "Sensor channel metadata and scaling.",
+        details: "Each [[sensors]] item defines one sensor channel, label, output unit, and either scale.factor or scale.max_abs.",
+    },
+    FieldDoc {
+        path: "sensors.channel",
+        summary: "Oscilloscope channel used as a sensor.",
+        details: "Sensor channels are integrated and can be used by Kerr analysis.",
+    },
+    FieldDoc {
+        path: "sensors.scale",
+        summary: "Sensor conversion rule.",
+        details: "Use { factor = ... } for linear conversion, or { max_abs = ..., polarity = 1|-1 } to normalize by absolute maximum.",
+    },
+    FieldDoc {
+        path: "pulse",
+        summary: "Background windows around the pulse.",
+        details: "background_before and background_after define time ranges used for pulse baseline handling.",
+    },
+    FieldDoc {
+        path: "reference",
+        summary: "Reference channel and FFT settings.",
+        details: "The reference signal estimates f_ref, amplitude, and phase before lock-in processing.",
+    },
+    FieldDoc {
+        path: "reference.channel",
+        summary: "Reference oscilloscope channel.",
+        details: "This channel must not also be a sensor or signal channel.",
+    },
+    FieldDoc {
+        path: "reference.fft_window",
+        summary: "Time range used for reference FFT.",
+        details: "Choose a stable portion of the reference signal. Values are seconds on the experiment time axis.",
+    },
+    FieldDoc {
+        path: "reference.stride_samples",
+        summary: "Decimation stride for reference fitting.",
+        details: "Larger values reduce fitting cost. Too large a stride can reduce phase/frequency accuracy.",
+    },
+    FieldDoc {
+        path: "reference.window_samples",
+        summary: "Local fitting window size.",
+        details: "Used by reference analysis around the FFT estimate.",
+    },
+    FieldDoc {
+        path: "lockin",
+        summary: "Numerical lock-in settings.",
+        details: "Defines signal channels, worker count, output stride, filter kind, and optional diagnostics.",
+    },
+    FieldDoc {
+        path: "lockin.signal_channels",
+        summary: "Oscilloscope channels demodulated by lock-in.",
+        details: "These channels become lock-in signal outputs and are later phase-rotated.",
+    },
+    FieldDoc {
+        path: "lockin.workers",
+        summary: "Parallel worker count for lock-in processing.",
+        details: "Use a value near the number of physical CPU cores for large data. Too high can increase memory pressure.",
+    },
+    FieldDoc {
+        path: "lockin.stride_samples",
+        summary: "Output decimation stride in input samples.",
+        details: "For example, 500 MHz input and stride 100 gives 5 MHz lock-in output.",
+    },
+    FieldDoc {
+        path: "lockin.filter",
+        summary: "Low-pass/smoothing filter used after demodulation.",
+        details: "sync_iir_zero_phase is the recommended smooth filter. boxcar_legacy is useful for comparing old results.",
+    },
+    FieldDoc {
+        path: "lockin.filter.kind",
+        summary: "Lock-in filter algorithm.",
+        details: "Supported values are boxcar_legacy, fir_boxcar_enbw, fir_zero_phase, and sync_iir_zero_phase.",
+    },
+    FieldDoc {
+        path: "lockin.filter.half_window_cycles",
+        summary: "Half window length in reference cycles.",
+        details: "For sync_iir_zero_phase this also controls the synchronous averaging scale after normalization.",
+    },
+    FieldDoc {
+        path: "lockin.filter.cutoff_ref_ratio",
+        summary: "IIR/FIR cutoff as a ratio of f_ref.",
+        details: "0.02 means cutoff = 0.02 * f_ref. Lower values smooth more and reduce time resolution.",
+    },
+    FieldDoc {
+        path: "lockin.filter.cutoff_hz",
+        summary: "Absolute low-pass cutoff in Hz.",
+        details: "Use either cutoff_hz or cutoff_ref_ratio when the selected filter accepts a cutoff.",
+    },
+    FieldDoc {
+        path: "lockin.filter.sync_average_cycles",
+        summary: "Synchronous average window length in cycles.",
+        details: "For current configs, use roughly 2 * half_window_cycles when matching the historical full boxcar window.",
+    },
+    FieldDoc {
+        path: "lockin.filter.iir_order",
+        summary: "IIR low-pass order for sync_iir_zero_phase.",
+        details: "2 is a conservative default. Higher orders roll off harder but can introduce more sensitivity.",
+    },
+    FieldDoc {
+        path: "lockin.debug_output",
+        summary: "Write lock-in debug artifacts.",
+        details: "Enable only when inspecting filter behavior; debug outputs can be large.",
+    },
+    FieldDoc {
+        path: "phase",
+        summary: "Phase rotation settings.",
+        details: "offsets contains harmonic phase offsets in radians and may use numeric expressions such as pi/2.",
+    },
+    FieldDoc {
+        path: "kerr",
+        summary: "Kerr angle conversion settings.",
+        details: "Select the sensor channel used for calibration, the method, and the final multiplicative factor.",
+    },
+    FieldDoc {
+        path: "plot",
+        summary: "Plot generation behavior.",
+        details: "Use save for batch runs, interactive for inspection, both for both windows and files, and off for no plotting.",
+    },
+    FieldDoc {
+        path: "plot.max_points",
+        summary: "Maximum points sent to plotting.",
+        details: "Lower this to make matplotlib faster on very large data.",
+    },
+    FieldDoc {
+        path: "plot.decimation",
+        summary: "Plot downsampling algorithm.",
+        details: "min_max preserves spikes better than simple stride-like decimation.",
+    },
+    FieldDoc {
+        path: "plot.on_error",
+        summary: "How plot failures affect the command.",
+        details: "warn keeps analysis running when plotting fails. fail turns plotting errors into command failures.",
+    },
+];
+
+fn run_init(source: &Path, output: Option<&Path>, force: bool) -> Result<ConfigCommandOutcome> {
+    let destination = output.unwrap_or(source);
+    let stdout_output = destination == Path::new("-");
+
+    ensure_template_is_valid()?;
+    if stdout_output {
+        print!("{CONFIG_TEMPLATE_V4}");
+        io::stdout()
+            .flush()
+            .context("failed to flush config template to stdout")?;
+    } else if force {
+        replace_output(destination, CONFIG_TEMPLATE_V4.as_bytes())?;
+        ui::saved(format!("initialized config at {}", destination.display()));
+    } else {
+        write_new_output(destination, CONFIG_TEMPLATE_V4.as_bytes())?;
+        ui::saved(format!("initialized config at {}", destination.display()));
+    }
+
+    Ok(ConfigCommandOutcome { exit_code: 0 })
+}
+
+fn run_validate(source: &Path) -> Result<ConfigCommandOutcome> {
+    match load_from_path(source) {
+        ConfigLoad::Ready { warnings, .. } => {
+            show::print_warnings(&warnings);
+            if warnings.is_empty() {
+                ui::success(format!("config is valid: {}", source.display()));
+            } else {
+                ui::success(format!(
+                    "config is valid with {} warning(s): {}",
+                    warnings.len(),
+                    source.display()
+                ));
+            }
+            Ok(ConfigCommandOutcome { exit_code: 0 })
+        }
+        ConfigLoad::Diagnostics(diagnostics) => {
+            show::print_diagnostics(&diagnostics);
+            Ok(ConfigCommandOutcome { exit_code: 1 })
+        }
+    }
+}
+
+fn run_explain(path: Option<&str>) -> Result<ConfigCommandOutcome> {
+    match path.map(str::trim).filter(|value| !value.is_empty()) {
+        None => print_field_docs("Config Fields", FIELD_DOCS),
+        Some(path) => {
+            let matches = explain_matches(path);
+            ensure!(
+                !matches.is_empty(),
+                "unknown config field or section: {path}"
+            );
+            let title = if matches.len() == 1 && matches[0].path == path {
+                format!("Config Field: {path}")
+            } else {
+                format!("Config Fields Matching: {path}")
+            };
+            print_field_docs(&title, &matches);
+        }
+    }
+    Ok(ConfigCommandOutcome { exit_code: 0 })
+}
+
+fn explain_matches(path: &str) -> Vec<FieldDoc> {
+    let exact = FIELD_DOCS
+        .iter()
+        .copied()
+        .filter(|doc| doc.path == path)
+        .collect::<Vec<_>>();
+    if !exact.is_empty() {
+        return exact;
+    }
+    FIELD_DOCS
+        .iter()
+        .copied()
+        .filter(|doc| doc.path.starts_with(&format!("{path}.")) || doc.path.contains(path))
+        .collect()
+}
+
+fn print_field_docs(title: &str, docs: &[FieldDoc]) {
+    ui::settings_table(
+        title,
+        docs.iter()
+            .map(|doc| {
+                (
+                    doc.path.to_string(),
+                    format!("{} {}", doc.summary, doc.details),
+                )
+            })
+            .collect(),
+    );
+}
+
+fn ensure_template_is_valid() -> Result<()> {
+    match load_from_str(CONFIG_TEMPLATE_V4) {
+        ConfigLoad::Ready { .. } => Ok(()),
+        ConfigLoad::Diagnostics(diagnostics) => bail!(
+            "bundled config template is invalid: {} diagnostic(s)",
+            diagnostics.diagnostics.len()
         ),
     }
 }
@@ -215,6 +597,46 @@ fn write_new_output(path: &Path, contents: &[u8]) -> Result<()> {
         let _ = fs::remove_file(path);
         return Err(error).with_context(|| format!("failed to write output: {}", path.display()));
     }
+    Ok(())
+}
+
+fn replace_output(path: &Path, contents: &[u8]) -> Result<()> {
+    let permissions = regular_file_metadata(path)
+        .ok()
+        .map(|metadata| metadata.permissions());
+    let (temporary, mut temporary_file) = create_temporary(path)?;
+    let prepare_result = (|| -> Result<()> {
+        write_and_sync(&mut temporary_file, contents)?;
+        if let Some(permissions) = permissions {
+            fs::set_permissions(&temporary, permissions).with_context(|| {
+                format!(
+                    "failed to preserve output permissions: {}",
+                    temporary.display()
+                )
+            })?;
+            temporary_file
+                .sync_all()
+                .with_context(|| format!("failed to sync permissions: {}", temporary.display()))?;
+        }
+        Ok(())
+    })();
+    drop(temporary_file);
+    if let Err(error) = prepare_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| format!("failed to write output: {}", path.display()));
+    }
+
+    if let Err(error) = atomic_replace(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| {
+            format!(
+                "failed to atomically replace {} with {}",
+                path.display(),
+                temporary.display()
+            )
+        });
+    }
+    sync_parent_directory(path)?;
     Ok(())
 }
 
@@ -515,6 +937,102 @@ mod tests {
             fs::read(backup_path(&source, 3)).unwrap(),
             b"existing backup"
         );
+    }
+
+    #[test]
+    fn init_writes_a_valid_v4_template() {
+        let dir = TempDir::new();
+        let source = dir.0.join("config.toml");
+
+        let outcome = run_init(&source, None, false).unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        let text = fs::read_to_string(&source).unwrap();
+        assert!(text.contains("version = 4"));
+        assert!(matches!(load_from_str(&text), ConfigLoad::Ready { .. }));
+    }
+
+    #[test]
+    fn init_refuses_to_overwrite_without_force() {
+        let dir = TempDir::new();
+        let source = dir.0.join("config.toml");
+        fs::write(&source, "existing").unwrap();
+
+        let error = run_init(&source, None, false).unwrap_err();
+
+        assert!(error.to_string().contains("refusing to overwrite output"));
+        assert_eq!(fs::read_to_string(&source).unwrap(), "existing");
+    }
+
+    #[test]
+    fn init_force_overwrites_existing_config() {
+        let dir = TempDir::new();
+        let source = dir.0.join("config.toml");
+        fs::write(&source, "existing").unwrap();
+
+        run_init(&source, None, true).unwrap();
+
+        let text = fs::read_to_string(&source).unwrap();
+        assert!(text.contains("[lockin.filter]"));
+        assert!(matches!(load_from_str(&text), ConfigLoad::Ready { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_force_preserves_regular_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new();
+        let source = dir.0.join("config.toml");
+        fs::write(&source, "existing").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+
+        run_init(&source, None, true).unwrap();
+
+        let mode = fs::metadata(&source).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_force_replaces_symlink_without_truncating_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new();
+        let target = dir.0.join("target.toml");
+        let source = dir.0.join("config.toml");
+        fs::write(&target, "target contents").unwrap();
+        symlink(&target, &source).unwrap();
+
+        run_init(&source, None, true).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "target contents");
+        let text = fs::read_to_string(&source).unwrap();
+        assert!(text.contains("version = 4"));
+        assert!(
+            !fs::symlink_metadata(&source)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn validate_returns_zero_for_valid_config_and_one_for_invalid_config() {
+        let dir = TempDir::new();
+        let valid = dir.0.join("valid.toml");
+        fs::write(&valid, CONFIG_TEMPLATE_V4).unwrap();
+        let invalid = dir.0.join("invalid.toml");
+        fs::write(&invalid, "version = 4\nunknown = true\n").unwrap();
+
+        assert_eq!(run_validate(&valid).unwrap().exit_code, 0);
+        assert_eq!(run_validate(&invalid).unwrap().exit_code, 1);
+    }
+
+    #[test]
+    fn explain_accepts_sections_and_rejects_unknown_paths() {
+        assert_eq!(run_explain(Some("lockin.filter")).unwrap().exit_code, 0);
+        assert!(run_explain(Some("does.not.exist")).is_err());
     }
 
     #[test]
