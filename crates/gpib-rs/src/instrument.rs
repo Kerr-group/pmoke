@@ -12,7 +12,7 @@ use crate::ffi::{ibclr, ibdev, ibonl, ibrd, ibtmo, ibwrt};
 #[cfg(not(target_os = "windows"))]
 use crate::tmo::secs_to_tmo_code;
 
-use crate::error::{Result, check_ok, err, ibsta_val};
+use crate::error::{Result, check_ok, err, ibsta_val, sys_err};
 #[cfg(not(target_os = "windows"))]
 use libc::{c_long, c_void};
 
@@ -163,18 +163,27 @@ impl Instrument {
             if ud < 0 {
                 return Err(err("ibdev"));
             }
-            check_ok("ibdev")?;
+            if let Err(error) = check_ok("ibdev") {
+                close_unix_handle(ud);
+                return Err(error);
+            }
 
             if opts.clear_on_open {
                 unsafe {
                     ibclr(ud);
                 }
-                check_ok("ibclr")?;
+                if let Err(error) = check_ok("ibclr") {
+                    close_unix_handle(ud);
+                    return Err(error);
+                }
             }
             unsafe {
                 ibtmo(ud, tmo);
             }
-            check_ok("ibtmo")?;
+            if let Err(error) = check_ok("ibtmo") {
+                close_unix_handle(ud);
+                return Err(error);
+            }
             Ok(Self { ud })
         }
     }
@@ -230,7 +239,7 @@ impl Instrument {
                     buf.len() as c_long,
                 );
             }
-            let n = min(super::error::ibcntl_now() as usize, buf.len());
+            let n = min(ibcntl_to_usize(super::error::ibcntl_now()), buf.len());
             if (ibsta_val() & TIMO) != 0 {
                 eprintln!("(warn) read timeout ibsta=0x{:04x}", ibsta_val());
             }
@@ -492,7 +501,8 @@ impl Instrument {
                 let status = viWrite(self.vi, bytes.as_ptr(), bytes.len() as u32, &mut ret);
                 update_status_from_visa(status, ret);
             }
-            check_ok("viWrite")
+            check_ok("viWrite")?;
+            ensure_complete_write("viWrite", bytes.len(), ret as usize)
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -504,45 +514,18 @@ impl Instrument {
                     bytes.len() as c_long,
                 );
             }
-            check_ok("ibwrt")
+            check_ok("ibwrt")?;
+            ensure_complete_write(
+                "ibwrt",
+                bytes.len(),
+                ibcntl_to_usize(super::error::ibcntl_now()),
+            )
         }
     }
 
     pub fn read_string(&self) -> Result<String> {
-        let mut buf = [0u8; 4096];
-
-        #[cfg(target_os = "windows")]
-        {
-            let mut ret: u32 = 0;
-            unsafe {
-                let status = viRead(self.vi, buf.as_mut_ptr(), buf.len() as u32, &mut ret);
-                update_status_from_visa(status, ret);
-            }
-            let n = ret as usize;
-            if ibsta_val() & TIMO != 0 {
-                eprintln!("(warn) read timeout");
-            }
-            check_ok("viRead")?;
-            Ok(String::from_utf8_lossy(&buf[..n]).trim_end().to_string())
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            unsafe {
-                ibrd(
-                    self.ud,
-                    buf.as_mut_ptr() as *mut c_void,
-                    buf.len() as c_long,
-                );
-            }
-            let n = min(super::error::ibcntl_now() as usize, buf.len());
-            let s = ibsta_val();
-            if (s & TIMO) != 0 {
-                eprintln!("(warn) read timeout ibsta=0x{s:04x}");
-            }
-            check_ok("ibrd")?;
-            Ok(String::from_utf8_lossy(&buf[..n]).trim_end().to_string())
-        }
+        let bytes = self.read_all()?;
+        Ok(String::from_utf8_lossy(&bytes).trim_end().to_string())
     }
 
     pub fn read_all(&self) -> Result<Vec<u8>> {
@@ -570,7 +553,7 @@ impl Instrument {
                         buf.len() as c_long,
                     );
                 }
-                n = min(super::error::ibcntl_now() as usize, buf.len());
+                n = min(ibcntl_to_usize(super::error::ibcntl_now()), buf.len());
             }
 
             let s = ibsta_val();
@@ -580,9 +563,6 @@ impl Instrument {
             }
 
             if (s & ERR) != 0 {
-                if (s & TIMO) != 0 && !out.is_empty() {
-                    break;
-                }
                 return Err(err("read_all"));
             }
             if (s & END) != 0 || n == 0 {
@@ -655,6 +635,28 @@ fn write_ieee_payload<W: Write>(out: &mut W, bytes: &[u8]) -> Result<()> {
     })
 }
 
+#[cfg(not(target_os = "windows"))]
+fn close_unix_handle(ud: i32) {
+    unsafe {
+        ibonl(ud, 0);
+    }
+}
+
+fn ensure_complete_write(ctx: &'static str, expected: usize, written: usize) -> Result<()> {
+    if written == expected {
+        return Ok(());
+    }
+    Err(sys_err(
+        ctx,
+        format!("partial write: wrote {written} of {expected} bytes"),
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ibcntl_to_usize(value: c_long) -> usize {
+    usize::try_from(value).unwrap_or(0)
+}
+
 impl Drop for Instrument {
     fn drop(&mut self) {
         #[cfg(target_os = "windows")]
@@ -673,5 +675,31 @@ impl Drop for Instrument {
                 ibonl(self.ud, 0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn complete_write_accepts_exact_byte_count() {
+        assert!(ensure_complete_write("write", 42, 42).is_ok());
+    }
+
+    #[test]
+    fn complete_write_rejects_short_byte_count() {
+        let error = ensure_complete_write("write", 42, 41).unwrap_err();
+        assert_eq!(error.ctx, "write");
+        assert_eq!(
+            error.note.as_deref(),
+            Some("partial write: wrote 41 of 42 bytes")
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn ibcntl_count_clamps_negative_values() {
+        assert_eq!(ibcntl_to_usize(-1), 0);
     }
 }
