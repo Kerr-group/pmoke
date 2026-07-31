@@ -1,0 +1,31 @@
+//! Prologix GPIB controller client.
+//!
+//! The crate keeps Prologix transport concerns separate from instrument drivers.
+//! Use [`Prologix::write`] for non-query SCPI commands and [`Prologix::query`]
+//! for commands that return a response.
+
+mod client;
+mod config;
+mod error;
+mod wire;
+
+#[cfg(feature = "serial")]
+mod serial;
+#[cfg(feature = "tcp")]
+mod tcp;
+
+pub use client::Prologix;
+pub use config::{
+    ControllerConfig, DEFAULT_PORT, DEFAULT_TIMEOUT_MS, MAX_GPIB_ADDRESS, MAX_READ_TIMEOUT_MS,
+    MIN_READ_TIMEOUT_MS,
+};
+pub use error::{Error, Result};
+
+#[cfg(feature = "serial")]
+pub use serial::SerialBuilder;
+#[cfg(feature = "tcp")]
+pub use tcp::TcpBuilder;
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

@@ -1,0 +1,15 @@
+[package]
+name = "prologix-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Small Prologix GPIB controller client for TCP and serial transports"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["tcp"]
+tcp = []
+serial = ["dep:serialport"]
+
+[dependencies]
+serialport = { version = "4.9.0", optional = true, default-features = false }
+
