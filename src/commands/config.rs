@@ -40,79 +40,64 @@ pub fn run(config_path: &str, command: &ConfigCommand) -> Result<ConfigCommandOu
     }
 }
 
-const CONFIG_TEMPLATE_V4: &str = r#"# pmoke config v4
-version = 4
+const CONFIG_TEMPLATE_V4: &str = r#"version = 4
 
 [scope]
 model = "DHO5108"
-connection = "tcp://10.249.11.25:55255"
+connection = "tcp://192.168.10.100:55255"
 
-# Uncomment this section when pmoke should control a function generator.
-# [generator]
-# model = "WF1946B"
-# connection = "gpib://0/11"
+[generator]
+model = "WF1946B"
+connection = "gpib://0/11"
+# macOS Prologix alternatives:
+# connection = "prologix-serial:///dev/cu.usbserial-XXXX?addr=11"
+# connection = "prologix-tcp://192.168.1.50:1234?addr=11"
 
 [data]
-output = "raw"     # csv | raw | both
-input = "auto"     # csv | raw | auto
-screenshot = false
+output = "raw"       # "csv", "raw", or "both"
+input = "raw"        # "csv", "raw", or "auto"
+screenshot = true
 
 [[sensors]]
 channel = 1
-label = "$B_1$"
+scale = { max_abs = 55.0, polarity = -1 }
+# A TOML literal string passes one backslash to Matplotlib mathtext.
+label = '$\mu_0H$'
 unit = "T"
-scale = { factor = -6411.02720777683 }
 
 [[sensors]]
-channel = 2
-label = "$I_2$"
-unit = "A"
+channel = 4
 scale = { factor = 1.0 }
+label = "sensor"
+unit = "a.u."
 
-[pulse.background_before]
-start = -0.02
-end = -0.0001
-
-[pulse.background_after]
-start = 0.065
-end = 0.08
+[pulse]
+background_before = { start = -5e-3, end = -0.1e-3 }
+background_after  = { start = 43e-3, end = 46e-3 }
 
 [reference]
-channel = 3
-stride_samples = 10000
-window_samples = 1000
-
-[reference.fft_window]
-start = 0.0
-end = 0.005
+channel = 2
+fft_window = { start = 0e-3, end = 15e-3 }
+stride_samples = 10_000
+window_samples = 1_000
 
 [lockin]
-signal_channels = [4]
-workers = 4
+signal_channels = [3]
+workers = 2
 stride_samples = 100
-debug_output = false
-debug_overwrite = false
-
-[lockin.filter]
-kind = "sync_iir_zero_phase"
-half_window_cycles = 1.0
-cutoff_ref_ratio = 0.02
-sync_average_cycles = 2.0
-iir_order = 2
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 
 [phase]
-offsets = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+offsets = [0, 0, 0, 0, 0, 0]
 
 [kerr]
 sensor = 1
-method = "harmonics"
+method = "harmonics" # "standard" or "harmonics"
 factor = -1.0
 
 [plot]
-mode = "save"      # off | save | interactive | both
-max_points = 50000
-decimation = "min_max"
-on_error = "warn"  # warn | fail
+mode = "both" # "off", "save", "interactive", or "both"
+decimation = "min_max" # "none", "stride", or "min_max"
 "#;
 
 #[derive(Debug, Clone, Copy)]
@@ -953,6 +938,17 @@ mod tests {
     }
 
     #[test]
+    fn init_template_matches_readme_example_config() {
+        let readme = include_str!("../../README.md");
+        let marker = "```toml\nversion = 4\n";
+        let start = readme.find(marker).unwrap() + "```toml\n".len();
+        let rest = &readme[start..];
+        let end = rest.find("\n```").unwrap();
+
+        assert_eq!(CONFIG_TEMPLATE_V4.trim(), rest[..end].trim());
+    }
+
+    #[test]
     fn init_refuses_to_overwrite_without_force() {
         let dir = TempDir::new();
         let source = dir.0.join("config.toml");
@@ -973,7 +969,7 @@ mod tests {
         run_init(&source, None, true).unwrap();
 
         let text = fs::read_to_string(&source).unwrap();
-        assert!(text.contains("[lockin.filter]"));
+        assert!(text.contains(r#"filter = { kind = "boxcar_legacy""#));
         assert!(matches!(load_from_str(&text), ConfigLoad::Ready { .. }));
     }
 
