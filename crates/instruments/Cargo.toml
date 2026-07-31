@@ -1,10 +1,17 @@
 [package]
 name = "instruments"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
+[features]
+default = ["gpib"]
+gpib = ["dep:gpib-rs"]
+prologix-tcp = ["dep:prologix-rs", "prologix-rs/tcp"]
+prologix-serial = ["dep:prologix-rs", "prologix-rs/serial"]
+
 [dependencies]
-gpib-rs = {path = "../gpib-rs"}
+gpib-rs = { path = "../gpib-rs", optional = true }
+prologix-rs = { path = "../prologix-rs", optional = true, default-features = false }
 anyhow = "1.0.102"
 
 [[example]]
@@ -14,6 +21,7 @@ path = "./examples/dummy/dummy.rs"
 [[example]]
 name = "keithley2000"
 path = "./examples/keithley/keithley2000.rs"
+required-features = ["gpib"]
 
 [[example]]
 name = "dho5108"
@@ -22,4 +30,4 @@ path = "./examples/rigol/dho5108.rs"
 [[example]]
 name = "wf1946b"
 path = "./examples/nf/wf1946b.rs"
-
+required-features = ["gpib"]
