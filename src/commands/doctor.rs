@@ -349,7 +349,7 @@ fn check_python(cfg: &Config, checks: &mut Vec<DoctorCheck>) {
     });
 }
 
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
     use crate::communications::function_generator::FGHandler;
     use crate::communications::oscilloscope::OscilloscopeHandler;
@@ -429,7 +429,7 @@ fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>
     predicted_bytes
 }
 
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 fn failed(name: &str, error: impl std::fmt::Display) -> DoctorCheck {
     DoctorCheck {
         name: name.to_string(),
@@ -438,7 +438,7 @@ fn failed(name: &str, error: impl std::fmt::Display) -> DoctorCheck {
     }
 }
 
-#[cfg(not(feature = "hw"))]
+#[cfg(not(feature = "hw-core"))]
 fn check_hardware(_cfg: &Config, _probe_fetch: bool, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
     checks.push(DoctorCheck {
         name: "hardware".to_string(),

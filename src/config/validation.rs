@@ -38,6 +38,17 @@ pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
+    if matches!(
+        cfg.instruments
+            .as_ref()
+            .map(|instruments| &instruments.oscilloscope.connection),
+        Some(Connection::Usbtmc { .. })
+    ) && !usbtmc_supported()
+    {
+        errors.push(usbtmc_unsupported_diagnostic(
+            "instruments.oscilloscope.connection",
+        ));
+    }
     if cfg.lockin.workers == 0 {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
@@ -413,8 +424,10 @@ fn validate_screenshot_target(cfg: &Config) -> Result<()> {
         .ok_or_else(|| anyhow!("instruments.oscilloscope is required"))?
         .oscilloscope;
     match &oscilloscope.connection {
-        Connection::Gpib { .. } => {
-            bail!("DHO5108 display capture does not support GPIB");
+        Connection::Gpib { .. }
+        | Connection::PrologixTcp { .. }
+        | Connection::PrologixSerial { .. } => {
+            bail!("DHO5108 display capture requires TCP/IP or USB-TMC");
         }
         Connection::Tcpip { .. } | Connection::Usbtmc { .. } => {}
     }

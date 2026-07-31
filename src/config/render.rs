@@ -106,6 +106,34 @@ fn connection_string_v4(connection: &Connection) -> String {
         Connection::Tcpip { ip, port } => format!("tcp://{ip}:{port}"),
         Connection::Usbtmc { resource } => format!("visa:{resource}"),
         Connection::Gpib { board, address } => format!("gpib://{board}/{address}"),
+        Connection::PrologixTcp {
+            host,
+            port,
+            address,
+            read_timeout_ms,
+        } if host.contains(':') => {
+            format!(
+                "prologix-tcp://[{host}]:{port}?addr={address}&read_timeout_ms={read_timeout_ms}"
+            )
+        }
+        Connection::PrologixTcp {
+            host,
+            port,
+            address,
+            read_timeout_ms,
+        } => {
+            format!("prologix-tcp://{host}:{port}?addr={address}&read_timeout_ms={read_timeout_ms}")
+        }
+        Connection::PrologixSerial {
+            path,
+            address,
+            baud_rate,
+            read_timeout_ms,
+        } => {
+            format!(
+                "prologix-serial://{path}?addr={address}&baud_rate={baud_rate}&read_timeout_ms={read_timeout_ms}"
+            )
+        }
     }
 }
 

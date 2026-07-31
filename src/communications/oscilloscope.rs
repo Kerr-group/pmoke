@@ -45,6 +45,11 @@ impl OscilloscopeHandler {
                 let dho = DHO5108::open_usbtmc(resource, Some(SCOPE_IO_TIMEOUT))?;
                 Oscilloscope::DHO5108(dho)
             }
+            ("DHO5108", Connection::Gpib { .. })
+            | ("DHO5108", Connection::PrologixTcp { .. })
+            | ("DHO5108", Connection::PrologixSerial { .. }) => {
+                return Err(anyhow!("DHO5108 requires a TCP/IP or USB-TMC connection"));
+            }
             (other, _) => return Err(anyhow!("Unknown oscilloscope model: {other}")),
         };
 

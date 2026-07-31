@@ -1,5 +1,9 @@
 use super::*;
 
+const PROLOGIX_DEFAULT_PORT: u16 = 1234;
+const PROLOGIX_DEFAULT_BAUD_RATE: u32 = 115_200;
+const PROLOGIX_DEFAULT_READ_TIMEOUT_MS: u16 = 3000;
+
 pub fn load_from_path(path: impl AsRef<Path>) -> ConfigLoad {
     let path = path.as_ref();
     let text = match fs::read_to_string(path) {
@@ -479,19 +483,24 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
     if let Some(connection) = &scope_connection {
         match connection {
             Connection::Tcpip { .. } => {}
-            Connection::Usbtmc { .. } if cfg!(target_os = "windows") => {}
-            Connection::Usbtmc { .. } => errors.push(ConfigDiagnostic::new(
-                DiagnosticKind::Validation,
-                Some("scope.connection".to_string()),
-                "visa connections currently require NI-VISA on Windows",
-                Some("use a tcp://host:port connection on this platform".to_string()),
-            )),
+            Connection::Usbtmc { .. } if usbtmc_supported() => {}
+            Connection::Usbtmc { .. } => {
+                errors.push(usbtmc_unsupported_diagnostic("scope.connection"))
+            }
             Connection::Gpib { .. } => errors.push(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
                 Some("scope.connection".to_string()),
                 "DHO5108 does not support a GPIB connection",
                 Some("use tcp://host:port or visa:RESOURCE".to_string()),
             )),
+            Connection::PrologixTcp { .. } | Connection::PrologixSerial { .. } => {
+                errors.push(ConfigDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Some("scope.connection".to_string()),
+                    "DHO5108 does not support a Prologix GPIB connection",
+                    Some("use tcp://host:port or visa:RESOURCE".to_string()),
+                ))
+            }
         }
     }
     if let Some(generator) = &raw.generator {
@@ -504,13 +513,18 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
             ));
         }
         if let Some(connection) = &generator_connection
-            && !matches!(connection, Connection::Gpib { .. })
+            && !matches!(
+                connection,
+                Connection::Gpib { .. }
+                    | Connection::PrologixTcp { .. }
+                    | Connection::PrologixSerial { .. }
+            )
         {
             errors.push(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
                 Some("generator.connection".to_string()),
-                "WF1946B requires a gpib://board/address connection",
-                None,
+                "WF1946B requires a GPIB or Prologix connection",
+                Some("use gpib://board/address, prologix-tcp://host:1234?addr=11, or prologix-serial:///dev/cu.usbserial?addr=11".to_string()),
             ));
         }
     }
@@ -838,7 +852,7 @@ fn parse_connection_v4(
             DiagnosticKind::Validation,
             Some(path.to_string()),
             message,
-            Some("use tcp://host:port, visa:RESOURCE, or gpib://board/address".to_string()),
+            Some("use tcp://host:port, visa:RESOURCE, gpib://board/address, prologix-tcp://host[:port]?addr=address, or prologix-serial:///path?addr=address".to_string()),
         )
     };
     if let Some(endpoint) = value.strip_prefix("tcp://") {
@@ -872,6 +886,73 @@ fn parse_connection_v4(
         }
         return Ok(Connection::Gpib { board, address });
     }
+    if let Some(endpoint) = value.strip_prefix("prologix-tcp://") {
+        let (endpoint, query) = split_query_v4(endpoint);
+        let params = parse_query_params_v4(query).map_err(|message| {
+            invalid(format!(
+                "invalid Prologix TCP connection '{value}': {message}"
+            ))
+        })?;
+        validate_query_param_keys_v4(&params, &["addr", "address", "read_timeout_ms"], &invalid)?;
+        let address = parse_required_address_param_v4(&params, &invalid)?;
+        let read_timeout_ms = parse_optional_u16_param_v4(
+            &params,
+            "read_timeout_ms",
+            PROLOGIX_DEFAULT_READ_TIMEOUT_MS,
+            &invalid,
+        )?;
+        validate_prologix_read_timeout_ms_v4(read_timeout_ms, &invalid)?;
+        let (host, port) = parse_prologix_tcp_endpoint_v4(endpoint).map_err(|message| {
+            invalid(format!(
+                "invalid Prologix TCP connection '{value}': {message}"
+            ))
+        })?;
+        return Ok(Connection::PrologixTcp {
+            host,
+            port,
+            address,
+            read_timeout_ms,
+        });
+    }
+    if let Some(endpoint) = value.strip_prefix("prologix-serial://") {
+        let (path, query) = split_query_v4(endpoint);
+        let params = parse_query_params_v4(query).map_err(|message| {
+            invalid(format!(
+                "invalid Prologix serial connection '{value}': {message}"
+            ))
+        })?;
+        validate_query_param_keys_v4(
+            &params,
+            &["addr", "address", "baud_rate", "read_timeout_ms"],
+            &invalid,
+        )?;
+        let address = parse_required_address_param_v4(&params, &invalid)?;
+        let read_timeout_ms = parse_optional_u16_param_v4(
+            &params,
+            "read_timeout_ms",
+            PROLOGIX_DEFAULT_READ_TIMEOUT_MS,
+            &invalid,
+        )?;
+        validate_prologix_read_timeout_ms_v4(read_timeout_ms, &invalid)?;
+        let baud_rate = parse_optional_u32_param_v4(
+            &params,
+            "baud_rate",
+            PROLOGIX_DEFAULT_BAUD_RATE,
+            &invalid,
+        )?;
+        let path = path.trim();
+        if path.is_empty() {
+            return Err(invalid(
+                "Prologix serial path must not be empty".to_string(),
+            ));
+        }
+        return Ok(Connection::PrologixSerial {
+            path: path.to_string(),
+            address,
+            baud_rate,
+            read_timeout_ms,
+        });
+    }
     Err(invalid(format!("unsupported connection string: {value}")))
 }
 
@@ -893,6 +974,148 @@ fn parse_tcp_endpoint_v4(endpoint: &str) -> std::result::Result<(String, u16), S
     let port = port
         .parse::<u16>()
         .map_err(|_| format!("invalid port: {port}"))?;
+    if port == 0 {
+        return Err("port must be in 1..=65535".to_string());
+    }
+    Ok((host.to_string(), port))
+}
+
+fn split_query_v4(value: &str) -> (&str, Option<&str>) {
+    match value.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (value, None),
+    }
+}
+
+fn parse_query_params_v4(query: Option<&str>) -> std::result::Result<Vec<(&str, &str)>, String> {
+    let Some(query) = query else {
+        return Ok(Vec::new());
+    };
+    query
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.split_once('=')
+                .ok_or_else(|| format!("query parameter '{part}' must be key=value"))
+        })
+        .collect()
+}
+
+fn validate_query_param_keys_v4(
+    params: &[(&str, &str)],
+    allowed: &[&str],
+    invalid: &impl Fn(String) -> ConfigDiagnostic,
+) -> std::result::Result<(), ConfigDiagnostic> {
+    for (key, _) in params {
+        if !allowed.contains(key) {
+            return Err(invalid(format!("unsupported query parameter: {key}")));
+        }
+    }
+    Ok(())
+}
+
+fn parse_required_address_param_v4(
+    params: &[(&str, &str)],
+    invalid: &impl Fn(String) -> ConfigDiagnostic,
+) -> std::result::Result<u8, ConfigDiagnostic> {
+    let address = params
+        .iter()
+        .find_map(|(key, value)| (*key == "addr" || *key == "address").then_some(*value))
+        .ok_or_else(|| invalid("Prologix connection must include addr=0..30".to_string()))?;
+    let address = address
+        .parse::<u8>()
+        .map_err(|_| invalid(format!("invalid Prologix address: {address}")))?;
+    if address > 30 {
+        return Err(invalid(format!(
+            "Prologix address must be in 0..=30 (got {address})"
+        )));
+    }
+    Ok(address)
+}
+
+fn parse_optional_u16_param_v4(
+    params: &[(&str, &str)],
+    key: &str,
+    default: u16,
+    invalid: &impl Fn(String) -> ConfigDiagnostic,
+) -> std::result::Result<u16, ConfigDiagnostic> {
+    let Some(value) = params
+        .iter()
+        .find_map(|(candidate, value)| (*candidate == key).then_some(*value))
+    else {
+        return Ok(default);
+    };
+    value
+        .parse::<u16>()
+        .map_err(|_| invalid(format!("invalid {key}: {value}")))
+}
+
+fn parse_optional_u32_param_v4(
+    params: &[(&str, &str)],
+    key: &str,
+    default: u32,
+    invalid: &impl Fn(String) -> ConfigDiagnostic,
+) -> std::result::Result<u32, ConfigDiagnostic> {
+    let Some(value) = params
+        .iter()
+        .find_map(|(candidate, value)| (*candidate == key).then_some(*value))
+    else {
+        return Ok(default);
+    };
+    value
+        .parse::<u32>()
+        .map_err(|_| invalid(format!("invalid {key}: {value}")))
+}
+
+fn validate_prologix_read_timeout_ms_v4(
+    read_timeout_ms: u16,
+    invalid: &impl Fn(String) -> ConfigDiagnostic,
+) -> std::result::Result<(), ConfigDiagnostic> {
+    if (1..=3000).contains(&read_timeout_ms) {
+        Ok(())
+    } else {
+        Err(invalid(format!(
+            "Prologix read_timeout_ms must be in 1..=3000 (got {read_timeout_ms})"
+        )))
+    }
+}
+
+fn parse_prologix_tcp_endpoint_v4(endpoint: &str) -> std::result::Result<(String, u16), String> {
+    if endpoint.trim().is_empty() {
+        return Err("host must not be empty".to_string());
+    }
+    if let Some(rest) = endpoint.strip_prefix('[') {
+        let (host, tail) = rest
+            .split_once(']')
+            .ok_or_else(|| "IPv6 endpoint must be [address] or [address]:port".to_string())?;
+        let port = match tail.strip_prefix(':') {
+            Some(port) => port
+                .parse::<u16>()
+                .map_err(|_| format!("invalid port: {port}"))?,
+            None if tail.is_empty() => PROLOGIX_DEFAULT_PORT,
+            _ => return Err("IPv6 endpoint must be [address] or [address]:port".to_string()),
+        };
+        if host.trim().is_empty() {
+            return Err("host must not be empty".to_string());
+        }
+        if port == 0 {
+            return Err("port must be in 1..=65535".to_string());
+        }
+        return Ok((host.to_string(), port));
+    }
+    let (host, port) = match endpoint.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => {
+            let port = port
+                .parse::<u16>()
+                .map_err(|_| format!("invalid port: {port}"))?;
+            (host, port)
+        }
+        _ => (endpoint, PROLOGIX_DEFAULT_PORT),
+    };
+    let host = host.trim();
+    if host.is_empty() {
+        return Err("host must not be empty".to_string());
+    }
     if port == 0 {
         return Err("port must be in 1..=65535".to_string());
     }

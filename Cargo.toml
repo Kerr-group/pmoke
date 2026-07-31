@@ -1,17 +1,17 @@
 [package]
 name = "pmoke"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [workspace]
 members = [
   "crates/gpib-rs",
   "crates/instruments",
+  "crates/prologix-rs",
 ]
 
 [dependencies]
-gpib-rs = { path = "crates/gpib-rs", optional = true }
-instruments = { path = "crates/instruments", optional = true }
+instruments = { path = "crates/instruments", optional = true, default-features = false }
 anyhow = "1.0.102"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
@@ -41,9 +41,13 @@ unicode-width = "0.2.2"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [features]
-default = ["hw"]
+default = ["hw-gpib"]
 
-hw = ["dep:gpib-rs", "dep:instruments"]
+hw = ["hw-gpib"]
+hw-core = ["dep:instruments"]
+hw-gpib = ["hw-core", "instruments/gpib"]
+hw-prologix-tcp = ["hw-core", "instruments/prologix-tcp"]
+hw-prologix-serial = ["hw-core", "instruments/prologix-serial"]
 
 [profile.release]
 opt-level = 3

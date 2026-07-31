@@ -26,6 +26,19 @@ pub use validation::validate_for_target;
 #[cfg(test)]
 use validation::validate_sensor_metadata;
 
+fn usbtmc_supported() -> bool {
+    cfg!(all(target_os = "windows", feature = "hw-gpib"))
+}
+
+fn usbtmc_unsupported_diagnostic(path: impl Into<String>) -> ConfigDiagnostic {
+    ConfigDiagnostic::new(
+        DiagnosticKind::Validation,
+        Some(path.into()),
+        "visa connections require NI-VISA on Windows and the hw-gpib feature",
+        Some("use tcp://host:port, or build pmoke with --features hw-gpib on Windows".to_string()),
+    )
+}
+
 fn eval_f64_expr(s: &str) -> Result<f64> {
     if contains_print_call(s) {
         bail!("invalid expression '{s}': print() is not allowed in config values");
@@ -310,9 +323,31 @@ pub struct Oscilloscope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "protocol", rename_all = "lowercase")]
 pub enum Connection {
-    Gpib { board: u8, address: u8 },
-    Tcpip { ip: String, port: u16 },
-    Usbtmc { resource: String },
+    Gpib {
+        board: u8,
+        address: u8,
+    },
+    Tcpip {
+        ip: String,
+        port: u16,
+    },
+    Usbtmc {
+        resource: String,
+    },
+    #[serde(rename = "prologix_tcp")]
+    PrologixTcp {
+        host: String,
+        port: u16,
+        address: u8,
+        read_timeout_ms: u16,
+    },
+    #[serde(rename = "prologix_serial")]
+    PrologixSerial {
+        path: String,
+        address: u8,
+        baud_rate: u32,
+        read_timeout_ms: u16,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]

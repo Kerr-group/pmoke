@@ -43,21 +43,21 @@ pub(super) enum MonitorAction {
     Analyze,
     Doctor,
     RawVerify,
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Single,
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Trigger,
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Autoshot,
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Fetch,
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Screenshot,
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Automeasure,
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Process,
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Auto,
 }
 
@@ -73,21 +73,21 @@ impl MonitorAction {
             Self::Analyze => "Analyze",
             Self::Doctor => "Doctor",
             Self::RawVerify => "RAW verify",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Single => "Single",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Trigger => "Trigger",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Autoshot => "Shot",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Fetch => "Fetch",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Screenshot => "Screenshot",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Automeasure => "Measure",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Process => "Process",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Auto => "Auto",
         }
     }
@@ -105,21 +105,21 @@ impl MonitorAction {
             Self::Analyze => "Run reference, sensor, lock-in, phase, and Kerr.",
             Self::Doctor => "Check config, storage, Python, and available instruments.",
             Self::RawVerify => "Verify the RAW manifest, sizes, and channel checksums.",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Single => "Set oscilloscope to single acquisition mode.",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Trigger => "Send trigger from the function generator.",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Autoshot => "Set single mode and send trigger.",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Fetch => "Fetch oscilloscope data using the configured output format.",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Screenshot => "Save an oscilloscope screenshot.",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Automeasure => "Single, trigger, then fetch waveform data.",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Process => "Fetch waveform and run the analysis chain.",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Auto => "Run the full automatic measurement and analysis.",
         }
     }
@@ -134,21 +134,21 @@ impl MonitorAction {
             Self::Kerr => Some(ValidationTarget::Kerr),
             Self::Analyze => Some(ValidationTarget::Analyze),
             Self::Doctor | Self::RawVerify => None,
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Single => Some(ValidationTarget::Single),
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Trigger => Some(ValidationTarget::Trigger),
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Autoshot => Some(ValidationTarget::Autoshot),
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Fetch => Some(ValidationTarget::Fetch),
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Screenshot => Some(ValidationTarget::Screenshot),
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Automeasure => Some(ValidationTarget::Automeasure),
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Process => Some(ValidationTarget::Process),
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Auto => Some(ValidationTarget::Auto),
         }
     }
@@ -164,21 +164,21 @@ impl MonitorAction {
             Self::Analyze => "analyze",
             Self::Doctor => "doctor",
             Self::RawVerify => "raw verify",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Single => "single",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Trigger => "trigger",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Autoshot => "autoshot",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Fetch => "fetch",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Screenshot => "screenshot",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Automeasure => "automeasure",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Process => "process",
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Auto => "auto",
         }
     }
@@ -194,28 +194,28 @@ impl MonitorAction {
             Self::Analyze => &["analyze"],
             Self::Doctor => &["doctor"],
             Self::RawVerify => &["raw", "verify"],
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Single => &["single"],
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Trigger => &["trigger"],
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Autoshot => &["autoshot"],
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Fetch => &["fetch"],
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Screenshot => &["screenshot"],
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Automeasure => &["automeasure"],
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Process => &["process"],
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Auto => &["auto"],
         }
     }
 
     pub(super) fn group(self) -> ActionGroup {
         match self {
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Single
             | Self::Trigger
             | Self::Autoshot
@@ -228,7 +228,7 @@ impl MonitorAction {
             | Self::Phase
             | Self::Kerr
             | Self::Analyze => ActionGroup::Analysis,
-            #[cfg(feature = "hw")]
+            #[cfg(feature = "hw-core")]
             Self::Process | Self::Auto => ActionGroup::EndToEnd,
             Self::Show | Self::Doctor | Self::RawVerify => ActionGroup::Utilities,
         }
@@ -238,17 +238,17 @@ impl MonitorAction {
 pub(super) fn monitor_actions() -> Vec<MonitorAction> {
     vec![
         MonitorAction::Show,
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Single,
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Trigger,
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Autoshot,
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Fetch,
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Screenshot,
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Automeasure,
         MonitorAction::Reference,
         MonitorAction::Sensor,
@@ -258,9 +258,9 @@ pub(super) fn monitor_actions() -> Vec<MonitorAction> {
         MonitorAction::Analyze,
         MonitorAction::Doctor,
         MonitorAction::RawVerify,
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Process,
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Auto,
     ]
 }

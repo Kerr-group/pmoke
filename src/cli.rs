@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 use clap::ValueEnum;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
@@ -64,26 +64,26 @@ pub enum Command {
         probe_fetch: bool,
     },
     /// Set single mode to the oscilloscope
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Single,
     /// Send trigger signal from the function generator
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Trigger,
     /// Set single mode and send trigger signal
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Autoshot,
     /// Fetch data from the oscilloscope and save to a file
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Fetch {
         /// Override output format from config [fetch].output
         #[arg(long, value_enum)]
         format: Option<FetchFormat>,
     },
     /// Capture an oscilloscope screenshot directly to the PC
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Screenshot,
     /// Perform auto measurement (set single mode, trigger, fetch)
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Automeasure,
     /// Analyze the reference signal
     Reference,
@@ -98,10 +98,10 @@ pub enum Command {
     /// Run all analysis steps: reference, sensor, lock-in, phase, Kerr
     Analyze,
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Process,
     /// Run the full automatic measurement and analysis
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Auto,
     /// Generate shell completion script
     Completions {
@@ -166,7 +166,7 @@ pub enum ExportCommand {
     },
 }
 
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum FetchFormat {
     Csv,
@@ -174,7 +174,7 @@ pub enum FetchFormat {
     CsvAndRaw,
 }
 
-#[cfg(all(test, feature = "hw"))]
+#[cfg(all(test, feature = "hw-core"))]
 mod tests {
     use super::*;
 
