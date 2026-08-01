@@ -939,7 +939,7 @@ mod tests {
 
     #[test]
     fn init_template_matches_readme_example_config() {
-        let readme = include_str!("../../README.md");
+        let readme = include_str!("../../README.md").replace("\r\n", "\n");
         let marker = "```toml\nversion = 4\n";
         let start = readme.find(marker).unwrap() + "```toml\n".len();
         let rest = &readme[start..];
