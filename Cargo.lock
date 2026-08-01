@@ -1301,9 +1301,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pmoke-config-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fasteval",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "pmoke-web-wasm"
 version = "0.1.0"
 dependencies = [
+ "pmoke-config-core",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
 ]
 

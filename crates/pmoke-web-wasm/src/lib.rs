@@ -24,6 +24,11 @@ pub fn generate_signal(requested_samples: usize, phase: f64) -> Box<[f64]> {
 }
 
 #[wasm_bindgen]
+pub fn validate_config_toml(toml_str: &str) -> String {
+    pmoke_config_core::validate_config_toml_json(toml_str)
+}
+
+#[wasm_bindgen]
 pub fn build_info() -> String {
     format!("pmoke-web-wasm/{}", env!("CARGO_PKG_VERSION"))
 }
@@ -47,5 +52,11 @@ mod tests {
     #[test]
     fn sample_count_has_a_renderable_minimum() {
         assert_eq!(generate_signal(1, 0.0).len(), MIN_SAMPLES * 4);
+    }
+
+    #[test]
+    fn wasm_config_validation_returns_valid_json() {
+        let json = validate_config_toml("version = 4\n[scope]\nmodel = 'dsox1204a'\nconnection = 'usbtmc://0x1/0x2/0x3'\n[data]\noutput = 'both'\ninput = 'fetch'\n[lockin]\nsignal_channels = [1]\nworkers = 4\nstride_samples = 1\nfilter = { kind = 'boxcar_legacy', half_window_cycles = 1.0 }");
+        assert!(json.contains("\"valid\": true"), "json: {json}");
     }
 }

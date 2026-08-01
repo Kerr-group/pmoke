@@ -800,32 +800,35 @@ impl RunMutationLock {
             .open(&path)
             .with_context(|| format!("failed to open lock file: {}", path.display()))?;
 
-        use fs2::FileExt;
-        match file.try_lock_exclusive() {
-            Ok(()) => {}
-            Err(error) => {
-                let is_lock_collision = error.kind() == io::ErrorKind::WouldBlock || {
-                    #[cfg(windows)]
-                    {
-                        error.raw_os_error() == Some(32) || error.raw_os_error() == Some(33)
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        false
-                    }
-                };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use fs2::FileExt;
+            match file.try_lock_exclusive() {
+                Ok(()) => {}
+                Err(error) => {
+                    let is_lock_collision = error.kind() == io::ErrorKind::WouldBlock || {
+                        #[cfg(windows)]
+                        {
+                            error.raw_os_error() == Some(32) || error.raw_os_error() == Some(33)
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            false
+                        }
+                    };
 
-                if is_lock_collision {
-                    let content = fs::read_to_string(&path).unwrap_or_default();
-                    bail!(
-                        "another run-mutating operation is already running in this directory (lock file: {}).\nLock info:\n{}",
-                        path.display(),
-                        content
-                    );
-                } else {
-                    return Err(error).with_context(|| {
-                        format!("failed to acquire run mutation lock: {}", path.display())
-                    });
+                    if is_lock_collision {
+                        let content = fs::read_to_string(&path).unwrap_or_default();
+                        bail!(
+                            "another run-mutating operation is already running in this directory (lock file: {}).\nLock info:\n{}",
+                            path.display(),
+                            content
+                        );
+                    } else {
+                        return Err(error).with_context(|| {
+                            format!("failed to acquire run mutation lock: {}", path.display())
+                        });
+                    }
                 }
             }
         }
@@ -845,6 +848,7 @@ impl RunMutationLock {
 
 impl Drop for RunMutationLock {
     fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
         let _ = fs2::FileExt::unlock(&self.file);
     }
 }

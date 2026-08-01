@@ -1,0 +1,15 @@
+[package]
+name = "pmoke-config-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Browser-safe deterministic configuration parsing and validation core for pmoke"
+license = "Apache-2.0"
+repository = "https://github.com/Kerr-group/pmoke"
+
+[dependencies]
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+toml = "1.1.4"
+fasteval = "0.2.4"
