@@ -633,10 +633,13 @@ fn probe_generator(
     use crate::communications::function_generator::scpi_connection;
     use instruments::transport::open_scpi_transport;
 
-    if !spec
+    let has_scpi_identity = spec
         .capabilities
-        .contains(&InstrumentCapability::ScpiIdentify)
-    {
+        .contains(&InstrumentCapability::ScpiIdentify);
+    let has_transport_diagnostic = !transport_kind(connection)
+        .diagnostic_capabilities()
+        .is_empty();
+    if !has_scpi_identity && !has_transport_diagnostic {
         checks.push(DoctorCheck {
             name: "generator.idn".to_string(),
             status: CheckStatus::Skip,
@@ -679,18 +682,6 @@ fn probe_scpi_identity(
     transport: &mut dyn instruments::transport::ScpiTransport,
     checks: &mut Vec<DoctorCheck>,
 ) {
-    if !spec
-        .capabilities
-        .contains(&InstrumentCapability::ScpiIdentify)
-    {
-        checks.push(DoctorCheck {
-            name: format!("{name}.idn"),
-            status: CheckStatus::Skip,
-            detail: "instrument has no SCPI identify capability".to_string(),
-        });
-        return;
-    }
-
     let needs_controller_version = transport_kind(connection)
         .diagnostic_capabilities()
         .contains(&TransportDiagnosticCapability::PrologixControllerVersion);
@@ -730,6 +721,17 @@ fn probe_scpi_identity(
     };
 
     if needs_controller_version && !controller_reachable {
+        return;
+    }
+    if !spec
+        .capabilities
+        .contains(&InstrumentCapability::ScpiIdentify)
+    {
+        checks.push(DoctorCheck {
+            name: format!("{name}.idn"),
+            status: CheckStatus::Skip,
+            detail: "instrument has no SCPI identify capability".to_string(),
+        });
         return;
     }
     record_identity(
@@ -1074,5 +1076,38 @@ mod tests {
         assert_eq!(transport.queries, 0);
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].status, CheckStatus::Skip);
+    }
+
+    #[cfg(feature = "hw-core")]
+    #[test]
+    fn prologix_controller_is_diagnosed_for_non_scpi_instruments() {
+        let spec = find_instrument("DummyInstrument").unwrap();
+        let mut transport = MockScpiTransport {
+            controller_version: Some(Ok(Some("Prologix controller 6.101".to_string()))),
+            identity: None,
+            queries: 0,
+        };
+        let mut checks = Vec::new();
+
+        probe_scpi_identity(
+            "generator",
+            spec.model,
+            &Connection::PrologixTcp {
+                host: "10.249.11.17".to_string(),
+                port: 1234,
+                address: 17,
+                read_timeout_ms: 2500,
+            },
+            spec,
+            &mut transport,
+            &mut checks,
+        );
+
+        assert_eq!(transport.queries, 0);
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].name, "generator.controller");
+        assert_eq!(checks[0].status, CheckStatus::Pass);
+        assert_eq!(checks[1].name, "generator.idn");
+        assert_eq!(checks[1].status, CheckStatus::Skip);
     }
 }
