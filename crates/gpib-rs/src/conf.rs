@@ -1,7 +1,9 @@
 //! Minimal parser for gpib.conf and helpers to find it.
 
+#[cfg(not(target_os = "windows"))]
 use std::{env, fs, path::PathBuf};
 
+#[cfg(not(target_os = "windows"))]
 #[derive(Debug, Clone)]
 pub(crate) struct InterfaceDef {
     pub name: String,
@@ -11,6 +13,7 @@ pub(crate) struct InterfaceDef {
     pub pad: Option<i32>,
 }
 
+#[cfg(not(target_os = "windows"))]
 #[derive(Debug, Clone)]
 pub(crate) struct DeviceDef {
     #[allow(dead_code)]
@@ -21,12 +24,14 @@ pub(crate) struct DeviceDef {
     pub sad: Option<i32>,
 }
 
+#[cfg(not(target_os = "windows"))]
 #[derive(Debug, Default, Clone)]
 pub(crate) struct GpibConf {
     pub interfaces: Vec<InterfaceDef>,
     pub devices: Vec<DeviceDef>,
 }
 
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn default_conf_paths() -> Vec<PathBuf> {
     let mut v = Vec::new();
     for k in ["GPIB_CONF", "GPIB_CONF_PATH"] {
@@ -58,6 +63,7 @@ pub(crate) fn default_conf_paths() -> Vec<PathBuf> {
     v
 }
 
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn load_gpib_conf() -> Option<(GpibConf, PathBuf)> {
     for p in default_conf_paths() {
         let Ok(txt) = fs::read_to_string(&p) else {
@@ -74,6 +80,7 @@ pub(crate) fn load_gpib_conf() -> Option<(GpibConf, PathBuf)> {
     None
 }
 
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn parse_gpib_conf(s: &str) -> Option<GpibConf> {
     #[derive(Copy, Clone, PartialEq)]
     enum State {
@@ -172,6 +179,7 @@ pub(crate) fn parse_gpib_conf(s: &str) -> Option<GpibConf> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn parse_kv(line: &str) -> Option<(String, String)> {
     let mut it = line.splitn(2, '=');
     let k = it.next()?.trim();
@@ -181,6 +189,7 @@ fn parse_kv(line: &str) -> Option<(String, String)> {
     }
     Some((k.to_string(), v.to_string()))
 }
+#[cfg(not(target_os = "windows"))]
 fn unquote(v: &str) -> &str {
     let v = v.trim();
     if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {

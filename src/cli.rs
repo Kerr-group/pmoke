@@ -128,6 +128,23 @@ pub enum InstrumentsCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Send one SCPI text query to a connection URI
+    Query {
+        /// Connection URI, for example prologix-tcp://host:1234?addr=17
+        #[arg(long, value_name = "URI")]
+        connection: String,
+
+        /// Timeout used when the URI does not include a transport-specific timeout
+        #[arg(long, default_value_t = 3000, value_name = "MS")]
+        timeout_ms: u64,
+
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+
+        /// SCPI query command, for example *IDN?
+        command: String,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -335,6 +352,33 @@ mod config_command_tests {
             Some(Command::Instruments {
                 command: InstrumentsCommand::Explain { model, json: false }
             }) if model == "Keithley2010"
+        ));
+    }
+
+    #[test]
+    fn parses_instruments_query_without_hardware_feature() {
+        let cli = Cli::try_parse_from([
+            "pmoke",
+            "instruments",
+            "query",
+            "--connection",
+            "prologix-tcp://10.249.11.17:1234?addr=17",
+            "--timeout-ms",
+            "2500",
+            "--json",
+            "*IDN?",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Instruments {
+                command: InstrumentsCommand::Query {
+                    connection,
+                    timeout_ms: 2500,
+                    json: true,
+                    command,
+                }
+            }) if connection == "prologix-tcp://10.249.11.17:1234?addr=17" && command == "*IDN?"
         ));
     }
 
