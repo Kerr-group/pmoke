@@ -1,0 +1,36 @@
+---
+title: Troubleshooting
+description: Structured checks for configuration, transport, data, and analysis failures.
+---
+
+## Begin with diagnostics
+
+```bash
+pmoke --config config.toml doctor
+pmoke --config config.toml doctor --json > doctor.json
+```
+
+The report separates compiled-feature errors, controller failures, instrument
+address failures, storage access, Python imports, and config diagnostics.
+
+## Instrument does not answer
+
+1. Compare the normalized URI and required feature in `doctor` output.
+2. Confirm the model's transports with `pmoke instruments explain MODEL`.
+3. Query a SCPI instrument explicitly with `pmoke instruments query`.
+4. For Prologix, distinguish adapter reachability from the instrument PAD.
+5. Increase the URI timeout only after checking cabling and command termination.
+
+## Analysis rejects artifacts
+
+- Run `pmoke raw verify` before conversion or analysis.
+- Keep `acquisition/manifest.toml` with every referenced waveform.
+- Rerun the upstream stage named by a stale-stage diagnostic.
+- Use a new `--run-dir` when acquisition settings differ.
+- Preserve the last published analysis; failed runs remain under an incomplete tree.
+
+## Lock-in warnings
+
+Treat Nyquist, excessive gain, ill-conditioned integer-period coefficients, and
+settling-range warnings as numerical diagnostics rather than formatting noise.
+Select a stable filter and output stride before increasing smoothing.

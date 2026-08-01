@@ -1,0 +1,27 @@
+---
+title: 検証・移行
+description: schema error の診断と legacy 設定の安全な移行。
+---
+
+## hardware 非接続の検証
+
+```bash
+pmoke --config config.toml config validate
+pmoke config explain lockin.filter
+```
+
+TOML 構文、v4 未知 key、範囲、channel role、filter 制約、接続 URI、model/transport compatibility の検証。装置 open を伴わない静的検証。
+
+editor 向け [config.schema.json](/pmoke/config.schema.json)。cross-field・hardware semantics の最終基準となる runtime validation。
+
+## legacy schema の移行
+
+原本を変更しない migration preview:
+
+```bash
+pmoke --config legacy.toml config migrate
+pmoke --config legacy.toml config migrate --output config.v4.toml
+pmoke --config legacy.toml config migrate --in-place
+```
+
+version 付き backup 作成後の atomic 置換となる `--in-place`。動作変更の可能性がある step に必要な `--accept-lossy`。既存 destination の上書き拒否。

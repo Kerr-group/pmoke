@@ -1,0 +1,22 @@
+---
+title: Feature Flags
+description: direct 通信・adapter 通信向け Cargo feature の選択表。
+---
+
+| Feature | 用途 | 主な platform |
+| --- | --- | --- |
+| `hw-core` | オシロスコープ direct TCP/IP と共通 hardware logic | Linux、macOS、Windows |
+| `hw-gpib` | direct GPIB と Windows USBTMC/VISA | Linux、Windows |
+| `hw-prologix-tcp` | Prologix Ethernet controller | Linux、macOS、Windows |
+| `hw-prologix-serial` | Prologix USB serial controller | Linux、macOS、Windows |
+| `hw` | direct GPIB hardware build の legacy alias | Linux、Windows |
+
+```bash
+# direct DHO TCP/IP + Prologix Ethernet の macOS build
+cargo install --path . --no-default-features --features hw-prologix-tcp
+
+# direct DHO TCP/IP + Prologix USB serial の macOS build
+cargo install --path . --no-default-features --features hw-prologix-serial
+```
+
+`hw-core` を内包する Prologix feature。Prologix を経由せず direct TCP/IP 接続となる DHO5108。

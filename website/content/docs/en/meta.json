@@ -1,4 +1,12 @@
 {
   "title": "pmoke",
-  "pages": ["index", "quickstart"]
+  "pages": [
+    "index",
+    "quickstart",
+    "installation",
+    "configuration",
+    "cli",
+    "troubleshooting",
+    "ai"
+  ]
 }

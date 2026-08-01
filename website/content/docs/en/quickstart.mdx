@@ -6,11 +6,25 @@ description: Validate a configuration and run the complete analysis pipeline.
 ```bash
 pmoke config init --output config.toml
 pmoke config validate --config config.toml
-pmoke --config config.toml analyze
+pmoke --config config.toml doctor
+pmoke --config config.toml --run-dir shot-001 analyze
 ```
 
-Run `pmoke` without a subcommand to open the terminal interface. Use `pmoke doctor hardware` before a measurement to diagnose instrument connectivity.
+Run `pmoke` without a subcommand to open the terminal interface. `doctor` checks the
+configuration, storage, Python environment, compiled transport features, and configured
+hardware before a measurement.
 
-## Static site proof
+## Choose a workflow
 
-This architecture spike includes bilingual routes, static search, LLM-friendly Markdown, and a Rust-generated signal preview loaded in a Web Worker.
+- Existing waveform data: `analyze`
+- Acquisition followed by analysis: `process`
+- Single mode, trigger, acquisition, and analysis: `auto`
+- Individual analysis stages: `reference`, `sensor`, `li`, `phase`, or `kerr`
+
+The run directory stores immutable source and resolved configuration snapshots. Reusing
+the directory with different acquisition settings is rejected.
+
+## Next checks
+
+Review the [installation matrix](../installation), then adapt the
+[guided configuration](../configuration) to the instrument wiring.

@@ -1,0 +1,36 @@
+---
+title: Installation
+description: Supported builds for analysis and instrument control.
+---
+
+pmoke combines a Rust executable with Python analysis packages. Select only the
+hardware transports required by the workstation.
+
+## Prerequisites
+
+- Stable Rust toolchain and Cargo
+- Python 3 with the packages pinned in `requirements.txt`
+- A platform driver only when using direct GPIB or VISA
+
+```bash
+python -m pip install -r requirements.txt
+cargo install --path .
+```
+
+The default build includes the project's standard hardware set. An analysis-only
+installation avoids hardware drivers:
+
+```bash
+cargo install --path . --no-default-features
+```
+
+## Verification
+
+```bash
+pmoke --version
+pmoke instruments list
+pmoke config init --output config.toml
+pmoke config validate --config config.toml
+```
+
+Continue with [feature selection](./feature-flags) for a minimal platform build.

@@ -1,0 +1,62 @@
+---
+title: Guided Configuration
+description: Build a schema v4 configuration around signal roles and artifacts.
+---
+
+Start from the executable's current template instead of copying an older experiment:
+
+```bash
+pmoke config init --output config.toml
+```
+
+## Instrument endpoints
+
+`scope` identifies the oscilloscope and its direct connection. `generator`
+identifies the trigger source and may use direct GPIB or a Prologix adapter.
+
+```toml
+version = 4
+
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+
+[generator]
+model = "WF1946B"
+connection = "prologix-tcp://192.0.2.20:1234?addr=11"
+```
+
+## Channel roles
+
+Each sensor has exactly one scale form. The reference channel drives frequency
+and phase estimation. Lock-in signal channels contain the optical response.
+
+```toml
+[[sensors]]
+channel = 1
+scale = { max_abs = 55.0, polarity = -1 }
+label = '$\mu_0H$'
+unit = "T"
+
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.015 }
+
+[lockin]
+signal_channels = [3]
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+```
+
+## Artifact policy
+
+Use RAW acquisition for large DHO captures. `--run-dir` isolates each shot and
+records immutable source and resolved configuration snapshots.
+
+```toml
+[data]
+output = "raw"
+input = "auto"
+screenshot = true
+```
+
+Use the [generated field reference](./reference) for every default and constraint.

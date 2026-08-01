@@ -1,0 +1,23 @@
+---
+title: Feature Flags
+description: Cargo features for direct and adapter-based instrument transports.
+---
+
+| Feature | Purpose | Typical platform |
+| --- | --- | --- |
+| `hw-core` | Direct oscilloscope TCP/IP and shared hardware logic | Linux, macOS, Windows |
+| `hw-gpib` | Direct GPIB and Windows USBTMC/VISA support | Linux, Windows |
+| `hw-prologix-tcp` | Prologix Ethernet controller | Linux, macOS, Windows |
+| `hw-prologix-serial` | Prologix USB serial controller | Linux, macOS, Windows |
+| `hw` | Legacy alias for the direct-GPIB hardware build | Linux, Windows |
+
+```bash
+# macOS with direct DHO TCP/IP and Prologix Ethernet
+cargo install --path . --no-default-features --features hw-prologix-tcp
+
+# macOS with direct DHO TCP/IP and Prologix USB serial
+cargo install --path . --no-default-features --features hw-prologix-serial
+```
+
+The Prologix features include `hw-core`; the DHO5108 remains a direct TCP/IP
+instrument and does not communicate through Prologix.

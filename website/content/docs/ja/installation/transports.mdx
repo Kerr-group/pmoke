@@ -1,0 +1,26 @@
+---
+title: Hardware Transport
+description: 接続 URI、timeout、platform 制約の一覧。
+---
+
+## URI 形式
+
+| Transport | URI |
+| --- | --- |
+| direct TCP/IP | `tcp://192.0.2.10:55255` |
+| direct GPIB | `gpib://0/11` |
+| Prologix Ethernet | `prologix-tcp://192.0.2.20:1234?addr=11` |
+| Prologix serial | `prologix-serial:///dev/cu.usbserial-XXXX?addr=11` |
+| Windows VISA | `visa:RESOURCE` |
+
+Prologix controller 自体ではなく対象装置の GPIB primary address を示す `addr`。既定値 3000 の `read_timeout_ms`。serial 接続で指定可能な既定値 115200 の正整数 `baud_rate`。
+
+## 接続確認
+
+```bash
+pmoke instruments query \
+  --connection 'prologix-tcp://192.0.2.20:1234?addr=17' \
+  '*IDN?'
+```
+
+documentation 専用 TEST-NET address の例示。実験室 network 割当への置換。
