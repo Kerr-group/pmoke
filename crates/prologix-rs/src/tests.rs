@@ -89,6 +89,45 @@ fn controller_version_queries_the_adapter_without_gpib_read() {
 }
 
 #[test]
+fn controller_query_preserves_payload_whitespace_without_gpib_read() {
+    let io = MockIo::with_read(b"  17  \r\n");
+    let mut controller = Prologix::new(io, 17).unwrap();
+
+    let response = controller.controller_query("++addr").unwrap();
+
+    assert_eq!(response, "  17  ");
+    assert_eq!(controller.into_inner().written_text(), "++addr\n");
+}
+
+#[test]
+fn controller_query_rejects_instrument_reads_and_line_injection() {
+    for command in [
+        "*IDN?",
+        "++read eoi",
+        "++READ",
+        "++addr 5",
+        "++ver\n++addr",
+        "",
+    ] {
+        let mut controller = Prologix::new(MockIo::default(), 17).unwrap();
+        let error = controller.controller_query(command).unwrap_err();
+
+        assert!(matches!(error, Error::InvalidControllerQuery(_)));
+        assert_eq!(controller.into_inner().written_text(), "");
+    }
+}
+
+#[test]
+fn controller_query_rejects_an_empty_response() {
+    let mut controller = Prologix::new(MockIo::default(), 17).unwrap();
+
+    let error = controller.controller_query("++ver").unwrap_err();
+
+    assert!(matches!(error, Error::EmptyControllerResponse));
+    assert_eq!(controller.into_inner().written_text(), "++ver\n");
+}
+
+#[test]
 fn validates_address_and_timeout() {
     assert!(matches!(
         ControllerConfig::new(31),

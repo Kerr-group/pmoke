@@ -1,6 +1,6 @@
 [package]
 name = "instruments"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 
 [features]
@@ -10,8 +10,8 @@ prologix-tcp = ["dep:prologix-rs", "prologix-rs/tcp"]
 prologix-serial = ["dep:prologix-rs", "prologix-rs/serial"]
 
 [dependencies]
-gpib-rs = { path = "../gpib-rs", optional = true }
-prologix-rs = { path = "../prologix-rs", optional = true, default-features = false }
+gpib-rs = { version = "0.1.2", path = "../gpib-rs", optional = true }
+prologix-rs = { version = "0.1.2", path = "../prologix-rs", optional = true, default-features = false }
 anyhow = "1.0.104"
 
 [[example]]

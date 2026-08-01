@@ -1,8 +1,9 @@
 //! Prologix GPIB controller client.
 //!
 //! The crate keeps Prologix transport concerns separate from instrument drivers.
-//! Use [`Prologix::write`] for non-query SCPI commands and [`Prologix::query`]
-//! for commands that return a response.
+//! Use [`Prologix::write`] for non-query SCPI commands, [`Prologix::query`]
+//! for SCPI queries, and [`Prologix::controller_query`] for controller-local
+//! diagnostics such as `++ver`.
 
 mod client;
 mod config;
