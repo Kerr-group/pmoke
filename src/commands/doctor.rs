@@ -1,7 +1,10 @@
-use crate::config::{Config, ConfigDiagnostics, ConfigWarning};
+use crate::config::{Config, ConfigDiagnostics, ConfigWarning, Connection, connection_uri};
 
 use crate::ui;
 use anyhow::{Context, Result, bail};
+#[cfg(feature = "hw-core")]
+use instruments::registry::{InstrumentCapability, TransportDiagnosticCapability};
+use instruments::registry::{InstrumentRole, InstrumentSpec, TransportKind, find_instrument};
 use pyo3::Python;
 use pyo3::types::{PyAnyMethods, PyModule};
 use serde::Serialize;
@@ -349,9 +352,187 @@ fn check_python(cfg: &Config, checks: &mut Vec<DoctorCheck>) {
     });
 }
 
-#[cfg(feature = "hw-core")]
 fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
-    use crate::communications::function_generator::FGHandler;
+    let Some(configured) = cfg.instruments.as_ref() else {
+        checks.push(DoctorCheck {
+            name: "hardware".to_string(),
+            status: CheckStatus::Skip,
+            detail: "no instruments configured".to_string(),
+        });
+        return None;
+    };
+
+    let scope_ready = inspect_instrument(
+        "scope",
+        InstrumentRole::Oscilloscope,
+        &configured.oscilloscope.model,
+        &configured.oscilloscope.connection,
+        checks,
+    );
+    let predicted_bytes = scope_ready.and_then(|spec| probe_scope(cfg, probe_fetch, spec, checks));
+
+    if let Some(generator) = &configured.function_generator {
+        if let Some(spec) = inspect_instrument(
+            "generator",
+            InstrumentRole::FunctionGenerator,
+            &generator.model,
+            &generator.connection,
+            checks,
+        ) {
+            probe_generator(&generator.model, &generator.connection, spec, checks);
+        }
+    } else {
+        checks.push(DoctorCheck {
+            name: "generator".to_string(),
+            status: CheckStatus::Skip,
+            detail: "not configured".to_string(),
+        });
+    }
+
+    predicted_bytes
+}
+
+fn inspect_instrument(
+    name: &str,
+    expected_role: InstrumentRole,
+    model: &str,
+    connection: &Connection,
+    checks: &mut Vec<DoctorCheck>,
+) -> Option<&'static InstrumentSpec> {
+    let transport = transport_kind(connection);
+    checks.push(DoctorCheck {
+        name: format!("{name}.connection"),
+        status: CheckStatus::Pass,
+        detail: connection_uri(connection),
+    });
+    checks.push(DoctorCheck {
+        name: format!("{name}.timeout"),
+        status: CheckStatus::Pass,
+        detail: timeout_detail(name, connection),
+    });
+
+    let spec = match find_instrument(model) {
+        Some(spec) if spec.role != expected_role => {
+            checks.push(DoctorCheck {
+                name: format!("{name}.registry"),
+                status: CheckStatus::Fail,
+                detail: format!(
+                    "model {model} is registered as {}, expected {}",
+                    spec.role.as_str(),
+                    expected_role.as_str()
+                ),
+            });
+            None
+        }
+        Some(spec) if !spec.transports.contains(&transport) => {
+            checks.push(DoctorCheck {
+                name: format!("{name}.registry"),
+                status: CheckStatus::Fail,
+                detail: format!(
+                    "model {model} does not support {}; supported transports: {}",
+                    transport.as_str(),
+                    spec.transports
+                        .iter()
+                        .map(|value| value.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            });
+            None
+        }
+        Some(spec) => {
+            checks.push(DoctorCheck {
+                name: format!("{name}.registry"),
+                status: CheckStatus::Pass,
+                detail: format!("{model} via {}", transport.as_str()),
+            });
+            Some(spec)
+        }
+        None => {
+            checks.push(DoctorCheck {
+                name: format!("{name}.registry"),
+                status: CheckStatus::Fail,
+                detail: format!("unknown instrument model {model}"),
+            });
+            None
+        }
+    };
+
+    let feature_available = transport_feature_available(transport);
+    let (status, detail) = match transport.required_feature() {
+        Some(feature) if feature_available => (
+            CheckStatus::Pass,
+            format!("Cargo feature {feature} enabled"),
+        ),
+        Some(feature) => {
+            let note = transport
+                .feature_note()
+                .map_or(String::new(), |note| format!("; requires {note}"));
+            (
+                CheckStatus::Fail,
+                format!(
+                    "{} requires Cargo feature {feature}{note}; rebuild with --features {feature}",
+                    transport.as_str()
+                ),
+            )
+        }
+        None => (CheckStatus::Pass, "no Cargo feature required".to_string()),
+    };
+    checks.push(DoctorCheck {
+        name: format!("{name}.feature"),
+        status,
+        detail,
+    });
+
+    if feature_available { spec } else { None }
+}
+
+fn transport_kind(connection: &Connection) -> TransportKind {
+    match connection {
+        Connection::Gpib { .. } => TransportKind::Gpib,
+        Connection::Tcpip { .. } => TransportKind::Tcpip,
+        Connection::Usbtmc { .. } => TransportKind::Usbtmc,
+        Connection::PrologixTcp { .. } => TransportKind::PrologixTcp,
+        Connection::PrologixSerial { .. } => TransportKind::PrologixSerial,
+    }
+}
+
+fn transport_feature_available(transport: TransportKind) -> bool {
+    match transport {
+        TransportKind::Dummy => true,
+        TransportKind::Gpib => cfg!(feature = "hw-gpib"),
+        TransportKind::Tcpip => cfg!(feature = "hw-core"),
+        TransportKind::Usbtmc => cfg!(all(target_os = "windows", feature = "hw-gpib")),
+        TransportKind::PrologixTcp => cfg!(feature = "hw-prologix-tcp"),
+        TransportKind::PrologixSerial => cfg!(feature = "hw-prologix-serial"),
+    }
+}
+
+fn timeout_detail(name: &str, connection: &Connection) -> String {
+    match connection {
+        Connection::Tcpip { .. } if name == "scope" => "connect=5s, read/write=30s".to_string(),
+        Connection::Tcpip { .. } => "connection-specific timeout".to_string(),
+        Connection::Usbtmc { .. } => "read/write=30s".to_string(),
+        Connection::Gpib { .. } => "read/write=10s".to_string(),
+        Connection::PrologixTcp {
+            read_timeout_ms, ..
+        }
+        | Connection::PrologixSerial {
+            read_timeout_ms, ..
+        } => format!(
+            "GPIB read={read_timeout_ms}ms, host read/write={}ms",
+            instruments::transport::prologix_host_io_timeout(*read_timeout_ms).as_millis()
+        ),
+    }
+}
+
+#[cfg(feature = "hw-core")]
+fn probe_scope(
+    cfg: &Config,
+    probe_fetch: bool,
+    spec: &InstrumentSpec,
+    checks: &mut Vec<DoctorCheck>,
+) -> Option<u64> {
     use crate::communications::oscilloscope::OscilloscopeHandler;
     use crate::utils::channels::build_channel_list;
     use instruments::rigol::DhoTriggerStatus;
@@ -359,13 +540,24 @@ fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>
     let mut predicted_bytes = None;
     match OscilloscopeHandler::initialize(cfg) {
         Ok(mut scope) => {
-            match scope.identify() {
-                Ok(idn) => checks.push(DoctorCheck {
+            if spec
+                .capabilities
+                .contains(&InstrumentCapability::ScpiIdentify)
+            {
+                record_identity(
+                    "scope",
+                    spec.model,
+                    &cfg.instruments.as_ref()?.oscilloscope.connection,
+                    scope.identify(),
+                    false,
+                    checks,
+                );
+            } else {
+                checks.push(DoctorCheck {
                     name: "scope.idn".to_string(),
-                    status: CheckStatus::Pass,
-                    detail: idn,
-                }),
-                Err(error) => checks.push(failed("scope.idn", error)),
+                    status: CheckStatus::Skip,
+                    detail: "instrument has no SCPI identify capability".to_string(),
+                });
             }
             if probe_fetch && let Err(error) = scope.stop() {
                 checks.push(failed("scope.stop", error));
@@ -402,29 +594,7 @@ fn check_hardware(cfg: &Config, probe_fetch: bool, checks: &mut Vec<DoctorCheck>
                 Err(error) => checks.push(failed("scope.memory", error)),
             }
         }
-        Err(error) => checks.push(failed("scope.connection", error)),
-    }
-
-    if cfg
-        .instruments
-        .as_ref()
-        .and_then(|instruments| instruments.function_generator.as_ref())
-        .is_some()
-    {
-        match FGHandler::initialize(cfg).and_then(|mut generator| generator.identify()) {
-            Ok(idn) => checks.push(DoctorCheck {
-                name: "generator.idn".to_string(),
-                status: CheckStatus::Pass,
-                detail: idn,
-            }),
-            Err(error) => checks.push(failed("generator.idn", error)),
-        }
-    } else {
-        checks.push(DoctorCheck {
-            name: "generator".to_string(),
-            status: CheckStatus::Skip,
-            detail: "not configured".to_string(),
-        });
+        Err(error) => checks.push(failed("scope.open", error)),
     }
     predicted_bytes
 }
@@ -439,19 +609,257 @@ fn failed(name: &str, error: impl std::fmt::Display) -> DoctorCheck {
 }
 
 #[cfg(not(feature = "hw-core"))]
-fn check_hardware(_cfg: &Config, _probe_fetch: bool, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
+fn probe_scope(
+    _cfg: &Config,
+    _probe_fetch: bool,
+    _spec: &InstrumentSpec,
+    checks: &mut Vec<DoctorCheck>,
+) -> Option<u64> {
     checks.push(DoctorCheck {
-        name: "hardware".to_string(),
+        name: "scope.probe".to_string(),
         status: CheckStatus::Skip,
-        detail: "built without hw feature".to_string(),
+        detail: "built without hw-core".to_string(),
     });
     None
+}
+
+#[cfg(feature = "hw-core")]
+fn probe_generator(
+    model: &str,
+    connection: &Connection,
+    spec: &InstrumentSpec,
+    checks: &mut Vec<DoctorCheck>,
+) {
+    use crate::communications::function_generator::scpi_connection;
+    use instruments::transport::open_scpi_transport;
+
+    let has_scpi_identity = spec
+        .capabilities
+        .contains(&InstrumentCapability::ScpiIdentify);
+    let has_transport_diagnostic = !transport_kind(connection)
+        .diagnostic_capabilities()
+        .is_empty();
+    if !has_scpi_identity && !has_transport_diagnostic {
+        checks.push(DoctorCheck {
+            name: "generator.idn".to_string(),
+            status: CheckStatus::Skip,
+            detail: "instrument has no SCPI identify capability".to_string(),
+        });
+        return;
+    }
+
+    let scpi_connection = match scpi_connection(connection) {
+        Ok(connection) => connection,
+        Err(error) => {
+            checks.push(failed("generator.open", error));
+            return;
+        }
+    };
+    let mut transport = match open_scpi_transport(&scpi_connection) {
+        Ok(transport) => transport,
+        Err(error) => {
+            checks.push(failed("generator.open", error));
+            return;
+        }
+    };
+
+    probe_scpi_identity(
+        "generator",
+        model,
+        connection,
+        spec,
+        transport.as_mut(),
+        checks,
+    );
+}
+
+#[cfg(feature = "hw-core")]
+fn probe_scpi_identity(
+    name: &str,
+    model: &str,
+    connection: &Connection,
+    spec: &InstrumentSpec,
+    transport: &mut dyn instruments::transport::ScpiTransport,
+    checks: &mut Vec<DoctorCheck>,
+) {
+    let needs_controller_version = transport_kind(connection)
+        .diagnostic_capabilities()
+        .contains(&TransportDiagnosticCapability::PrologixControllerVersion);
+    let controller_reachable = if needs_controller_version {
+        match transport.controller_version() {
+            Ok(Some(version)) if !version.trim().is_empty() => {
+                checks.push(DoctorCheck {
+                    name: format!("{name}.controller"),
+                    status: CheckStatus::Pass,
+                    detail: version,
+                });
+                true
+            }
+            Ok(Some(_)) => {
+                checks.push(DoctorCheck {
+                    name: format!("{name}.controller"),
+                    status: CheckStatus::Fail,
+                    detail: "Prologix controller returned an empty ++ver response".to_string(),
+                });
+                false
+            }
+            Ok(None) => {
+                checks.push(DoctorCheck {
+                    name: format!("{name}.controller"),
+                    status: CheckStatus::Fail,
+                    detail: "transport does not expose the required ++ver diagnostic".to_string(),
+                });
+                false
+            }
+            Err(error) => {
+                checks.push(failed(&format!("{name}.controller"), error));
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    if needs_controller_version && !controller_reachable {
+        return;
+    }
+    if !spec
+        .capabilities
+        .contains(&InstrumentCapability::ScpiIdentify)
+    {
+        checks.push(DoctorCheck {
+            name: format!("{name}.idn"),
+            status: CheckStatus::Skip,
+            detail: "instrument has no SCPI identify capability".to_string(),
+        });
+        return;
+    }
+    record_identity(
+        name,
+        model,
+        connection,
+        transport.query_line("*IDN?").map_err(Into::into),
+        controller_reachable,
+        checks,
+    );
+}
+
+#[cfg(not(feature = "hw-core"))]
+fn probe_generator(
+    _model: &str,
+    _connection: &Connection,
+    _spec: &InstrumentSpec,
+    checks: &mut Vec<DoctorCheck>,
+) {
+    checks.push(DoctorCheck {
+        name: "generator.probe".to_string(),
+        status: CheckStatus::Skip,
+        detail: "built without hw-core".to_string(),
+    });
+}
+
+#[cfg(any(feature = "hw-core", test))]
+fn record_identity(
+    name: &str,
+    model: &str,
+    connection: &Connection,
+    result: Result<String>,
+    controller_reachable: bool,
+    checks: &mut Vec<DoctorCheck>,
+) {
+    match result {
+        Ok(idn) if idn.trim().is_empty() => checks.push(DoctorCheck {
+            name: format!("{name}.idn"),
+            status: CheckStatus::Fail,
+            detail: "instrument returned an empty *IDN? response".to_string(),
+        }),
+        Ok(idn) => {
+            let reported_model = scpi_idn_model(&idn);
+            let matches = reported_model.is_some_and(|value| value.eq_ignore_ascii_case(model));
+            checks.push(DoctorCheck {
+                name: format!("{name}.idn"),
+                status: CheckStatus::Pass,
+                detail: idn.clone(),
+            });
+            checks.push(DoctorCheck {
+                name: format!("{name}.model"),
+                status: if matches {
+                    CheckStatus::Pass
+                } else {
+                    CheckStatus::Fail
+                },
+                detail: if matches {
+                    format!("response matches configured model {model}")
+                } else if let Some(reported_model) = reported_model {
+                    format!(
+                        "configured model {model} does not match reported model {reported_model}: {idn}"
+                    )
+                } else {
+                    format!("*IDN? response has no valid model field for {model}: {idn}")
+                },
+            });
+        }
+        Err(error) => checks.push(DoctorCheck {
+            name: format!("{name}.idn"),
+            status: CheckStatus::Fail,
+            detail: identity_error_detail(connection, controller_reachable, &error),
+        }),
+    }
+}
+
+#[cfg(any(feature = "hw-core", test))]
+fn scpi_idn_model(idn: &str) -> Option<&str> {
+    idn.split(',')
+        .nth(1)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+}
+
+#[cfg(any(feature = "hw-core", test))]
+fn identity_error_detail(
+    connection: &Connection,
+    controller_reachable: bool,
+    error: &anyhow::Error,
+) -> String {
+    match (connection, controller_reachable) {
+        (Connection::PrologixTcp { address, .. }, true)
+        | (Connection::PrologixSerial { address, .. }, true) => format!(
+            "Prologix controller is reachable, but GPIB address {address} did not answer *IDN?: {error:#}; verify the instrument PAD, cable, and power"
+        ),
+        _ => format!("{error:#}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(feature = "hw-core")]
+    struct MockScpiTransport {
+        controller_version: Option<instruments::Result<Option<String>>>,
+        identity: Option<instruments::Result<String>>,
+        queries: usize,
+    }
+
+    #[cfg(feature = "hw-core")]
+    impl instruments::transport::ScpiTransport for MockScpiTransport {
+        fn write_line(&mut self, _command: &str) -> instruments::Result<()> {
+            Ok(())
+        }
+
+        fn query_line(&mut self, command: &str) -> instruments::Result<String> {
+            assert_eq!(command, "*IDN?");
+            self.queries += 1;
+            self.identity.take().expect("unexpected identity query")
+        }
+
+        fn controller_version(&mut self) -> instruments::Result<Option<String>> {
+            self.controller_version
+                .take()
+                .expect("unexpected controller version query")
+        }
+    }
 
     fn temporary_directory() -> PathBuf {
         let nonce = SystemTime::now()
@@ -521,5 +929,185 @@ mod tests {
         let mut checks = Vec::new();
         check_capacity(Some(2_000_000_000), Some(1_000_000_000), &mut checks);
         assert_eq!(checks[0].status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn prologix_timeout_and_uri_are_reported_from_config() {
+        let connection = Connection::PrologixTcp {
+            host: "10.249.11.17".to_string(),
+            port: 1234,
+            address: 17,
+            read_timeout_ms: 2500,
+        };
+
+        assert_eq!(
+            connection_uri(&connection),
+            "prologix-tcp://10.249.11.17:1234?addr=17&read_timeout_ms=2500"
+        );
+        assert_eq!(
+            timeout_detail("generator", &connection),
+            "GPIB read=2500ms, host read/write=2750ms"
+        );
+        assert_eq!(transport_kind(&connection), TransportKind::PrologixTcp);
+    }
+
+    #[test]
+    fn identity_mismatch_is_a_failure() {
+        let mut checks = Vec::new();
+        record_identity(
+            "scope",
+            "DHO5108",
+            &Connection::Tcpip {
+                ip: "10.249.11.19".to_string(),
+                port: 5555,
+            },
+            Ok("RIGOL TECHNOLOGIES,DHO924S,serial,firmware".to_string()),
+            false,
+            &mut checks,
+        );
+
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].status, CheckStatus::Pass);
+        assert_eq!(checks[1].name, "scope.model");
+        assert_eq!(checks[1].status, CheckStatus::Fail);
+    }
+
+    #[test]
+    fn identity_model_requires_an_exact_scpi_model_field() {
+        let connection = Connection::Tcpip {
+            ip: "10.249.11.19".to_string(),
+            port: 5555,
+        };
+        let mut checks = Vec::new();
+
+        record_identity(
+            "scope",
+            "DHO5108",
+            &connection,
+            Ok("RIGOL,DHO5108A,serial,firmware".to_string()),
+            false,
+            &mut checks,
+        );
+
+        assert_eq!(checks[1].status, CheckStatus::Fail);
+        assert!(checks[1].detail.contains("reported model DHO5108A"));
+        assert_eq!(
+            scpi_idn_model("RIGOL TECHNOLOGIES, DHO5108 ,serial,firmware"),
+            Some("DHO5108")
+        );
+    }
+
+    #[test]
+    fn reachable_prologix_reports_pad_specific_identity_errors() {
+        let detail = identity_error_detail(
+            &Connection::PrologixTcp {
+                host: "10.249.11.17".to_string(),
+                port: 1234,
+                address: 17,
+                read_timeout_ms: 2500,
+            },
+            true,
+            &anyhow::anyhow!("timed out"),
+        );
+
+        assert!(detail.contains("controller is reachable"));
+        assert!(detail.contains("GPIB address 17"));
+        assert!(detail.contains("verify the instrument PAD"));
+    }
+
+    #[cfg(feature = "hw-core")]
+    #[test]
+    fn prologix_probe_separates_controller_and_instrument_identity() {
+        let connection = Connection::PrologixTcp {
+            host: "10.249.11.17".to_string(),
+            port: 1234,
+            address: 17,
+            read_timeout_ms: 2500,
+        };
+        let spec = find_instrument("WF1946B").unwrap();
+        let mut transport = MockScpiTransport {
+            controller_version: Some(Ok(Some("Prologix controller 6.101".to_string()))),
+            identity: Some(Ok("NF Corporation,WF1946B,0,1".to_string())),
+            queries: 0,
+        };
+        let mut checks = Vec::new();
+
+        probe_scpi_identity(
+            "generator",
+            "WF1946B",
+            &connection,
+            spec,
+            &mut transport,
+            &mut checks,
+        );
+
+        assert_eq!(transport.queries, 1);
+        assert_eq!(checks.len(), 3);
+        assert_eq!(checks[0].name, "generator.controller");
+        assert_eq!(checks[0].status, CheckStatus::Pass);
+        assert_eq!(checks[1].name, "generator.idn");
+        assert_eq!(checks[2].name, "generator.model");
+        assert_eq!(checks[2].status, CheckStatus::Pass);
+    }
+
+    #[cfg(feature = "hw-core")]
+    #[test]
+    fn instruments_without_scpi_identity_are_not_queried() {
+        let spec = find_instrument("DummyInstrument").unwrap();
+        let mut transport = MockScpiTransport {
+            controller_version: None,
+            identity: None,
+            queries: 0,
+        };
+        let mut checks = Vec::new();
+
+        probe_scpi_identity(
+            "generator",
+            spec.model,
+            &Connection::Gpib {
+                board: 0,
+                address: 1,
+            },
+            spec,
+            &mut transport,
+            &mut checks,
+        );
+
+        assert_eq!(transport.queries, 0);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, CheckStatus::Skip);
+    }
+
+    #[cfg(feature = "hw-core")]
+    #[test]
+    fn prologix_controller_is_diagnosed_for_non_scpi_instruments() {
+        let spec = find_instrument("DummyInstrument").unwrap();
+        let mut transport = MockScpiTransport {
+            controller_version: Some(Ok(Some("Prologix controller 6.101".to_string()))),
+            identity: None,
+            queries: 0,
+        };
+        let mut checks = Vec::new();
+
+        probe_scpi_identity(
+            "generator",
+            spec.model,
+            &Connection::PrologixTcp {
+                host: "10.249.11.17".to_string(),
+                port: 1234,
+                address: 17,
+                read_timeout_ms: 2500,
+            },
+            spec,
+            &mut transport,
+            &mut checks,
+        );
+
+        assert_eq!(transport.queries, 0);
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].name, "generator.controller");
+        assert_eq!(checks[0].status, CheckStatus::Pass);
+        assert_eq!(checks[1].name, "generator.idn");
+        assert_eq!(checks[1].status, CheckStatus::Skip);
     }
 }

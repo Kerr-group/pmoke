@@ -65,6 +65,17 @@ impl TransportKind {
             Self::PrologixSerial => "prologix-serial:///dev/cu.usbserial-XXXX?addr=<addr>",
         }
     }
+
+    pub fn diagnostic_capabilities(self) -> &'static [TransportDiagnosticCapability] {
+        const NONE: &[TransportDiagnosticCapability] = &[];
+        const PROLOGIX: &[TransportDiagnosticCapability] =
+            &[TransportDiagnosticCapability::PrologixControllerVersion];
+
+        match self {
+            Self::PrologixTcp | Self::PrologixSerial => PROLOGIX,
+            Self::Dummy | Self::Gpib | Self::Tcpip | Self::Usbtmc => NONE,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

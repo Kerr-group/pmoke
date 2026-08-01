@@ -50,6 +50,14 @@ where
         write_line(&mut self.io, command)
     }
 
+    pub fn controller_version(&mut self) -> Result<String> {
+        self.controller_command("++ver")?;
+        let bytes = read_response_bytes(&mut self.io)?;
+        Ok(String::from_utf8(bytes)?
+            .trim_end_matches(['\r', '\n'])
+            .to_string())
+    }
+
     pub fn write(&mut self, command: &str) -> Result<()> {
         write_line(&mut self.io, command)
     }

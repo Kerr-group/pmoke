@@ -1,9 +1,7 @@
 use crate::Result;
 use std::fmt;
-#[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
 use std::time::Duration;
 
-#[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
 const PROLOGIX_HOST_TIMEOUT_MARGIN_MS: u64 = 250;
 
 pub trait ScpiTransport {
@@ -16,6 +14,10 @@ pub trait ScpiTransport {
 
     fn clear(&mut self) -> Result<()> {
         Ok(())
+    }
+
+    fn controller_version(&mut self) -> Result<Option<String>> {
+        Ok(None)
     }
 }
 
@@ -251,10 +253,13 @@ where
     fn query_line(&mut self, command: &str) -> Result<String> {
         Ok(self.query(command)?)
     }
+
+    fn controller_version(&mut self) -> Result<Option<String>> {
+        Ok(Some(prologix_rs::Prologix::controller_version(self)?))
+    }
 }
 
-#[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
-fn prologix_host_io_timeout(read_timeout_ms: u16) -> Duration {
+pub fn prologix_host_io_timeout(read_timeout_ms: u16) -> Duration {
     Duration::from_millis(
         u64::from(read_timeout_ms).saturating_add(PROLOGIX_HOST_TIMEOUT_MARGIN_MS),
     )

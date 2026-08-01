@@ -18,6 +18,7 @@ mod validation;
 pub use load::{load_from_path, load_from_str};
 pub use migration::{MigrationPlan, plan_latest_executable_migration, plan_migration};
 pub use paths::{ArtifactPaths, ArtifactResolver};
+pub(crate) use render::connection_uri;
 use render::render_config_v4;
 pub use render::render_normalized_config;
 use schema::*;
