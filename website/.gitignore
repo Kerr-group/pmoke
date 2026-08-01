@@ -4,6 +4,10 @@
 # generated content
 .source
 
+# source route whose segment intentionally carries an image extension
+!/app/og.png/
+!/app/og.png/route.tsx
+
 # test & build
 /coverage
 /playwright-report/
