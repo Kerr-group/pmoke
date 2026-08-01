@@ -19,14 +19,14 @@ fn normalized_config_v4(config: &Config) -> Result<NormalizedConfigV4> {
         .ok_or_else(|| anyhow!("version 4 normalized config has no oscilloscope"))?;
     let scope = ScopeOutputV4 {
         model: instruments.oscilloscope.model.clone(),
-        connection: connection_string_v4(&instruments.oscilloscope.connection),
+        connection: connection_uri(&instruments.oscilloscope.connection),
     };
     let generator = instruments
         .function_generator
         .as_ref()
         .map(|generator| GeneratorOutputV4 {
             model: generator.model.clone(),
-            connection: connection_string_v4(&generator.connection),
+            connection: connection_uri(&generator.connection),
         });
     let sensors = config
         .roles
@@ -100,7 +100,7 @@ fn sensor_output_v4(config: &Config, index: u8) -> Result<SensorOutputV4> {
     })
 }
 
-fn connection_string_v4(connection: &Connection) -> String {
+pub(crate) fn connection_uri(connection: &Connection) -> String {
     match connection {
         Connection::Tcpip { ip, port } if ip.contains(':') => format!("tcp://[{ip}]:{port}"),
         Connection::Tcpip { ip, port } => format!("tcp://{ip}:{port}"),

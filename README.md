@@ -113,9 +113,20 @@ The directory receives immutable `config.source.toml` and
 `config.resolved.toml` snapshots. Reusing it with different config contents is
 rejected, preventing artifacts from different shots from being mixed.
 
-`doctor` only observes acquisition state by default. Add `--probe-fetch` to
+`doctor` reports each configured instrument's normalized connection URI,
+registry compatibility, required Cargo feature, and effective timeout before
+opening hardware. It then runs only diagnostics declared by the instrument and
+transport registries. SCPI instruments are identified with `*IDN?`; Prologix
+connections first query the adapter with `++ver`, then query the instrument at
+the configured GPIB primary address. This separates controller connectivity
+from an incorrect PAD, disconnected cable, or powered-off instrument.
+
+The command only observes acquisition state by default. Add `--probe-fetch` to
 allow the preflight check to stop the oscilloscope before verifying its state.
-Use `--json` for a machine-readable report.
+Use `--json` for a machine-readable report suitable for CI or support records.
+Instrument roles not present in the current config schema, including
+multimeters, remain available through `pmoke instruments query` and are not
+implicitly probed by `doctor`.
 
 ### Migrate Legacy Configs
 

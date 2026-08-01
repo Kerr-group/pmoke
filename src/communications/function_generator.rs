@@ -43,7 +43,7 @@ fn open_function_generator(model: &str, connection: &Connection) -> Result<FG> {
     }
 }
 
-fn scpi_connection(connection: &Connection) -> Result<ScpiConnection> {
+pub(crate) fn scpi_connection(connection: &Connection) -> Result<ScpiConnection> {
     match connection {
         Connection::Gpib { board, address } => Ok(ScpiConnection::Gpib {
             board: *board as i32,
