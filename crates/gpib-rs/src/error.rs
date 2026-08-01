@@ -74,9 +74,9 @@ use std::cell::RefCell;
 
 #[cfg(target_os = "windows")]
 thread_local! {
-    pub(crate) static LAST_IBSTA: RefCell<i32> = RefCell::new(0);
-    pub(crate) static LAST_IBCNTL: RefCell<c_long> = RefCell::new(0);
-    pub(crate) static LAST_IBERR: RefCell<i32> = RefCell::new(0);
+    pub(crate) static LAST_IBSTA: RefCell<i32> = const { RefCell::new(0) };
+    pub(crate) static LAST_IBCNTL: RefCell<c_long> = const { RefCell::new(0) };
+    pub(crate) static LAST_IBERR: RefCell<i32> = const { RefCell::new(0) };
 }
 
 #[cfg(not(target_os = "windows"))]

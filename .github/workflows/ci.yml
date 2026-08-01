@@ -166,6 +166,31 @@ jobs:
       - name: Lint pmoke hw-gpib
         run: cargo clippy --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw-gpib -- -D warnings
 
+  windows-visa-check:
+    name: Windows VISA compile check
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Check gpib-rs VISA bindings
+        run: cargo check --locked -p gpib-rs --lib
+
+      - name: Lint gpib-rs VISA bindings
+        run: cargo clippy --locked -p gpib-rs --lib -- -D warnings
+
+      - name: Check instruments VISA integration
+        run: cargo check --locked -p instruments --lib --no-default-features --features gpib
+
+      - name: Lint instruments VISA integration
+        run: cargo clippy --locked -p instruments --lib --no-default-features --features gpib -- -D warnings
+
   crate-feature-matrix:
     name: Crate features (${{ matrix.os }}, ${{ matrix.label }})
     runs-on: ${{ matrix.os }}

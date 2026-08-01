@@ -1,5 +1,7 @@
 use crate::Result;
 use std::fmt;
+#[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
+use std::time::Duration;
 
 pub trait ScpiTransport {
     fn write_line(&mut self, command: &str) -> Result<()>;
@@ -116,6 +118,7 @@ fn open_prologix_tcp_transport(
 ) -> Result<BoxedScpiTransport> {
     let controller = prologix_rs::Prologix::tcp(host, port)
         .address(address)
+        .timeout(prologix_io_timeout(read_timeout_ms))
         .read_timeout_ms(read_timeout_ms)
         .open()?;
     Ok(Box::new(controller))
@@ -145,6 +148,7 @@ fn open_prologix_serial_transport(
     let controller = prologix_rs::Prologix::serial(path)
         .address(address)
         .baud_rate(baud_rate)
+        .timeout(prologix_io_timeout(read_timeout_ms))
         .read_timeout_ms(read_timeout_ms)
         .open()?;
     Ok(Box::new(controller))
@@ -243,5 +247,55 @@ where
 
     fn query_line(&mut self, command: &str) -> Result<String> {
         Ok(self.query(command)?)
+    }
+}
+
+#[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
+fn prologix_io_timeout(read_timeout_ms: u16) -> Duration {
+    Duration::from_millis(u64::from(read_timeout_ms))
+}
+
+#[cfg(all(test, feature = "prologix-tcp"))]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Instant;
+
+    #[test]
+    fn prologix_read_timeout_also_limits_host_io() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            for _ in 0..8 {
+                let mut command = String::new();
+                reader.read_line(&mut command).unwrap();
+            }
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+
+        let connection = ScpiConnection::PrologixTcp {
+            host: "127.0.0.1".to_string(),
+            port,
+            address: 17,
+            read_timeout_ms: 50,
+        };
+        let mut transport = open_scpi_transport(&connection).unwrap();
+        let started = Instant::now();
+        let _error = transport.query_line("*IDN?").unwrap_err();
+        let elapsed = started.elapsed();
+
+        release_tx.send(()).unwrap();
+        drop(transport);
+        server.join().unwrap();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "query exceeded configured host timeout: {elapsed:?}"
+        );
     }
 }

@@ -525,7 +525,7 @@ impl Instrument {
 
     pub fn read_string(&self) -> Result<String> {
         let bytes = self.read_all()?;
-        Ok(String::from_utf8_lossy(&bytes).trim_end().to_string())
+        Ok(decode_text_response(&bytes))
     }
 
     pub fn read_all(&self) -> Result<Vec<u8>> {
@@ -657,6 +657,12 @@ fn ibcntl_to_usize(value: c_long) -> usize {
     usize::try_from(value).unwrap_or(0)
 }
 
+fn decode_text_response(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .trim_end_matches(['\r', '\n'])
+        .to_string()
+}
+
 impl Drop for Instrument {
     fn drop(&mut self) {
         #[cfg(target_os = "windows")]
@@ -701,5 +707,12 @@ mod tests {
     #[test]
     fn ibcntl_count_clamps_negative_values() {
         assert_eq!(ibcntl_to_usize(-1), 0);
+    }
+
+    #[test]
+    fn text_response_preserves_payload_whitespace() {
+        assert_eq!(decode_text_response(b"  +1.0  \r\n"), "  +1.0  ");
+        assert_eq!(decode_text_response(b"VALUE\n\r\n"), "VALUE");
+        assert_eq!(decode_text_response(b"VALUE  "), "VALUE  ");
     }
 }

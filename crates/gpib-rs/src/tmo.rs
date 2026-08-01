@@ -1,6 +1,7 @@
 //! Timeout helpers (linux-gpib style codes and VISA milliseconds).
 
 #[inline]
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn secs_to_tmo_code(s: u64) -> i32 {
     match s {
         0..=3 => 11,   // ~3s

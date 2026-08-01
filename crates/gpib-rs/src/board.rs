@@ -2,22 +2,25 @@ use std::ffi::{CStr, CString};
 
 #[cfg(not(target_os = "windows"))]
 use crate::conf::{GpibConf, load_gpib_conf, parse_board_index};
+#[cfg(not(target_os = "windows"))]
 use crate::consts::{EOS_NONE, EOT_ENABLE, ERR, NO_SAD};
 #[cfg(not(target_os = "windows"))]
 use crate::driver::ensure_driver_configured;
 #[cfg(not(target_os = "windows"))]
-use crate::error::{ibsta_val, sys_err};
+use crate::error::{check_ok, ibsta_val, sys_err};
 #[cfg(not(target_os = "windows"))]
 use crate::ffi::{ibdev, ibfind, ibln, ibonl, ibrsp, ibtmo};
 #[cfg(not(target_os = "windows"))]
 use crate::tmo::secs_to_tmo_code;
 
-use crate::error::{Result, check_ok, err};
+use crate::error::{Result, err};
 
 #[cfg(target_os = "windows")]
 use crate::consts::visa::{VI_NULL, VI_SUCCESS};
 #[cfg(target_os = "windows")]
-use crate::ffi::{ViSession, ViStatus, ViUInt32, viClose, viFindNext, viFindRsrc, viOpenDefaultRM};
+use crate::ffi::{
+    ViFindList, ViSession, ViUInt32, viClose, viFindNext, viFindRsrc, viOpenDefaultRM,
+};
 #[cfg(target_os = "windows")]
 use std::os::raw::c_char;
 
@@ -134,7 +137,7 @@ impl Board {
             // Pattern: "GPIB{index}::?*::INSTR" matches all instruments on this board.
             let query = CString::new(format!("GPIB{}::?*::INSTR", self.index)).unwrap();
 
-            let mut find_list: ViSession = 0;
+            let mut find_list: ViFindList = 0;
             let mut ret_cnt: ViUInt32 = 0;
             let mut desc_buf = [0i8; 256]; // Buffer for resource string (e.g. "GPIB0::17::INSTR")
 
@@ -153,8 +156,8 @@ impl Board {
                         v.push(pad);
                     }
 
-                    // Process subsequent matches
-                    while ret_cnt > 1 {
+                    // Process the remaining matches reported by viFindRsrc.
+                    for _ in 1..ret_cnt {
                         let next_status = viFindNext(find_list, desc_buf.as_mut_ptr());
                         if next_status < VI_SUCCESS {
                             break;
@@ -162,9 +165,6 @@ impl Board {
                         if let Some(pad) = parse_visa_rsrc_pad(&desc_buf) {
                             v.push(pad);
                         }
-                        // Note: ret_cnt isn't decremented by viFindNext,
-                        // we loop until viFindNext fails or we assume the count was correct.
-                        // Ideally checking next_status is sufficient.
                     }
                     viClose(find_list);
                 }

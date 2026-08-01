@@ -5,8 +5,11 @@ pub const ERR: i32 = 0x8000;
 pub const TIMO: i32 = 0x4000;
 pub const END: i32 = 0x2000;
 
+#[cfg(not(target_os = "windows"))]
 pub const NO_SAD: i32 = 0;
+#[cfg(not(target_os = "windows"))]
 pub const EOT_ENABLE: i32 = 1;
+#[cfg(not(target_os = "windows"))]
 pub const EOS_NONE: i32 = 0;
 
 // --- VISA Constants (Windows) ---
@@ -16,12 +19,10 @@ pub mod visa {
     pub const VI_SUCCESS_TERM_CHAR: i32 = 0x3FFF0005;
     pub const VI_SUCCESS_MAX_CNT: i32 = 0x3FFF0006;
 
-    pub const VI_NULL: u64 = 0;
+    pub const VI_NULL: u32 = 0;
 
     // Attributes
     pub const VI_ATTR_TMO_VALUE: u32 = 0x3FFF000A;
-    pub const VI_ATTR_TERMCHAR: u32 = 0x3FFF0018;
-    pub const VI_ATTR_TERMCHAR_EN: u32 = 0x3FFF0038;
     pub const VI_ATTR_SEND_END_EN: u32 = 0x3FFF0016;
 
     // Values

@@ -1,6 +1,8 @@
 //! Driver initialization helpers (platform-aware).
 
+#[cfg(not(target_os = "windows"))]
 use crate::error::{Result, sys_err};
+#[cfg(not(target_os = "windows"))]
 use std::{fs, process::Command};
 
 #[cfg(not(target_os = "windows"))]
