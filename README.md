@@ -308,7 +308,7 @@ Default builds include hardware support.
   - Serial: build with `--no-default-features --features hw-prologix-serial`, then use `prologix-serial:///dev/cu.usbserial-XXXX?addr=11`.
   - Ethernet: build with `--no-default-features --features hw-prologix-tcp`, then use `prologix-tcp://host:1234?addr=11`.
 - Prologix options: `addr` is the instrument GPIB address, `read_timeout_ms` defaults to `3000`, and serial `baud_rate` defaults to `115200`.
-- Use `pmoke instruments list` and `pmoke instruments explain MODEL` to inspect supported transports, protocols, required features, and connection examples without opening hardware.
+- Use `pmoke instruments list` and `pmoke instruments explain MODEL` to inspect supported transports, protocols, required features, and connection templates without opening hardware.
 
 Screenshot capture uses `:DISPlay:DATA? PNG` and writes directly to:
 

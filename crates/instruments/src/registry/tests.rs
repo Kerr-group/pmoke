@@ -48,7 +48,7 @@ fn known_instruments_are_registered_from_device_specs() {
 }
 
 #[test]
-fn known_instruments_expose_protocols_capabilities_and_examples() {
+fn known_instruments_expose_protocols_and_capabilities() {
     for spec in KNOWN_INSTRUMENTS {
         assert!(
             !spec.transports.is_empty(),
@@ -65,10 +65,19 @@ fn known_instruments_expose_protocols_capabilities_and_examples() {
             "{} must declare capabilities",
             spec.model
         );
-        assert!(
-            !spec.examples.is_empty(),
-            "{} must provide at least one connection example",
-            spec.model
-        );
     }
+}
+
+#[test]
+fn transport_metadata_provides_features_and_connection_templates() {
+    assert_eq!(TransportKind::Gpib.required_feature(), "hw-gpib");
+    assert_eq!(TransportKind::Gpib.connection_template(), "gpib://0/<addr>");
+    assert_eq!(
+        TransportKind::PrologixTcp.required_feature(),
+        "hw-prologix-tcp"
+    );
+    assert_eq!(
+        TransportKind::PrologixTcp.connection_template(),
+        "prologix-tcp://<host>:1234?addr=<addr>"
+    );
 }

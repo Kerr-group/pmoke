@@ -36,6 +36,28 @@ impl TransportKind {
             Self::PrologixSerial => "prologix_serial",
         }
     }
+
+    pub fn required_feature(self) -> &'static str {
+        match self {
+            Self::Dummy => "none",
+            Self::Gpib => "hw-gpib",
+            Self::Tcpip => "hw-core",
+            Self::Usbtmc => "hw-gpib on Windows",
+            Self::PrologixTcp => "hw-prologix-tcp",
+            Self::PrologixSerial => "hw-prologix-serial",
+        }
+    }
+
+    pub fn connection_template(self) -> &'static str {
+        match self {
+            Self::Dummy => "dummy://default",
+            Self::Gpib => "gpib://0/<addr>",
+            Self::Tcpip => "tcp://<host>:<port>",
+            Self::Usbtmc => "visa:USB0::...::INSTR",
+            Self::PrologixTcp => "prologix-tcp://<host>:1234?addr=<addr>",
+            Self::PrologixSerial => "prologix-serial:///dev/cu.usbserial-XXXX?addr=<addr>",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,20 +114,12 @@ impl TransportDiagnosticCapability {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ConnectionExample {
-    pub transport: TransportKind,
-    pub connection: &'static str,
-    pub required_feature: &'static str,
-}
-
-#[derive(Debug, Clone, Copy)]
 pub struct InstrumentSpec {
     pub model: &'static str,
     pub role: InstrumentRole,
     pub transports: &'static [TransportKind],
     pub protocols: &'static [ProtocolKind],
     pub capabilities: &'static [InstrumentCapability],
-    pub examples: &'static [ConnectionExample],
     pub description: &'static str,
 }
 

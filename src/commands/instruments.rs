@@ -23,14 +23,14 @@ struct InstrumentDetails {
     transports: Vec<&'static str>,
     protocols: Vec<&'static str>,
     capabilities: Vec<&'static str>,
-    examples: Vec<ConnectionExampleDetails>,
+    connection_templates: Vec<ConnectionTemplateDetails>,
     description: &'static str,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
-struct ConnectionExampleDetails {
+struct ConnectionTemplateDetails {
     transport: &'static str,
-    connection: &'static str,
+    connection_template: &'static str,
     required_feature: &'static str,
 }
 
@@ -95,19 +95,19 @@ fn explain(model: &str, json: bool) -> Result<()> {
             ("capabilities".to_string(), details.capabilities.join(", ")),
         ],
     );
-    if !details.examples.is_empty() {
-        ui::section("Connection Examples");
+    if !details.connection_templates.is_empty() {
+        ui::section("Connection Templates");
         println!(
             "{}",
             ui::table(
-                &["Transport", "Connection", "Feature"],
+                &["Transport", "Connection template", "Feature"],
                 details
-                    .examples
+                    .connection_templates
                     .iter()
                     .map(|example| {
                         vec![
                             example.transport.to_string(),
-                            example.connection.to_string(),
+                            example.connection_template.to_string(),
                             example.required_feature.to_string(),
                         ]
                     })
@@ -169,13 +169,13 @@ fn details(spec: &InstrumentSpec) -> InstrumentDetails {
             .iter()
             .map(|capability| capability.as_str())
             .collect(),
-        examples: spec
-            .examples
+        connection_templates: spec
+            .transports
             .iter()
-            .map(|example| ConnectionExampleDetails {
-                transport: example.transport.as_str(),
-                connection: example.connection,
-                required_feature: example.required_feature,
+            .map(|transport| ConnectionTemplateDetails {
+                transport: transport.as_str(),
+                connection_template: transport.connection_template(),
+                required_feature: transport.required_feature(),
             })
             .collect(),
         description: spec.description,
@@ -183,9 +183,9 @@ fn details(spec: &InstrumentSpec) -> InstrumentDetails {
 }
 
 fn required_features(spec: &InstrumentSpec) -> Vec<&'static str> {
-    spec.examples
+    spec.transports
         .iter()
-        .map(|example| example.required_feature)
+        .map(|transport| transport.required_feature())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -213,13 +213,13 @@ mod tests {
     }
 
     #[test]
-    fn details_include_connection_examples() {
+    fn details_generate_connection_templates_from_transports() {
         let spec = instruments::registry::find_instrument("Keithley2010").unwrap();
         let details = details(spec);
 
-        assert!(details.examples.iter().any(|example| {
+        assert!(details.connection_templates.iter().any(|example| {
             example.transport == "prologix_tcp"
-                && example.connection == "prologix-tcp://10.249.11.17:1234?addr=17"
+                && example.connection_template == "prologix-tcp://<host>:1234?addr=<addr>"
                 && example.required_feature == "hw-prologix-tcp"
         }));
     }
