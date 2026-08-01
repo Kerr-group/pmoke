@@ -1,4 +1,5 @@
 use super::*;
+use crate::connection::ConnectionUri;
 
 pub fn render_normalized_config(config: &Config) -> Result<String> {
     if config.version == 4 {
@@ -101,40 +102,42 @@ fn sensor_output_v4(config: &Config, index: u8) -> Result<SensorOutputV4> {
 }
 
 pub(crate) fn connection_uri(connection: &Connection) -> String {
-    match connection {
-        Connection::Tcpip { ip, port } if ip.contains(':') => format!("tcp://[{ip}]:{port}"),
-        Connection::Tcpip { ip, port } => format!("tcp://{ip}:{port}"),
-        Connection::Usbtmc { resource } => format!("visa:{resource}"),
-        Connection::Gpib { board, address } => format!("gpib://{board}/{address}"),
+    let uri = match connection {
+        Connection::Tcpip { ip, port } => ConnectionUri::Tcp {
+            host: ip.clone(),
+            port: *port,
+        },
+        Connection::Usbtmc { resource } => ConnectionUri::Visa {
+            resource: resource.clone(),
+        },
+        Connection::Gpib { board, address } => ConnectionUri::Gpib {
+            board: *board,
+            address: *address,
+        },
         Connection::PrologixTcp {
             host,
             port,
             address,
             read_timeout_ms,
-        } if host.contains(':') => {
-            format!(
-                "prologix-tcp://[{host}]:{port}?addr={address}&read_timeout_ms={read_timeout_ms}"
-            )
-        }
-        Connection::PrologixTcp {
-            host,
-            port,
-            address,
-            read_timeout_ms,
-        } => {
-            format!("prologix-tcp://{host}:{port}?addr={address}&read_timeout_ms={read_timeout_ms}")
-        }
+        } => ConnectionUri::PrologixTcp {
+            host: host.clone(),
+            port: *port,
+            address: *address,
+            read_timeout_ms: *read_timeout_ms,
+        },
         Connection::PrologixSerial {
             path,
             address,
             baud_rate,
             read_timeout_ms,
-        } => {
-            format!(
-                "prologix-serial://{path}?addr={address}&baud_rate={baud_rate}&read_timeout_ms={read_timeout_ms}"
-            )
-        }
-    }
+        } => ConnectionUri::PrologixSerial {
+            path: path.clone(),
+            address: *address,
+            baud_rate: *baud_rate,
+            read_timeout_ms: *read_timeout_ms,
+        },
+    };
+    uri.to_string()
 }
 
 fn lockin_output_v4(lockin: &Lockin, signal_channels: &[u8]) -> LockinOutputV4 {

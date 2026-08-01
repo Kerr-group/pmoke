@@ -1,4 +1,5 @@
 use crate::cli::{InstrumentsCommand, JsonOutput};
+use crate::connection::{ConnectionDefaults, ConnectionUri};
 use crate::ui;
 use anyhow::{Context, Result, anyhow, bail};
 use instruments::registry::{InstrumentSpec, KNOWN_INSTRUMENTS};
@@ -8,9 +9,6 @@ use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
-
-const DEFAULT_PROLOGIX_PORT: u16 = 1234;
-const DEFAULT_PROLOGIX_BAUD_RATE: u32 = 115_200;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 struct InstrumentListItem {
@@ -455,79 +453,56 @@ pub(crate) fn parse_query_connection(
     if default_timeout_ms == 0 {
         bail!("timeout_ms must be positive");
     }
-    if let Some(endpoint) = value.strip_prefix("tcp://") {
-        let (host, port) = parse_host_port(endpoint, "TCP")?;
-        return Ok(QueryConnection::Tcpip { host, port });
-    }
-    if value.starts_with("visa:") {
-        bail!(
+    let parsed = ConnectionUri::parse(
+        value,
+        ConnectionDefaults {
+            prologix_read_timeout_ms: default_timeout_ms,
+        },
+    )
+    .map_err(anyhow::Error::msg)?;
+    Ok(match parsed {
+        ConnectionUri::Tcp { host, port } => QueryConnection::Tcpip { host, port },
+        ConnectionUri::Visa { .. } => bail!(
             "visa connections are not supported by generic instruments query yet; use a TCP/IP, GPIB, or Prologix SCPI connection"
-        );
-    }
-    if let Some(endpoint) = value.strip_prefix("gpib://") {
-        let (board, address) = endpoint
-            .split_once('/')
-            .ok_or_else(|| anyhow!("GPIB connection must be gpib://board/address"))?;
-        let board = parse_u8(board, "GPIB board")?;
-        let address = parse_gpib_address(address, "GPIB address")?;
-        return Ok(QueryConnection::Scpi(ScpiConnection::Gpib {
+        ),
+        ConnectionUri::Gpib { board, address } => QueryConnection::Scpi(ScpiConnection::Gpib {
             board: i32::from(board),
             address: i32::from(address),
             timeout_secs: timeout_ms_to_secs(default_timeout_ms),
             use_crlf: false,
-        }));
-    }
-    if let Some(endpoint) = value.strip_prefix("prologix-tcp://") {
-        let (endpoint, query) = split_query(endpoint);
-        let params = parse_query_params(query)?;
-        validate_query_param_keys(&params, &["addr", "address", "read_timeout_ms"])?;
-        let address = parse_required_address_param(&params)?;
-        let read_timeout_ms = parse_timeout_param(&params, default_timeout_ms)?;
-        let (host, port) =
-            parse_optional_host_port(endpoint, DEFAULT_PROLOGIX_PORT, "Prologix TCP")?;
-        return Ok(QueryConnection::Scpi(ScpiConnection::PrologixTcp {
+        }),
+        ConnectionUri::PrologixTcp {
             host,
             port,
             address,
             read_timeout_ms,
-        }));
-    }
-    if let Some(endpoint) = value.strip_prefix("prologix-serial://") {
-        let (path, query) = split_query(endpoint);
-        let params = parse_query_params(query)?;
-        validate_query_param_keys(
-            &params,
-            &["addr", "address", "baud_rate", "read_timeout_ms"],
-        )?;
-        let address = parse_required_address_param(&params)?;
-        let read_timeout_ms = parse_timeout_param(&params, default_timeout_ms)?;
-        let baud_rate = parse_optional_u32_param(&params, "baud_rate", DEFAULT_PROLOGIX_BAUD_RATE)?;
-        if baud_rate == 0 {
-            bail!("Prologix serial baud_rate must be positive");
-        }
-        let path = path.trim();
-        if path.is_empty() {
-            bail!("Prologix serial path must not be empty");
-        }
-        return Ok(QueryConnection::Scpi(ScpiConnection::PrologixSerial {
-            path: path.to_string(),
+        } => QueryConnection::Scpi(ScpiConnection::PrologixTcp {
+            host,
+            port,
+            address,
+            read_timeout_ms,
+        }),
+        ConnectionUri::PrologixSerial {
+            path,
             address,
             baud_rate,
             read_timeout_ms,
-        }));
-    }
-
-    bail!(
-        "unsupported connection URI '{value}'; use tcp://host:port, gpib://board/address, prologix-tcp://host[:port]?addr=address, or prologix-serial:///path?addr=address"
-    )
+        } => QueryConnection::Scpi(ScpiConnection::PrologixSerial {
+            path,
+            address,
+            baud_rate,
+            read_timeout_ms,
+        }),
+    })
 }
 
 pub(crate) fn display_query_connection(connection: &QueryConnection) -> String {
     match connection {
-        QueryConnection::Tcpip { host, port } if host.contains(':') => {
-            format!("tcp://[{host}]:{port}")
+        QueryConnection::Tcpip { host, port } => ConnectionUri::Tcp {
+            host: host.clone(),
+            port: *port,
         }
-        QueryConnection::Tcpip { host, port } => format!("tcp://{host}:{port}"),
+        .to_string(),
         QueryConnection::Scpi(ScpiConnection::Gpib { board, address, .. }) => {
             format!("gpib://{board}/{address}")
         }
@@ -536,29 +511,25 @@ pub(crate) fn display_query_connection(connection: &QueryConnection) -> String {
             port,
             address,
             read_timeout_ms,
-        }) if host.contains(':') => {
-            format!(
-                "prologix-tcp://[{host}]:{port}?addr={address}&read_timeout_ms={read_timeout_ms}"
-            )
+        }) => ConnectionUri::PrologixTcp {
+            host: host.clone(),
+            port: *port,
+            address: *address,
+            read_timeout_ms: *read_timeout_ms,
         }
-        QueryConnection::Scpi(ScpiConnection::PrologixTcp {
-            host,
-            port,
-            address,
-            read_timeout_ms,
-        }) => {
-            format!("prologix-tcp://{host}:{port}?addr={address}&read_timeout_ms={read_timeout_ms}")
-        }
+        .to_string(),
         QueryConnection::Scpi(ScpiConnection::PrologixSerial {
             path,
             address,
             baud_rate,
             read_timeout_ms,
-        }) => {
-            format!(
-                "prologix-serial://{path}?addr={address}&baud_rate={baud_rate}&read_timeout_ms={read_timeout_ms}"
-            )
+        }) => ConnectionUri::PrologixSerial {
+            path: path.clone(),
+            address: *address,
+            baud_rate: *baud_rate,
+            read_timeout_ms: *read_timeout_ms,
         }
+        .to_string(),
     }
 }
 
@@ -578,136 +549,6 @@ pub(crate) fn configured_query_timeout_ms(
             read_timeout_ms, ..
         }) => u64::from(*read_timeout_ms),
     }
-}
-
-fn parse_host_port(endpoint: &str, label: &str) -> Result<(String, u16)> {
-    parse_optional_host_port(endpoint, 0, label)
-}
-
-fn parse_optional_host_port(
-    endpoint: &str,
-    default_port: u16,
-    label: &str,
-) -> Result<(String, u16)> {
-    let (host, port) = if let Some(rest) = endpoint.strip_prefix('[') {
-        if let Some((host, port)) = rest.split_once("]:") {
-            (
-                host,
-                port.parse::<u16>()
-                    .with_context(|| format!("invalid {label} port: {port}"))?,
-            )
-        } else if let Some(host) = rest.strip_suffix(']') {
-            (host, default_port)
-        } else {
-            bail!("{label} IPv6 endpoint must be [address]:port or [address]");
-        }
-    } else if let Some((host, port)) = endpoint.rsplit_once(':') {
-        if host.contains(':') {
-            bail!("{label} IPv6 endpoint must use [address]:port or [address]");
-        }
-        (
-            host,
-            port.parse::<u16>()
-                .with_context(|| format!("invalid {label} port: {port}"))?,
-        )
-    } else {
-        (endpoint, default_port)
-    };
-    let host = host.trim();
-    if host.is_empty() {
-        bail!("{label} host must not be empty");
-    }
-    if port == 0 {
-        bail!("{label} endpoint must include a port");
-    }
-    Ok((host.to_string(), port))
-}
-
-fn split_query(value: &str) -> (&str, Option<&str>) {
-    match value.split_once('?') {
-        Some((base, query)) => (base, Some(query)),
-        None => (value, None),
-    }
-}
-
-fn parse_query_params(query: Option<&str>) -> Result<Vec<(&str, &str)>> {
-    let Some(query) = query else {
-        return Ok(Vec::new());
-    };
-    query
-        .split('&')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            part.split_once('=')
-                .ok_or_else(|| anyhow!("query parameter '{part}' must be key=value"))
-        })
-        .collect()
-}
-
-fn validate_query_param_keys(params: &[(&str, &str)], allowed: &[&str]) -> Result<()> {
-    for (key, _) in params {
-        if !allowed.contains(key) {
-            bail!("unsupported query parameter: {key}");
-        }
-    }
-    Ok(())
-}
-
-fn parse_required_address_param(params: &[(&str, &str)]) -> Result<u8> {
-    let address = find_unique_query_param(params, &["addr", "address"], "Prologix address")?
-        .ok_or_else(|| anyhow!("Prologix connection must include addr=0..30"))?;
-    parse_gpib_address(address, "Prologix address")
-}
-
-fn parse_timeout_param(params: &[(&str, &str)], default_timeout_ms: u64) -> Result<u16> {
-    let timeout = match find_unique_query_param(params, &["read_timeout_ms"], "read_timeout_ms")? {
-        Some(value) => value
-            .parse::<u64>()
-            .with_context(|| format!("invalid read_timeout_ms: {value}"))?,
-        None => default_timeout_ms,
-    };
-    if !(1..=3000).contains(&timeout) {
-        bail!("Prologix read_timeout_ms must be in 1..=3000 (got {timeout})");
-    }
-    Ok(timeout as u16)
-}
-
-fn parse_optional_u32_param(params: &[(&str, &str)], key: &str, default: u32) -> Result<u32> {
-    let Some(value) = find_unique_query_param(params, &[key], key)? else {
-        return Ok(default);
-    };
-    value
-        .parse::<u32>()
-        .with_context(|| format!("invalid {key}: {value}"))
-}
-
-fn find_unique_query_param<'a>(
-    params: &[(&str, &'a str)],
-    keys: &[&str],
-    label: &str,
-) -> Result<Option<&'a str>> {
-    let mut values = params
-        .iter()
-        .filter_map(|(key, value)| keys.contains(key).then_some(*value));
-    let value = values.next();
-    if values.next().is_some() {
-        bail!("{label} must be specified only once");
-    }
-    Ok(value)
-}
-
-fn parse_gpib_address(value: &str, label: &str) -> Result<u8> {
-    let address = parse_u8(value, label)?;
-    if address > 30 {
-        bail!("{label} must be in 0..=30 (got {address})");
-    }
-    Ok(address)
-}
-
-fn parse_u8(value: &str, label: &str) -> Result<u8> {
-    value
-        .parse::<u8>()
-        .with_context(|| format!("invalid {label}: {value}"))
 }
 
 fn timeout_ms_to_secs(timeout_ms: u64) -> u64 {
