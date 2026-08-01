@@ -74,6 +74,7 @@ pmoke --config config.toml export npy # export analysis tables for NumPy
 pmoke instruments list             # list supported instrument models
 pmoke instruments explain DHO5108  # show transport/protocol/capability metadata
 pmoke instruments query --connection 'prologix-tcp://10.249.11.17:1234?addr=17' '*IDN?'
+pmoke --run-dir shot-001 bench scpi-query --connection 'prologix-tcp://10.249.11.17:1234?addr=17'
 pmoke bench transport --connection 'prologix-tcp://10.249.11.17:1234?addr=17' --output bench.json
 pmoke --config config.toml doctor     # check storage, Python, and hardware
 pmoke --config config.toml analyze    # analyze existing data
@@ -322,7 +323,8 @@ Default builds include hardware support.
   - Ethernet: build with `--no-default-features --features hw-prologix-tcp`, then use `prologix-tcp://host:1234?addr=11`.
 - Prologix options: `addr` is the instrument GPIB address, `read_timeout_ms` defaults to `3000`, and serial `baud_rate` defaults to `115200`.
 - Use `pmoke instruments list`, `pmoke instruments explain MODEL`, and `pmoke instruments query --connection URI COMMAND` to inspect supported transports and run explicit SCPI text queries without a full experiment config.
-- Use `pmoke bench transport --connection URI` to measure request latency, p50/p90/p99, timeout rate, and error rate. Repeat `--request` to compare queries, save full samples with `--output FILE`, and use `--protocol line` for non-SCPI single-line request/response protocols.
+- Use `pmoke --run-dir DIR bench scpi-query --connection URI` for a compact, reproducible SCPI benchmark. It saves a timestamped TOML report and a regular-file `benchmarks/scpi-query/latest.toml` copy containing environment metadata, p50/p90/p99 latency, throughput, and categorized failures. Latency fields are omitted when no query succeeds, while failure counts are still saved.
+- Use `pmoke bench transport --connection URI` for exploratory multi-request measurements with full JSON samples. Repeat `--request` to compare queries, save with `--output FILE`, and use `--protocol line` for non-SCPI single-line request/response protocols.
 
 Screenshot capture uses `:DISPlay:DATA? PNG` and writes directly to:
 
