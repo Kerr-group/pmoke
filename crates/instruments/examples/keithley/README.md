@@ -90,58 +90,34 @@ LF (`\n`).
 
 ## Query latency benchmark
 
-Use this to measure Prologix TCP + GPIB + Keithley response latency.
+Use the generic pmoke transport benchmark to measure Prologix TCP + GPIB +
+Keithley response latency:
 
 ```bash
-cargo run --locked -p instruments --example keithley2010_prologix_bench --no-default-features --features prologix-tcp
+pmoke bench transport \
+  --connection 'prologix-tcp://10.249.11.17:1234?addr=17' \
+  --request '*IDN?' \
+  --output keithley2010-prologix-tcp.json
 ```
 
 Default benchmark settings:
 
-- host: `10.249.11.17`
-- port: `1234`
-- GPIB PAD: `17`
-- command: `*IDN?`
 - warmup: `3`
 - measured iterations: `50`
 
-Example output:
-
-```text
-Keithley 2010 Prologix TCP benchmark
-  endpoint   : 10.249.11.17:1234
-  gpib pad   : 17
-  command    : *IDN?
-  iterations : 50
-  last reply : KEITHLEY INSTRUMENTS INC.,MODEL 2010,...
-
-Latency
-  min        12.345 ms
-  p50        13.210 ms
-  p90        15.001 ms
-  p99        20.442 ms
-  max        20.442 ms
-  mean       13.721 ms
-  rate       72.88 query/s
-```
-
-Change the query and count:
+Compare identification and measurement latency under a fixed instrument setup:
 
 ```bash
-cargo run --locked -p instruments --example keithley2010_prologix_bench --no-default-features --features prologix-tcp -- \
+pmoke bench transport \
+  --connection 'prologix-tcp://10.249.11.17:1234?addr=17' \
   --iterations 100 \
   --warmup 5 \
-  --command "*IDN?"
-```
-
-Print every measured response:
-
-```bash
-cargo run --locked -p instruments --example keithley2010_prologix_bench --no-default-features --features prologix-tcp -- \
-  --show-responses
+  --request '*IDN?' \
+  --request ':READ?'
 ```
 
 For pure communication overhead, `*IDN?` is a safe first benchmark. Measurement
 queries such as `:READ?` include Keithley integration time, trigger state, and
 range settings, so they are not directly comparable unless the instrument setup
-is fixed first.
+is fixed first. The JSON report includes every measured sample plus p50, p90,
+p99, timeout rate, and error rate.

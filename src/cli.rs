@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-#[cfg(feature = "hw-core")]
-use clap::ValueEnum;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
 /// A simple CLI tool to inspect and validate experiment configuration files.
@@ -53,6 +51,11 @@ pub enum Command {
     Instruments {
         #[command(subcommand)]
         command: InstrumentsCommand,
+    },
+    /// Benchmark instrument transport request latency
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommand,
     },
     /// Export stored data to interchange formats
     Export {
@@ -114,6 +117,58 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BenchCommand {
+    /// Measure text request/response latency for a connection URI
+    Transport {
+        /// Connection URI accepted by `pmoke instruments query`
+        #[arg(long, value_name = "URI")]
+        connection: String,
+
+        /// Text protocol used to validate each request
+        #[arg(long, value_enum, default_value_t = BenchProtocol::Scpi)]
+        protocol: BenchProtocol,
+
+        /// Request to benchmark; repeat for multiple requests
+        #[arg(
+            short = 'r',
+            long = "request",
+            visible_alias = "command",
+            default_value = "*IDN?",
+            value_name = "TEXT"
+        )]
+        requests: Vec<String>,
+
+        /// Measured request count per request
+        #[arg(short = 'n', long, default_value_t = 50, value_name = "N")]
+        iterations: usize,
+
+        /// Unmeasured request count before each measurement
+        #[arg(long, default_value_t = 3, value_name = "N")]
+        warmup: usize,
+
+        /// Timeout used when the URI has no transport-specific timeout
+        #[arg(long, default_value_t = 3000, value_name = "MS")]
+        timeout_ms: u64,
+
+        /// Save the complete JSON report to a file
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        /// Emit the complete report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub enum BenchProtocol {
+    /// Validate requests as one SCPI query
+    Scpi,
+    /// Send one non-empty text line and expect one text response line
+    Line,
 }
 
 #[derive(Subcommand, Debug)]
@@ -379,6 +434,77 @@ mod config_command_tests {
                     command,
                 }
             }) if connection == "prologix-tcp://10.249.11.17:1234?addr=17" && command == "*IDN?"
+        ));
+    }
+
+    #[test]
+    fn parses_transport_benchmark_defaults() {
+        let cli = Cli::try_parse_from([
+            "pmoke",
+            "bench",
+            "transport",
+            "--connection",
+            "tcp://127.0.0.1:5025",
+        ])
+        .unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::Bench {
+                command: BenchCommand::Transport {
+                    connection,
+                    protocol: BenchProtocol::Scpi,
+                    requests,
+                    iterations: 50,
+                    warmup: 3,
+                    timeout_ms: 3000,
+                    output: None,
+                    json: false,
+                }
+            }) if connection == "tcp://127.0.0.1:5025" && requests == ["*IDN?"]
+        ));
+    }
+
+    #[test]
+    fn parses_transport_benchmark_with_multiple_line_requests() {
+        let cli = Cli::try_parse_from([
+            "pmoke",
+            "bench",
+            "transport",
+            "--connection",
+            "tcp://127.0.0.1:1234",
+            "--protocol",
+            "line",
+            "--request",
+            "status",
+            "--request",
+            "value",
+            "--iterations",
+            "12",
+            "--warmup",
+            "0",
+            "--timeout-ms",
+            "800",
+            "--output",
+            "bench.json",
+            "--json",
+        ])
+        .unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::Bench {
+                command: BenchCommand::Transport {
+                    protocol: BenchProtocol::Line,
+                    requests,
+                    iterations: 12,
+                    warmup: 0,
+                    timeout_ms: 800,
+                    output: Some(output),
+                    json: true,
+                    ..
+                }
+            }) if requests == ["status", "value"] && output == std::path::Path::new("bench.json")
         ));
     }
 
