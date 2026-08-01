@@ -86,4 +86,9 @@ fn transport_metadata_provides_features_and_connection_templates() {
         TransportKind::PrologixTcp.connection_template(),
         "prologix-tcp://<host>:1234?addr=<addr>"
     );
+    assert_eq!(
+        TransportKind::PrologixTcp.diagnostic_capabilities(),
+        &[TransportDiagnosticCapability::PrologixControllerVersion]
+    );
+    assert!(TransportKind::Tcpip.diagnostic_capabilities().is_empty());
 }

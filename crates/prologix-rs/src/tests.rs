@@ -78,6 +78,17 @@ fn query_uses_explicit_eoi_read_and_trims_text_response() {
 }
 
 #[test]
+fn controller_version_queries_the_adapter_without_gpib_read() {
+    let io = MockIo::with_read(b"Prologix GPIB-ETHERNET Controller version 6.101\r\n");
+    let mut controller = Prologix::new(io, 17).unwrap();
+
+    let response = controller.controller_version().unwrap();
+
+    assert_eq!(response, "Prologix GPIB-ETHERNET Controller version 6.101");
+    assert_eq!(controller.into_inner().written_text(), "++ver\n");
+}
+
+#[test]
 fn validates_address_and_timeout() {
     assert!(matches!(
         ControllerConfig::new(31),
