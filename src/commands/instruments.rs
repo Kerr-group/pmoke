@@ -280,13 +280,16 @@ fn run_scpi_text_query(
         QueryConnection::Scpi(connection) => {
             let mut transport = open_scpi_transport(connection)
                 .with_context(|| format!("failed to open {connection}"))?;
-            Ok(transport
+            let response = transport
                 .query_line(command)
-                .with_context(|| format!("failed to query {connection}"))?
-                .trim()
-                .to_string())
+                .with_context(|| format!("failed to query {connection}"))?;
+            Ok(trim_scpi_line_ending(&response).to_string())
         }
     }
+}
+
+fn trim_scpi_line_ending(response: &str) -> &str {
+    response.trim_end_matches(['\r', '\n'])
 }
 
 fn query_tcp_text(host: &str, port: u16, command: &str, timeout_ms: u64) -> Result<String> {
@@ -327,9 +330,9 @@ fn query_tcp_text(host: &str, port: u16, command: &str, timeout_ms: u64) -> Resu
     for _ in 0..4 {
         response.clear();
         let read = reader.read_line(&mut response)?;
-        let trimmed = response.trim();
-        if read == 0 || !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
+        let line = trim_scpi_line_ending(&response);
+        if read == 0 || !line.is_empty() {
+            return Ok(line.to_string());
         }
     }
     Ok(String::new())
@@ -725,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn tcp_query_writes_command_and_reads_trimmed_response() {
+    fn tcp_query_writes_command_and_preserves_payload_whitespace() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
@@ -734,13 +737,20 @@ mod tests {
             let mut command = String::new();
             reader.read_line(&mut command).unwrap();
             assert_eq!(command, "*IDN?\n");
-            writeln!(reader.get_mut(), "MOCK,MODEL,SERIAL,FIRMWARE").unwrap();
+            write!(reader.get_mut(), "  MOCK,MODEL,SERIAL,FIRMWARE  \r\n").unwrap();
             reader.get_mut().flush().unwrap();
         });
 
         let response = query_tcp_text("127.0.0.1", port, "*IDN?", 1000).unwrap();
 
         server.join().unwrap();
-        assert_eq!(response, "MOCK,MODEL,SERIAL,FIRMWARE");
+        assert_eq!(response, "  MOCK,MODEL,SERIAL,FIRMWARE  ");
+    }
+
+    #[test]
+    fn scpi_response_trimming_only_removes_line_endings() {
+        assert_eq!(trim_scpi_line_ending("  +1.0  \r\n"), "  +1.0  ");
+        assert_eq!(trim_scpi_line_ending("  +1.0  "), "  +1.0  ");
+        assert_eq!(trim_scpi_line_ending("\r\n"), "");
     }
 }
