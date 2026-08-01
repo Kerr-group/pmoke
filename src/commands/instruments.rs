@@ -2,7 +2,7 @@ use crate::cli::{InstrumentsCommand, JsonOutput};
 use crate::ui;
 use anyhow::{Context, Result, anyhow, bail};
 use instruments::registry::{InstrumentSpec, KNOWN_INSTRUMENTS};
-use instruments::transport::{ScpiConnection, open_scpi_transport};
+use instruments::transport::{BoxedScpiTransport, ScpiConnection, open_scpi_transport};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Write};
@@ -52,9 +52,37 @@ struct QueryOutput {
 }
 
 #[derive(Debug, Clone)]
-enum QueryConnection {
+pub(crate) enum QueryConnection {
     Tcpip { host: String, port: u16 },
     Scpi(ScpiConnection),
+}
+
+pub(crate) struct TextQuerySession {
+    connection: String,
+    inner: TextQuerySessionInner,
+}
+
+enum TextQuerySessionInner {
+    Tcp(BufReader<TcpStream>),
+    Scpi(BoxedScpiTransport),
+}
+
+impl TextQuerySession {
+    pub(crate) fn query_line(&mut self, request: &str) -> Result<String> {
+        let response = match &mut self.inner {
+            TextQuerySessionInner::Tcp(reader) => {
+                query_tcp_reader(reader, request, &self.connection)
+            }
+            TextQuerySessionInner::Scpi(transport) => transport
+                .query_line(request)
+                .with_context(|| format!("failed to query {}", self.connection)),
+        }?;
+        let response = trim_scpi_line_ending(&response);
+        if response.is_empty() {
+            bail!("received an empty text response from {}", self.connection);
+        }
+        Ok(response.to_string())
+    }
 }
 
 pub fn run(command: &InstrumentsCommand) -> Result<()> {
@@ -160,7 +188,8 @@ fn explain(model: &str, json: bool) -> Result<()> {
 fn query(connection: &str, command: &str, timeout_ms: u64, json: bool) -> Result<()> {
     validate_scpi_query_command(command)?;
     let connection = parse_query_connection(connection, timeout_ms)?;
-    let response = run_scpi_text_query(&connection, command, timeout_ms)?;
+    let mut session = open_text_query_session(&connection, timeout_ms)?;
+    let response = session.query_line(command)?;
     let output = QueryOutput {
         connection: display_query_connection(&connection),
         command: command.to_string(),
@@ -175,13 +204,18 @@ fn query(connection: &str, command: &str, timeout_ms: u64, json: bool) -> Result
     Ok(())
 }
 
-fn validate_scpi_query_command(command: &str) -> Result<()> {
-    if command.trim().is_empty() {
-        bail!("SCPI query command must not be empty");
+pub(crate) fn validate_line_request(request: &str) -> Result<()> {
+    if request.trim().is_empty() {
+        bail!("text request must not be empty");
     }
-    if command.contains(['\r', '\n']) {
-        bail!("SCPI query command must be a single line");
+    if request.contains(['\r', '\n']) {
+        bail!("text request must be a single line");
     }
+    Ok(())
+}
+
+pub(crate) fn validate_scpi_query_command(command: &str) -> Result<()> {
+    validate_line_request(command).map_err(|error| anyhow!("SCPI query command: {error}"))?;
 
     let mut quote = None;
     let mut has_query_marker = false;
@@ -324,25 +358,23 @@ fn display_list(values: &[&str]) -> String {
     }
 }
 
-fn run_scpi_text_query(
+pub(crate) fn open_text_query_session(
     connection: &QueryConnection,
-    command: &str,
     timeout_ms: u64,
-) -> Result<String> {
+) -> Result<TextQuerySession> {
+    let display = display_query_connection(connection);
     match connection {
-        QueryConnection::Tcpip { host, port } => query_tcp_text(host, *port, command, timeout_ms),
-        QueryConnection::Scpi(connection) => {
-            let mut transport = open_scpi_transport(connection)
-                .with_context(|| format!("failed to open {connection}"))?;
-            let response = transport
-                .query_line(command)
-                .with_context(|| format!("failed to query {connection}"))?;
-            let response = trim_scpi_line_ending(&response);
-            if response.is_empty() {
-                bail!("received an empty SCPI response from {connection}");
-            }
-            Ok(response.to_string())
-        }
+        QueryConnection::Tcpip { host, port } => Ok(TextQuerySession {
+            connection: display,
+            inner: TextQuerySessionInner::Tcp(open_tcp_text(host, *port, timeout_ms)?),
+        }),
+        QueryConnection::Scpi(connection) => Ok(TextQuerySession {
+            connection: display,
+            inner: TextQuerySessionInner::Scpi(
+                open_scpi_transport(connection)
+                    .with_context(|| format!("failed to open {connection}"))?,
+            ),
+        }),
     }
 }
 
@@ -350,7 +382,7 @@ fn trim_scpi_line_ending(response: &str) -> &str {
     response.trim_end_matches(['\r', '\n'])
 }
 
-fn query_tcp_text(host: &str, port: u16, command: &str, timeout_ms: u64) -> Result<String> {
+fn open_tcp_text(host: &str, port: u16, timeout_ms: u64) -> Result<BufReader<TcpStream>> {
     let timeout = Duration::from_millis(timeout_ms);
     let addresses = (host, port)
         .to_socket_addrs()
@@ -380,8 +412,15 @@ fn query_tcp_text(host: &str, port: u16, command: &str, timeout_ms: u64) -> Resu
     stream.set_write_timeout(Some(timeout))?;
     stream.set_nodelay(true)?;
 
-    let mut reader = BufReader::new(stream);
-    writeln!(reader.get_mut(), "{command}")?;
+    Ok(BufReader::new(stream))
+}
+
+fn query_tcp_reader(
+    reader: &mut BufReader<TcpStream>,
+    request: &str,
+    connection: &str,
+) -> Result<String> {
+    writeln!(reader.get_mut(), "{request}")?;
     reader.get_mut().flush()?;
 
     let mut response = String::new();
@@ -390,16 +429,29 @@ fn query_tcp_text(host: &str, port: u16, command: &str, timeout_ms: u64) -> Resu
         let read = reader.read_line(&mut response)?;
         let line = trim_scpi_line_ending(&response);
         if read == 0 {
-            bail!("connection closed before {host}:{port} returned a SCPI response");
+            bail!("connection closed before {connection} returned a text response");
         }
         if !line.is_empty() {
             return Ok(line.to_string());
         }
     }
-    bail!("received only blank SCPI response lines from {host}:{port}")
+    bail!("received only blank text response lines from {connection}")
 }
 
-fn parse_query_connection(value: &str, default_timeout_ms: u64) -> Result<QueryConnection> {
+#[cfg(test)]
+fn query_tcp_text(host: &str, port: u16, request: &str, timeout_ms: u64) -> Result<String> {
+    let connection = QueryConnection::Tcpip {
+        host: host.to_string(),
+        port,
+    };
+    let mut session = open_text_query_session(&connection, timeout_ms)?;
+    session.query_line(request)
+}
+
+pub(crate) fn parse_query_connection(
+    value: &str,
+    default_timeout_ms: u64,
+) -> Result<QueryConnection> {
     if default_timeout_ms == 0 {
         bail!("timeout_ms must be positive");
     }
@@ -470,7 +522,7 @@ fn parse_query_connection(value: &str, default_timeout_ms: u64) -> Result<QueryC
     )
 }
 
-fn display_query_connection(connection: &QueryConnection) -> String {
+pub(crate) fn display_query_connection(connection: &QueryConnection) -> String {
     match connection {
         QueryConnection::Tcpip { host, port } if host.contains(':') => {
             format!("tcp://[{host}]:{port}")
