@@ -58,6 +58,10 @@ fn run_with(args: Cli) -> Result<()> {
         }
     }
 
+    if let Some(Command::Instruments { command }) = args.command.as_ref() {
+        return commands::instruments::run(command);
+    }
+
     if let Some(Command::Raw {
         command: RawCommand::Verify { input: Some(input) },
     }) = args.command.as_ref()
@@ -139,6 +143,7 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Monitor
                 | Command::Config { .. }
                 | Command::Raw { .. }
+                | Command::Instruments { .. }
                 | Command::Export { .. }
                 | Command::Doctor { .. },
             ) => unreachable!(),
@@ -204,6 +209,7 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Monitor
                 | Command::Config { .. }
                 | Command::Raw { .. }
+                | Command::Instruments { .. }
                 | Command::Export { .. }
                 | Command::Doctor { .. },
             ) => unreachable!(),

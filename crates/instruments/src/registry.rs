@@ -5,6 +5,16 @@ pub enum InstrumentRole {
     Multimeter,
 }
 
+impl InstrumentRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Oscilloscope => "oscilloscope",
+            Self::FunctionGenerator => "function_generator",
+            Self::Multimeter => "multimeter",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportKind {
     Dummy,
@@ -15,11 +25,87 @@ pub enum TransportKind {
     PrologixSerial,
 }
 
+impl TransportKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dummy => "dummy",
+            Self::Gpib => "gpib",
+            Self::Tcpip => "tcpip",
+            Self::Usbtmc => "usbtmc",
+            Self::PrologixTcp => "prologix_tcp",
+            Self::PrologixSerial => "prologix_serial",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolKind {
+    Scpi,
+    VendorSpecific,
+    Raw,
+}
+
+impl ProtocolKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Scpi => "scpi",
+            Self::VendorSpecific => "vendor_specific",
+            Self::Raw => "raw",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstrumentCapability {
+    ScpiIdentify,
+    ScpiTrigger,
+    ScpiMeasureRead,
+    Screenshot,
+    WaveformFetch,
+    VendorIdentify,
+}
+
+impl InstrumentCapability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ScpiIdentify => "scpi_identify",
+            Self::ScpiTrigger => "scpi_trigger",
+            Self::ScpiMeasureRead => "scpi_measure_read",
+            Self::Screenshot => "screenshot",
+            Self::WaveformFetch => "waveform_fetch",
+            Self::VendorIdentify => "vendor_identify",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportDiagnosticCapability {
+    PrologixControllerVersion,
+}
+
+impl TransportDiagnosticCapability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PrologixControllerVersion => "prologix_controller_version",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConnectionExample {
+    pub transport: TransportKind,
+    pub connection: &'static str,
+    pub required_feature: &'static str,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct InstrumentSpec {
     pub model: &'static str,
     pub role: InstrumentRole,
     pub transports: &'static [TransportKind],
+    pub protocols: &'static [ProtocolKind],
+    pub capabilities: &'static [InstrumentCapability],
+    pub examples: &'static [ConnectionExample],
     pub description: &'static str,
 }
 

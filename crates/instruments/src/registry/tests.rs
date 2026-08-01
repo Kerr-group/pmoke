@@ -46,3 +46,29 @@ fn known_instruments_are_registered_from_device_specs() {
         Some(InstrumentRole::Multimeter)
     );
 }
+
+#[test]
+fn known_instruments_expose_protocols_capabilities_and_examples() {
+    for spec in KNOWN_INSTRUMENTS {
+        assert!(
+            !spec.transports.is_empty(),
+            "{} must declare transports",
+            spec.model
+        );
+        assert!(
+            !spec.protocols.is_empty(),
+            "{} must declare protocols",
+            spec.model
+        );
+        assert!(
+            !spec.capabilities.is_empty(),
+            "{} must declare capabilities",
+            spec.model
+        );
+        assert!(
+            !spec.examples.is_empty(),
+            "{} must provide at least one connection example",
+            spec.model
+        );
+    }
+}

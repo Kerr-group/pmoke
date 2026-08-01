@@ -71,6 +71,8 @@ pmoke --config config.toml fetch      # fetch waveforms
 pmoke --config config.toml raw verify # verify stored RAW data
 pmoke --config config.toml export csv # explicitly convert verified RAW to CSV
 pmoke --config config.toml export npy # export analysis tables for NumPy
+pmoke instruments list             # list supported instrument models
+pmoke instruments explain DHO5108  # show transport/protocol/capability metadata
 pmoke --config config.toml doctor     # check storage, Python, and hardware
 pmoke --config config.toml analyze    # analyze existing data
 pmoke --config config.toml process    # fetch + analyze
@@ -306,6 +308,7 @@ Default builds include hardware support.
   - Serial: build with `--no-default-features --features hw-prologix-serial`, then use `prologix-serial:///dev/cu.usbserial-XXXX?addr=11`.
   - Ethernet: build with `--no-default-features --features hw-prologix-tcp`, then use `prologix-tcp://host:1234?addr=11`.
 - Prologix options: `addr` is the instrument GPIB address, `read_timeout_ms` defaults to `3000`, and serial `baud_rate` defaults to `115200`.
+- Use `pmoke instruments list` and `pmoke instruments explain MODEL` to inspect supported transports, protocols, required features, and connection examples without opening hardware.
 
 Screenshot capture uses `:DISPlay:DATA? PNG` and writes directly to:
 

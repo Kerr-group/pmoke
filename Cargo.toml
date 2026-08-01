@@ -11,7 +11,7 @@ members = [
 ]
 
 [dependencies]
-instruments = { path = "crates/instruments", optional = true, default-features = false }
+instruments = { path = "crates/instruments", default-features = false }
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
@@ -44,7 +44,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 default = ["hw-gpib"]
 
 hw = ["hw-gpib"]
-hw-core = ["dep:instruments"]
+hw-core = []
 hw-gpib = ["hw-core", "instruments/gpib"]
 hw-prologix-tcp = ["hw-core", "instruments/prologix-tcp"]
 hw-prologix-serial = ["hw-core", "instruments/prologix-serial"]
