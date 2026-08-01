@@ -101,6 +101,7 @@ export function ConfigValidator({ locale = 'en' }: { locale?: 'en' | 'ja' }) {
     let isMounted = true;
     async function loadWasm() {
       try {
+        // @ts-ignore - wasm binding JS is generated during build
         const wasm = await import('../public/wasm/pmoke_web_wasm.js');
         await wasm.default();
         if (isMounted) {
