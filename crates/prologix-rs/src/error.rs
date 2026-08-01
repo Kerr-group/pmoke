@@ -10,6 +10,8 @@ pub enum Error {
     Io(io::Error),
     InvalidAddress(u8),
     InvalidReadTimeoutMs(u16),
+    InvalidControllerQuery(&'static str),
+    EmptyControllerResponse,
     ResponseNotUtf8(std::string::FromUtf8Error),
 }
 
@@ -25,6 +27,12 @@ impl fmt::Display for Error {
                 f,
                 "invalid Prologix read timeout {timeout_ms} ms; expected {MIN_READ_TIMEOUT_MS}..={MAX_READ_TIMEOUT_MS}"
             ),
+            Self::InvalidControllerQuery(reason) => {
+                write!(f, "invalid Prologix controller query: {reason}")
+            }
+            Self::EmptyControllerResponse => {
+                write!(f, "Prologix controller returned an empty response")
+            }
             Self::ResponseNotUtf8(err) => write!(f, "Prologix response is not UTF-8: {err}"),
         }
     }
@@ -35,7 +43,10 @@ impl std::error::Error for Error {
         match self {
             Self::Io(err) => Some(err),
             Self::ResponseNotUtf8(err) => Some(err),
-            Self::InvalidAddress(_) | Self::InvalidReadTimeoutMs(_) => None,
+            Self::InvalidAddress(_)
+            | Self::InvalidReadTimeoutMs(_)
+            | Self::InvalidControllerQuery(_)
+            | Self::EmptyControllerResponse => None,
         }
     }
 }

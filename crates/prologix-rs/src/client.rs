@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 
 use crate::config::ControllerConfig;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::wire::{read_response_bytes, write_line};
 
 pub struct Prologix<T> {
@@ -51,8 +51,20 @@ where
     }
 
     pub fn controller_version(&mut self) -> Result<String> {
-        self.controller_command("++ver")?;
+        self.controller_query("++ver")
+    }
+
+    /// Sends a controller query and reads its direct response.
+    ///
+    /// This does not issue `++read eoi` and therefore cannot be used to read an
+    /// instrument response from the GPIB bus.
+    pub fn controller_query(&mut self, command: &str) -> Result<String> {
+        validate_controller_query(command)?;
+        self.controller_command(command)?;
         let bytes = read_response_bytes(&mut self.io)?;
+        if bytes.is_empty() {
+            return Err(Error::EmptyControllerResponse);
+        }
         Ok(String::from_utf8(bytes)?
             .trim_end_matches(['\r', '\n'])
             .to_string())
@@ -74,4 +86,38 @@ where
         self.controller_command("++read eoi")?;
         read_response_bytes(&mut self.io)
     }
+}
+
+fn validate_controller_query(command: &str) -> Result<()> {
+    if command.trim().is_empty() {
+        return Err(Error::InvalidControllerQuery("command must not be empty"));
+    }
+    if command.contains(['\r', '\n']) {
+        return Err(Error::InvalidControllerQuery(
+            "command must contain exactly one line",
+        ));
+    }
+    let Some(controller_command) = command.strip_prefix("++") else {
+        return Err(Error::InvalidControllerQuery(
+            "command must start with '++'",
+        ));
+    };
+    let mut parts = controller_command.split_ascii_whitespace();
+    let name = parts.next().unwrap_or_default();
+    if name.is_empty() {
+        return Err(Error::InvalidControllerQuery(
+            "controller command name must not be empty",
+        ));
+    }
+    if name.eq_ignore_ascii_case("read") {
+        return Err(Error::InvalidControllerQuery(
+            "++read retrieves an instrument response; use query or query_bytes instead",
+        ));
+    }
+    if parts.next().is_some() {
+        return Err(Error::InvalidControllerQuery(
+            "controller queries must not include arguments; use controller_command for writes",
+        ));
+    }
+    Ok(())
 }
