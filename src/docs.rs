@@ -190,6 +190,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "hw-core")]
     fn hardware_commands_report_their_feature() {
         let reference = cli_reference();
         let fetch = reference
