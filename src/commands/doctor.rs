@@ -772,9 +772,8 @@ fn record_identity(
             detail: "instrument returned an empty *IDN? response".to_string(),
         }),
         Ok(idn) => {
-            let matches = idn
-                .to_ascii_lowercase()
-                .contains(&model.to_ascii_lowercase());
+            let reported_model = scpi_idn_model(&idn);
+            let matches = reported_model.is_some_and(|value| value.eq_ignore_ascii_case(model));
             checks.push(DoctorCheck {
                 name: format!("{name}.idn"),
                 status: CheckStatus::Pass,
@@ -789,8 +788,12 @@ fn record_identity(
                 },
                 detail: if matches {
                     format!("response matches configured model {model}")
+                } else if let Some(reported_model) = reported_model {
+                    format!(
+                        "configured model {model} does not match reported model {reported_model}: {idn}"
+                    )
                 } else {
-                    format!("configured model {model} does not match *IDN? response: {idn}")
+                    format!("*IDN? response has no valid model field for {model}: {idn}")
                 },
             });
         }
@@ -800,6 +803,14 @@ fn record_identity(
             detail: identity_error_detail(connection, controller_reachable, &error),
         }),
     }
+}
+
+#[cfg(any(feature = "hw-core", test))]
+fn scpi_idn_model(idn: &str) -> Option<&str> {
+    idn.split(',')
+        .nth(1)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
 }
 
 #[cfg(any(feature = "hw-core", test))]
@@ -957,6 +968,31 @@ mod tests {
         assert_eq!(checks[0].status, CheckStatus::Pass);
         assert_eq!(checks[1].name, "scope.model");
         assert_eq!(checks[1].status, CheckStatus::Fail);
+    }
+
+    #[test]
+    fn identity_model_requires_an_exact_scpi_model_field() {
+        let connection = Connection::Tcpip {
+            ip: "10.249.11.19".to_string(),
+            port: 5555,
+        };
+        let mut checks = Vec::new();
+
+        record_identity(
+            "scope",
+            "DHO5108",
+            &connection,
+            Ok("RIGOL,DHO5108A,serial,firmware".to_string()),
+            false,
+            &mut checks,
+        );
+
+        assert_eq!(checks[1].status, CheckStatus::Fail);
+        assert!(checks[1].detail.contains("reported model DHO5108A"));
+        assert_eq!(
+            scpi_idn_model("RIGOL TECHNOLOGIES, DHO5108 ,serial,firmware"),
+            Some("DHO5108")
+        );
     }
 
     #[test]
