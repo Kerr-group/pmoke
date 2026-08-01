@@ -1301,6 +1301,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pmoke-web-wasm"
+version = "0.1.0"
+dependencies = [
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

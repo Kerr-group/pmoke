@@ -1,0 +1,45 @@
+{
+  "name": "website",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static bilingual documentation for the pmoke pulsed-MOKE CLI.",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": "22.23.1"
+  },
+  "scripts": {
+    "build": "npm run build:wasm && next build && node scripts/postbuild.mjs",
+    "build:site": "next build && node scripts/postbuild.mjs",
+    "build:wasm": "wasm-pack build ../crates/pmoke-web-wasm --target web --out-dir ../../website/public/wasm --release -- --locked",
+    "dev": "pnpm build:wasm && next dev",
+    "start": "node scripts/serve-basepath.mjs",
+    "types:check": "next typegen && tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "test:export": "node scripts/verify-export.mjs",
+    "test:e2e": "playwright test",
+    "check": "npm run lint && npm run types:check && npm run test:export"
+  },
+  "dependencies": {
+    "fumadocs-core": "16.14.0",
+    "fumadocs-mdx": "15.2.1",
+    "fumadocs-ui": "npm:@fumadocs/base-ui@16.14.0",
+    "lucide-react": "1.27.0",
+    "next": "16.2.12",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/mdx": "2.0.14",
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "postcss": "8.5.24",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.12"
+  }
+}

@@ -1,0 +1,16 @@
+---
+title: Quickstart
+description: Validate a configuration and run the complete analysis pipeline.
+---
+
+```bash
+pmoke config init --output config.toml
+pmoke config validate --config config.toml
+pmoke --config config.toml analyze
+```
+
+Run `pmoke` without a subcommand to open the terminal interface. Use `pmoke doctor hardware` before a measurement to diagnose instrument connectivity.
+
+## Static site proof
+
+This architecture spike includes bilingual routes, static search, LLM-friendly Markdown, and a Rust-generated signal preview loaded in a Web Worker.

@@ -1,0 +1,16 @@
+---
+title: クイックスタート
+description: 設定検証と完全解析パイプラインの実行手順。
+---
+
+```bash
+pmoke config init --output config.toml
+pmoke config validate --config config.toml
+pmoke --config config.toml analyze
+```
+
+サブコマンドなしの `pmoke` によるターミナル画面の起動。測定前の `pmoke doctor hardware` による装置接続診断。
+
+## 静的サイト実証
+
+日英ルート、静的検索、LLM 向け Markdown、Web Worker 上の Rust 信号生成を含むアーキテクチャ実証。

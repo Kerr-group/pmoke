@@ -1,0 +1,91 @@
+name: Documentation site
+
+on:
+  push:
+    paths:
+      - "website/**"
+      - "crates/pmoke-web-wasm/**"
+      - ".github/workflows/docs-site.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    paths:
+      - "website/**"
+      - "crates/pmoke-web-wasm/**"
+      - ".github/workflows/docs-site.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-site-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Static export and browser smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: "website/.node-version"
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        working-directory: website
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint and type-check
+        working-directory: website
+        run: |
+          pnpm lint
+          pnpm types:check
+
+      - name: Build static site
+        working-directory: website
+        run: pnpm build
+
+      - name: Verify export
+        working-directory: website
+        run: pnpm test:export
+
+      - name: Install Chromium
+        working-directory: website
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser smoke tests
+        working-directory: website
+        run: pnpm test:e2e
+
+      - name: Upload static site and visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pmoke-docs-${{ github.sha }}
+          path: |
+            website/out
+            website/test-results
+            website/playwright-report
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
