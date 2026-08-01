@@ -130,21 +130,9 @@ fn list_item(spec: &InstrumentSpec) -> InstrumentListItem {
     InstrumentListItem {
         model: spec.model,
         role: spec.role.as_str(),
-        transports: spec
-            .transports
-            .iter()
-            .map(|transport| transport.as_str())
-            .collect(),
-        protocols: spec
-            .protocols
-            .iter()
-            .map(|protocol| protocol.as_str())
-            .collect(),
-        capabilities: spec
-            .capabilities
-            .iter()
-            .map(|capability| capability.as_str())
-            .collect(),
+        transports: transport_names(spec),
+        protocols: protocol_names(spec),
+        capabilities: capability_names(spec),
         required_features: required_features(spec),
         description: spec.description,
     }
@@ -154,32 +142,44 @@ fn details(spec: &InstrumentSpec) -> InstrumentDetails {
     InstrumentDetails {
         model: spec.model,
         role: spec.role.as_str(),
-        transports: spec
-            .transports
-            .iter()
-            .map(|transport| transport.as_str())
-            .collect(),
-        protocols: spec
-            .protocols
-            .iter()
-            .map(|protocol| protocol.as_str())
-            .collect(),
-        capabilities: spec
-            .capabilities
-            .iter()
-            .map(|capability| capability.as_str())
-            .collect(),
-        connection_templates: spec
-            .transports
-            .iter()
-            .map(|transport| ConnectionTemplateDetails {
-                transport: transport.as_str(),
-                connection_template: transport.connection_template(),
-                required_feature: transport.required_feature(),
-            })
-            .collect(),
+        transports: transport_names(spec),
+        protocols: protocol_names(spec),
+        capabilities: capability_names(spec),
+        connection_templates: connection_templates(spec),
         description: spec.description,
     }
+}
+
+fn transport_names(spec: &InstrumentSpec) -> Vec<&'static str> {
+    spec.transports
+        .iter()
+        .map(|transport| transport.as_str())
+        .collect()
+}
+
+fn protocol_names(spec: &InstrumentSpec) -> Vec<&'static str> {
+    spec.protocols
+        .iter()
+        .map(|protocol| protocol.as_str())
+        .collect()
+}
+
+fn capability_names(spec: &InstrumentSpec) -> Vec<&'static str> {
+    spec.capabilities
+        .iter()
+        .map(|capability| capability.as_str())
+        .collect()
+}
+
+fn connection_templates(spec: &InstrumentSpec) -> Vec<ConnectionTemplateDetails> {
+    spec.transports
+        .iter()
+        .map(|transport| ConnectionTemplateDetails {
+            transport: transport.as_str(),
+            connection_template: transport.connection_template(),
+            required_feature: transport.required_feature(),
+        })
+        .collect()
 }
 
 fn required_features(spec: &InstrumentSpec) -> Vec<&'static str> {
