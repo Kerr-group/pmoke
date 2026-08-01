@@ -185,6 +185,8 @@ fn validate_scpi_query_command(command: &str) -> Result<()> {
 
     let mut quote = None;
     let mut has_query_marker = false;
+    let mut has_header = false;
+    let mut in_header = true;
     let mut chars = command.chars().peekable();
     while let Some(character) = chars.next() {
         if let Some(delimiter) = quote {
@@ -199,9 +201,24 @@ fn validate_scpi_query_command(command: &str) -> Result<()> {
         }
 
         match character {
-            '\'' | '"' => quote = Some(character),
             ';' => bail!("SCPI query command must contain exactly one command"),
-            '?' => has_query_marker = true,
+            '\'' | '"' if in_header && has_query_marker => {
+                bail!("SCPI query marker must terminate the command header");
+            }
+            '\'' | '"' => {
+                quote = Some(character);
+                in_header = false;
+            }
+            '?' if in_header && has_header && !has_query_marker => has_query_marker = true,
+            '?' if in_header => bail!("SCPI query marker must terminate the command header"),
+            character if in_header && character.is_ascii_whitespace() && has_header => {
+                in_header = false;
+            }
+            character if in_header && character.is_ascii_whitespace() => {}
+            _ if in_header && has_query_marker => {
+                bail!("SCPI query marker must terminate the command header");
+            }
+            _ if in_header => has_header = true,
             _ => {}
         }
     }
@@ -870,6 +887,18 @@ mod tests {
 
         let quoted_marker = validate_scpi_query_command(":DISP:TEXT '?'").unwrap_err();
         assert!(quoted_marker.to_string().contains("must contain '?'"));
+
+        let marker_after_write = validate_scpi_query_command("*RST ?").unwrap_err();
+        assert!(marker_after_write.to_string().contains("must contain '?'"));
+
+        let marker_inside_header = validate_scpi_query_command("*IDN?RST").unwrap_err();
+        assert!(marker_inside_header.to_string().contains("must terminate"));
+
+        let missing_separator = validate_scpi_query_command("*IDN?'value'").unwrap_err();
+        assert!(missing_separator.to_string().contains("must terminate"));
+
+        let repeated_marker = validate_scpi_query_command("*IDN??").unwrap_err();
+        assert!(repeated_marker.to_string().contains("must terminate"));
 
         let unterminated = validate_scpi_query_command(":SYST:ERR? '").unwrap_err();
         assert!(unterminated.to_string().contains("unterminated"));
