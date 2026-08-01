@@ -1,6 +1,6 @@
 [package]
 name = "instruments"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 
 [features]
@@ -26,11 +26,6 @@ required-features = ["gpib"]
 [[example]]
 name = "keithley2010_prologix_tcp"
 path = "./examples/keithley/keithley2010_prologix_tcp.rs"
-required-features = ["prologix-tcp"]
-
-[[example]]
-name = "keithley2010_prologix_bench"
-path = "./examples/keithley/keithley2010_prologix_bench.rs"
 required-features = ["prologix-tcp"]
 
 [[example]]

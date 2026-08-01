@@ -11,6 +11,27 @@ pub enum InstrumentError {
 
 pub type Result<T> = std::result::Result<T, InstrumentError>;
 
+impl InstrumentError {
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            #[cfg(feature = "gpib")]
+            Self::Gpib(error) => error.iberr == 6,
+            Self::Io(error) => is_io_timeout(error),
+            #[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
+            Self::Prologix(prologix_rs::Error::Io(error)) => is_io_timeout(error),
+            #[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
+            Self::Prologix(_) => false,
+        }
+    }
+}
+
+fn is_io_timeout(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    )
+}
+
 #[cfg(feature = "gpib")]
 use gpib_rs::GpibError;
 
@@ -55,5 +76,19 @@ impl Error for InstrumentError {
             #[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
             InstrumentError::Prologix(e) => Some(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_host_io_timeouts() {
+        assert!(InstrumentError::Io(io::Error::new(io::ErrorKind::TimedOut, "late")).is_timeout());
+        assert!(
+            InstrumentError::Io(io::Error::new(io::ErrorKind::WouldBlock, "late")).is_timeout()
+        );
+        assert!(!InstrumentError::Io(io::Error::other("broken")).is_timeout());
     }
 }
