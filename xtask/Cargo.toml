@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+pmoke = { path = "..", default-features = false, features = ["hw-core"] }
+serde_json = "1.0.151"

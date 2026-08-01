@@ -1,0 +1,1922 @@
+{
+  "$id": "https://kerr-group.github.io/pmoke/config.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "pmoke 0.4.0 configuration schema v4",
+  "properties": {
+    "data": {
+      "additionalProperties": false,
+      "description": "Acquisition storage and analysis-input policy. Controls canonical waveform formats and optional screenshot capture.",
+      "properties": {
+        "input": {
+          "description": "Waveform source used by analysis. Auto selects available canonical data, preferring verified raw data.",
+          "enum": [
+            "csv",
+            "raw",
+            "auto"
+          ],
+          "title": "Waveform source used by analysis",
+          "type": "string",
+          "x-pmoke-path": "data.input"
+        },
+        "output": {
+          "description": "Waveform format written by acquisition. Raw is preferred for very large captures; both also writes CSV.",
+          "enum": [
+            "csv",
+            "raw",
+            "both"
+          ],
+          "title": "Waveform format written by acquisition",
+          "type": "string",
+          "x-pmoke-path": "data.output"
+        },
+        "screenshot": {
+          "default": false,
+          "description": "Oscilloscope screenshot capture. Capture requires a scope and transport that support display transfer.",
+          "title": "Oscilloscope screenshot capture",
+          "type": "boolean",
+          "x-constraints": [
+            "DHO5108 capture requires TCP/IP or USB-TMC"
+          ],
+          "x-pmoke-path": "data.screenshot"
+        }
+      },
+      "required": [
+        "output",
+        "input"
+      ],
+      "title": "Acquisition storage and analysis-input policy",
+      "type": "object",
+      "x-pmoke-path": "data"
+    },
+    "generator": {
+      "additionalProperties": false,
+      "description": "Optional function-generator configuration. Required only by commands that trigger or automate a measurement.",
+      "properties": {
+        "connection": {
+          "description": "Function-generator transport URI. The URI selects native GPIB or a Prologix TCP/serial controller.",
+          "minLength": 1,
+          "pattern": "^(tcp://|visa:|gpib://|prologix-tcp://|prologix-serial://)",
+          "title": "Function-generator transport URI",
+          "type": "string",
+          "x-constraints": [
+            "transport must be supported by the model and build features"
+          ],
+          "x-pmoke-path": "generator.connection"
+        },
+        "model": {
+          "description": "Function-generator driver model. Required when the generator table is present.",
+          "minLength": 1,
+          "title": "Function-generator driver model",
+          "type": "string",
+          "x-constraints": [
+            "must be a registered generator model"
+          ],
+          "x-pmoke-path": "generator.model"
+        }
+      },
+      "required": [
+        "model",
+        "connection"
+      ],
+      "title": "Optional function-generator configuration",
+      "type": "object",
+      "x-constraints": [
+        "required by trigger, autoshot, automeasure, and auto"
+      ],
+      "x-pmoke-path": "generator"
+    },
+    "kerr": {
+      "additionalProperties": false,
+      "description": "Kerr-angle conversion settings. Selects calibration sensor, calculation method, and final factor.",
+      "properties": {
+        "factor": {
+          "description": "Final Kerr conversion factor. Applied after the selected Kerr calculation.",
+          "title": "Final Kerr conversion factor",
+          "type": "number",
+          "x-constraints": [
+            "must be finite"
+          ],
+          "x-pmoke-path": "kerr.factor"
+        },
+        "method": {
+          "description": "Kerr calculation method. Selects the standard or harmonic analysis implementation.",
+          "enum": [
+            "standard",
+            "harmonics"
+          ],
+          "title": "Kerr calculation method",
+          "type": "string",
+          "x-pmoke-path": "kerr.method"
+        },
+        "sensor": {
+          "description": "Sensor channel used for Kerr calibration. The channel must also exist in the sensors array.",
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Sensor channel used for Kerr calibration",
+          "type": "integer",
+          "x-constraints": [
+            "must reference sensors[].channel"
+          ],
+          "x-pmoke-path": "kerr.sensor"
+        }
+      },
+      "required": [
+        "sensor",
+        "method",
+        "factor"
+      ],
+      "title": "Kerr-angle conversion settings",
+      "type": "object",
+      "x-pmoke-path": "kerr"
+    },
+    "lockin": {
+      "additionalProperties": false,
+      "description": "Numerical lock-in settings. Defines signal channels, parallelism, output stride, and low-pass filtering.",
+      "properties": {
+        "debug_label": {
+          "description": "Safe suffix for debug artifacts. The label is restricted to a short ASCII filename-safe subset.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9._-]+$",
+          "title": "Safe suffix for debug artifacts",
+          "type": "string",
+          "x-constraints": [
+            "1-64 ASCII alphanumeric, '.', '_', or '-'",
+            "must not be '.' or '..'"
+          ],
+          "x-pmoke-path": "lockin.debug_label"
+        },
+        "debug_output": {
+          "default": false,
+          "description": "Lock-in debug artifact output. Enable only for filter inspection because artifacts can be large.",
+          "title": "Lock-in debug artifact output",
+          "type": "boolean",
+          "x-pmoke-path": "lockin.debug_output"
+        },
+        "debug_overwrite": {
+          "default": false,
+          "description": "Debug artifact overwrite policy. Allows replacement of an existing matching debug output.",
+          "title": "Debug artifact overwrite policy",
+          "type": "boolean",
+          "x-pmoke-path": "lockin.debug_overwrite"
+        },
+        "filter": {
+          "description": "Lock-in low-pass filter configuration. Fields accepted by the table depend on the selected kind.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "half_window_cycles": {
+                  "description": "Half-window scale in reference cycles. For sync_iir_zero_phase it defines half of the synchronous-average window.",
+                  "exclusiveMinimum": 0,
+                  "title": "Half-window scale in reference cycles",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive"
+                  ],
+                  "x-pmoke-path": "lockin.filter.half_window_cycles",
+                  "x-units": "reference cycles"
+                },
+                "kind": {
+                  "const": "boxcar_legacy",
+                  "description": "Lock-in filter algorithm. sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
+                  "title": "Lock-in filter algorithm",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.filter.kind"
+                }
+              },
+              "required": [
+                "kind",
+                "half_window_cycles"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "half_window_cycles": {
+                  "description": "Half-window scale in reference cycles. For sync_iir_zero_phase it defines half of the synchronous-average window.",
+                  "exclusiveMinimum": 0,
+                  "title": "Half-window scale in reference cycles",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive"
+                  ],
+                  "x-pmoke-path": "lockin.filter.half_window_cycles",
+                  "x-units": "reference cycles"
+                },
+                "kind": {
+                  "const": "fir_boxcar_enbw",
+                  "description": "Lock-in filter algorithm. sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
+                  "title": "Lock-in filter algorithm",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.filter.kind"
+                }
+              },
+              "required": [
+                "kind",
+                "half_window_cycles"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "not": {
+                    "required": [
+                      "cutoff_hz",
+                      "cutoff_ref_ratio"
+                    ]
+                  }
+                }
+              ],
+              "properties": {
+                "cutoff_hz": {
+                  "description": "Absolute low-pass cutoff. Accepted by cutoff-based FIR and IIR filters.",
+                  "exclusiveMinimum": 0,
+                  "title": "Absolute low-pass cutoff",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive",
+                    "mutually exclusive with cutoff_ref_ratio"
+                  ],
+                  "x-pmoke-path": "lockin.filter.cutoff_hz",
+                  "x-units": "Hz"
+                },
+                "cutoff_ref_ratio": {
+                  "description": "Low-pass cutoff relative to the fitted reference frequency. A value of 0.02 gives a cutoff at two percent of f_ref.",
+                  "exclusiveMinimum": 0,
+                  "title": "Low-pass cutoff relative to the fitted reference frequency",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive",
+                    "mutually exclusive with cutoff_hz"
+                  ],
+                  "x-pmoke-path": "lockin.filter.cutoff_ref_ratio",
+                  "x-units": "f_ref ratio"
+                },
+                "half_window_cycles": {
+                  "description": "Half-window scale in reference cycles. For sync_iir_zero_phase it defines half of the synchronous-average window.",
+                  "exclusiveMinimum": 0,
+                  "title": "Half-window scale in reference cycles",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive"
+                  ],
+                  "x-pmoke-path": "lockin.filter.half_window_cycles",
+                  "x-units": "reference cycles"
+                },
+                "kind": {
+                  "const": "fir_zero_phase",
+                  "description": "Lock-in filter algorithm. sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
+                  "title": "Lock-in filter algorithm",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.filter.kind"
+                },
+                "stopband_atten_db": {
+                  "default": 60.0,
+                  "description": "FIR stopband attenuation target. Used only by fir_zero_phase filter design.",
+                  "exclusiveMinimum": 0,
+                  "title": "FIR stopband attenuation target",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive"
+                  ],
+                  "x-pmoke-path": "lockin.filter.stopband_atten_db",
+                  "x-units": "dB"
+                }
+              },
+              "required": [
+                "kind",
+                "half_window_cycles"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "not": {
+                    "required": [
+                      "cutoff_hz",
+                      "cutoff_ref_ratio"
+                    ]
+                  }
+                }
+              ],
+              "properties": {
+                "cutoff_hz": {
+                  "description": "Absolute low-pass cutoff. Accepted by cutoff-based FIR and IIR filters.",
+                  "exclusiveMinimum": 0,
+                  "title": "Absolute low-pass cutoff",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive",
+                    "mutually exclusive with cutoff_ref_ratio"
+                  ],
+                  "x-pmoke-path": "lockin.filter.cutoff_hz",
+                  "x-units": "Hz"
+                },
+                "cutoff_ref_ratio": {
+                  "description": "Low-pass cutoff relative to the fitted reference frequency. A value of 0.02 gives a cutoff at two percent of f_ref.",
+                  "exclusiveMinimum": 0,
+                  "title": "Low-pass cutoff relative to the fitted reference frequency",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive",
+                    "mutually exclusive with cutoff_hz"
+                  ],
+                  "x-pmoke-path": "lockin.filter.cutoff_ref_ratio",
+                  "x-units": "f_ref ratio"
+                },
+                "half_window_cycles": {
+                  "description": "Half-window scale in reference cycles. For sync_iir_zero_phase it defines half of the synchronous-average window.",
+                  "exclusiveMinimum": 0,
+                  "title": "Half-window scale in reference cycles",
+                  "type": "number",
+                  "x-constraints": [
+                    "must be finite and positive"
+                  ],
+                  "x-pmoke-path": "lockin.filter.half_window_cycles",
+                  "x-units": "reference cycles"
+                },
+                "iir_order": {
+                  "description": "IIR filter order. Used only by sync_iir_zero_phase.",
+                  "enum": [
+                    2,
+                    4,
+                    6,
+                    8
+                  ],
+                  "title": "IIR filter order",
+                  "type": "integer",
+                  "x-pmoke-path": "lockin.filter.iir_order"
+                },
+                "kind": {
+                  "const": "sync_iir_zero_phase",
+                  "description": "Lock-in filter algorithm. sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
+                  "title": "Lock-in filter algorithm",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.filter.kind"
+                },
+                "sync_average_cycles": {
+                  "default": 1.0,
+                  "description": "Synchronous-average full-window length. Used only by sync_iir_zero_phase; two times half_window_cycles matches a symmetric full window.",
+                  "exclusiveMinimum": 0,
+                  "maximum": 100,
+                  "title": "Synchronous-average full-window length",
+                  "type": "number",
+                  "x-constraints": [
+                    "0 < value <= 100",
+                    "must be finite"
+                  ],
+                  "x-pmoke-path": "lockin.filter.sync_average_cycles",
+                  "x-units": "reference cycles"
+                }
+              },
+              "required": [
+                "kind",
+                "half_window_cycles"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "Lock-in low-pass filter configuration",
+          "x-constraints": [
+            "fields from other filter kinds are rejected"
+          ],
+          "x-pmoke-path": "lockin.filter"
+        },
+        "save_npy": {
+          "default": false,
+          "description": "NumPy output for lock-in results. Writes NPY artifacts in addition to canonical CSV results.",
+          "title": "NumPy output for lock-in results",
+          "type": "boolean",
+          "x-pmoke-path": "lockin.save_npy"
+        },
+        "signal_channels": {
+          "description": "Channels demodulated by lock-in analysis. At least one channel is required by lock-in and downstream analysis.",
+          "items": {
+            "maximum": 8,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Channels demodulated by lock-in analysis",
+          "type": "array",
+          "uniqueItems": true,
+          "x-constraints": [
+            "each value must be in 1..=8",
+            "must be unique across all channel roles"
+          ],
+          "x-pmoke-path": "lockin.signal_channels"
+        },
+        "snr_background_window": {
+          "additionalProperties": false,
+          "description": "Optional background window for SNR diagnostics. An inline table with finite start and end values.",
+          "properties": {
+            "end": {
+              "type": "number"
+            },
+            "start": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "Optional background window for SNR diagnostics",
+          "type": "object",
+          "x-constraints": [
+            "start < end"
+          ],
+          "x-pmoke-path": "lockin.snr_background_window",
+          "x-units": "s"
+        },
+        "snr_signal_window": {
+          "additionalProperties": false,
+          "description": "Optional signal window for SNR diagnostics. An inline table with finite start and end values.",
+          "properties": {
+            "end": {
+              "type": "number"
+            },
+            "start": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "Optional signal window for SNR diagnostics",
+          "type": "object",
+          "x-constraints": [
+            "start < end"
+          ],
+          "x-pmoke-path": "lockin.snr_signal_window",
+          "x-units": "s"
+        },
+        "stride_samples": {
+          "description": "Lock-in output stride in input samples. Input sample rate divided by this value gives the output sample rate.",
+          "minimum": 1,
+          "title": "Lock-in output stride in input samples",
+          "type": "integer",
+          "x-constraints": [
+            "must be positive"
+          ],
+          "x-pmoke-path": "lockin.stride_samples",
+          "x-units": "samples"
+        },
+        "workers": {
+          "description": "Parallel lock-in worker count. Values near the physical CPU count are a practical starting point.",
+          "minimum": 1,
+          "title": "Parallel lock-in worker count",
+          "type": "integer",
+          "x-constraints": [
+            "must be positive"
+          ],
+          "x-pmoke-path": "lockin.workers"
+        }
+      },
+      "required": [
+        "signal_channels",
+        "workers",
+        "stride_samples",
+        "filter"
+      ],
+      "title": "Numerical lock-in settings",
+      "type": "object",
+      "x-pmoke-path": "lockin"
+    },
+    "phase": {
+      "additionalProperties": false,
+      "description": "Phase-rotation settings. Contains offsets for the first six harmonic components.",
+      "properties": {
+        "offsets": {
+          "description": "Six harmonic phase offsets. Numeric expressions such as pi/2 are accepted.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "maxItems": 6,
+          "minItems": 6,
+          "title": "Six harmonic phase offsets",
+          "type": "array",
+          "x-constraints": [
+            "must contain exactly 6 finite values"
+          ],
+          "x-pmoke-path": "phase.offsets",
+          "x-units": "rad"
+        }
+      },
+      "required": [
+        "offsets"
+      ],
+      "title": "Phase-rotation settings",
+      "type": "object",
+      "x-pmoke-path": "phase"
+    },
+    "plot": {
+      "additionalProperties": false,
+      "description": "Plot generation settings. Controls display/save behavior, decimation, and error policy.",
+      "properties": {
+        "decimation": {
+          "default": "stride",
+          "description": "Plot downsampling algorithm. min_max preserves narrow extrema better than stride decimation.",
+          "enum": [
+            "none",
+            "stride",
+            "min_max"
+          ],
+          "title": "Plot downsampling algorithm",
+          "type": "string",
+          "x-pmoke-path": "plot.decimation"
+        },
+        "max_points": {
+          "default": 100000,
+          "description": "Maximum points passed to plotting. Lower values improve Matplotlib responsiveness on large captures.",
+          "minimum": 1,
+          "title": "Maximum points passed to plotting",
+          "type": "integer",
+          "x-constraints": [
+            "must be positive"
+          ],
+          "x-pmoke-path": "plot.max_points",
+          "x-units": "points per series"
+        },
+        "mode": {
+          "default": "save",
+          "description": "Plot output mode. Batch use normally selects save; interactive opens Matplotlib windows.",
+          "enum": [
+            "off",
+            "save",
+            "interactive",
+            "both"
+          ],
+          "title": "Plot output mode",
+          "type": "string",
+          "x-pmoke-path": "plot.mode"
+        },
+        "on_error": {
+          "default": "warn",
+          "description": "Plot failure policy. Warn preserves successful analysis; fail makes plotting errors fatal.",
+          "enum": [
+            "warn",
+            "fail"
+          ],
+          "title": "Plot failure policy",
+          "type": "string",
+          "x-pmoke-path": "plot.on_error"
+        },
+        "output_dir": {
+          "description": "Deprecated plot directory compatibility field. Version 4 accepts but ignores this field; artifacts use the canonical run layout.",
+          "title": "Deprecated plot directory compatibility field",
+          "type": "string",
+          "x-constraints": [
+            "ignored with a warning"
+          ],
+          "x-pmoke-path": "plot.output_dir"
+        }
+      },
+      "required": [],
+      "title": "Plot generation settings",
+      "type": "object",
+      "x-pmoke-path": "plot"
+    },
+    "pulse": {
+      "additionalProperties": false,
+      "description": "Pulse background windows. Defines baseline regions before and after the pulse.",
+      "properties": {
+        "background_after": {
+          "additionalProperties": false,
+          "description": "Background window after the pulse. An inline table with finite start and end values.",
+          "properties": {
+            "end": {
+              "type": "number"
+            },
+            "start": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "Background window after the pulse",
+          "type": "object",
+          "x-constraints": [
+            "start < end"
+          ],
+          "x-pmoke-path": "pulse.background_after",
+          "x-units": "s"
+        },
+        "background_before": {
+          "additionalProperties": false,
+          "description": "Background window before the pulse. An inline table with finite start and end values.",
+          "properties": {
+            "end": {
+              "type": "number"
+            },
+            "start": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "Background window before the pulse",
+          "type": "object",
+          "x-constraints": [
+            "start < end"
+          ],
+          "x-pmoke-path": "pulse.background_before",
+          "x-units": "s"
+        }
+      },
+      "required": [
+        "background_before",
+        "background_after"
+      ],
+      "title": "Pulse background windows",
+      "type": "object",
+      "x-constraints": [
+        "background windows must not overlap"
+      ],
+      "x-pmoke-path": "pulse"
+    },
+    "reference": {
+      "additionalProperties": false,
+      "description": "Optical reference analysis settings. Controls the reference channel, FFT region, and fit decimation.",
+      "properties": {
+        "channel": {
+          "description": "Reference oscilloscope channel. The current DHO5108 mapping accepts channels 1 through 8.",
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Reference oscilloscope channel",
+          "type": "integer",
+          "x-constraints": [
+            "1 <= value <= 8",
+            "must be unique across all channel roles"
+          ],
+          "x-pmoke-path": "reference.channel"
+        },
+        "fft_window": {
+          "additionalProperties": false,
+          "description": "Time range used by the reference FFT. Choose a stable reference segment with finite start and end values.",
+          "properties": {
+            "end": {
+              "type": "number"
+            },
+            "start": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "Time range used by the reference FFT",
+          "type": "object",
+          "x-constraints": [
+            "start < end"
+          ],
+          "x-pmoke-path": "reference.fft_window",
+          "x-units": "s"
+        },
+        "stride_samples": {
+          "description": "Reference-fit decimation stride. Larger values reduce fitting cost at the expense of temporal detail.",
+          "minimum": 1,
+          "title": "Reference-fit decimation stride",
+          "type": "integer",
+          "x-constraints": [
+            "must be positive"
+          ],
+          "x-pmoke-path": "reference.stride_samples",
+          "x-units": "samples"
+        },
+        "window_samples": {
+          "description": "Local reference-fitting window size. Used around the FFT estimate by reference analysis.",
+          "minimum": 1,
+          "title": "Local reference-fitting window size",
+          "type": "integer",
+          "x-constraints": [
+            "must be positive"
+          ],
+          "x-pmoke-path": "reference.window_samples",
+          "x-units": "samples"
+        }
+      },
+      "required": [
+        "channel",
+        "fft_window",
+        "stride_samples",
+        "window_samples"
+      ],
+      "title": "Optical reference analysis settings",
+      "type": "object",
+      "x-pmoke-path": "reference"
+    },
+    "scope": {
+      "additionalProperties": false,
+      "description": "Oscilloscope configuration. Selects one registered scope model and its transport URI.",
+      "properties": {
+        "connection": {
+          "description": "Oscilloscope transport URI. DHO5108 normally uses direct TCP/IP and never uses a Prologix transport.",
+          "minLength": 1,
+          "pattern": "^(tcp://|visa:|gpib://|prologix-tcp://|prologix-serial://)",
+          "title": "Oscilloscope transport URI",
+          "type": "string",
+          "x-constraints": [
+            "transport must be supported by the model and build features"
+          ],
+          "x-pmoke-path": "scope.connection"
+        },
+        "model": {
+          "description": "Oscilloscope driver model. The model must match an oscilloscope registered by the instruments crate.",
+          "minLength": 1,
+          "title": "Oscilloscope driver model",
+          "type": "string",
+          "x-constraints": [
+            "must be a registered oscilloscope model"
+          ],
+          "x-pmoke-path": "scope.model"
+        }
+      },
+      "required": [
+        "model",
+        "connection"
+      ],
+      "title": "Oscilloscope configuration",
+      "type": "object",
+      "x-pmoke-path": "scope"
+    },
+    "sensors": {
+      "default": [],
+      "description": "Sensor-channel metadata and scaling. Each entry assigns one channel and exactly one scaling strategy.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "description": "Oscilloscope sensor channel. The current DHO5108 mapping accepts channels 1 through 8.",
+            "maximum": 8,
+            "minimum": 1,
+            "title": "Oscilloscope sensor channel",
+            "type": "integer",
+            "x-constraints": [
+              "1 <= value <= 8",
+              "must be unique across all channel roles"
+            ],
+            "x-pmoke-path": "sensors[].channel"
+          },
+          "label": {
+            "description": "Plot label for the sensor. Matplotlib mathtext may be supplied as a TOML literal string.",
+            "minLength": 1,
+            "title": "Plot label for the sensor",
+            "type": "string",
+            "x-constraints": [
+              "must not be empty"
+            ],
+            "x-pmoke-path": "sensors[].label"
+          },
+          "scale": {
+            "description": "Sensor conversion rule. Choose direct multiplication or maximum-absolute normalization.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "factor": {
+                    "description": "Linear sensor conversion factor. Multiplies the integrated sensor values directly.",
+                    "not": {
+                      "const": 0
+                    },
+                    "title": "Linear sensor conversion factor",
+                    "type": "number",
+                    "x-constraints": [
+                      "must be finite and non-zero"
+                    ],
+                    "x-pmoke-path": "sensors[].scale.factor"
+                  }
+                },
+                "required": [
+                  "factor"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "max_abs": {
+                    "description": "Target maximum absolute sensor value. Normalizes the measured absolute maximum to this positive target.",
+                    "exclusiveMinimum": 0,
+                    "title": "Target maximum absolute sensor value",
+                    "type": "number",
+                    "x-constraints": [
+                      "must be finite and positive"
+                    ],
+                    "x-pmoke-path": "sensors[].scale.max_abs"
+                  },
+                  "polarity": {
+                    "description": "Polarity for maximum-absolute scaling. Required with max_abs scaling.",
+                    "enum": [
+                      -1,
+                      1
+                    ],
+                    "title": "Polarity for maximum-absolute scaling",
+                    "type": "integer",
+                    "x-constraints": [
+                      "must equal -1 or 1"
+                    ],
+                    "x-pmoke-path": "sensors[].scale.polarity"
+                  }
+                },
+                "required": [
+                  "max_abs",
+                  "polarity"
+                ],
+                "type": "object"
+              }
+            ],
+            "title": "Sensor conversion rule",
+            "x-constraints": [
+              "factor and max_abs forms are mutually exclusive"
+            ],
+            "x-pmoke-path": "sensors[].scale"
+          },
+          "unit": {
+            "description": "Output unit for the scaled sensor. Used in tables, plots, and saved analysis headers.",
+            "minLength": 1,
+            "title": "Output unit for the scaled sensor",
+            "type": "string",
+            "x-constraints": [
+              "must not be empty"
+            ],
+            "x-pmoke-path": "sensors[].unit"
+          }
+        },
+        "required": [
+          "channel",
+          "scale",
+          "label",
+          "unit"
+        ],
+        "type": "object"
+      },
+      "title": "Sensor-channel metadata and scaling",
+      "type": "array",
+      "x-constraints": [
+        "channels must not overlap reference or lock-in signal channels"
+      ],
+      "x-pmoke-path": "sensors"
+    },
+    "version": {
+      "const": 4,
+      "description": "Configuration schema version. New and migrated configurations use schema version 4.",
+      "title": "Configuration schema version",
+      "type": "integer",
+      "x-constraints": [
+        "must equal 4"
+      ],
+      "x-pmoke-path": "version"
+    }
+  },
+  "required": [
+    "version",
+    "scope",
+    "data",
+    "pulse",
+    "reference",
+    "lockin",
+    "phase",
+    "kerr"
+  ],
+  "title": "pmoke config.toml",
+  "type": "object",
+  "x-pmoke": {
+    "fields": [
+      {
+        "constraints": [
+          "must equal 4"
+        ],
+        "default": null,
+        "details_en": "New and migrated configurations use schema version 4.",
+        "details_ja": "新規設定と移行済み設定で使用するバージョン 4。",
+        "id": "version",
+        "path": "version",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Configuration schema version.",
+        "summary_ja": "設定スキーマ版",
+        "units": null,
+        "valid_values": [
+          "4"
+        ],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Selects one registered scope model and its transport URI.",
+        "details_ja": "登録済みモデルと通信 URI の組み合わせ。",
+        "id": "scope",
+        "path": "scope",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Oscilloscope configuration.",
+        "summary_ja": "オシロスコープ設定",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "must be a registered oscilloscope model"
+        ],
+        "default": null,
+        "details_en": "The model must match an oscilloscope registered by the instruments crate.",
+        "details_ja": "instruments crate の登録名との一致。",
+        "id": "scope.model",
+        "path": "scope.model",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Oscilloscope driver model.",
+        "summary_ja": "オシロスコープモデル",
+        "units": null,
+        "valid_values": [
+          "DHO5108"
+        ],
+        "value_type": "string"
+      },
+      {
+        "constraints": [
+          "transport must be supported by the model and build features"
+        ],
+        "default": null,
+        "details_en": "DHO5108 normally uses direct TCP/IP and never uses a Prologix transport.",
+        "details_ja": "DHO5108 で通常使用する直接 TCP/IP。Prologix 対象外。",
+        "id": "scope.connection",
+        "path": "scope.connection",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Oscilloscope transport URI.",
+        "summary_ja": "オシロスコープ通信 URI",
+        "units": null,
+        "valid_values": [
+          "tcp://",
+          "visa:",
+          "gpib://"
+        ],
+        "value_type": "connection URI"
+      },
+      {
+        "constraints": [
+          "required by trigger, autoshot, automeasure, and auto"
+        ],
+        "default": "absent",
+        "details_en": "Required only by commands that trigger or automate a measurement.",
+        "details_ja": "trigger または自動測定系コマンドで必要な装置設定。",
+        "id": "generator",
+        "path": "generator",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Optional function-generator configuration.",
+        "summary_ja": "任意のファンクションジェネレータ設定",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "must be a registered generator model"
+        ],
+        "default": null,
+        "details_en": "Required when the generator table is present.",
+        "details_ja": "generator table 使用時の必須登録名。",
+        "id": "generator.model",
+        "path": "generator.model",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "Function-generator driver model.",
+        "summary_ja": "ファンクションジェネレータモデル",
+        "units": null,
+        "valid_values": [
+          "WF1946B"
+        ],
+        "value_type": "string"
+      },
+      {
+        "constraints": [
+          "transport must be supported by the model and build features"
+        ],
+        "default": null,
+        "details_en": "The URI selects native GPIB or a Prologix TCP/serial controller.",
+        "details_ja": "native GPIB または Prologix TCP/serial の選択。",
+        "id": "generator.connection",
+        "path": "generator.connection",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "Function-generator transport URI.",
+        "summary_ja": "ファンクションジェネレータ通信 URI",
+        "units": null,
+        "valid_values": [
+          "gpib://",
+          "prologix-tcp://",
+          "prologix-serial://"
+        ],
+        "value_type": "connection URI"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Controls canonical waveform formats and optional screenshot capture.",
+        "details_ja": "標準波形形式と任意スクリーンショット取得の設定。",
+        "id": "data",
+        "path": "data",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Acquisition storage and analysis-input policy.",
+        "summary_ja": "取得データ方針",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Raw is preferred for very large captures; both also writes CSV.",
+        "details_ja": "大規模取得向け raw、CSV 併記向け both。",
+        "id": "data.output",
+        "path": "data.output",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Waveform format written by acquisition.",
+        "summary_ja": "取得波形の保存形式",
+        "units": null,
+        "valid_values": [
+          "csv",
+          "raw",
+          "both"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Auto selects available canonical data, preferring verified raw data.",
+        "details_ja": "利用可能な標準データを選ぶ auto。検証済み raw 優先。",
+        "id": "data.input",
+        "path": "data.input",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Waveform source used by analysis.",
+        "summary_ja": "解析波形の入力形式",
+        "units": null,
+        "valid_values": [
+          "csv",
+          "raw",
+          "auto"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "DHO5108 capture requires TCP/IP or USB-TMC"
+        ],
+        "default": "false",
+        "details_en": "Capture requires a scope and transport that support display transfer.",
+        "details_ja": "display transfer 対応モデル・通信方式での任意取得。",
+        "id": "data.screenshot",
+        "path": "data.screenshot",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Oscilloscope screenshot capture.",
+        "summary_ja": "オシロスコープ画面取得",
+        "units": null,
+        "valid_values": [
+          "true",
+          "false"
+        ],
+        "value_type": "boolean"
+      },
+      {
+        "constraints": [
+          "channels must not overlap reference or lock-in signal channels"
+        ],
+        "default": "[]",
+        "details_en": "Each entry assigns one channel and exactly one scaling strategy.",
+        "details_ja": "各 channel と単一 scale 方針の対応。",
+        "id": "sensors",
+        "path": "sensors",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "Sensor-channel metadata and scaling.",
+        "summary_ja": "センサーチャンネル一覧",
+        "units": null,
+        "valid_values": [],
+        "value_type": "array of tables"
+      },
+      {
+        "constraints": [
+          "1 <= value <= 8",
+          "must be unique across all channel roles"
+        ],
+        "default": null,
+        "details_en": "The current DHO5108 mapping accepts channels 1 through 8.",
+        "details_ja": "DHO5108 向け 1 以上 8 以下の番号。",
+        "id": "sensors[].channel",
+        "path": "sensors[].channel",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Oscilloscope sensor channel.",
+        "summary_ja": "センサーチャンネル番号",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [
+          "factor and max_abs forms are mutually exclusive"
+        ],
+        "default": null,
+        "details_en": "Choose direct multiplication or maximum-absolute normalization.",
+        "details_ja": "直接係数または最大絶対値正規化の択一。",
+        "id": "sensors[].scale",
+        "path": "sensors[].scale",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Sensor conversion rule.",
+        "summary_ja": "センサー変換規則",
+        "units": null,
+        "valid_values": [
+          "{ factor = ... }",
+          "{ max_abs = ..., polarity = ... }"
+        ],
+        "value_type": "inline table union"
+      },
+      {
+        "constraints": [
+          "must be finite and non-zero"
+        ],
+        "default": null,
+        "details_en": "Multiplies the integrated sensor values directly.",
+        "details_ja": "積分センサー値への直接乗算。",
+        "id": "sensors[].scale.factor",
+        "path": "sensors[].scale.factor",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "Linear sensor conversion factor.",
+        "summary_ja": "線形センサー変換係数",
+        "units": null,
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must be finite and positive"
+        ],
+        "default": null,
+        "details_en": "Normalizes the measured absolute maximum to this positive target.",
+        "details_ja": "測定最大絶対値に対応する正の目標値。",
+        "id": "sensors[].scale.max_abs",
+        "path": "sensors[].scale.max_abs",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "Target maximum absolute sensor value.",
+        "summary_ja": "最大絶対値の正規化目標",
+        "units": null,
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must equal -1 or 1"
+        ],
+        "default": null,
+        "details_en": "Required with max_abs scaling.",
+        "details_ja": "max_abs 使用時の必須符号。",
+        "id": "sensors[].scale.polarity",
+        "path": "sensors[].scale.polarity",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "Polarity for maximum-absolute scaling.",
+        "summary_ja": "最大絶対値正規化の極性",
+        "units": null,
+        "valid_values": [
+          "-1",
+          "1"
+        ],
+        "value_type": "integer enum"
+      },
+      {
+        "constraints": [
+          "must not be empty"
+        ],
+        "default": null,
+        "details_en": "Matplotlib mathtext may be supplied as a TOML literal string.",
+        "details_ja": "TOML literal string で指定可能な Matplotlib mathtext。",
+        "id": "sensors[].label",
+        "path": "sensors[].label",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Plot label for the sensor.",
+        "summary_ja": "センサープロットラベル",
+        "units": null,
+        "valid_values": [],
+        "value_type": "string"
+      },
+      {
+        "constraints": [
+          "must not be empty"
+        ],
+        "default": null,
+        "details_en": "Used in tables, plots, and saved analysis headers.",
+        "details_ja": "表・プロット・解析保存ヘッダーでの単位。",
+        "id": "sensors[].unit",
+        "path": "sensors[].unit",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Output unit for the scaled sensor.",
+        "summary_ja": "変換後センサーの出力単位",
+        "units": null,
+        "valid_values": [],
+        "value_type": "string"
+      },
+      {
+        "constraints": [
+          "background windows must not overlap"
+        ],
+        "default": null,
+        "details_en": "Defines baseline regions before and after the pulse.",
+        "details_ja": "パルス前後のベースライン領域。",
+        "id": "pulse",
+        "path": "pulse",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Pulse background windows.",
+        "summary_ja": "パルス背景区間",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "start < end"
+        ],
+        "default": null,
+        "details_en": "An inline table with finite start and end values.",
+        "details_ja": "有限な start と end の inline table。",
+        "id": "pulse.background_before",
+        "path": "pulse.background_before",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Background window before the pulse.",
+        "summary_ja": "パルス前背景区間",
+        "units": "s",
+        "valid_values": [],
+        "value_type": "inline time window"
+      },
+      {
+        "constraints": [
+          "start < end"
+        ],
+        "default": null,
+        "details_en": "An inline table with finite start and end values.",
+        "details_ja": "有限な start と end の inline table。",
+        "id": "pulse.background_after",
+        "path": "pulse.background_after",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Background window after the pulse.",
+        "summary_ja": "パルス後背景区間",
+        "units": "s",
+        "valid_values": [],
+        "value_type": "inline time window"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Controls the reference channel, FFT region, and fit decimation.",
+        "details_ja": "reference channel、FFT 区間、fit 間引きの指定。",
+        "id": "reference",
+        "path": "reference",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Optical reference analysis settings.",
+        "summary_ja": "光学参照信号の解析設定",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "1 <= value <= 8",
+          "must be unique across all channel roles"
+        ],
+        "default": null,
+        "details_en": "The current DHO5108 mapping accepts channels 1 through 8.",
+        "details_ja": "DHO5108 向け 1 以上 8 以下の番号。",
+        "id": "reference.channel",
+        "path": "reference.channel",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Reference oscilloscope channel.",
+        "summary_ja": "参照信号チャンネル",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [
+          "start < end"
+        ],
+        "default": null,
+        "details_en": "Choose a stable reference segment with finite start and end values.",
+        "details_ja": "安定した参照信号区間を表す有限な start と end。",
+        "id": "reference.fft_window",
+        "path": "reference.fft_window",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Time range used by the reference FFT.",
+        "summary_ja": "参照 FFT 時間区間",
+        "units": "s",
+        "valid_values": [],
+        "value_type": "inline time window"
+      },
+      {
+        "constraints": [
+          "must be positive"
+        ],
+        "default": null,
+        "details_en": "Larger values reduce fitting cost at the expense of temporal detail.",
+        "details_ja": "計算量と時間詳細度の調整値。",
+        "id": "reference.stride_samples",
+        "path": "reference.stride_samples",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Reference-fit decimation stride.",
+        "summary_ja": "参照 fit の間引き幅",
+        "units": "samples",
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [
+          "must be positive"
+        ],
+        "default": null,
+        "details_en": "Used around the FFT estimate by reference analysis.",
+        "details_ja": "FFT 推定値周辺で使用する sample 数。",
+        "id": "reference.window_samples",
+        "path": "reference.window_samples",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Local reference-fitting window size.",
+        "summary_ja": "局所参照 fit の窓幅",
+        "units": "samples",
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Defines signal channels, parallelism, output stride, and low-pass filtering.",
+        "details_ja": "信号 channel、並列度、出力間引き、low-pass filter の指定。",
+        "id": "lockin",
+        "path": "lockin",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Numerical lock-in settings.",
+        "summary_ja": "数値 lock-in 設定",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "each value must be in 1..=8",
+          "must be unique across all channel roles"
+        ],
+        "default": null,
+        "details_en": "At least one channel is required by lock-in and downstream analysis.",
+        "details_ja": "lock-in と後段解析で必要な 1 件以上の番号。",
+        "id": "lockin.signal_channels",
+        "path": "lockin.signal_channels",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "Channels demodulated by lock-in analysis.",
+        "summary_ja": "lock-in 復調対象チャンネル",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer array"
+      },
+      {
+        "constraints": [
+          "must be positive"
+        ],
+        "default": null,
+        "details_en": "Values near the physical CPU count are a practical starting point.",
+        "details_ja": "物理 CPU 数付近を初期値とする並列度。",
+        "id": "lockin.workers",
+        "path": "lockin.workers",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Parallel lock-in worker count.",
+        "summary_ja": "lock-in 並列 worker 数",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [
+          "must be positive"
+        ],
+        "default": null,
+        "details_en": "Input sample rate divided by this value gives the output sample rate.",
+        "details_ja": "入力 sample rate を除算する sample 数。",
+        "id": "lockin.stride_samples",
+        "path": "lockin.stride_samples",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Lock-in output stride in input samples.",
+        "summary_ja": "lock-in 出力間引き幅",
+        "units": "samples",
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [
+          "fields from other filter kinds are rejected"
+        ],
+        "default": null,
+        "details_en": "Fields accepted by the table depend on the selected kind.",
+        "details_ja": "kind ごとに異なる許可 field。",
+        "id": "lockin.filter",
+        "path": "lockin.filter",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Lock-in low-pass filter configuration.",
+        "summary_ja": "lock-in low-pass filter 設定",
+        "units": null,
+        "valid_values": [],
+        "value_type": "tagged inline table"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
+        "details_ja": "同期平均と zero-phase IIR 平滑化を組み合わせる sync_iir_zero_phase。",
+        "id": "lockin.filter.kind",
+        "path": "lockin.filter.kind",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Lock-in filter algorithm.",
+        "summary_ja": "lock-in filter アルゴリズム",
+        "units": null,
+        "valid_values": [
+          "boxcar_legacy",
+          "fir_boxcar_enbw",
+          "fir_zero_phase",
+          "sync_iir_zero_phase"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "must be finite and positive"
+        ],
+        "default": null,
+        "details_en": "For sync_iir_zero_phase it defines half of the synchronous-average window.",
+        "details_ja": "sync_iir_zero_phase の同期平均 full window の半分。",
+        "id": "lockin.filter.half_window_cycles",
+        "path": "lockin.filter.half_window_cycles",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Half-window scale in reference cycles.",
+        "summary_ja": "参照周期単位の半窓幅",
+        "units": "reference cycles",
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must be finite and positive",
+          "mutually exclusive with cutoff_ref_ratio"
+        ],
+        "default": "absent",
+        "details_en": "Accepted by cutoff-based FIR and IIR filters.",
+        "details_ja": "cutoff 型 FIR/IIR filter で使用する周波数。",
+        "id": "lockin.filter.cutoff_hz",
+        "path": "lockin.filter.cutoff_hz",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Absolute low-pass cutoff.",
+        "summary_ja": "絶対 low-pass cutoff",
+        "units": "Hz",
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must be finite and positive",
+          "mutually exclusive with cutoff_hz"
+        ],
+        "default": "absent",
+        "details_en": "A value of 0.02 gives a cutoff at two percent of f_ref.",
+        "details_ja": "0.02 で f_ref の 2% となる比率。",
+        "id": "lockin.filter.cutoff_ref_ratio",
+        "path": "lockin.filter.cutoff_ref_ratio",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Low-pass cutoff relative to the fitted reference frequency.",
+        "summary_ja": "参照周波数比の low-pass cutoff",
+        "units": "f_ref ratio",
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must be finite and positive"
+        ],
+        "default": "60.0",
+        "details_en": "Used only by fir_zero_phase filter design.",
+        "details_ja": "fir_zero_phase 設計のみで使用する dB 値。",
+        "id": "lockin.filter.stopband_atten_db",
+        "path": "lockin.filter.stopband_atten_db",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "FIR stopband attenuation target.",
+        "summary_ja": "FIR stopband 減衰目標",
+        "units": "dB",
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "0 < value <= 100",
+          "must be finite"
+        ],
+        "default": "1.0",
+        "details_en": "Used only by sync_iir_zero_phase; two times half_window_cycles matches a symmetric full window.",
+        "details_ja": "sync_iir_zero_phase 専用。対称 full window では half_window_cycles の 2 倍。",
+        "id": "lockin.filter.sync_average_cycles",
+        "path": "lockin.filter.sync_average_cycles",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "Synchronous-average full-window length.",
+        "summary_ja": "同期平均の full window 長",
+        "units": "reference cycles",
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [],
+        "default": "2",
+        "details_en": "Used only by sync_iir_zero_phase.",
+        "details_ja": "sync_iir_zero_phase 専用の偶数次数。",
+        "id": "lockin.filter.iir_order",
+        "path": "lockin.filter.iir_order",
+        "required": "conditional",
+        "since": 4,
+        "summary_en": "IIR filter order.",
+        "summary_ja": "IIR filter 次数",
+        "units": null,
+        "valid_values": [
+          "2",
+          "4",
+          "6",
+          "8"
+        ],
+        "value_type": "integer enum"
+      },
+      {
+        "constraints": [],
+        "default": "false",
+        "details_en": "Enable only for filter inspection because artifacts can be large.",
+        "details_ja": "filter 調査時のみ有効化する大容量出力。",
+        "id": "lockin.debug_output",
+        "path": "lockin.debug_output",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Lock-in debug artifact output.",
+        "summary_ja": "lock-in debug artifact 出力",
+        "units": null,
+        "valid_values": [
+          "true",
+          "false"
+        ],
+        "value_type": "boolean"
+      },
+      {
+        "constraints": [
+          "1-64 ASCII alphanumeric, '.', '_', or '-'",
+          "must not be '.' or '..'"
+        ],
+        "default": "absent",
+        "details_en": "The label is restricted to a short ASCII filename-safe subset.",
+        "details_ja": "短い ASCII filename-safe 文字列。",
+        "id": "lockin.debug_label",
+        "path": "lockin.debug_label",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Safe suffix for debug artifacts.",
+        "summary_ja": "debug artifact の安全な suffix",
+        "units": null,
+        "valid_values": [],
+        "value_type": "string"
+      },
+      {
+        "constraints": [],
+        "default": "false",
+        "details_en": "Allows replacement of an existing matching debug output.",
+        "details_ja": "同名 debug 出力の置換許可。",
+        "id": "lockin.debug_overwrite",
+        "path": "lockin.debug_overwrite",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Debug artifact overwrite policy.",
+        "summary_ja": "debug artifact 上書き方針",
+        "units": null,
+        "valid_values": [
+          "true",
+          "false"
+        ],
+        "value_type": "boolean"
+      },
+      {
+        "constraints": [
+          "start < end"
+        ],
+        "default": "absent",
+        "details_en": "An inline table with finite start and end values.",
+        "details_ja": "有限な start と end の任意 inline table。",
+        "id": "lockin.snr_background_window",
+        "path": "lockin.snr_background_window",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Optional background window for SNR diagnostics.",
+        "summary_ja": "SNR 診断用背景区間",
+        "units": "s",
+        "valid_values": [],
+        "value_type": "inline time window"
+      },
+      {
+        "constraints": [
+          "start < end"
+        ],
+        "default": "absent",
+        "details_en": "An inline table with finite start and end values.",
+        "details_ja": "有限な start と end の任意 inline table。",
+        "id": "lockin.snr_signal_window",
+        "path": "lockin.snr_signal_window",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Optional signal window for SNR diagnostics.",
+        "summary_ja": "SNR 診断用信号区間",
+        "units": "s",
+        "valid_values": [],
+        "value_type": "inline time window"
+      },
+      {
+        "constraints": [],
+        "default": "false",
+        "details_en": "Writes NPY artifacts in addition to canonical CSV results.",
+        "details_ja": "標準 CSV に追加する NPY artifact。",
+        "id": "lockin.save_npy",
+        "path": "lockin.save_npy",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "NumPy output for lock-in results.",
+        "summary_ja": "lock-in 結果の NumPy 出力",
+        "units": null,
+        "valid_values": [
+          "true",
+          "false"
+        ],
+        "value_type": "boolean"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Contains offsets for the first six harmonic components.",
+        "details_ja": "第 1 から第 6 高調波の offset。",
+        "id": "phase",
+        "path": "phase",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Phase-rotation settings.",
+        "summary_ja": "位相回転設定",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "must contain exactly 6 finite values"
+        ],
+        "default": null,
+        "details_en": "Numeric expressions such as pi/2 are accepted.",
+        "details_ja": "pi/2 などの数式指定に対応する rad 値。",
+        "id": "phase.offsets",
+        "path": "phase.offsets",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Six harmonic phase offsets.",
+        "summary_ja": "6 高調波の位相 offset",
+        "units": "rad",
+        "valid_values": [],
+        "value_type": "float or expression array"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Selects calibration sensor, calculation method, and final factor.",
+        "details_ja": "校正 sensor、計算法、最終係数の指定。",
+        "id": "kerr",
+        "path": "kerr",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Kerr-angle conversion settings.",
+        "summary_ja": "Kerr 角変換設定",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "must reference sensors[].channel"
+        ],
+        "default": null,
+        "details_en": "The channel must also exist in the sensors array.",
+        "details_ja": "sensors 配列に存在する channel。",
+        "id": "kerr.sensor",
+        "path": "kerr.sensor",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Sensor channel used for Kerr calibration.",
+        "summary_ja": "Kerr 校正用センサーチャンネル",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Selects the standard or harmonic analysis implementation.",
+        "details_ja": "standard または harmonics 実装の選択。",
+        "id": "kerr.method",
+        "path": "kerr.method",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Kerr calculation method.",
+        "summary_ja": "Kerr 計算法",
+        "units": null,
+        "valid_values": [
+          "standard",
+          "harmonics"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "must be finite"
+        ],
+        "default": null,
+        "details_en": "Applied after the selected Kerr calculation.",
+        "details_ja": "選択した Kerr 計算後の乗算値。",
+        "id": "kerr.factor",
+        "path": "kerr.factor",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Final Kerr conversion factor.",
+        "summary_ja": "最終 Kerr 変換係数",
+        "units": null,
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [],
+        "default": "defaults",
+        "details_en": "Controls display/save behavior, decimation, and error policy.",
+        "details_ja": "表示・保存、間引き、失敗方針の指定。",
+        "id": "plot",
+        "path": "plot",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Plot generation settings.",
+        "summary_ja": "プロット生成設定",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [],
+        "default": "save",
+        "details_en": "Batch use normally selects save; interactive opens Matplotlib windows.",
+        "details_ja": "batch 向け save と Matplotlib window 向け interactive。",
+        "id": "plot.mode",
+        "path": "plot.mode",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Plot output mode.",
+        "summary_ja": "プロット出力 mode",
+        "units": null,
+        "valid_values": [
+          "off",
+          "save",
+          "interactive",
+          "both"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "must be positive"
+        ],
+        "default": "100000",
+        "details_en": "Lower values improve Matplotlib responsiveness on large captures.",
+        "details_ja": "大規模取得時の Matplotlib 応答性調整値。",
+        "id": "plot.max_points",
+        "path": "plot.max_points",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Maximum points passed to plotting.",
+        "summary_ja": "プロット入力の最大点数",
+        "units": "points per series",
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [],
+        "default": "stride",
+        "details_en": "min_max preserves narrow extrema better than stride decimation.",
+        "details_ja": "狭い極値の保持に適した min_max。",
+        "id": "plot.decimation",
+        "path": "plot.decimation",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Plot downsampling algorithm.",
+        "summary_ja": "プロット間引きアルゴリズム",
+        "units": null,
+        "valid_values": [
+          "none",
+          "stride",
+          "min_max"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [],
+        "default": "warn",
+        "details_en": "Warn preserves successful analysis; fail makes plotting errors fatal.",
+        "details_ja": "解析成功を保持する warn と致命扱いの fail。",
+        "id": "plot.on_error",
+        "path": "plot.on_error",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Plot failure policy.",
+        "summary_ja": "プロット失敗方針",
+        "units": null,
+        "valid_values": [
+          "warn",
+          "fail"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "ignored with a warning"
+        ],
+        "default": "absent",
+        "details_en": "Version 4 accepts but ignores this field; artifacts use the canonical run layout.",
+        "details_ja": "version 4 で受理後に無視される値。artifact は標準 run layout。",
+        "id": "plot.output_dir",
+        "path": "plot.output_dir",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Deprecated plot directory compatibility field.",
+        "summary_ja": "非推奨のプロット directory 互換 field",
+        "units": null,
+        "valid_values": [],
+        "value_type": "string"
+      }
+    ],
+    "format_version": 1,
+    "pmoke_version": "0.4.0",
+    "schema_version": 4,
+    "semantic_constraints": [
+      "channel assignments must be unique across sensors, reference, and lock-in signals",
+      "kerr.sensor must reference a configured sensor channel",
+      "pulse background windows must not overlap",
+      "cutoff_hz and cutoff_ref_ratio are mutually exclusive"
+    ]
+  }
+}

@@ -9,6 +9,7 @@ members = [
   "crates/instruments",
   "crates/pmoke-web-wasm",
   "crates/prologix-rs",
+  "xtask",
 ]
 
 [dependencies]

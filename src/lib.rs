@@ -6,6 +6,7 @@ mod communications;
 pub mod config;
 mod connection;
 mod constants;
+pub mod docs;
 mod kerr;
 pub mod lockin;
 mod phase;

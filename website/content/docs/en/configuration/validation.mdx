@@ -1,0 +1,32 @@
+---
+title: Validation and Migration
+description: Diagnose schema errors and migrate legacy configuration safely.
+---
+
+## Validate without hardware
+
+```bash
+pmoke --config config.toml config validate
+pmoke config explain lockin.filter
+```
+
+Validation covers TOML syntax, unknown v4 keys, ranges, channel roles, filter
+constraints, connection URI syntax, and model/transport compatibility. It does not
+open an instrument.
+
+The editor schema is available as [config.schema.json](/pmoke/config.schema.json).
+Runtime validation remains authoritative for cross-field and hardware semantics.
+
+## Migrate legacy schema
+
+Previewing a migration never changes the source file:
+
+```bash
+pmoke --config legacy.toml config migrate
+pmoke --config legacy.toml config migrate --output config.v4.toml
+pmoke --config legacy.toml config migrate --in-place
+```
+
+`--in-place` creates a versioned backup before an atomic replacement. Potentially
+behavior-changing steps require `--accept-lossy`; existing destinations are not
+overwritten.

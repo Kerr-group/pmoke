@@ -9,14 +9,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod docs;
 mod load;
 mod migration;
 mod paths;
 mod render;
 mod schema;
 mod validation;
+pub use docs::{
+    CONFIG_FIELD_DOCS, ConfigFieldDoc, ConfigReference, RequiredState, config_reference,
+};
 pub use load::{load_from_path, load_from_str};
-pub use migration::{MigrationPlan, plan_latest_executable_migration, plan_migration};
+pub use migration::{
+    LATEST_CONFIG_VERSION, MigrationPlan, plan_latest_executable_migration, plan_migration,
+};
 pub use paths::{ArtifactPaths, ArtifactResolver};
 pub(crate) use render::connection_uri;
 use render::render_config_v4;

@@ -3,6 +3,7 @@ import { absoluteUrl, basePath, docsContentRoute, docsRoute } from './shared';
 import { defineDocs } from 'fumadocs-mdx/macro';
 import { metaSchema, pageSchema } from 'fumadocs-core/source/schema';
 import { i18n } from './i18n';
+import { versionMetadata } from './version';
 
 const docs = defineDocs({
   dir: 'content/docs',
@@ -26,7 +27,10 @@ export const source = loader({
 });
 
 export function getPageMarkdownUrl(page: (typeof source)['$inferPage']) {
-  const segments = page.slugs.length === 0 ? ['content.md'] : page.slugs;
+  const last = page.slugs.at(-1);
+  const segments = last
+    ? [...page.slugs.slice(0, -1), `${last}.md`]
+    : ['content.md'];
 
   return {
     segments,
@@ -45,6 +49,11 @@ export async function getLLMText(page: (typeof source)['$inferPage']) {
   const canonical = absoluteUrl(page.url);
 
   return `# ${page.data.title} (${canonical})
+
+- locale: ${page.locale}
+- pmoke: ${versionMetadata.pmoke_version}
+- config schema: ${versionMetadata.schema_version}
+- source commit: ${versionMetadata.source_commit}
 
 ${processed}`;
 }

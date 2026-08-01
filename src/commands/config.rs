@@ -1,8 +1,8 @@
 use crate::cli::ConfigCommand;
 use crate::commands::show;
 use crate::config::{
-    ConfigLoad, MigrationPlan, load_from_path, load_from_str, plan_latest_executable_migration,
-    plan_migration,
+    CONFIG_FIELD_DOCS, ConfigFieldDoc, ConfigLoad, MigrationPlan, load_from_path, load_from_str,
+    plan_latest_executable_migration, plan_migration,
 };
 use crate::ui;
 use anyhow::{Context, Result, bail, ensure};
@@ -100,201 +100,6 @@ mode = "both" # "off", "save", "interactive", or "both"
 decimation = "min_max" # "none", "stride", or "min_max"
 "#;
 
-#[derive(Debug, Clone, Copy)]
-struct FieldDoc {
-    path: &'static str,
-    summary: &'static str,
-    details: &'static str,
-}
-
-const FIELD_DOCS: &[FieldDoc] = &[
-    FieldDoc {
-        path: "version",
-        summary: "Config schema version. New configs should use 4.",
-        details: "pmoke loads legacy v1-v3 configs, but v4 is the editable schema used by config init and migrate.",
-    },
-    FieldDoc {
-        path: "scope",
-        summary: "Oscilloscope configuration.",
-        details: "Set model and connection. DHO5108 usually uses tcp://IP:PORT and does not require Prologix.",
-    },
-    FieldDoc {
-        path: "scope.model",
-        summary: "Oscilloscope driver name.",
-        details: "Currently expected values include DHO5108.",
-    },
-    FieldDoc {
-        path: "scope.connection",
-        summary: "Oscilloscope transport URI.",
-        details: "Use tcp://host:port for LAN instruments, visa:RESOURCE for NI-VISA on supported builds, or gpib://board/address where available.",
-    },
-    FieldDoc {
-        path: "generator",
-        summary: "Optional function generator configuration.",
-        details: "Remove the section when pmoke should not control a generator. WF1946B can use gpib:// or Prologix URIs.",
-    },
-    FieldDoc {
-        path: "generator.connection",
-        summary: "Function generator transport URI.",
-        details: "Supported forms include gpib://0/11, prologix-tcp://host:1234?addr=11, and prologix-serial:///dev/tty.usbserial?addr=11.",
-    },
-    FieldDoc {
-        path: "data",
-        summary: "Acquisition storage and analysis input policy.",
-        details: "output controls what fetch writes. input controls whether analysis reads CSV, RAW, or automatically chooses available data.",
-    },
-    FieldDoc {
-        path: "data.output",
-        summary: "Fetch output format.",
-        details: "csv is simple, raw is safer for large oscilloscope data, both writes both formats.",
-    },
-    FieldDoc {
-        path: "data.input",
-        summary: "Analysis input source.",
-        details: "auto prefers canonical data available under the run directory. Use raw or csv to force one format.",
-    },
-    FieldDoc {
-        path: "data.screenshot",
-        summary: "Whether fetch captures an oscilloscope screenshot.",
-        details: "Set true when the configured oscilloscope transport supports screenshot capture and you want it in run artifacts.",
-    },
-    FieldDoc {
-        path: "sensors",
-        summary: "Sensor channel metadata and scaling.",
-        details: "Each [[sensors]] item defines one sensor channel, label, output unit, and either scale.factor or scale.max_abs.",
-    },
-    FieldDoc {
-        path: "sensors.channel",
-        summary: "Oscilloscope channel used as a sensor.",
-        details: "Sensor channels are integrated and can be used by Kerr analysis.",
-    },
-    FieldDoc {
-        path: "sensors.scale",
-        summary: "Sensor conversion rule.",
-        details: "Use { factor = ... } for linear conversion, or { max_abs = ..., polarity = 1|-1 } to normalize by absolute maximum.",
-    },
-    FieldDoc {
-        path: "pulse",
-        summary: "Background windows around the pulse.",
-        details: "background_before and background_after define time ranges used for pulse baseline handling.",
-    },
-    FieldDoc {
-        path: "reference",
-        summary: "Reference channel and FFT settings.",
-        details: "The reference signal estimates f_ref, amplitude, and phase before lock-in processing.",
-    },
-    FieldDoc {
-        path: "reference.channel",
-        summary: "Reference oscilloscope channel.",
-        details: "This channel must not also be a sensor or signal channel.",
-    },
-    FieldDoc {
-        path: "reference.fft_window",
-        summary: "Time range used for reference FFT.",
-        details: "Choose a stable portion of the reference signal. Values are seconds on the experiment time axis.",
-    },
-    FieldDoc {
-        path: "reference.stride_samples",
-        summary: "Decimation stride for reference fitting.",
-        details: "Larger values reduce fitting cost. Too large a stride can reduce phase/frequency accuracy.",
-    },
-    FieldDoc {
-        path: "reference.window_samples",
-        summary: "Local fitting window size.",
-        details: "Used by reference analysis around the FFT estimate.",
-    },
-    FieldDoc {
-        path: "lockin",
-        summary: "Numerical lock-in settings.",
-        details: "Defines signal channels, worker count, output stride, filter kind, and optional diagnostics.",
-    },
-    FieldDoc {
-        path: "lockin.signal_channels",
-        summary: "Oscilloscope channels demodulated by lock-in.",
-        details: "These channels become lock-in signal outputs and are later phase-rotated.",
-    },
-    FieldDoc {
-        path: "lockin.workers",
-        summary: "Parallel worker count for lock-in processing.",
-        details: "Use a value near the number of physical CPU cores for large data. Too high can increase memory pressure.",
-    },
-    FieldDoc {
-        path: "lockin.stride_samples",
-        summary: "Output decimation stride in input samples.",
-        details: "For example, 500 MHz input and stride 100 gives 5 MHz lock-in output.",
-    },
-    FieldDoc {
-        path: "lockin.filter",
-        summary: "Low-pass/smoothing filter used after demodulation.",
-        details: "sync_iir_zero_phase is the recommended smooth filter. boxcar_legacy is useful for comparing old results.",
-    },
-    FieldDoc {
-        path: "lockin.filter.kind",
-        summary: "Lock-in filter algorithm.",
-        details: "Supported values are boxcar_legacy, fir_boxcar_enbw, fir_zero_phase, and sync_iir_zero_phase.",
-    },
-    FieldDoc {
-        path: "lockin.filter.half_window_cycles",
-        summary: "Half window length in reference cycles.",
-        details: "For sync_iir_zero_phase this also controls the synchronous averaging scale after normalization.",
-    },
-    FieldDoc {
-        path: "lockin.filter.cutoff_ref_ratio",
-        summary: "IIR/FIR cutoff as a ratio of f_ref.",
-        details: "0.02 means cutoff = 0.02 * f_ref. Lower values smooth more and reduce time resolution.",
-    },
-    FieldDoc {
-        path: "lockin.filter.cutoff_hz",
-        summary: "Absolute low-pass cutoff in Hz.",
-        details: "Use either cutoff_hz or cutoff_ref_ratio when the selected filter accepts a cutoff.",
-    },
-    FieldDoc {
-        path: "lockin.filter.sync_average_cycles",
-        summary: "Synchronous average window length in cycles.",
-        details: "For current configs, use roughly 2 * half_window_cycles when matching the historical full boxcar window.",
-    },
-    FieldDoc {
-        path: "lockin.filter.iir_order",
-        summary: "IIR low-pass order for sync_iir_zero_phase.",
-        details: "2 is a conservative default. Higher orders roll off harder but can introduce more sensitivity.",
-    },
-    FieldDoc {
-        path: "lockin.debug_output",
-        summary: "Write lock-in debug artifacts.",
-        details: "Enable only when inspecting filter behavior; debug outputs can be large.",
-    },
-    FieldDoc {
-        path: "phase",
-        summary: "Phase rotation settings.",
-        details: "offsets contains harmonic phase offsets in radians and may use numeric expressions such as pi/2.",
-    },
-    FieldDoc {
-        path: "kerr",
-        summary: "Kerr angle conversion settings.",
-        details: "Select the sensor channel used for calibration, the method, and the final multiplicative factor.",
-    },
-    FieldDoc {
-        path: "plot",
-        summary: "Plot generation behavior.",
-        details: "Use save for batch runs, interactive for inspection, both for both windows and files, and off for no plotting.",
-    },
-    FieldDoc {
-        path: "plot.max_points",
-        summary: "Maximum points sent to plotting.",
-        details: "Lower this to make matplotlib faster on very large data.",
-    },
-    FieldDoc {
-        path: "plot.decimation",
-        summary: "Plot downsampling algorithm.",
-        details: "min_max preserves spikes better than simple stride-like decimation.",
-    },
-    FieldDoc {
-        path: "plot.on_error",
-        summary: "How plot failures affect the command.",
-        details: "warn keeps analysis running when plotting fails. fail turns plotting errors into command failures.",
-    },
-];
-
 fn run_init(source: &Path, output: Option<&Path>, force: bool) -> Result<ConfigCommandOutcome> {
     let destination = output.unwrap_or(source);
     let stdout_output = destination == Path::new("-");
@@ -340,7 +145,7 @@ fn run_validate(source: &Path) -> Result<ConfigCommandOutcome> {
 
 fn run_explain(path: Option<&str>) -> Result<ConfigCommandOutcome> {
     match path.map(str::trim).filter(|value| !value.is_empty()) {
-        None => print_field_docs("Config Fields", FIELD_DOCS),
+        None => print_field_docs("Config Fields", CONFIG_FIELD_DOCS),
         Some(path) => {
             let matches = explain_matches(path);
             ensure!(
@@ -358,30 +163,37 @@ fn run_explain(path: Option<&str>) -> Result<ConfigCommandOutcome> {
     Ok(ConfigCommandOutcome { exit_code: 0 })
 }
 
-fn explain_matches(path: &str) -> Vec<FieldDoc> {
-    let exact = FIELD_DOCS
+fn explain_matches(path: &str) -> Vec<ConfigFieldDoc> {
+    let exact = CONFIG_FIELD_DOCS
         .iter()
         .copied()
-        .filter(|doc| doc.path == path)
+        .filter(|doc| config_doc_path_matches(doc.path, path))
         .collect::<Vec<_>>();
     if !exact.is_empty() {
         return exact;
     }
-    FIELD_DOCS
+    CONFIG_FIELD_DOCS
         .iter()
         .copied()
-        .filter(|doc| doc.path.starts_with(&format!("{path}.")) || doc.path.contains(path))
+        .filter(|doc| {
+            let searchable = doc.path.replace("[]", "");
+            searchable.starts_with(&format!("{path}.")) || searchable.contains(path)
+        })
         .collect()
 }
 
-fn print_field_docs(title: &str, docs: &[FieldDoc]) {
+fn config_doc_path_matches(documented: &str, query: &str) -> bool {
+    documented == query || documented.replace("[]", "") == query
+}
+
+fn print_field_docs(title: &str, docs: &[ConfigFieldDoc]) {
     ui::settings_table(
         title,
         docs.iter()
             .map(|doc| {
                 (
                     doc.path.to_string(),
-                    format!("{} {}", doc.summary, doc.details),
+                    format!("{} {}", doc.summary_en, doc.details_en),
                 )
             })
             .collect(),
@@ -1028,6 +840,7 @@ mod tests {
     #[test]
     fn explain_accepts_sections_and_rejects_unknown_paths() {
         assert_eq!(run_explain(Some("lockin.filter")).unwrap().exit_code, 0);
+        assert_eq!(run_explain(Some("sensors.channel")).unwrap().exit_code, 0);
         assert!(run_explain(Some("does.not.exist")).is_err());
     }
 

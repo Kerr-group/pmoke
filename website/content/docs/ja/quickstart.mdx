@@ -6,11 +6,21 @@ description: 設定検証と完全解析パイプラインの実行手順。
 ```bash
 pmoke config init --output config.toml
 pmoke config validate --config config.toml
-pmoke --config config.toml analyze
+pmoke --config config.toml doctor
+pmoke --config config.toml --run-dir shot-001 analyze
 ```
 
-サブコマンドなしの `pmoke` によるターミナル画面の起動。測定前の `pmoke doctor hardware` による装置接続診断。
+サブコマンドなしの `pmoke` によるターミナル画面の起動。測定前の `doctor` による設定、storage、Python 環境、build 済み transport feature、接続装置の診断。
 
-## 静的サイト実証
+## workflow の選択
 
-日英ルート、静的検索、LLM 向け Markdown、Web Worker 上の Rust 信号生成を含むアーキテクチャ実証。
+- 取得済み波形の全解析: `analyze`
+- 波形取得後の全解析: `process`
+- single mode、trigger、取得、解析の自動実行: `auto`
+- 個別解析段階: `reference`、`sensor`、`li`、`phase`、`kerr`
+
+run directory 内の immutable な取得時設定と解決済み設定 snapshot。異なる取得設定による同一 directory 再利用の拒否。
+
+## 次の確認
+
+[導入 matrix](./installation)の確認後、装置配線に合わせた[設定作成](./configuration)。

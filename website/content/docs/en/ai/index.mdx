@@ -1,0 +1,26 @@
+---
+title: AI and Machine Resources
+description: Stable documentation feeds for agents, editors, and automation.
+---
+
+## Endpoints
+
+| Resource | Purpose |
+| --- | --- |
+| [`llms.txt`](/pmoke/llms.txt) | Concise bilingual page index |
+| [`llms-full.txt`](/pmoke/llms-full.txt) | Full processed documentation context |
+| [CLI JSON](/pmoke/generated/cli-reference.json) | Typed command and option tree |
+| [Config JSON](/pmoke/generated/config-reference.json) | Typed field registry |
+| [Config JSON Schema](/pmoke/config.schema.json) | Editor and structural validation schema |
+
+Every feed identifies the pmoke version, config schema version, and build source
+commit. Per-page Markdown URLs appear in page actions and preserve locale and
+canonical source information.
+
+## Agent policy
+
+1. Read `llms.txt` to select only relevant pages.
+2. Prefer the generated JSON over parsing rendered tables.
+3. Treat native `pmoke config validate` as authoritative for semantic validation.
+4. Preserve exact commands, field paths, units, and version metadata in generated output.
+5. Never infer private laboratory addresses from documentation examples.

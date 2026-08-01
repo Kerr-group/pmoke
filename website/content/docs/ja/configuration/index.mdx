@@ -1,0 +1,59 @@
+---
+title: 設定作成
+description: signal role と artifact を軸とする schema v4 設定。
+---
+
+過去の実験設定の複製ではなく、実行中 binary の現行 template を起点とする構成:
+
+```bash
+pmoke config init --output config.toml
+```
+
+## 装置 endpoint
+
+オシロスコープと direct 接続を定義する `scope`。trigger source と direct GPIB または Prologix adapter を定義する `generator`。
+
+```toml
+version = 4
+
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+
+[generator]
+model = "WF1946B"
+connection = "prologix-tcp://192.0.2.20:1234?addr=11"
+```
+
+## channel role
+
+sensor ごとに一つだけの scale 形式。周波数・位相推定の基準となる reference channel。光学応答を含む lock-in signal channel。
+
+```toml
+[[sensors]]
+channel = 1
+scale = { max_abs = 55.0, polarity = -1 }
+label = '$\mu_0H$'
+unit = "T"
+
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.015 }
+
+[lockin]
+signal_channels = [3]
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+```
+
+## artifact 方針
+
+大容量 DHO capture 向け RAW 取得。shot ごとの分離と immutable な設定 snapshot を担う `--run-dir`。
+
+```toml
+[data]
+output = "raw"
+input = "auto"
+screenshot = true
+```
+
+全 default・制約の確認先となる[自動生成 field リファレンス](./reference)。

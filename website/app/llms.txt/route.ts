@@ -1,5 +1,6 @@
 import { source } from '@/lib/source';
 import { basePath, siteDescription, siteOrigin } from '@/lib/shared';
+import { versionMetadata } from '@/lib/version';
 
 export const revalidate = false;
 
@@ -12,7 +13,7 @@ export function GET() {
     });
     return `## ${title}\n\n${pages.join('\n')}`;
   });
-  const body = `# pmoke\n\n> ${siteDescription}\n\n${sections.join('\n\n')}\n`;
+  const body = `# pmoke\n\n> ${siteDescription}\n\n- pmoke: ${versionMetadata.pmoke_version}\n- config schema: ${versionMetadata.schema_version}\n- source commit: ${versionMetadata.source_commit}\n\n${sections.join('\n\n')}\n`;
   return new Response(body, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
   });

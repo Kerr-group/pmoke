@@ -1,0 +1,24 @@
+---
+title: AI・機械向け Resource
+description: agent、editor、自動化向けの安定 documentation feed。
+---
+
+## endpoint
+
+| Resource | 用途 |
+| --- | --- |
+| [`llms.txt`](/pmoke/llms.txt) | 日英 page の簡潔な索引 |
+| [`llms-full.txt`](/pmoke/llms-full.txt) | 処理済み documentation の全 context |
+| [CLI JSON](/pmoke/generated/cli-reference.json) | 型付き command・option tree |
+| [Config JSON](/pmoke/generated/config-reference.json) | 型付き field registry |
+| [Config JSON Schema](/pmoke/config.schema.json) | editor・構造検証向け schema |
+
+pmoke version、config schema version、build source commit を含む各 feed。locale と canonical source 情報を保持する page 別 Markdown URL。
+
+## agent 方針
+
+1. 関連 page 選択の起点となる `llms.txt`。
+2. render 済み table の parse より優先する生成 JSON。
+3. semantic validation の最終基準となる native `pmoke config validate`。
+4. 生成結果で保持する正確な command、field path、unit、version metadata。
+5. documentation 例からの private 実験室 address 推測の禁止。

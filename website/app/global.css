@@ -85,6 +85,43 @@ pre,
   font-family: var(--font-mono), monospace;
 }
 
+.reference-metadata {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 1.25rem 0 1.75rem;
+  border-block: 1px solid var(--color-fd-border);
+}
+
+.reference-metadata > div {
+  min-width: 0;
+  padding: 0.7rem 0.85rem;
+  border-inline-end: 1px solid var(--color-fd-border);
+}
+
+.reference-metadata > div:last-child { border-inline-end: 0; }
+.reference-metadata dt {
+  color: var(--color-fd-muted-foreground);
+  font: 600 0.68rem/1.4 var(--font-inter), sans-serif;
+  text-transform: uppercase;
+}
+.reference-metadata dd {
+  margin: 0.2rem 0 0;
+  overflow: hidden;
+  color: var(--color-fd-foreground);
+  font: 600 0.78rem/1.4 var(--font-mono), monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .reference-metadata { grid-template-columns: 1fr; }
+  .reference-metadata > div {
+    border-block-end: 1px solid var(--color-fd-border);
+    border-inline-end: 0;
+  }
+  .reference-metadata > div:last-child { border-block-end: 0; }
+}
+
 button,
 a {
   border-radius: var(--radius);

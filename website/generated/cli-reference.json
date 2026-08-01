@@ -1,0 +1,1529 @@
+{
+  "format_version": 1,
+  "pmoke_version": "0.4.0",
+  "feature_set": "hw-core",
+  "command": {
+    "name": "pmoke",
+    "path": "pmoke",
+    "summary": "A CLI tool to conduct pulsed MOKE experiments and analyze the data.",
+    "required_feature": null,
+    "arguments": [
+      {
+        "id": "config",
+        "kind": "option",
+        "short": "c",
+        "long": "config",
+        "value_names": [
+          "FILE"
+        ],
+        "help": "Path to the configuration file (default: ./config.toml)",
+        "required": false,
+        "global": false,
+        "repeatable": false,
+        "default_values": [
+          "config.toml"
+        ],
+        "possible_values": [],
+        "conflicts_with": []
+      },
+      {
+        "id": "run_dir",
+        "kind": "option",
+        "short": null,
+        "long": "run-dir",
+        "value_names": [
+          "DIR"
+        ],
+        "help": "Store and read run artifacts under this directory",
+        "required": false,
+        "global": true,
+        "repeatable": false,
+        "default_values": [],
+        "possible_values": [],
+        "conflicts_with": []
+      },
+      {
+        "id": "force",
+        "kind": "flag",
+        "short": "f",
+        "long": "force",
+        "value_names": [],
+        "help": "Overwrite existing run artifacts without error",
+        "required": false,
+        "global": true,
+        "repeatable": false,
+        "default_values": [],
+        "possible_values": [],
+        "conflicts_with": []
+      },
+      {
+        "id": "help",
+        "kind": "flag",
+        "short": "h",
+        "long": "help",
+        "value_names": [],
+        "help": "Print help",
+        "required": false,
+        "global": false,
+        "repeatable": false,
+        "default_values": [],
+        "possible_values": [],
+        "conflicts_with": []
+      },
+      {
+        "id": "version",
+        "kind": "flag",
+        "short": "V",
+        "long": "version",
+        "value_names": [],
+        "help": "Print version",
+        "required": false,
+        "global": false,
+        "repeatable": false,
+        "default_values": [],
+        "possible_values": [],
+        "conflicts_with": []
+      }
+    ],
+    "subcommands": [
+      {
+        "name": "show",
+        "path": "pmoke show",
+        "summary": "Display the contents of the configuration file",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "monitor",
+        "path": "pmoke monitor",
+        "summary": "Open a live terminal dashboard for configuration and analysis artifacts",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "config",
+        "path": "pmoke config",
+        "summary": "Inspect and migrate configuration files",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "init",
+            "path": "pmoke config init",
+            "summary": "Create a starter config file",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Write the template to FILE instead of --config; use '-' for standard output",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "force",
+                "kind": "flag",
+                "short": "f",
+                "long": "force",
+                "value_names": [],
+                "help": "Overwrite an existing output file",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "validate",
+            "path": "pmoke config validate",
+            "summary": "Validate the config file without running an analysis command",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "explain",
+            "path": "pmoke config explain",
+            "summary": "Explain config sections and fields",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "path",
+                "kind": "positional",
+                "short": null,
+                "long": null,
+                "value_names": [
+                  "PATH"
+                ],
+                "help": "Field or section path to explain, for example lockin.filter",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "migrate",
+            "path": "pmoke config migrate",
+            "summary": "Migrate the config to the latest executable schema",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Write the migrated TOML to FILE; use '-' for standard output",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "check",
+                  "in_place"
+                ]
+              },
+              {
+                "id": "in_place",
+                "kind": "flag",
+                "short": null,
+                "long": "in-place",
+                "value_names": [],
+                "help": "Atomically replace the source config after creating a versioned backup",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "check",
+                  "output"
+                ]
+              },
+              {
+                "id": "check",
+                "kind": "flag",
+                "short": null,
+                "long": "check",
+                "value_names": [],
+                "help": "Only report whether a migration is required",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "in_place",
+                  "output"
+                ]
+              },
+              {
+                "id": "accept_lossy",
+                "kind": "flag",
+                "short": null,
+                "long": "accept-lossy",
+                "value_names": [],
+                "help": "Accept migration steps that can change legacy behavior",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "to",
+                "kind": "option",
+                "short": null,
+                "long": "to",
+                "value_names": [
+                  "VERSION"
+                ],
+                "help": "Require a specific target version instead of the latest executable version",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "raw",
+        "path": "pmoke raw",
+        "summary": "Inspect and verify stored RAW waveform data",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "verify",
+            "path": "pmoke raw verify",
+            "summary": "Verify RAW metadata, file sizes, and available checksums",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "input",
+                "kind": "option",
+                "short": null,
+                "long": "input",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "RAW acquisition directory (defaults to acquisition/ with legacy fallback)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "instruments",
+        "path": "pmoke instruments",
+        "summary": "Inspect supported instruments and hardware capabilities",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "list",
+            "path": "pmoke instruments list",
+            "summary": "List supported instrument models",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "json",
+                "kind": "flag",
+                "short": null,
+                "long": "json",
+                "value_names": [],
+                "help": "Emit machine-readable JSON",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "explain",
+            "path": "pmoke instruments explain",
+            "summary": "Explain a supported instrument model",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "model",
+                "kind": "positional",
+                "short": null,
+                "long": null,
+                "value_names": [
+                  "MODEL"
+                ],
+                "help": "Instrument model name, for example Keithley2010",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "json",
+                "kind": "flag",
+                "short": null,
+                "long": "json",
+                "value_names": [],
+                "help": "Emit machine-readable JSON",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "query",
+            "path": "pmoke instruments query",
+            "summary": "Send one SCPI text query to a connection URI",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "connection",
+                "kind": "option",
+                "short": null,
+                "long": "connection",
+                "value_names": [
+                  "URI"
+                ],
+                "help": "Connection URI, for example prologix-tcp://host:1234?addr=17",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "timeout_ms",
+                "kind": "option",
+                "short": null,
+                "long": "timeout-ms",
+                "value_names": [
+                  "MS"
+                ],
+                "help": "Timeout used when the URI does not include a transport-specific timeout",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "3000"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "json",
+                "kind": "flag",
+                "short": null,
+                "long": "json",
+                "value_names": [],
+                "help": "Emit machine-readable JSON",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "command",
+                "kind": "positional",
+                "short": null,
+                "long": null,
+                "value_names": [
+                  "COMMAND"
+                ],
+                "help": "SCPI query command, for example *IDN?",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "bench",
+        "path": "pmoke bench",
+        "summary": "Benchmark instrument transport request latency",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "scpi-query",
+            "path": "pmoke bench scpi-query",
+            "summary": "Benchmark one SCPI query and save a compact reproducibility report",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "connection",
+                "kind": "option",
+                "short": null,
+                "long": "connection",
+                "value_names": [
+                  "URI"
+                ],
+                "help": "Connection URI accepted by `pmoke instruments query`",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "command",
+                "kind": "option",
+                "short": null,
+                "long": "command",
+                "value_names": [
+                  "COMMAND"
+                ],
+                "help": "SCPI query command to benchmark",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "*IDN?"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "iterations",
+                "kind": "option",
+                "short": "n",
+                "long": "iterations",
+                "value_names": [
+                  "N"
+                ],
+                "help": "Measured query count",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "50"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "warmup",
+                "kind": "option",
+                "short": null,
+                "long": "warmup",
+                "value_names": [
+                  "N"
+                ],
+                "help": "Unmeasured query count before measurement",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "3"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "timeout_ms",
+                "kind": "option",
+                "short": null,
+                "long": "timeout-ms",
+                "value_names": [
+                  "MS"
+                ],
+                "help": "Timeout used when the URI has no transport-specific timeout",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "3000"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": "o",
+                "long": "output",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Save TOML to FILE instead of the run benchmark directory",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "json",
+                "kind": "flag",
+                "short": null,
+                "long": "json",
+                "value_names": [],
+                "help": "Emit the compact report as JSON after saving TOML",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "transport",
+            "path": "pmoke bench transport",
+            "summary": "Measure text request/response latency for a connection URI",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "connection",
+                "kind": "option",
+                "short": null,
+                "long": "connection",
+                "value_names": [
+                  "URI"
+                ],
+                "help": "Connection URI accepted by `pmoke instruments query`",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "protocol",
+                "kind": "option",
+                "short": null,
+                "long": "protocol",
+                "value_names": [
+                  "PROTOCOL"
+                ],
+                "help": "Text protocol used to validate each request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "scpi"
+                ],
+                "possible_values": [
+                  "scpi",
+                  "line"
+                ],
+                "conflicts_with": []
+              },
+              {
+                "id": "requests",
+                "kind": "option",
+                "short": "r",
+                "long": "request",
+                "value_names": [
+                  "TEXT"
+                ],
+                "help": "Request to benchmark; repeat for multiple requests",
+                "required": false,
+                "global": false,
+                "repeatable": true,
+                "default_values": [
+                  "*IDN?"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "iterations",
+                "kind": "option",
+                "short": "n",
+                "long": "iterations",
+                "value_names": [
+                  "N"
+                ],
+                "help": "Measured request count per request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "50"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "warmup",
+                "kind": "option",
+                "short": null,
+                "long": "warmup",
+                "value_names": [
+                  "N"
+                ],
+                "help": "Unmeasured request count before each measurement",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "3"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "timeout_ms",
+                "kind": "option",
+                "short": null,
+                "long": "timeout-ms",
+                "value_names": [
+                  "MS"
+                ],
+                "help": "Timeout used when the URI has no transport-specific timeout",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [
+                  "3000"
+                ],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": "o",
+                "long": "output",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Save the complete JSON report to a file",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "json",
+                "kind": "flag",
+                "short": null,
+                "long": "json",
+                "value_names": [],
+                "help": "Emit the complete report as JSON",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help (see a summary with '-h')",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "export",
+        "path": "pmoke export",
+        "summary": "Export stored data to interchange formats",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "csv",
+            "path": "pmoke export csv",
+            "summary": "Convert a verified RAW waveform directory to CSV",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "input",
+                "kind": "option",
+                "short": null,
+                "long": "input",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "RAW acquisition directory (defaults to acquisition/ with legacy fallback)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "CSV destination (defaults to acquisition/waveforms/waveform.csv)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "npy",
+            "path": "pmoke export npy",
+            "summary": "Convert analysis result CSV files to NumPy tables",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Destination directory (defaults to NPY files beside canonical analysis CSVs)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "doctor",
+        "path": "pmoke doctor",
+        "summary": "Diagnose config, storage, Python, and connected instruments",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "json",
+            "kind": "flag",
+            "short": null,
+            "long": "json",
+            "value_names": [],
+            "help": "Emit a machine-readable JSON report",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "probe_fetch",
+            "kind": "flag",
+            "short": null,
+            "long": "probe-fetch",
+            "value_names": [],
+            "help": "Allow active checks such as stopping the oscilloscope",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "single",
+        "path": "pmoke single",
+        "summary": "Set single mode to the oscilloscope",
+        "required_feature": "hw-core",
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "trigger",
+        "path": "pmoke trigger",
+        "summary": "Send trigger signal from the function generator",
+        "required_feature": "hw-core",
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "autoshot",
+        "path": "pmoke autoshot",
+        "summary": "Set single mode and send trigger signal",
+        "required_feature": "hw-core",
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "fetch",
+        "path": "pmoke fetch",
+        "summary": "Fetch data from the oscilloscope and save to a file",
+        "required_feature": "hw-core",
+        "arguments": [
+          {
+            "id": "format",
+            "kind": "option",
+            "short": null,
+            "long": "format",
+            "value_names": [
+              "FORMAT"
+            ],
+            "help": "Override output format from config [fetch].output",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [
+              "csv",
+              "raw",
+              "csv-and-raw"
+            ],
+            "conflicts_with": []
+          },
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "screenshot",
+        "path": "pmoke screenshot",
+        "summary": "Capture an oscilloscope screenshot directly to the PC",
+        "required_feature": "hw-core",
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "automeasure",
+        "path": "pmoke automeasure",
+        "summary": "Perform auto measurement (set single mode, trigger, fetch)",
+        "required_feature": "hw-core",
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "reference",
+        "path": "pmoke reference",
+        "summary": "Analyze the reference signal",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "sensor",
+        "path": "pmoke sensor",
+        "summary": "Analyze the sensor signal",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "li",
+        "path": "pmoke li",
+        "summary": "Run numerical lock-in analysis",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "phase",
+        "path": "pmoke phase",
+        "summary": "Rotate the reference phase for lock-in analysis",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "kerr",
+        "path": "pmoke kerr",
+        "summary": "Calculate the Kerr angle",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "analyze",
+        "path": "pmoke analyze",
+        "summary": "Run all analysis steps: reference, sensor, lock-in, phase, Kerr",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "process",
+        "path": "pmoke process",
+        "summary": "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)",
+        "required_feature": "hw-core",
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "auto",
+        "path": "pmoke auto",
+        "summary": "Run the full automatic measurement and analysis",
+        "required_feature": "hw-core",
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "completions",
+        "path": "pmoke completions",
+        "summary": "Generate shell completion script",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "shell",
+            "kind": "positional",
+            "short": null,
+            "long": null,
+            "value_names": [
+              "SHELL"
+            ],
+            "help": "Shell to generate for: bash, zsh, fish, powershell, elvish",
+            "required": true,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [
+              "bash",
+              "elvish",
+              "fish",
+              "powershell",
+              "zsh"
+            ],
+            "conflicts_with": []
+          },
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      }
+    ]
+  }
+}
