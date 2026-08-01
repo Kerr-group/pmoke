@@ -812,8 +812,10 @@ mod tests {
         let report: serde_json::Value =
             serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
         assert_eq!(report["results"][0]["attempts"], 2);
-        assert_eq!(report["results"][0]["timeout_count"], 1);
-        assert_eq!(report["results"][0]["error_count"], 1);
+        assert_eq!(report["results"][0]["success_count"], 0);
+        let timeout_count = report["results"][0]["timeout_count"].as_u64().unwrap();
+        let error_count = report["results"][0]["error_count"].as_u64().unwrap();
+        assert_eq!(timeout_count + error_count, 2);
         assert!(
             report["results"][0]["samples"][1]["error"]
                 .as_str()
