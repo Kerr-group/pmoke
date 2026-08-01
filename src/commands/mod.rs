@@ -11,6 +11,7 @@ pub mod doctor;
 pub mod export;
 #[cfg(feature = "hw-core")]
 pub mod fetch;
+pub mod instruments;
 pub mod kerr;
 pub mod li;
 pub mod monitor;

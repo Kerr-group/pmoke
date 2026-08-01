@@ -46,3 +46,44 @@ fn known_instruments_are_registered_from_device_specs() {
         Some(InstrumentRole::Multimeter)
     );
 }
+
+#[test]
+fn known_instruments_expose_protocols_and_capabilities() {
+    for spec in KNOWN_INSTRUMENTS {
+        assert!(
+            !spec.transports.is_empty(),
+            "{} must declare transports",
+            spec.model
+        );
+        assert!(
+            !spec.protocols.is_empty(),
+            "{} must declare protocols",
+            spec.model
+        );
+        assert!(
+            !spec.capabilities.is_empty(),
+            "{} must declare capabilities",
+            spec.model
+        );
+    }
+}
+
+#[test]
+fn transport_metadata_provides_features_and_connection_templates() {
+    assert_eq!(TransportKind::Dummy.required_feature(), None);
+    assert_eq!(TransportKind::Gpib.required_feature(), Some("hw-gpib"));
+    assert_eq!(TransportKind::Gpib.connection_template(), "gpib://0/<addr>");
+    assert_eq!(TransportKind::Usbtmc.required_feature(), Some("hw-gpib"));
+    assert_eq!(
+        TransportKind::Usbtmc.feature_note(),
+        Some("Windows + NI-VISA")
+    );
+    assert_eq!(
+        TransportKind::PrologixTcp.required_feature(),
+        Some("hw-prologix-tcp")
+    );
+    assert_eq!(
+        TransportKind::PrologixTcp.connection_template(),
+        "prologix-tcp://<host>:1234?addr=<addr>"
+    );
+}

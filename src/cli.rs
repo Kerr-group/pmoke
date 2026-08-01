@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 #[cfg(feature = "hw-core")]
 use clap::ValueEnum;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use clap_complete::Shell;
 
 /// A simple CLI tool to inspect and validate experiment configuration files.
@@ -48,6 +48,11 @@ pub enum Command {
     Raw {
         #[command(subcommand)]
         command: RawCommand,
+    },
+    /// Inspect supported instruments and hardware capabilities
+    Instruments {
+        #[command(subcommand)]
+        command: InstrumentsCommand,
     },
     /// Export stored data to interchange formats
     Export {
@@ -109,6 +114,27 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum InstrumentsCommand {
+    /// List supported instrument models
+    List(JsonOutput),
+    /// Explain a supported instrument model
+    Explain {
+        /// Instrument model name, for example Keithley2010
+        model: String,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct JsonOutput {
+    /// Emit machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -289,6 +315,26 @@ mod config_command_tests {
             Some(Command::Config {
                 command: ConfigCommand::Explain { path: Some(_) }
             })
+        ));
+    }
+
+    #[test]
+    fn parses_instruments_list_and_explain_without_hardware_feature() {
+        let list = Cli::try_parse_from(["pmoke", "instruments", "list", "--json"]).unwrap();
+        assert!(matches!(
+            list.command,
+            Some(Command::Instruments {
+                command: InstrumentsCommand::List(JsonOutput { json: true })
+            })
+        ));
+
+        let explain =
+            Cli::try_parse_from(["pmoke", "instruments", "explain", "Keithley2010"]).unwrap();
+        assert!(matches!(
+            explain.command,
+            Some(Command::Instruments {
+                command: InstrumentsCommand::Explain { model, json: false }
+            }) if model == "Keithley2010"
         ));
     }
 
