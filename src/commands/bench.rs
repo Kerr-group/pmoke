@@ -17,6 +17,7 @@ const REPORT_SCHEMA_VERSION: u32 = 1;
 const MAX_REQUESTS: usize = 64;
 const MAX_ITERATIONS: usize = 100_000;
 const MAX_WARMUP: usize = 100_000;
+const MAX_TOTAL_STORED_SAMPLES: usize = 200_000;
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Serialize)]
@@ -210,6 +211,16 @@ fn validate_options(options: &TransportOptions<'_>) -> Result<()> {
     }
     if !(1..=MAX_ITERATIONS).contains(&options.iterations) {
         bail!("--iterations must be in 1..={MAX_ITERATIONS}");
+    }
+    let total_stored_samples = options
+        .requests
+        .len()
+        .checked_mul(options.iterations)
+        .ok_or_else(|| anyhow::anyhow!("benchmark sample count is too large"))?;
+    if total_stored_samples > MAX_TOTAL_STORED_SAMPLES {
+        bail!(
+            "benchmark would store {total_stored_samples} samples; reduce --request or --iterations to at most {MAX_TOTAL_STORED_SAMPLES} total samples"
+        );
     }
     if options.warmup > MAX_WARMUP {
         bail!("--warmup must be in 0..={MAX_WARMUP}");
@@ -551,6 +562,33 @@ mod tests {
         assert!((summary.p90 - 3.7).abs() < 1.0e-12);
         assert!((summary.p99 - 3.97).abs() < 1.0e-12);
         assert_eq!(summary.max, 4.0);
+    }
+
+    #[test]
+    fn validation_caps_total_stored_samples_before_opening_transport() {
+        let allowed_requests = vec!["A?".to_string(), "B?".to_string()];
+        let allowed = TransportOptions {
+            connection: "tcp://127.0.0.1:1",
+            protocol: BenchProtocol::Scpi,
+            requests: &allowed_requests,
+            iterations: 100_000,
+            warmup: 0,
+            timeout_ms: 1,
+            output: None,
+            json: false,
+            force: false,
+        };
+        validate_options(&allowed).unwrap();
+
+        let rejected_requests = vec!["A?".to_string(), "B?".to_string(), "C?".to_string()];
+        let rejected = TransportOptions {
+            requests: &rejected_requests,
+            ..allowed
+        };
+        let error = validate_options(&rejected).unwrap_err();
+
+        assert!(error.to_string().contains("would store 300000 samples"));
+        assert!(error.to_string().contains("at most 200000 total samples"));
     }
 
     #[test]
