@@ -540,17 +540,17 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["kerr analysis completed"],
             },
         ],
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Single => vec![StageSpec {
             label: "Single",
             markers: &["single"],
         }],
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Trigger => vec![StageSpec {
             label: "Trigger",
             markers: &["trigger"],
         }],
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Autoshot => vec![
             StageSpec {
                 label: "Single",
@@ -561,17 +561,17 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["trigger"],
             },
         ],
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Fetch => vec![StageSpec {
             label: "Fetch",
             markers: &["fetched data", "fetched raw WORD"],
         }],
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Screenshot => vec![StageSpec {
             label: "Screenshot",
             markers: &["oscilloscope screenshot"],
         }],
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Automeasure => vec![
             StageSpec {
                 label: "Single",
@@ -586,7 +586,7 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["fetched data", "fetched raw WORD"],
             },
         ],
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Process => vec![
             StageSpec {
                 label: "Fetch",
@@ -613,7 +613,7 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["kerr analysis completed"],
             },
         ],
-        #[cfg(feature = "hw")]
+        #[cfg(feature = "hw-core")]
         MonitorAction::Auto => vec![
             StageSpec {
                 label: "Single",

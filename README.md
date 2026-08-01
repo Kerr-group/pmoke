@@ -35,6 +35,15 @@ Hardware-enabled build:
 
 ```sh
 cargo install --path .
+# Legacy direct-GPIB alias:
+cargo install --path . --no-default-features --features hw
+```
+
+macOS Prologix build:
+
+```sh
+cargo install --path . --no-default-features --features hw-prologix-serial
+cargo install --path . --no-default-features --features hw-prologix-tcp
 ```
 
 Analysis-only build:
@@ -138,6 +147,9 @@ connection = "tcp://192.168.10.100:55255"
 [generator]
 model = "WF1946B"
 connection = "gpib://0/11"
+# macOS Prologix alternatives:
+# connection = "prologix-serial:///dev/cu.usbserial-XXXX?addr=11"
+# connection = "prologix-tcp://192.168.1.50:1234?addr=11"
 
 [data]
 output = "raw"       # "csv", "raw", or "both"
@@ -182,7 +194,7 @@ method = "harmonics" # "standard" or "harmonics"
 factor = -1.0
 
 [plot]
-mode = "save" # "off", "save", "interactive", or "both"
+mode = "both" # "off", "save", "interactive", or "both"
 decimation = "min_max" # "none", "stride", or "min_max"
 ```
 
@@ -288,7 +300,12 @@ Default builds include hardware support.
 
 - Use `tcp://host:port` for the DHO5108.
 - Windows: `visa:RESOURCE` is also supported with NI-VISA installed.
-- Install NI-488.2 or `linux-gpib` when using a GPIB function generator.
+- Default builds use direct GPIB for function generators; install NI-488.2 or `linux-gpib`.
+- `--features hw` remains a legacy alias for direct-GPIB hardware builds. Prefer `hw-gpib`, `hw-prologix-serial`, or `hw-prologix-tcp` for explicit builds.
+- macOS function generator control can use Prologix without NI-488.2:
+  - Serial: build with `--no-default-features --features hw-prologix-serial`, then use `prologix-serial:///dev/cu.usbserial-XXXX?addr=11`.
+  - Ethernet: build with `--no-default-features --features hw-prologix-tcp`, then use `prologix-tcp://host:1234?addr=11`.
+- Prologix options: `addr` is the instrument GPIB address, `read_timeout_ms` defaults to `3000`, and serial `baud_rate` defaults to `115200`.
 
 Screenshot capture uses `:DISPlay:DATA? PNG` and writes directly to:
 

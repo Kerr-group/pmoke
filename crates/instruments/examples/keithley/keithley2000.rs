@@ -1,5 +1,6 @@
 use anyhow::Result;
 use instruments::keithley::Keithley2000;
+use instruments::transport::{ScpiConnection, open_scpi_transport};
 use std::io::{self, Write};
 
 fn main() -> Result<()> {
@@ -14,7 +15,13 @@ fn main() -> Result<()> {
     io::stdin().read_line(&mut s)?;
     let pad: i32 = s.trim().parse()?; // ParseIntError -> anyhow::Error
 
-    let dmm = Keithley2000::open(pad)?; // InstrumentError -> anyhow::Error
+    let transport = open_scpi_transport(&ScpiConnection::Gpib {
+        board: 0,
+        address: pad,
+        timeout_secs: 10,
+        use_crlf: false,
+    })?;
+    let mut dmm = Keithley2000::new(transport); // InstrumentError -> anyhow::Error
 
     let idn = dmm.identify()?;
     println!("*IDN? -> {}", idn);

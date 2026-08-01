@@ -1,34 +1,34 @@
 [package]
 name = "pmoke"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [workspace]
 members = [
   "crates/gpib-rs",
   "crates/instruments",
+  "crates/prologix-rs",
 ]
 
 [dependencies]
-gpib-rs = { path = "crates/gpib-rs", optional = true }
-instruments = { path = "crates/instruments", optional = true }
-anyhow = "1.0.102"
-serde = { version = "1.0.228", features = ["derive"] }
-toml = "1.1.2"
+instruments = { path = "crates/instruments", optional = true, default-features = false }
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.4"
 serde_path_to_error = "0.1.20"
-clap = { version = "4.6.1", features = ["derive"] }
-serde_json = "1.0.150"
+clap = { version = "4.6.5", features = ["derive"] }
+serde_json = "1.0.151"
 sha2 = "0.11.0"
-jiff = { version = "0.2.15", default-features = false, features = ["std"] }
+jiff = { version = "0.2.35", default-features = false, features = ["std"] }
 pyo3 = { version = "0.29.0", features = ["auto-initialize"] }
 numpy = "0.29.0"
-console = "0.16.3"
-indicatif = "0.18.4"
+console = "0.16.4"
+indicatif = "0.18.6"
 comfy-table = "7.2.2"
-ratatui = { version = "0.30.1", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
 arboard = "3.6.1"
-clap_complete = "4.6.5"
+clap_complete = "4.6.8"
 dirs = "6.0.0"
 fs2 = "0.4.3"
 csv = "1.4.0"
@@ -41,9 +41,13 @@ unicode-width = "0.2.2"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [features]
-default = ["hw"]
+default = ["hw-gpib"]
 
-hw = ["dep:gpib-rs", "dep:instruments"]
+hw = ["hw-gpib"]
+hw-core = ["dep:instruments"]
+hw-gpib = ["hw-core", "instruments/gpib"]
+hw-prologix-tcp = ["hw-core", "instruments/prologix-tcp"]
+hw-prologix-serial = ["hw-core", "instruments/prologix-serial"]
 
 [profile.release]
 opt-level = 3

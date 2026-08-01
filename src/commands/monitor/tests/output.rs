@@ -444,7 +444,7 @@ fn analyze_timeline_marks_done_current_and_pending_steps() {
     assert_eq!(timeline.steps[3].state, TimelineStepState::Pending);
 }
 
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 #[test]
 fn failed_screenshot_timeline_marks_stage_failed_instead_of_pending() {
     let timeline = timeline_for_action(MonitorAction::Screenshot, &[], StageProgressState::Failed)

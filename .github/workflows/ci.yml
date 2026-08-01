@@ -74,13 +74,216 @@ jobs:
         run: cargo check --locked --workspace --all-targets --all-features
 
       - name: Test
-        run: cargo test --locked --workspace --all-targets --all-features
+        run: cargo test --locked --workspace --lib --bins --tests --examples --all-features
 
       - name: Performance smoke test
         run: cargo bench --locked --no-default-features --bench performance -- --smoke
 
       - name: Lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+  hardware-feature-slices:
+    name: Hardware feature slices
+    runs-on: ubuntu-latest
+    env:
+      PYO3_PYTHON: python
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            curl \
+            pkg-config
+
+      - name: Install linux-gpib userspace library
+        run: |
+          curl -fL --retry 3 -o /tmp/linux-gpib.tar.gz \
+            "https://sourceforge.net/projects/linux-gpib/files/linux-gpib%20for%203.x.x%20and%202.6.x%20kernels/4.3.6/linux-gpib-4.3.6.tar.gz/download"
+          tar -xzf /tmp/linux-gpib.tar.gz -C /tmp
+          tar -xzf /tmp/linux-gpib-4.3.6/linux-gpib-user-4.3.6.tar.gz -C /tmp
+          cd /tmp/linux-gpib-user-4.3.6
+          ./configure --sysconfdir=/etc --disable-all-bindings --disable-documentation
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Check gpib-rs
+        run: cargo check --locked -p gpib-rs --lib --bins --tests --examples
+
+      - name: Test gpib-rs
+        run: cargo test --locked -p gpib-rs --lib --bins --tests --examples
+
+      - name: Lint gpib-rs
+        run: cargo clippy --locked -p gpib-rs --lib --bins --tests --examples -- -D warnings
+
+      - name: Check instruments gpib
+        run: cargo check --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib
+
+      - name: Test instruments gpib
+        run: cargo test --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib
+
+      - name: Lint instruments gpib
+        run: cargo clippy --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib -- -D warnings
+
+      - name: Check pmoke legacy hw
+        run: cargo check --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw
+
+      - name: Test pmoke legacy hw
+        run: cargo test --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw
+
+      - name: Lint pmoke legacy hw
+        run: cargo clippy --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw -- -D warnings
+
+      - name: Check pmoke hw-gpib
+        run: cargo check --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw-gpib
+
+      - name: Test pmoke hw-gpib
+        run: cargo test --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw-gpib
+
+      - name: Lint pmoke hw-gpib
+        run: cargo clippy --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw-gpib -- -D warnings
+
+  crate-feature-matrix:
+    name: Crate features (${{ matrix.os }}, ${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: prologix-rs no-default
+            package: prologix-rs
+            flags: --no-default-features
+          - os: ubuntu-latest
+            label: prologix-rs tcp
+            package: prologix-rs
+            flags: --no-default-features --features tcp
+          - os: ubuntu-latest
+            label: prologix-rs serial
+            package: prologix-rs
+            flags: --no-default-features --features serial
+          - os: macos-14
+            label: prologix-rs tcp
+            package: prologix-rs
+            flags: --no-default-features --features tcp
+          - os: macos-14
+            label: prologix-rs serial
+            package: prologix-rs
+            flags: --no-default-features --features serial
+          - os: windows-latest
+            label: prologix-rs tcp
+            package: prologix-rs
+            flags: --no-default-features --features tcp
+          - os: windows-latest
+            label: prologix-rs serial
+            package: prologix-rs
+            flags: --no-default-features --features serial
+          - os: ubuntu-latest
+            label: instruments no-default
+            package: instruments
+            flags: --no-default-features
+          - os: ubuntu-latest
+            label: instruments prologix-tcp
+            package: instruments
+            flags: --no-default-features --features prologix-tcp
+          - os: ubuntu-latest
+            label: instruments prologix-serial
+            package: instruments
+            flags: --no-default-features --features prologix-serial
+          - os: macos-14
+            label: instruments prologix-tcp
+            package: instruments
+            flags: --no-default-features --features prologix-tcp
+          - os: macos-14
+            label: instruments prologix-serial
+            package: instruments
+            flags: --no-default-features --features prologix-serial
+          - os: windows-latest
+            label: instruments prologix-tcp
+            package: instruments
+            flags: --no-default-features --features prologix-tcp
+          - os: windows-latest
+            label: instruments prologix-serial
+            package: instruments
+            flags: --no-default-features --features prologix-serial
+          - os: ubuntu-latest
+            label: pmoke hw-prologix-tcp
+            package: pmoke
+            flags: --no-default-features --features hw-prologix-tcp
+          - os: ubuntu-latest
+            label: pmoke hw-prologix-serial
+            package: pmoke
+            flags: --no-default-features --features hw-prologix-serial
+          - os: macos-14
+            label: pmoke hw-prologix-tcp
+            package: pmoke
+            flags: --no-default-features --features hw-prologix-tcp
+          - os: macos-14
+            label: pmoke hw-prologix-serial
+            package: pmoke
+            flags: --no-default-features --features hw-prologix-serial
+          - os: windows-latest
+            label: pmoke hw-prologix-tcp
+            package: pmoke
+            flags: --no-default-features --features hw-prologix-tcp
+          - os: windows-latest
+            label: pmoke hw-prologix-serial
+            package: pmoke
+            flags: --no-default-features --features hw-prologix-serial
+    env:
+      PYO3_PYTHON: python
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Check ${{ matrix.label }}
+        run: cargo check --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }}
+
+      - name: Test ${{ matrix.label }}
+        run: cargo test --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }}
+
+      - name: Lint ${{ matrix.label }}
+        run: cargo clippy --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }} -- -D warnings
 
   analysis-portability:
     name: Analysis-only (${{ matrix.os }}, Python ${{ matrix.python }})

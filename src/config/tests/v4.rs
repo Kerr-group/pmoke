@@ -239,6 +239,43 @@ fn v4_invalid_generator_connection_is_diagnostic_not_panic() {
 }
 
 #[test]
+fn v4_prologix_connection_rejects_unknown_query_keys() {
+    let text = v4_base().replacen(
+        "[data]",
+        "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-tcp://192.168.1.50?addr=11&timeout=1000\"\n\n[data]",
+        1,
+    );
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics
+                .iter()
+                .any(|issue| issue.message.contains("unsupported query parameter")),
+            "missing Prologix query parameter diagnostic: {diag:?}"
+        ),
+        other => panic!("expected v4 Prologix diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
+fn v4_prologix_serial_rejects_zero_baud_rate() {
+    let text = v4_base().replacen(
+        "[data]",
+        "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-serial:///dev/cu.usbserial-ABC?addr=11&baud_rate=0\"\n\n[data]",
+        1,
+    );
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics.iter().any(|issue| {
+                issue.path.as_deref() == Some("generator.connection")
+                    && issue.message.contains("baud_rate must be positive")
+            }),
+            "missing Prologix baud_rate diagnostic: {diag:?}"
+        ),
+        other => panic!("expected v4 Prologix diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
 fn v4_generator_and_connection_strings_normalize() {
     let text = v4_base().replacen(
         "[data]",
@@ -268,6 +305,75 @@ fn v4_generator_and_connection_strings_normalize() {
     assert!(matches!(
         config.instruments.unwrap().oscilloscope.connection,
         Connection::Tcpip { ip, port } if ip == "2001:db8::1" && port == 55255
+    ));
+}
+
+#[cfg(not(all(target_os = "windows", feature = "hw-gpib")))]
+#[test]
+fn v4_usbtmc_scope_connection_requires_windows_hw_gpib() {
+    let text = v4_base().replace(
+        "tcp://10.249.11.19:55255",
+        "visa:USB0::0x1AB1::0x0450::DHO5A27090041::INSTR",
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics.iter().any(|issue| {
+                issue.path.as_deref() == Some("scope.connection")
+                    && issue.message.contains("hw-gpib")
+            }),
+            "missing USB-TMC feature diagnostic: {diag:?}"
+        ),
+        other => panic!("expected diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
+fn v4_prologix_generator_connections_normalize() {
+    let tcp = v4_base().replacen(
+        "[data]",
+        "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-tcp://192.168.1.50?addr=11\"\n\n[data]",
+        1,
+    );
+    let ConfigLoad::Ready { config, .. } = load_from_str(&tcp) else {
+        panic!("expected ready v4 Prologix TCP config");
+    };
+    assert!(matches!(
+        config
+            .instruments
+            .unwrap()
+            .function_generator
+            .unwrap()
+            .connection,
+        Connection::PrologixTcp {
+            host,
+            port: 1234,
+            address: 11,
+            read_timeout_ms: 3000,
+        } if host == "192.168.1.50"
+    ));
+
+    let serial = v4_base().replacen(
+        "[data]",
+        "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-serial:///dev/cu.usbserial-ABC?addr=11&baud_rate=57600&read_timeout_ms=2500\"\n\n[data]",
+        1,
+    );
+    let ConfigLoad::Ready { config, .. } = load_from_str(&serial) else {
+        panic!("expected ready v4 Prologix serial config");
+    };
+    assert!(matches!(
+        config
+            .instruments
+            .unwrap()
+            .function_generator
+            .unwrap()
+            .connection,
+        Connection::PrologixSerial {
+            path,
+            address: 11,
+            baud_rate: 57600,
+            read_timeout_ms: 2500,
+        } if path == "/dev/cu.usbserial-ABC"
     ));
 }
 

@@ -1,7 +1,7 @@
 mod analysis_results;
 mod cli;
 mod commands;
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 mod communications;
 pub mod config;
 mod constants;
@@ -131,7 +131,7 @@ fn run_with(args: Cli) -> Result<()> {
     }
     commands::show::print_warnings(&warnings);
 
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     {
         match args.command.as_ref() {
             Some(
@@ -196,7 +196,7 @@ fn run_with(args: Cli) -> Result<()> {
         }
     }
 
-    #[cfg(not(feature = "hw"))]
+    #[cfg(not(feature = "hw-core"))]
     {
         match args.command.as_ref() {
             Some(

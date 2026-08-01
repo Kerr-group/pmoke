@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::usbtmc_supported;
 
 #[test]
 fn v2_fetch_output_defaults_to_csv() {
@@ -115,16 +116,22 @@ lpf_half_window_cycles = 1.0
 
 #[test]
 fn screenshot_target_accepts_pc_capture_transports_and_rejects_gpib() {
-    for (connection, should_pass) in [
+    for (connection, should_load, should_pass) in [
         (
             r#"{ protocol = "tcpip", ip = "192.168.10.100", port = 55255 }"#,
+            true,
             true,
         ),
         (
             r#"{ protocol = "usbtmc", resource = "USB0::DHO::INSTR" }"#,
+            usbtmc_supported(),
             true,
         ),
-        (r#"{ protocol = "gpib", board = 0, address = 1 }"#, false),
+        (
+            r#"{ protocol = "gpib", board = 0, address = 1 }"#,
+            true,
+            false,
+        ),
     ] {
         let text = v3_base_lockin(
             r#"
@@ -147,8 +154,10 @@ enabled = true"#
             ),
             1,
         );
-        let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
-            panic!("expected ready config for {connection}");
+        let load = load_from_str(&text);
+        let ConfigLoad::Ready { config, .. } = load else {
+            assert!(!should_load, "expected ready config for {connection}");
+            continue;
         };
 
         assert_eq!(
@@ -432,6 +441,7 @@ max_points = 0"#,
     }
 }
 
+#[cfg(all(target_os = "windows", feature = "hw-gpib"))]
 #[test]
 fn v2_usbtmc_connection_loads() {
     let text = v2_base_lockin(
@@ -461,6 +471,38 @@ model = "DHO5108""#,
             ));
         }
         other => panic!("expected ready load, got {other:?}"),
+    }
+}
+
+#[cfg(not(all(target_os = "windows", feature = "hw-gpib")))]
+#[test]
+fn v2_usbtmc_connection_requires_windows_hw_gpib() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen(
+        "version = 2",
+        r#"version = 2
+
+[instruments.oscilloscope]
+connection = { protocol = "usbtmc", resource = "USB0::0x1AB1::0x0450::DHO5A27090041::INSTR" }
+model = "DHO5108""#,
+        1,
+    );
+
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics.iter().any(|issue| {
+                issue.path.as_deref() == Some("instruments.oscilloscope.connection")
+                    && issue.message.contains("hw-gpib")
+            }),
+            "missing USB-TMC feature diagnostic: {diag:?}"
+        ),
+        other => panic!("expected diagnostics, got {other:?}"),
     }
 }
 

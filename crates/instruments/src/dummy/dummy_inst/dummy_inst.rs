@@ -1,7 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::instruments::Result;
-use gpib_rs::GpibError;
+use crate::Result;
 
 #[derive(Clone)]
 struct Lcg(u64);
@@ -155,13 +154,3 @@ impl std::fmt::Debug for DummyInstrument {
 }
 
 pub type DummyResult<T> = Result<T>;
-
-#[allow(dead_code)]
-fn dummy_err(ctx: &'static str) -> GpibError {
-    GpibError {
-        ctx,
-        ibsta: 0,
-        iberr: 0,
-        note: None,
-    }
-}

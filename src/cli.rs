@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 use clap::ValueEnum;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
@@ -64,26 +64,26 @@ pub enum Command {
         probe_fetch: bool,
     },
     /// Set single mode to the oscilloscope
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Single,
     /// Send trigger signal from the function generator
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Trigger,
     /// Set single mode and send trigger signal
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Autoshot,
     /// Fetch data from the oscilloscope and save to a file
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Fetch {
         /// Override output format from config [fetch].output
         #[arg(long, value_enum)]
         format: Option<FetchFormat>,
     },
     /// Capture an oscilloscope screenshot directly to the PC
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Screenshot,
     /// Perform auto measurement (set single mode, trigger, fetch)
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Automeasure,
     /// Analyze the reference signal
     Reference,
@@ -98,10 +98,10 @@ pub enum Command {
     /// Run all analysis steps: reference, sensor, lock-in, phase, Kerr
     Analyze,
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Process,
     /// Run the full automatic measurement and analysis
-    #[cfg(feature = "hw")]
+    #[cfg(feature = "hw-core")]
     Auto,
     /// Generate shell completion script
     Completions {
@@ -113,6 +113,27 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum ConfigCommand {
+    /// Create a starter config file
+    Init {
+        /// Write the template to FILE instead of --config; use '-' for standard output
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        /// Overwrite an existing output file
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Validate the config file without running an analysis command
+    Validate,
+
+    /// Explain config sections and fields
+    Explain {
+        /// Field or section path to explain, for example lockin.filter
+        #[arg(value_name = "PATH")]
+        path: Option<String>,
+    },
+
     /// Migrate the config to the latest executable schema
     Migrate {
         /// Write the migrated TOML to FILE; use '-' for standard output
@@ -166,7 +187,7 @@ pub enum ExportCommand {
     },
 }
 
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum FetchFormat {
     Csv,
@@ -174,7 +195,7 @@ pub enum FetchFormat {
     CsvAndRaw,
 }
 
-#[cfg(all(test, feature = "hw"))]
+#[cfg(all(test, feature = "hw-core"))]
 mod tests {
     use super::*;
 
@@ -232,6 +253,41 @@ mod config_command_tests {
                     accept_lossy: true,
                     ..
                 }
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_config_init_validate_and_explain() {
+        let init = Cli::try_parse_from([
+            "pmoke",
+            "--config",
+            "config.toml",
+            "config",
+            "init",
+            "--force",
+        ])
+        .unwrap();
+        assert!(matches!(
+            init.command,
+            Some(Command::Config {
+                command: ConfigCommand::Init { force: true, .. }
+            })
+        ));
+
+        let validate = Cli::try_parse_from(["pmoke", "config", "validate"]).unwrap();
+        assert!(matches!(
+            validate.command,
+            Some(Command::Config {
+                command: ConfigCommand::Validate
+            })
+        ));
+
+        let explain = Cli::try_parse_from(["pmoke", "config", "explain", "lockin.filter"]).unwrap();
+        assert!(matches!(
+            explain.command,
+            Some(Command::Config {
+                command: ConfigCommand::Explain { path: Some(_) }
             })
         ));
     }

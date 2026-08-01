@@ -30,7 +30,7 @@ fn end_to_end_group_has_an_explicit_user_facing_label() {
     assert_eq!(ActionGroup::EndToEnd.label(), "END-TO-END");
 }
 
-#[cfg(feature = "hw")]
+#[cfg(feature = "hw-core")]
 #[test]
 fn workflow_groups_measurement_by_its_terminal_stage() {
     assert_eq!(MonitorAction::Automeasure.group(), ActionGroup::Acquisition);
