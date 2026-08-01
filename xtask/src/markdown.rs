@@ -302,7 +302,7 @@ fn config_row(output: &mut String, field: &ConfigFieldDoc, locale: Locale) -> st
     )
 }
 
-fn translated<'a>(text: &'a str, locale: Locale) -> Result<&'a str> {
+fn translated(text: &str, locale: Locale) -> Result<&str> {
     match locale {
         Locale::English => Ok(text),
         Locale::Japanese => japanese(text)
