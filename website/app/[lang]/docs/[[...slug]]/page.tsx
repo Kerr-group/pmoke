@@ -11,7 +11,7 @@ import {
 } from 'fumadocs-ui/layouts/docs/page';
 import { getMDXComponents } from '@/components/mdx';
 import { getPageMarkdownUrl, source } from '@/lib/source';
-import { gitConfig } from '@/lib/shared';
+import { absoluteUrl, gitConfig, socialImage } from '@/lib/shared';
 
 type Params = { lang: string; slug?: string[] };
 
@@ -48,12 +48,31 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const { lang, slug } = await params;
   const page = source.getPage(slug, lang);
   if (!page) notFound();
+  const englishPage = source.getPage(slug, 'en');
+  const japanesePage = source.getPage(slug, 'ja');
+  const canonical = absoluteUrl(page.url);
+  const languages: Record<string, string> = {};
+  if (englishPage) {
+    languages.en = absoluteUrl(englishPage.url);
+    languages['x-default'] = absoluteUrl(englishPage.url);
+  }
+  if (japanesePage) languages.ja = absoluteUrl(japanesePage.url);
+
   return {
     title: page.data.title,
     description: page.data.description,
     alternates: {
-      canonical: page.url,
-      languages: { en: page.url.replace(`/${lang}/`, '/en/'), ja: page.url.replace(`/${lang}/`, '/ja/') },
+      canonical,
+      languages,
     },
+    openGraph: {
+      title: page.data.title,
+      description: page.data.description,
+      url: canonical,
+      locale: lang === 'ja' ? 'ja_JP' : 'en_US',
+      alternateLocale: lang === 'ja' ? ['en_US'] : ['ja_JP'],
+      images: [socialImage],
+    },
+    twitter: { title: page.data.title, description: page.data.description, images: [socialImage.url] },
   };
 }

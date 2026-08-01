@@ -1,5 +1,5 @@
 import { loader } from 'fumadocs-core/source';
-import { basePath, docsContentRoute, docsRoute, siteOrigin } from './shared';
+import { absoluteUrl, basePath, docsContentRoute, docsRoute } from './shared';
 import { defineDocs } from 'fumadocs-mdx/macro';
 import { metaSchema, pageSchema } from 'fumadocs-core/source/schema';
 import { i18n } from './i18n';
@@ -42,7 +42,7 @@ function withBasePath(path: string): string {
 
 export async function getLLMText(page: (typeof source)['$inferPage']) {
   const processed = await page.data.getText('processed');
-  const canonical = new URL(`${basePath}${page.url}/`, siteOrigin);
+  const canonical = absoluteUrl(page.url);
 
   return `# ${page.data.title} (${canonical})
 

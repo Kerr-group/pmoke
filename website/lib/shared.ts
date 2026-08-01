@@ -3,10 +3,27 @@ export const docsRoute = '/docs';
 export const docsContentRoute = '/llm';
 export const siteDescription =
   'Precision pulsed-MOKE acquisition, lock-in analysis, and instrument control.';
-export const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/pmoke';
-export const siteOrigin = 'https://kerr-group.github.io';
+const configuredBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/pmoke';
+export const basePath = configuredBasePath === '/' ? '' : configuredBasePath.replace(/\/$/, '');
+export const siteOrigin = (process.env.NEXT_PUBLIC_SITE_ORIGIN ?? 'https://kerr-group.github.io').replace(
+  /\/$/,
+  '',
+);
+export const siteUrl = `${siteOrigin}${basePath}`;
 
-// fill this with your actual GitHub info, for example:
+export function absoluteUrl(pathname = '/'): string {
+  const normalized = pathname.replace(/^\/+|\/+$/g, '');
+  const path = pathname === '/' ? '/' : `/${normalized}${/\.[^/]+$/.test(normalized) ? '' : '/'}`;
+  return `${siteUrl}${path}`;
+}
+
+export const socialImage = {
+  url: absoluteUrl('/og.png'),
+  width: 1200,
+  height: 630,
+  alt: 'pmoke pulsed-MOKE precision signal lab',
+};
+
 export const gitConfig = {
   user: 'Kerr-group',
   repo: 'pmoke',

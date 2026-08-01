@@ -1,8 +1,11 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Activity, ArrowRight, BookOpen, CodeXml, Cpu, Search, Terminal } from 'lucide-react';
 import { notFound } from 'next/navigation';
 import { SignalHero } from '@/components/signal-hero';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { isLanguage } from '@/lib/i18n';
+import { absoluteUrl, siteDescription, socialImage } from '@/lib/shared';
 
 const copy = {
   en: {
@@ -13,6 +16,9 @@ const copy = {
     docs: 'Read the docs',
     quickstart: 'Quickstart',
     signal: 'Live Wasm signal preview',
+    toggleTheme: 'Toggle color theme',
+    lightTheme: 'Switch to light theme',
+    darkTheme: 'Switch to dark theme',
     cards: [
       ['Instrument control', 'Typed TCP/IP, GPIB, and Prologix transports.', 'terminal'],
       ['Analysis pipeline', 'Reference, sensor, lock-in, phase, and Kerr stages.', 'activity'],
@@ -26,6 +32,9 @@ const copy = {
     docs: 'ドキュメント',
     quickstart: 'クイックスタート',
     signal: 'Wasm 信号プレビュー',
+    toggleTheme: 'カラーテーマ切替',
+    lightTheme: 'ライトテーマへ切替',
+    darkTheme: 'ダークテーマへ切替',
     cards: [
       ['装置制御', 'TCP/IP、GPIB、Prologix の型付き通信。', 'terminal'],
       ['解析パイプライン', 'Reference、sensor、lock-in、phase、Kerr の連続処理。', 'activity'],
@@ -53,6 +62,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
           <Link href={`/${lang === 'en' ? 'ja' : 'en'}`} lang={lang === 'en' ? 'ja' : 'en'}>
             {lang === 'en' ? '日本語' : 'English'}
           </Link>
+          <ThemeToggle toggleLabel={text.toggleTheme} lightLabel={text.lightTheme} darkLabel={text.darkTheme} />
           <a href="https://github.com/Kerr-group/pmoke" aria-label="GitHub"><CodeXml aria-hidden="true" /></a>
         </nav>
       </header>
@@ -79,4 +89,37 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
       </section>
     </main>
   );
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ lang: string }>;
+}): Promise<Metadata> {
+  const { lang } = await params;
+  if (!isLanguage(lang)) notFound();
+  const title = lang === 'ja' ? 'pmoke | パルス MOKE 精密信号ラボ' : 'pmoke | Pulsed-MOKE precision signal lab';
+  const canonical = absoluteUrl(`/${lang}`);
+
+  return {
+    title: { absolute: title },
+    description: siteDescription,
+    alternates: {
+      canonical,
+      languages: {
+        en: absoluteUrl('/en'),
+        ja: absoluteUrl('/ja'),
+        'x-default': absoluteUrl('/'),
+      },
+    },
+    openGraph: {
+      title,
+      description: siteDescription,
+      url: canonical,
+      locale: lang === 'ja' ? 'ja_JP' : 'en_US',
+      alternateLocale: lang === 'ja' ? ['en_US'] : ['ja_JP'],
+      images: [socialImage],
+    },
+    twitter: { title, description: siteDescription, images: [socialImage.url] },
+  };
 }
