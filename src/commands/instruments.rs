@@ -562,6 +562,24 @@ pub(crate) fn display_query_connection(connection: &QueryConnection) -> String {
     }
 }
 
+pub(crate) fn configured_query_timeout_ms(
+    connection: &QueryConnection,
+    tcp_timeout_ms: u64,
+) -> u64 {
+    match connection {
+        QueryConnection::Tcpip { .. } => tcp_timeout_ms,
+        QueryConnection::Scpi(ScpiConnection::Gpib { timeout_secs, .. }) => {
+            timeout_secs.saturating_mul(1_000)
+        }
+        QueryConnection::Scpi(ScpiConnection::PrologixTcp {
+            read_timeout_ms, ..
+        })
+        | QueryConnection::Scpi(ScpiConnection::PrologixSerial {
+            read_timeout_ms, ..
+        }) => u64::from(*read_timeout_ms),
+    }
+}
+
 fn parse_host_port(endpoint: &str, label: &str) -> Result<(String, u16)> {
     parse_optional_host_port(endpoint, 0, label)
 }
@@ -865,6 +883,20 @@ mod tests {
                 read_timeout_ms: 1500,
             }) if path == "/dev/cu.usbserial-XXXX"
         ));
+    }
+
+    #[test]
+    fn configured_query_timeout_uses_parsed_transport_value() {
+        let tcp = parse_query_connection("tcp://host:5025", 1250).unwrap();
+        assert_eq!(configured_query_timeout_ms(&tcp, 1250), 1250);
+
+        let gpib = parse_query_connection("gpib://0/17", 1250).unwrap();
+        assert_eq!(configured_query_timeout_ms(&gpib, 1250), 2000);
+
+        let prologix =
+            parse_query_connection("prologix-tcp://host:1234?addr=17&read_timeout_ms=750", 1250)
+                .unwrap();
+        assert_eq!(configured_query_timeout_ms(&prologix, 1250), 750);
     }
 
     #[test]

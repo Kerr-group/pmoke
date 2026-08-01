@@ -1,7 +1,8 @@
 use crate::cli::{BenchCommand, BenchProtocol};
 use crate::commands::instruments::{
-    QueryConnection, TextQuerySession, display_query_connection, open_text_query_session,
-    parse_query_connection, validate_line_request, validate_scpi_query_command,
+    QueryConnection, TextQuerySession, configured_query_timeout_ms, display_query_connection,
+    open_text_query_session, parse_query_connection, validate_line_request,
+    validate_scpi_query_command,
 };
 use crate::ui;
 use anyhow::{Context, Result, bail};
@@ -124,11 +125,11 @@ fn run_transport(options: TransportOptions<'_>) -> Result<()> {
         .checked_mul(options.warmup.saturating_add(options.iterations))
         .and_then(|value| u64::try_from(value).ok())
         .ok_or_else(|| anyhow::anyhow!("benchmark operation count is too large"))?;
-    let progress = (!options.json).then(|| ui::progress("transport benchmark", total));
+    let mut progress = (!options.json).then(|| ui::progress("transport benchmark", total));
 
     let mut results = Vec::with_capacity(options.requests.len());
     for request in options.requests {
-        let result = benchmark_request(
+        let result = match benchmark_request(
             &connection,
             options.timeout_ms,
             request,
@@ -136,11 +137,24 @@ fn run_transport(options: TransportOptions<'_>) -> Result<()> {
             options.iterations,
             &mut session,
             progress.as_ref(),
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                if let Some(progress) = progress.take() {
+                    ui::finish_warning(progress, "transport benchmark interrupted");
+                }
+                return Err(error);
+            }
+        };
         results.push(result);
     }
+    let has_success = results.iter().any(|result| result.success_count > 0);
     if let Some(progress) = progress {
-        ui::finish_success(progress, "transport benchmark completed");
+        if has_success {
+            ui::finish_success(progress, "transport benchmark completed");
+        } else {
+            ui::finish_warning(progress, "transport benchmark completed without a response");
+        }
     }
 
     let report = TransportBenchmarkReport {
@@ -148,7 +162,7 @@ fn run_transport(options: TransportOptions<'_>) -> Result<()> {
         generated_at: jiff::Timestamp::now().to_string(),
         connection: display_query_connection(&connection),
         protocol: protocol_name(options.protocol),
-        timeout_ms: options.timeout_ms,
+        timeout_ms: configured_query_timeout_ms(&connection, options.timeout_ms),
         warmup: options.warmup,
         iterations: options.iterations,
         results,
@@ -172,11 +186,7 @@ fn run_transport(options: TransportOptions<'_>) -> Result<()> {
         }
     }
 
-    if report
-        .results
-        .iter()
-        .all(|result| result.success_count == 0)
-    {
+    if !has_success {
         bail!("transport benchmark completed without a successful response");
     }
     Ok(())
@@ -467,11 +477,18 @@ fn write_report(path: &Path, contents: &[u8], force: bool) -> Result<()> {
 }
 
 fn write_new_report(path: &Path, contents: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .with_context(|| format!("refusing to overwrite benchmark report: {}", path.display()))?;
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(error).with_context(|| {
+                format!("refusing to overwrite benchmark report: {}", path.display())
+            });
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to create benchmark report: {}", path.display()));
+        }
+    };
     if let Err(error) = file.write_all(contents).and_then(|()| file.sync_all()) {
         drop(file);
         let _ = fs::remove_file(path);
@@ -571,6 +588,52 @@ mod tests {
     }
 
     #[test]
+    fn transport_benchmark_reconnects_after_request_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (first, _) = listener.accept().unwrap();
+            let mut first = BufReader::new(first);
+            let mut request = String::new();
+            first.read_line(&mut request).unwrap();
+            assert_eq!(request, "*IDN?\n");
+            drop(first);
+
+            let (second, _) = listener.accept().unwrap();
+            let mut second = BufReader::new(second);
+            request.clear();
+            second.read_line(&mut request).unwrap();
+            assert_eq!(request, "*IDN?\n");
+            second.get_mut().write_all(b"MOCK,RECOVERED,1,0\n").unwrap();
+            second.get_mut().flush().unwrap();
+        });
+        let output = temporary_path("bench-reconnect.json");
+        let connection = format!("tcp://{address}");
+        let requests = vec!["*IDN?".to_string()];
+
+        run_transport(TransportOptions {
+            connection: &connection,
+            protocol: BenchProtocol::Scpi,
+            requests: &requests,
+            iterations: 2,
+            warmup: 0,
+            timeout_ms: 1_000,
+            output: Some(&output),
+            json: false,
+            force: false,
+        })
+        .unwrap();
+        server.join().unwrap();
+
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(report["results"][0]["success_count"], 1);
+        assert_eq!(report["results"][0]["error_count"], 1);
+        assert_eq!(report["results"][0]["last_response"], "MOCK,RECOVERED,1,0");
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
     fn request_summary_excludes_failures_from_latency() {
         let samples = vec![
             BenchmarkSample {
@@ -611,6 +674,20 @@ mod tests {
         assert!(error.to_string().contains("refusing to overwrite"));
         assert_eq!(fs::read(&path).unwrap(), b"old");
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn report_writer_distinguishes_create_failure_from_overwrite() {
+        let path = temporary_path("missing-parent").join("bench-report.json");
+
+        let error = write_report(&path, b"new", false).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to create benchmark report")
+        );
+        assert!(!error.to_string().contains("refusing to overwrite"));
     }
 
     #[test]
