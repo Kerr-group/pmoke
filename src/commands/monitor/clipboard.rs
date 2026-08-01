@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "wasm32"))]
 use arboard::Clipboard;
 use std::io::{self, Write};
 
@@ -19,8 +20,11 @@ impl ClipboardMethod {
 }
 
 pub(super) fn copy_text_to_clipboard(text: &str) -> std::result::Result<ClipboardMethod, String> {
+    #[cfg(not(target_arch = "wasm32"))]
     let system_result =
         Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text.to_string()));
+    #[cfg(target_arch = "wasm32")]
+    let system_result: Result<(), arboard::Error> = Err(arboard::Error::Unknown);
     let terminal_result = write_osc52_clipboard(text);
 
     match (system_result, terminal_result) {

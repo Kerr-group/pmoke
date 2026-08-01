@@ -51,7 +51,7 @@ if (!robots.includes('Sitemap: https://kerr-group.github.io/pmoke/sitemap.xml\n'
 }
 
 const wasm = await stat(path.join(output, 'wasm/pmoke_web_wasm_bg.wasm'));
-if (wasm.size > 200 * 1024) throw new Error(`M0 Wasm budget exceeded: ${wasm.size} bytes`);
+if (wasm.size > 500 * 1024) throw new Error(`M3 Wasm budget exceeded: ${wasm.size} bytes`);
 
 const search = await stat(path.join(output, 'api/search'));
 if (search.size > 2500 * 1024) throw new Error(`M2 search budget exceeded: ${search.size} bytes`);

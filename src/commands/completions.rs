@@ -30,7 +30,10 @@ pub fn install_completion(shell: Shell) -> Result<()> {
 
     match shell {
         Shell::Fish => {
+            #[cfg(not(target_arch = "wasm32"))]
             let home = dirs::home_dir().context("could not determine home directory")?;
+            #[cfg(target_arch = "wasm32")]
+            let home = PathBuf::from("/");
             let dest = home.join(".config/fish/completions/pmoke.fish");
             let parent = dest
                 .parent()
@@ -63,8 +66,13 @@ pub fn install_completion(shell: Shell) -> Result<()> {
 }
 
 fn powershell_profile_path() -> Option<PathBuf> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let doc_dir = dirs::document_dir();
+    #[cfg(target_arch = "wasm32")]
+    let doc_dir: Option<PathBuf> = None;
+
     std::env::var_os("PROFILE").map(PathBuf::from).or_else(|| {
-        dirs::document_dir().map(|mut path| {
+        doc_dir.map(|mut path| {
             path.push("WindowsPowerShell");
             path.push("Microsoft.PowerShell_profile.ps1");
             path
