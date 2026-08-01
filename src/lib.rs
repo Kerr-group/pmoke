@@ -4,6 +4,7 @@ mod commands;
 #[cfg(feature = "hw-core")]
 mod communications;
 pub mod config;
+mod connection;
 mod constants;
 mod kerr;
 pub mod lockin;

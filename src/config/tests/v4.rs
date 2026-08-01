@@ -257,6 +257,27 @@ fn v4_prologix_connection_rejects_unknown_query_keys() {
 }
 
 #[test]
+fn v4_prologix_connection_rejects_duplicate_address_aliases() {
+    let text = v4_base().replacen(
+        "[data]",
+        "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-tcp://192.168.1.50?addr=11&address=12\"\n\n[data]",
+        1,
+    );
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics.iter().any(|issue| {
+                issue.path.as_deref() == Some("generator.connection")
+                    && issue
+                        .message
+                        .contains("address must be specified only once")
+            }),
+            "missing duplicate Prologix address diagnostic: {diag:?}"
+        ),
+        other => panic!("expected v4 Prologix diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
 fn v4_prologix_serial_rejects_zero_baud_rate() {
     let text = v4_base().replacen(
         "[data]",
