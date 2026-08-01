@@ -257,6 +257,25 @@ fn v4_prologix_connection_rejects_unknown_query_keys() {
 }
 
 #[test]
+fn v4_prologix_serial_rejects_zero_baud_rate() {
+    let text = v4_base().replacen(
+        "[data]",
+        "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-serial:///dev/cu.usbserial-ABC?addr=11&baud_rate=0\"\n\n[data]",
+        1,
+    );
+    match load_from_str(&text) {
+        ConfigLoad::Diagnostics(diag) => assert!(
+            diag.diagnostics.iter().any(|issue| {
+                issue.path.as_deref() == Some("generator.connection")
+                    && issue.message.contains("baud_rate must be positive")
+            }),
+            "missing Prologix baud_rate diagnostic: {diag:?}"
+        ),
+        other => panic!("expected v4 Prologix diagnostics, got {other:?}"),
+    }
+}
+
+#[test]
 fn v4_generator_and_connection_strings_normalize() {
     let text = v4_base().replacen(
         "[data]",

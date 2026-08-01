@@ -940,6 +940,11 @@ fn parse_connection_v4(
             PROLOGIX_DEFAULT_BAUD_RATE,
             &invalid,
         )?;
+        if baud_rate == 0 {
+            return Err(invalid(
+                "Prologix serial baud_rate must be positive".to_string(),
+            ));
+        }
         let path = path.trim();
         if path.is_empty() {
             return Err(invalid(
