@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 description = "Browser-safe signal preview primitives for the pmoke documentation site"
-license-file = "../../LICENSE"
+license = "Apache-2.0"
 repository = "https://github.com/Kerr-group/pmoke"
 
 [lib]

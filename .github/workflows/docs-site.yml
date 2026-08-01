@@ -22,7 +22,7 @@ permissions:
 
 concurrency:
   group: docs-site-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -77,15 +77,59 @@ jobs:
         working-directory: website
         run: pnpm test:e2e
 
-      - name: Upload static site and visual evidence
+      - name: Package GitHub Pages preview artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: website/out
+
+      - name: Upload visual evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pmoke-docs-${{ github.sha }}
+          name: pmoke-docs-visuals-${{ github.sha }}
           path: |
-            website/out
             website/test-results
             website/playwright-report
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 14
+
+  deploy:
+    name: Deploy GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  post-deploy:
+    name: Verify deployed site
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: "website/.node-version"
+
+      - name: Run deployment smoke test
+        run: node website/scripts/smoke-deployment.mjs "${{ needs.deploy.outputs.page_url }}"

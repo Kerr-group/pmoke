@@ -13,6 +13,41 @@
   --amber: #f0b84e;
   --line: color-mix(in srgb, currentColor 14%, transparent);
   --radius: 6px;
+  --color-fd-background: #f2f5f3;
+  --color-fd-foreground: #101517;
+  --color-fd-muted: #e8edeb;
+  --color-fd-muted-foreground: #52605d;
+  --color-fd-popover: #f8faf9;
+  --color-fd-popover-foreground: #172023;
+  --color-fd-card: #edf1ef;
+  --color-fd-card-foreground: #101517;
+  --color-fd-border: rgba(36, 51, 53, 0.18);
+  --color-fd-primary: #087b7b;
+  --color-fd-primary-foreground: #f5ffff;
+  --color-fd-secondary: #e1e8e5;
+  --color-fd-secondary-foreground: #101517;
+  --color-fd-accent: rgba(8, 123, 123, 0.11);
+  --color-fd-accent-foreground: #075e60;
+  --color-fd-ring: #087b7b;
+}
+
+.dark {
+  --color-fd-background: #101517;
+  --color-fd-foreground: #edf2f0;
+  --color-fd-muted: #182124;
+  --color-fd-muted-foreground: #a2afac;
+  --color-fd-popover: #151d20;
+  --color-fd-popover-foreground: #edf2f0;
+  --color-fd-card: #151d20;
+  --color-fd-card-foreground: #edf2f0;
+  --color-fd-border: rgba(170, 190, 187, 0.17);
+  --color-fd-primary: #16d9d1;
+  --color-fd-primary-foreground: #071314;
+  --color-fd-secondary: #1c272a;
+  --color-fd-secondary-foreground: #edf2f0;
+  --color-fd-accent: rgba(22, 217, 209, 0.12);
+  --color-fd-accent-foreground: #58ebe5;
+  --color-fd-ring: #16d9d1;
 }
 
 html {
@@ -75,6 +110,14 @@ button:focus-visible {
   color: var(--cyan);
 }
 
+.brand-context {
+  padding-left: 0.55rem;
+  border-left: 1px solid var(--color-fd-border);
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.62rem;
+  font-weight: 650;
+}
+
 .locale-index {
   width: min(92vw, 680px);
   min-height: 100vh;
@@ -132,6 +175,24 @@ button:focus-visible {
 }
 .site-header nav a:hover { color: var(--cyan); }
 .site-header nav svg { width: 16px; height: 16px; }
+
+.theme-toggle {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #536165;
+  background: transparent;
+  color: #dce5e2;
+  cursor: pointer;
+}
+
+.theme-toggle:hover { border-color: var(--cyan); color: var(--cyan); }
+.theme-toggle svg { grid-area: 1 / 1; width: 16px; height: 16px; }
+.theme-icon-to-light { display: none; }
+.dark .theme-icon-to-light { display: block; }
+.dark .theme-icon-to-dark { display: none; }
 
 .hero-band {
   position: relative;
@@ -267,10 +328,41 @@ button:focus-visible {
 .capability-grid h2 { margin: 2.6rem 0 0.7rem; font-size: 1.05rem; }
 .capability-grid p { max-width: 34ch; margin: 0; color: #94a19f; line-height: 1.65; }
 
+html:not(.dark) .home-shell { background: #eef3f1; color: #101517; }
+html:not(.dark) .site-header { border-color: #b7c2bf; }
+html:not(.dark) .site-header nav a { color: #3b4b4c; }
+html:not(.dark) .site-header nav a:hover { color: #087b7b; }
+html:not(.dark) .signal-stage { background: #e4ebe8; }
+html:not(.dark) .signal-stage::after { background: rgba(242, 245, 243, 0.24); }
+html:not(.dark) .signal-hud { color: #536563; }
+html:not(.dark) .signal-hud .wasm-state { color: #137946; }
+html:not(.dark) .hero-copy h1,
+html:not(.dark) .hero-lead { color: #101517; }
+html:not(.dark) .hero-description { color: #52615f; }
+html:not(.dark) .hero-actions a { border-color: #82908e; color: #172023; }
+html:not(.dark) .hero-actions .primary-action { border-color: #087b7b; background: #087b7b; color: #f5ffff; }
+html:not(.dark) .theme-toggle { border-color: #82908e; color: #172023; }
+html:not(.dark) .capability-grid { border-color: #b7c2bf; }
+html:not(.dark) .capability-grid article { border-color: #b7c2bf; }
+html:not(.dark) .capability-grid p { color: #52615f; }
+
+#nd-docs-layout { background: var(--color-fd-background); }
+
+#nd-sidebar,
+#nd-tocnav {
+  backdrop-filter: blur(14px);
+}
+
+.prose pre {
+  border: 1px solid var(--color-fd-border);
+  border-radius: var(--radius);
+}
+
 @media (max-width: 720px) {
   .locale-index h1 { font-size: 4.4rem; }
   .site-header { width: min(100% - 28px, 1440px); height: 60px; }
   .site-header nav a:first-child { display: none; }
+  .site-header nav { gap: 0.7rem; }
   .hero-band { min-height: 550px; height: calc(100svh - 112px); max-height: 720px; }
   .hero-copy { width: min(100% - 28px, 1440px); padding-bottom: 5rem; justify-content: flex-end; }
   .hero-copy h1 { font-size: 5rem; }

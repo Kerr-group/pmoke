@@ -9,7 +9,7 @@ export function Provider({ children, lang }: { children: ReactNode; lang: Langua
     <RootProvider
       search={{ SearchDialog }}
       i18n={i18nUI.provider(lang)}
-      theme={{ attribute: 'class', defaultTheme: 'dark', enableSystem: true }}
+      theme={{ enabled: false }}
     >
       {children}
     </RootProvider>

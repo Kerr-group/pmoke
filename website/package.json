@@ -10,7 +10,7 @@
   "scripts": {
     "build": "npm run build:wasm && next build && node scripts/postbuild.mjs",
     "build:site": "next build && node scripts/postbuild.mjs",
-    "build:wasm": "wasm-pack build ../crates/pmoke-web-wasm --target web --out-dir ../../website/public/wasm --release -- --locked",
+    "build:wasm": "wasm-pack build ../crates/pmoke-web-wasm --target web --out-dir ../../website/public/wasm --release --no-pack -- --locked",
     "dev": "pnpm build:wasm && next dev",
     "start": "node scripts/serve-basepath.mjs",
     "types:check": "next typegen && tsc --noEmit",
@@ -25,11 +25,13 @@
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.14.0",
     "lucide-react": "1.27.0",
     "next": "16.2.12",
+    "next-themes": "0.4.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "4.3.3",
     "@types/mdx": "2.0.14",

@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { basePath } from '@/lib/shared';
 
 const CHANNELS = [
-  { offset: 1, color: '#e7edf0', width: 1.15 },
-  { offset: 2, color: '#16d9d1', width: 1.8 },
-  { offset: 3, color: '#ed4f9a', width: 1.45 },
+  { offset: 1, darkColor: '#e7edf0', lightColor: '#44575a', width: 1.15 },
+  { offset: 2, darkColor: '#16d9d1', lightColor: '#087b7b', width: 1.8 },
+  { offset: 3, darkColor: '#ed4f9a', lightColor: '#bd286f', width: 1.45 },
 ] as const;
 const FALLBACK_SIGNAL = fallbackSignal(360);
 
@@ -54,10 +54,11 @@ export function SignalHero({ label }: { label: string }) {
         }
         context.setTransform(ratio, 0, 0, ratio, 0, 0);
         context.clearRect(0, 0, rect.width, rect.height);
-        drawGrid(context, rect.width, rect.height);
+        const dark = document.documentElement.classList.contains('dark');
+        drawGrid(context, rect.width, rect.height, dark);
         const values = dataRef.current ?? FALLBACK_SIGNAL;
         const phase = reducedMotion ? 0 : frame * 0.0018;
-        drawSignals(context, values, rect.width, rect.height, phase);
+        drawSignals(context, values, rect.width, rect.height, phase, dark);
         frame += 1;
       }
       animation = requestAnimationFrame(draw);
@@ -78,18 +79,25 @@ export function SignalHero({ label }: { label: string }) {
   );
 }
 
-function drawGrid(context: CanvasRenderingContext2D, width: number, height: number) {
-  context.strokeStyle = 'rgba(145, 164, 174, 0.13)';
+function drawGrid(context: CanvasRenderingContext2D, width: number, height: number, dark: boolean) {
+  context.strokeStyle = dark ? 'rgba(145, 164, 174, 0.13)' : 'rgba(40, 67, 68, 0.14)';
   context.lineWidth = 1;
   for (let x = 0; x <= width; x += 48) { context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke(); }
   for (let y = 0; y <= height; y += 40) { context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke(); }
 }
 
-function drawSignals(context: CanvasRenderingContext2D, values: Float64Array, width: number, height: number, phase: number) {
+function drawSignals(
+  context: CanvasRenderingContext2D,
+  values: Float64Array,
+  width: number,
+  height: number,
+  phase: number,
+  dark: boolean,
+) {
   const count = values.length / 4;
   for (const channel of CHANNELS) {
     context.beginPath();
-    context.strokeStyle = channel.color;
+    context.strokeStyle = dark ? channel.darkColor : channel.lightColor;
     context.lineWidth = channel.width;
     context.globalAlpha = channel.offset === 1 ? 0.36 : 0.92;
     for (let index = 0; index < count; index += 1) {
