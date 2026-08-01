@@ -71,7 +71,7 @@ fn list(json: bool) -> Result<()> {
                         item.role.to_string(),
                         item.transports.join(", "),
                         item.protocols.join(", "),
-                        item.required_features.join(", "),
+                        display_list(&item.required_features),
                         display_list(&item.notes),
                     ]
                 })
@@ -280,6 +280,7 @@ mod tests {
         let details = details(spec);
 
         assert!(item.required_features.is_empty());
+        assert_eq!(display_list(&item.required_features), "-");
         assert!(
             details.connection_templates.iter().any(|example| {
                 example.transport == "dummy" && example.required_feature.is_none()
