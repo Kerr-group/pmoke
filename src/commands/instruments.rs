@@ -33,7 +33,7 @@ struct InstrumentDetails {
 struct ConnectionTemplateDetails {
     transport: &'static str,
     connection_template: &'static str,
-    required_feature: &'static str,
+    required_feature: Option<&'static str>,
     feature_note: Option<&'static str>,
 }
 
@@ -120,7 +120,7 @@ fn explain(model: &str, json: bool) -> Result<()> {
                         vec![
                             example.transport.to_string(),
                             example.connection_template.to_string(),
-                            example.required_feature.to_string(),
+                            example.required_feature.unwrap_or("-").to_string(),
                             example.feature_note.unwrap_or("-").to_string(),
                         ]
                     })
@@ -201,7 +201,7 @@ fn connection_templates(spec: &InstrumentSpec) -> Vec<ConnectionTemplateDetails>
 fn required_features(spec: &InstrumentSpec) -> Vec<&'static str> {
     spec.transports
         .iter()
-        .map(|transport| transport.required_feature())
+        .filter_map(|transport| transport.required_feature())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -253,7 +253,7 @@ mod tests {
         assert!(details.connection_templates.iter().any(|example| {
             example.transport == "prologix_tcp"
                 && example.connection_template == "prologix-tcp://<host>:1234?addr=<addr>"
-                && example.required_feature == "hw-prologix-tcp"
+                && example.required_feature == Some("hw-prologix-tcp")
         }));
     }
 
@@ -268,8 +268,22 @@ mod tests {
         assert_eq!(item.notes, vec!["Windows + NI-VISA"]);
         assert!(details.connection_templates.iter().any(|example| {
             example.transport == "usbtmc"
-                && example.required_feature == "hw-gpib"
+                && example.required_feature == Some("hw-gpib")
                 && example.feature_note == Some("Windows + NI-VISA")
         }));
+    }
+
+    #[test]
+    fn dummy_instrument_has_no_required_feature_name() {
+        let spec = instruments::registry::find_instrument("DummyInstrument").unwrap();
+        let item = list_item(spec);
+        let details = details(spec);
+
+        assert!(item.required_features.is_empty());
+        assert!(
+            details.connection_templates.iter().any(|example| {
+                example.transport == "dummy" && example.required_feature.is_none()
+            })
+        );
     }
 }

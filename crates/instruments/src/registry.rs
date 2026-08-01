@@ -37,14 +37,14 @@ impl TransportKind {
         }
     }
 
-    pub fn required_feature(self) -> &'static str {
+    pub fn required_feature(self) -> Option<&'static str> {
         match self {
-            Self::Dummy => "none",
-            Self::Gpib => "hw-gpib",
-            Self::Tcpip => "hw-core",
-            Self::Usbtmc => "hw-gpib",
-            Self::PrologixTcp => "hw-prologix-tcp",
-            Self::PrologixSerial => "hw-prologix-serial",
+            Self::Dummy => None,
+            Self::Gpib => Some("hw-gpib"),
+            Self::Tcpip => Some("hw-core"),
+            Self::Usbtmc => Some("hw-gpib"),
+            Self::PrologixTcp => Some("hw-prologix-tcp"),
+            Self::PrologixSerial => Some("hw-prologix-serial"),
         }
     }
 
