@@ -64,7 +64,7 @@ fn run_with(args: Cli) -> Result<()> {
     }
 
     if let Some(Command::Bench { command }) = args.command.as_ref() {
-        return commands::bench::run(command, args.force);
+        return commands::bench::run(command, args.run_dir.as_deref(), args.force);
     }
 
     if let Some(Command::Raw {

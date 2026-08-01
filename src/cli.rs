@@ -121,6 +121,37 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum BenchCommand {
+    /// Benchmark one SCPI query and save a compact reproducibility report
+    ScpiQuery {
+        /// Connection URI accepted by `pmoke instruments query`
+        #[arg(long, value_name = "URI")]
+        connection: String,
+
+        /// SCPI query command to benchmark
+        #[arg(long, default_value = "*IDN?", value_name = "COMMAND")]
+        command: String,
+
+        /// Measured query count
+        #[arg(short = 'n', long, default_value_t = 50, value_name = "N")]
+        iterations: usize,
+
+        /// Unmeasured query count before measurement
+        #[arg(long, default_value_t = 3, value_name = "N")]
+        warmup: usize,
+
+        /// Timeout used when the URI has no transport-specific timeout
+        #[arg(long, default_value_t = 3000, value_name = "MS")]
+        timeout_ms: u64,
+
+        /// Save TOML to FILE instead of the run benchmark directory
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        /// Emit the compact report as JSON after saving TOML
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Measure text request/response latency for a connection URI
     Transport {
         /// Connection URI accepted by `pmoke instruments query`
@@ -462,6 +493,37 @@ mod config_command_tests {
                     json: false,
                 }
             }) if connection == "tcp://127.0.0.1:5025" && requests == ["*IDN?"]
+        ));
+    }
+
+    #[test]
+    fn parses_scpi_query_benchmark_defaults() {
+        let cli = Cli::try_parse_from([
+            "pmoke",
+            "--run-dir",
+            "shot-001",
+            "bench",
+            "scpi-query",
+            "--connection",
+            "prologix-tcp://10.249.11.17:1234?addr=17",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.run_dir, Some(PathBuf::from("shot-001")));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Bench {
+                command: BenchCommand::ScpiQuery {
+                    connection,
+                    command,
+                    iterations: 50,
+                    warmup: 3,
+                    timeout_ms: 3000,
+                    output: None,
+                    json: false,
+                }
+            }) if connection == "prologix-tcp://10.249.11.17:1234?addr=17"
+                && command == "*IDN?"
         ));
     }
 

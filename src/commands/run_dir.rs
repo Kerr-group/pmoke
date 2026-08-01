@@ -925,7 +925,7 @@ fn replacement_backup_path(destination: &Path) -> PathBuf {
     destination.with_file_name(name)
 }
 
-fn sync_parent(path: &Path) -> Result<()> {
+pub(crate) fn sync_parent(path: &Path) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     sync_directory(parent)
 }

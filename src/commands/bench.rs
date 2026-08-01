@@ -7,6 +7,8 @@ use crate::commands::instruments::{
 use crate::ui;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -14,6 +16,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const REPORT_SCHEMA_VERSION: u32 = 1;
+const SCPI_QUERY_REPORT_SCHEMA_VERSION: u32 = 1;
+const SCPI_QUERY_REPORT_DIR: &str = "benchmarks/scpi-query";
 const MAX_REQUESTS: usize = 64;
 const MAX_ITERATIONS: usize = 100_000;
 const MAX_WARMUP: usize = 100_000;
@@ -63,6 +67,8 @@ struct BenchmarkSample {
     elapsed_ms: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip)]
+    failure_kind: Option<FailureKind>,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,8 +81,85 @@ struct LatencySummary {
     max: f64,
 }
 
-pub fn run(command: &BenchCommand, force: bool) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum FailureKind {
+    Timeout,
+    Connection,
+    UnsupportedFeature,
+    Protocol,
+    Other,
+}
+
+impl FailureKind {
+    const ALL: [Self; 5] = [
+        Self::Timeout,
+        Self::Connection,
+        Self::UnsupportedFeature,
+        Self::Protocol,
+        Self::Other,
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Connection => "connection",
+            Self::UnsupportedFeature => "unsupported_feature",
+            Self::Protocol => "protocol",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ScpiQueryBenchmarkReport {
+    schema_version: u32,
+    pmoke_version: &'static str,
+    git_commit: String,
+    timestamp: String,
+    os: &'static str,
+    arch: &'static str,
+    connection: String,
+    protocol: &'static str,
+    command: String,
+    timeout_ms: u64,
+    iterations: usize,
+    warmup: usize,
+    warmup_failure_count: usize,
+    success_count: usize,
+    timeout_count: usize,
+    error_count: usize,
+    errors_by_kind: BTreeMap<&'static str, usize>,
+    min_ms: Option<f64>,
+    p50_ms: Option<f64>,
+    p90_ms: Option<f64>,
+    p99_ms: Option<f64>,
+    max_ms: Option<f64>,
+    mean_ms: Option<f64>,
+    query_per_sec: f64,
+    last_response: Option<String>,
+}
+
+pub fn run(command: &BenchCommand, run_dir: Option<&Path>, force: bool) -> Result<()> {
     match command {
+        BenchCommand::ScpiQuery {
+            connection,
+            command,
+            iterations,
+            warmup,
+            timeout_ms,
+            output,
+            json,
+        } => run_scpi_query(ScpiQueryOptions {
+            connection,
+            command,
+            iterations: *iterations,
+            warmup: *warmup,
+            timeout_ms: *timeout_ms,
+            output: output.as_deref(),
+            run_dir,
+            json: *json,
+            force,
+        }),
         BenchCommand::Transport {
             connection,
             protocol,
@@ -100,6 +183,18 @@ pub fn run(command: &BenchCommand, force: bool) -> Result<()> {
     }
 }
 
+struct ScpiQueryOptions<'a> {
+    connection: &'a str,
+    command: &'a str,
+    iterations: usize,
+    warmup: usize,
+    timeout_ms: u64,
+    output: Option<&'a Path>,
+    run_dir: Option<&'a Path>,
+    json: bool,
+    force: bool,
+}
+
 struct TransportOptions<'a> {
     connection: &'a str,
     protocol: BenchProtocol,
@@ -110,6 +205,141 @@ struct TransportOptions<'a> {
     output: Option<&'a Path>,
     json: bool,
     force: bool,
+}
+
+fn run_scpi_query(options: ScpiQueryOptions<'_>) -> Result<()> {
+    validate_scpi_query_options(&options)?;
+    validate_scpi_query_command(options.command)?;
+    let connection = parse_query_connection(options.connection, options.timeout_ms)?;
+    let total = options
+        .warmup
+        .checked_add(options.iterations)
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or_else(|| anyhow::anyhow!("benchmark operation count is too large"))?;
+    let progress = (!options.json).then(|| ui::progress("SCPI query benchmark", total));
+    let mut session = None;
+    let result = benchmark_request(
+        &connection,
+        options.timeout_ms,
+        options.command,
+        options.warmup,
+        options.iterations,
+        &mut session,
+        progress.as_ref(),
+    );
+    if let Some(progress) = progress {
+        if result.success_count > 0 {
+            ui::finish_success(progress, "SCPI query benchmark completed");
+        } else {
+            ui::finish_warning(
+                progress,
+                "SCPI query benchmark completed without a response",
+            );
+        }
+    }
+
+    let report = compact_scpi_report(&connection, options.timeout_ms, options.warmup, &result);
+    let encoded_toml = toml::to_string_pretty(&report)
+        .context("failed to encode SCPI query benchmark report as TOML")?;
+    let saved_path = save_scpi_query_report(
+        &report.timestamp,
+        encoded_toml.as_bytes(),
+        options.output,
+        options.run_dir,
+        options.force,
+    )?;
+
+    if options.json {
+        let mut encoded_json =
+            serde_json::to_vec_pretty(&report).context("failed to encode benchmark JSON")?;
+        encoded_json.push(b'\n');
+        io::stdout()
+            .lock()
+            .write_all(&encoded_json)
+            .context("failed to write benchmark JSON")?;
+    } else {
+        print_scpi_query_report(&report);
+        ui::saved(format!("SCPI query benchmark: {}", saved_path.display()));
+    }
+
+    if result.success_count == 0 {
+        bail!("SCPI query benchmark completed without a successful response");
+    }
+    Ok(())
+}
+
+fn validate_scpi_query_options(options: &ScpiQueryOptions<'_>) -> Result<()> {
+    if !(1..=MAX_ITERATIONS).contains(&options.iterations) {
+        bail!("--iterations must be in 1..={MAX_ITERATIONS}");
+    }
+    if options.warmup > MAX_WARMUP {
+        bail!("--warmup must be in 0..={MAX_WARMUP}");
+    }
+    if options.timeout_ms == 0 {
+        bail!("--timeout-ms must be positive");
+    }
+    Ok(())
+}
+
+fn compact_scpi_report(
+    connection: &QueryConnection,
+    timeout_ms: u64,
+    warmup: usize,
+    result: &RequestBenchmark,
+) -> ScpiQueryBenchmarkReport {
+    let mut errors_by_kind = FailureKind::ALL
+        .into_iter()
+        .map(|kind| (kind.as_str(), 0))
+        .collect::<BTreeMap<_, _>>();
+    for kind in result
+        .samples
+        .iter()
+        .filter_map(|sample| sample.failure_kind)
+    {
+        *errors_by_kind.entry(kind.as_str()).or_default() += 1;
+    }
+    let measured_seconds = result
+        .samples
+        .iter()
+        .map(|sample| sample.elapsed_ms)
+        .sum::<f64>()
+        / 1_000.0;
+    let query_per_sec = if measured_seconds > 0.0 {
+        result.success_count as f64 / measured_seconds
+    } else {
+        0.0
+    };
+    let latency = result.latency_ms.as_ref();
+
+    ScpiQueryBenchmarkReport {
+        schema_version: SCPI_QUERY_REPORT_SCHEMA_VERSION,
+        pmoke_version: env!("CARGO_PKG_VERSION"),
+        git_commit: option_env!("PMOKE_GIT_COMMIT")
+            .unwrap_or("unknown")
+            .to_string(),
+        timestamp: jiff::Timestamp::now().to_string(),
+        os: env::consts::OS,
+        arch: env::consts::ARCH,
+        connection: display_query_connection(connection),
+        protocol: "scpi",
+        command: result.request.clone(),
+        timeout_ms: configured_query_timeout_ms(connection, timeout_ms),
+        iterations: result.attempts,
+        warmup,
+        warmup_failure_count: result.warmup_failure_count,
+        success_count: result.success_count,
+        timeout_count: result.timeout_count,
+        error_count: result.error_count,
+        errors_by_kind,
+        min_ms: latency.map(|stats| stats.min),
+        p50_ms: latency.map(|stats| stats.p50),
+        p90_ms: latency.map(|stats| stats.p90),
+        p99_ms: latency.map(|stats| stats.p99),
+        max_ms: latency.map(|stats| stats.max),
+        mean_ms: latency.map(|stats| stats.mean),
+        query_per_sec,
+        last_response: result.last_response.clone(),
+    }
 }
 
 fn run_transport(options: TransportOptions<'_>) -> Result<()> {
@@ -258,10 +488,12 @@ fn benchmark_request(
                     outcome: SampleOutcome::Success,
                     elapsed_ms,
                     error: None,
+                    failure_kind: None,
                 });
             }
             Err(error) => {
-                let outcome = if is_timeout_error(&error) {
+                let failure_kind = classify_failure(&error);
+                let outcome = if failure_kind == FailureKind::Timeout {
                     SampleOutcome::Timeout
                 } else {
                     SampleOutcome::Error
@@ -271,6 +503,7 @@ fn benchmark_request(
                     outcome,
                     elapsed_ms,
                     error: Some(format!("{error:#}")),
+                    failure_kind: Some(failure_kind),
                 });
                 session.take();
             }
@@ -420,6 +653,40 @@ fn is_timeout_error(error: &anyhow::Error) -> bool {
     })
 }
 
+fn classify_failure(error: &anyhow::Error) -> FailureKind {
+    if is_timeout_error(error) {
+        return FailureKind::Timeout;
+    }
+    for cause in error.chain() {
+        if let Some(error) = cause.downcast_ref::<io::Error>() {
+            match error.kind() {
+                io::ErrorKind::Unsupported => return FailureKind::UnsupportedFeature,
+                io::ErrorKind::ConnectionRefused
+                | io::ErrorKind::ConnectionReset
+                | io::ErrorKind::ConnectionAborted
+                | io::ErrorKind::NotConnected
+                | io::ErrorKind::BrokenPipe
+                | io::ErrorKind::AddrInUse
+                | io::ErrorKind::AddrNotAvailable
+                | io::ErrorKind::UnexpectedEof => return FailureKind::Connection,
+                io::ErrorKind::InvalidData => return FailureKind::Protocol,
+                _ => {}
+            }
+        }
+        if cause.downcast_ref::<std::string::FromUtf8Error>().is_some() {
+            return FailureKind::Protocol;
+        }
+    }
+    let message = format!("{error:#}");
+    if message.contains("empty text response") || message.contains("blank text response") {
+        FailureKind::Protocol
+    } else if message.contains("connection closed before") {
+        FailureKind::Connection
+    } else {
+        FailureKind::Other
+    }
+}
+
 fn print_human_report(report: &TransportBenchmarkReport) {
     ui::settings_table(
         "Transport Benchmark",
@@ -475,6 +742,42 @@ fn print_human_report(report: &TransportBenchmarkReport) {
     }
 }
 
+fn print_scpi_query_report(report: &ScpiQueryBenchmarkReport) {
+    ui::settings_table(
+        "SCPI Query Benchmark",
+        vec![
+            ("connection".to_string(), report.connection.clone()),
+            ("command".to_string(), report.command.clone()),
+            ("timeout".to_string(), format!("{} ms", report.timeout_ms)),
+            ("warmup".to_string(), report.warmup.to_string()),
+            ("iterations".to_string(), report.iterations.to_string()),
+        ],
+    );
+    println!(
+        "{}",
+        ui::table(
+            &[
+                "OK", "Timeout", "Error", "min ms", "p50 ms", "p90 ms", "p99 ms", "max ms",
+                "query/s",
+            ],
+            vec![vec![
+                report.success_count.to_string(),
+                report.timeout_count.to_string(),
+                report.error_count.to_string(),
+                format_latency(report.min_ms),
+                format_latency(report.p50_ms),
+                format_latency(report.p90_ms),
+                format_latency(report.p99_ms),
+                format_latency(report.max_ms),
+                format!("{:.2}", report.query_per_sec),
+            ]],
+        )
+    );
+    if report.warmup_failure_count > 0 {
+        ui::warn(format!("warmup failures: {}", report.warmup_failure_count));
+    }
+}
+
 fn format_latency(value: Option<f64>) -> String {
     value.map_or_else(|| "-".to_string(), |value| format!("{value:.3}"))
 }
@@ -488,6 +791,70 @@ fn protocol_name(protocol: BenchProtocol) -> &'static str {
 
 fn duration_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
+}
+
+fn save_scpi_query_report(
+    timestamp: &str,
+    contents: &[u8],
+    output: Option<&Path>,
+    run_dir: Option<&Path>,
+    force: bool,
+) -> Result<PathBuf> {
+    if let Some(output) = output {
+        write_report(output, contents, force)?;
+        return Ok(output.to_path_buf());
+    }
+
+    let directory = run_dir
+        .unwrap_or_else(|| Path::new("."))
+        .join(SCPI_QUERY_REPORT_DIR);
+    fs::create_dir_all(&directory).with_context(|| {
+        format!(
+            "failed to create SCPI benchmark directory: {}",
+            directory.display()
+        )
+    })?;
+    let timestamp_path = write_timestamped_report(&directory, timestamp, contents)?;
+    let latest_path = directory.join("latest.toml");
+    write_report(&latest_path, contents, true)?;
+    Ok(timestamp_path)
+}
+
+fn write_timestamped_report(directory: &Path, timestamp: &str, contents: &[u8]) -> Result<PathBuf> {
+    let stamp = filename_timestamp(timestamp)?;
+    for sequence in 0..1_000_u16 {
+        let file_name = if sequence == 0 {
+            format!("{stamp}.toml")
+        } else {
+            format!("{stamp}-{sequence:03}.toml")
+        };
+        let path = directory.join(file_name);
+        match write_new_report(&path, contents) {
+            Ok(()) => return Ok(path),
+            Err(error) if error_chain_has_kind(&error, io::ErrorKind::AlreadyExists) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    bail!("failed to allocate a unique SCPI benchmark report name for {stamp}")
+}
+
+fn filename_timestamp(timestamp: &str) -> Result<String> {
+    let digits = timestamp
+        .chars()
+        .filter(char::is_ascii_digit)
+        .take(14)
+        .collect::<String>();
+    if digits.len() != 14 {
+        bail!("invalid benchmark timestamp: {timestamp}");
+    }
+    Ok(format!("{}-{}", &digits[..8], &digits[8..]))
+}
+
+fn error_chain_has_kind(error: &anyhow::Error, kind: io::ErrorKind) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<io::Error>())
+        .any(|error| error.kind() == kind)
 }
 
 fn write_report(path: &Path, contents: &[u8], force: bool) -> Result<()> {
@@ -527,7 +894,9 @@ fn write_new_report(path: &Path, contents: &[u8]) -> Result<()> {
         return Err(error)
             .with_context(|| format!("failed to save benchmark report: {}", path.display()));
     }
-    Ok(())
+    drop(file);
+    crate::commands::run_dir::sync_parent(path)
+        .with_context(|| format!("failed to persist benchmark report: {}", path.display()))
 }
 
 fn create_temporary_report(path: &Path) -> Result<(PathBuf, fs::File)> {
@@ -826,6 +1195,166 @@ mod tests {
     }
 
     #[test]
+    fn scpi_query_benchmark_saves_timestamped_toml_and_regular_latest_copy() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            for _ in 0..3 {
+                let mut request = String::new();
+                reader.read_line(&mut request).unwrap();
+                assert_eq!(request, "*IDN?\n");
+                reader.get_mut().write_all(b"MOCK,SCPI,1,0\n").unwrap();
+                reader.get_mut().flush().unwrap();
+            }
+        });
+        let run_dir = temporary_path("scpi-query-run");
+        let connection = format!("tcp://{address}");
+
+        run_scpi_query(ScpiQueryOptions {
+            connection: &connection,
+            command: "*IDN?",
+            iterations: 2,
+            warmup: 1,
+            timeout_ms: 1_000,
+            output: None,
+            run_dir: Some(&run_dir),
+            json: false,
+            force: false,
+        })
+        .unwrap();
+        server.join().unwrap();
+
+        let directory = run_dir.join(SCPI_QUERY_REPORT_DIR);
+        let latest = directory.join("latest.toml");
+        assert!(latest.is_file());
+        assert!(
+            !fs::symlink_metadata(&latest)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let report_paths = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(report_paths.len(), 2);
+        let timestamped = report_paths
+            .into_iter()
+            .find(|path| path.file_name().unwrap() != "latest.toml")
+            .unwrap();
+        let latest_bytes = fs::read(&latest).unwrap();
+        assert_eq!(latest_bytes, fs::read(timestamped).unwrap());
+        let report: toml::Value = toml::from_slice(&latest_bytes).unwrap();
+        assert_eq!(report["schema_version"].as_integer(), Some(1));
+        assert_eq!(
+            report["pmoke_version"].as_str(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(report["git_commit"].as_str().is_some());
+        assert!(report["timestamp"].as_str().is_some());
+        assert_eq!(report["os"].as_str(), Some(env::consts::OS));
+        assert_eq!(report["arch"].as_str(), Some(env::consts::ARCH));
+        assert_eq!(report["protocol"].as_str(), Some("scpi"));
+        assert_eq!(report["warmup"].as_integer(), Some(1));
+        assert_eq!(report["iterations"].as_integer(), Some(2));
+        assert_eq!(report["success_count"].as_integer(), Some(2));
+        assert_eq!(report["last_response"].as_str(), Some("MOCK,SCPI,1,0"));
+        assert!(report["min_ms"].as_float().is_some());
+        assert!(report["mean_ms"].as_float().is_some());
+        assert!(report["p99_ms"].as_float().is_some());
+        assert!(report["query_per_sec"].as_float().unwrap() > 0.0);
+        for kind in FailureKind::ALL {
+            assert_eq!(
+                report["errors_by_kind"][kind.as_str()].as_integer(),
+                Some(0)
+            );
+        }
+        fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn scpi_query_benchmark_records_all_timeout_before_returning_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            assert_eq!(request, "*IDN?\n");
+            thread::sleep(Duration::from_millis(100));
+        });
+        let run_dir = temporary_path("scpi-query-timeout");
+        let connection = format!("tcp://{address}");
+
+        let error = run_scpi_query(ScpiQueryOptions {
+            connection: &connection,
+            command: "*IDN?",
+            iterations: 1,
+            warmup: 0,
+            timeout_ms: 20,
+            output: None,
+            run_dir: Some(&run_dir),
+            json: false,
+            force: false,
+        })
+        .unwrap_err();
+        server.join().unwrap();
+
+        assert!(error.to_string().contains("without a successful response"));
+        let report: toml::Value = toml::from_str(
+            &fs::read_to_string(run_dir.join(SCPI_QUERY_REPORT_DIR).join("latest.toml")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(report["success_count"].as_integer(), Some(0));
+        assert_eq!(report["timeout_count"].as_integer(), Some(1));
+        assert_eq!(report["errors_by_kind"]["timeout"].as_integer(), Some(1));
+        assert!(report.get("p50_ms").is_none());
+        fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn timestamped_report_uses_a_collision_suffix() {
+        let run_dir = temporary_path("scpi-query-collision");
+        let directory = run_dir.join(SCPI_QUERY_REPORT_DIR);
+        fs::create_dir_all(&directory).unwrap();
+        let timestamp = "2026-08-01T13:30:45.123456789Z";
+
+        let first = write_timestamped_report(&directory, timestamp, b"first").unwrap();
+        let second = write_timestamped_report(&directory, timestamp, b"second").unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "20260801-133045.toml");
+        assert_eq!(second.file_name().unwrap(), "20260801-133045-001.toml");
+        fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn failure_classification_distinguishes_actionable_categories() {
+        let timeout = anyhow::Error::new(io::Error::new(io::ErrorKind::TimedOut, "late"));
+        let connection =
+            anyhow::Error::new(io::Error::new(io::ErrorKind::ConnectionRefused, "closed"));
+        let unsupported = anyhow::Error::new(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "feature disabled",
+        ));
+        let protocol = anyhow::Error::new(io::Error::new(io::ErrorKind::InvalidData, "bad"));
+
+        assert_eq!(classify_failure(&timeout), FailureKind::Timeout);
+        assert_eq!(classify_failure(&connection), FailureKind::Connection);
+        assert_eq!(
+            classify_failure(&unsupported),
+            FailureKind::UnsupportedFeature
+        );
+        assert_eq!(classify_failure(&protocol), FailureKind::Protocol);
+        assert_eq!(
+            classify_failure(&anyhow::anyhow!("unknown")),
+            FailureKind::Other
+        );
+    }
+
+    #[test]
     fn request_summary_excludes_failures_from_latency() {
         let samples = vec![
             BenchmarkSample {
@@ -833,18 +1362,21 @@ mod tests {
                 outcome: SampleOutcome::Success,
                 elapsed_ms: 2.0,
                 error: None,
+                failure_kind: None,
             },
             BenchmarkSample {
                 iteration: 2,
                 outcome: SampleOutcome::Timeout,
                 elapsed_ms: 10.0,
                 error: Some("timeout".to_string()),
+                failure_kind: Some(FailureKind::Timeout),
             },
             BenchmarkSample {
                 iteration: 3,
                 outcome: SampleOutcome::Error,
                 elapsed_ms: 1.0,
                 error: Some("error".to_string()),
+                failure_kind: Some(FailureKind::Other),
             },
         ];
         let result = summarize_request("*IDN?", 1, samples, vec![2.0], Some("IDN".to_string()));
