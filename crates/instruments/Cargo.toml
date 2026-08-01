@@ -24,6 +24,16 @@ path = "./examples/keithley/keithley2000.rs"
 required-features = ["gpib"]
 
 [[example]]
+name = "keithley2010_prologix_tcp"
+path = "./examples/keithley/keithley2010_prologix_tcp.rs"
+required-features = ["prologix-tcp"]
+
+[[example]]
+name = "keithley2010_prologix_bench"
+path = "./examples/keithley/keithley2010_prologix_bench.rs"
+required-features = ["prologix-tcp"]
+
+[[example]]
 name = "dho5108"
 path = "./examples/rigol/dho5108.rs"
 

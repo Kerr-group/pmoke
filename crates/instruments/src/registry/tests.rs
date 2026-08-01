@@ -22,6 +22,10 @@ fn known_instruments_are_registered_from_device_specs() {
         Some(crate::nf::wf1946b::MODEL)
     );
     assert_eq!(
+        find_instrument(crate::keithley::keithley2010::MODEL).map(|spec| spec.model),
+        Some(crate::keithley::keithley2010::MODEL)
+    );
+    assert_eq!(
         find_instrument(crate::keithley::keithley2000::MODEL).map(|spec| spec.model),
         Some(crate::keithley::keithley2000::MODEL)
     );
@@ -32,6 +36,10 @@ fn known_instruments_are_registered_from_device_specs() {
     assert_eq!(
         find_instrument(crate::nf::wf1946b::MODEL).map(|spec| spec.role),
         Some(InstrumentRole::FunctionGenerator)
+    );
+    assert_eq!(
+        find_instrument(crate::keithley::keithley2010::MODEL).map(|spec| spec.role),
+        Some(InstrumentRole::Multimeter)
     );
     assert_eq!(
         find_instrument(crate::keithley::keithley2000::MODEL).map(|spec| spec.role),

@@ -26,6 +26,7 @@ pub struct InstrumentSpec {
 pub const KNOWN_INSTRUMENTS: &[InstrumentSpec] = &[
     crate::rigol::dho5108::SPEC,
     crate::nf::wf1946b::SPEC,
+    crate::keithley::keithley2010::SPEC,
     crate::keithley::keithley2000::SPEC,
     crate::dummy::dummy_inst::SPEC,
 ];
