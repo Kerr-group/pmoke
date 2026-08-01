@@ -158,9 +158,7 @@ fn explain(model: &str, json: bool) -> Result<()> {
 }
 
 fn query(connection: &str, command: &str, timeout_ms: u64, json: bool) -> Result<()> {
-    if command.trim().is_empty() {
-        bail!("SCPI query command must not be empty");
-    }
+    validate_scpi_query_command(command)?;
     let connection = parse_query_connection(connection, timeout_ms)?;
     let response = run_scpi_text_query(&connection, command, timeout_ms)?;
     let output = QueryOutput {
@@ -173,6 +171,19 @@ fn query(connection: &str, command: &str, timeout_ms: u64, json: bool) -> Result
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("{}", output.response);
+    }
+    Ok(())
+}
+
+fn validate_scpi_query_command(command: &str) -> Result<()> {
+    if command.trim().is_empty() {
+        bail!("SCPI query command must not be empty");
+    }
+    if command.contains(['\r', '\n']) {
+        bail!("SCPI query command must be a single line");
+    }
+    if !command.contains('?') {
+        bail!("SCPI query command must contain '?'");
     }
     Ok(())
 }
@@ -752,5 +763,20 @@ mod tests {
         assert_eq!(trim_scpi_line_ending("  +1.0  \r\n"), "  +1.0  ");
         assert_eq!(trim_scpi_line_ending("  +1.0  "), "  +1.0  ");
         assert_eq!(trim_scpi_line_ending("\r\n"), "");
+    }
+
+    #[test]
+    fn scpi_query_validation_rejects_writes_and_multiple_lines() {
+        assert!(validate_scpi_query_command("*IDN?").is_ok());
+        assert!(validate_scpi_query_command(":SYST:ERR?;:STAT?").is_ok());
+
+        let empty = validate_scpi_query_command("  ").unwrap_err();
+        assert!(empty.to_string().contains("must not be empty"));
+
+        let write = validate_scpi_query_command("*RST").unwrap_err();
+        assert!(write.to_string().contains("must contain '?'"));
+
+        let multiline = validate_scpi_query_command("*IDN?\n++addr 5").unwrap_err();
+        assert!(multiline.to_string().contains("must be a single line"));
     }
 }
