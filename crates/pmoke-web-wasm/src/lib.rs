@@ -56,7 +56,9 @@ mod tests {
 
     #[test]
     fn wasm_config_validation_returns_valid_json() {
-        let json = validate_config_toml("version = 4\n[scope]\nmodel = 'dsox1204a'\nconnection = 'usbtmc://0x1/0x2/0x3'\n[data]\noutput = 'both'\ninput = 'fetch'\n[lockin]\nsignal_channels = [1]\nworkers = 4\nstride_samples = 1\nfilter = { kind = 'boxcar_legacy', half_window_cycles = 1.0 }");
+        let json = validate_config_toml(
+            "version = 4\n[scope]\nmodel = 'dsox1204a'\nconnection = 'usbtmc://0x1/0x2/0x3'\n[data]\noutput = 'both'\ninput = 'fetch'\n[lockin]\nsignal_channels = [1]\nworkers = 4\nstride_samples = 1\nfilter = { kind = 'boxcar_legacy', half_window_cycles = 1.0 }",
+        );
         assert!(json.contains("\"valid\": true"), "json: {json}");
     }
 }

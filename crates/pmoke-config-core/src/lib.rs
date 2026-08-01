@@ -112,7 +112,9 @@ pub fn validate_config_toml(toml_str: &str) -> ValidationReport {
                 kind: DiagnosticKind::Schema,
                 path: Some("version".to_string()),
                 message: "missing required top-level 'version' field".to_string(),
-                suggestion: Some("add 'version = 4' to the top of your configuration file".to_string()),
+                suggestion: Some(
+                    "add 'version = 4' to the top of your configuration file".to_string(),
+                ),
             });
             return ValidationReport {
                 valid: false,
@@ -143,7 +145,9 @@ pub fn validate_config_toml(toml_str: &str) -> ValidationReport {
     }
 
     if ver < 4 {
-        warnings.push(format!("configuration version {ver} is deprecated; consider migrating to version 4"));
+        warnings.push(format!(
+            "configuration version {ver} is deprecated; consider migrating to version 4"
+        ));
     }
 
     // Perform structured validation based on version
@@ -165,7 +169,9 @@ pub fn validate_config_toml(toml_str: &str) -> ValidationReport {
                         kind: DiagnosticKind::Schema,
                         path: Some("scope.model".to_string()),
                         message: "missing required 'model' in [scope]".to_string(),
-                        suggestion: Some("specify scope model e.g. model = \"dsox1204a\"".to_string()),
+                        suggestion: Some(
+                            "specify scope model e.g. model = \"dsox1204a\"".to_string(),
+                        ),
                     });
                 }
                 if !scope.contains_key("connection") {
@@ -183,7 +189,10 @@ pub fn validate_config_toml(toml_str: &str) -> ValidationReport {
                     kind: DiagnosticKind::Schema,
                     path: Some("data".to_string()),
                     message: "missing required [data] section in version 4 config".to_string(),
-                    suggestion: Some("add [data] section with output, input, and screenshot settings".to_string()),
+                    suggestion: Some(
+                        "add [data] section with output, input, and screenshot settings"
+                            .to_string(),
+                    ),
                 });
             }
 
@@ -192,7 +201,10 @@ pub fn validate_config_toml(toml_str: &str) -> ValidationReport {
                     kind: DiagnosticKind::Schema,
                     path: Some("lockin".to_string()),
                     message: "missing required [lockin] section".to_string(),
-                    suggestion: Some("add [lockin] section specifying signal_channels and filter settings".to_string()),
+                    suggestion: Some(
+                        "add [lockin] section specifying signal_channels and filter settings"
+                            .to_string(),
+                    ),
                 });
             } else if let Some(lockin) = table.get("lockin").and_then(|l| l.as_table()) {
                 if let Some(workers) = lockin.get("workers").and_then(|w| w.as_integer()) {
@@ -209,13 +221,38 @@ pub fn validate_config_toml(toml_str: &str) -> ValidationReport {
         }
 
         if diagnostics.is_empty() {
-            let scope_model = parsed_val.get("scope").and_then(|s| s.get("model")).and_then(|m| m.as_str()).map(|s| s.to_string());
-            let scope_conn = parsed_val.get("scope").and_then(|s| s.get("connection")).and_then(|c| c.as_str()).map(|s| s.to_string());
-            let gen_model = parsed_val.get("generator").and_then(|g| g.get("model")).and_then(|m| m.as_str()).map(|s| s.to_string());
-            let gen_conn = parsed_val.get("generator").and_then(|g| g.get("connection")).and_then(|c| c.as_str()).map(|s| s.to_string());
+            let scope_model = parsed_val
+                .get("scope")
+                .and_then(|s| s.get("model"))
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string());
+            let scope_conn = parsed_val
+                .get("scope")
+                .and_then(|s| s.get("connection"))
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string());
+            let gen_model = parsed_val
+                .get("generator")
+                .and_then(|g| g.get("model"))
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string());
+            let gen_conn = parsed_val
+                .get("generator")
+                .and_then(|g| g.get("connection"))
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string());
 
-            let workers = parsed_val.get("lockin").and_then(|l| l.get("workers")).and_then(|w| w.as_integer()).unwrap_or(4) as usize;
-            let plot_mode = parsed_val.get("plot").and_then(|p| p.get("mode")).and_then(|m| m.as_str()).unwrap_or("save").to_string();
+            let workers = parsed_val
+                .get("lockin")
+                .and_then(|l| l.get("workers"))
+                .and_then(|w| w.as_integer())
+                .unwrap_or(4) as usize;
+            let plot_mode = parsed_val
+                .get("plot")
+                .and_then(|p| p.get("mode"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("save")
+                .to_string();
 
             summary = Some(ConfigSummary {
                 version: 4,

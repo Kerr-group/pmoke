@@ -166,7 +166,10 @@ fn check_storage(cfg: &Config, checks: &mut Vec<DoctorCheck>) -> Option<u64> {
     #[cfg(not(target_arch = "wasm32"))]
     let free_bytes_result = fs2::available_space(&probe_parent);
     #[cfg(target_arch = "wasm32")]
-    let free_bytes_result: std::io::Result<u64> = Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "unsupported"));
+    let free_bytes_result: std::io::Result<u64> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "unsupported",
+    ));
 
     let free_bytes = match free_bytes_result {
         Ok(bytes) => {
