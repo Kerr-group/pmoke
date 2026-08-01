@@ -13,6 +13,7 @@ struct InstrumentListItem {
     protocols: Vec<&'static str>,
     capabilities: Vec<&'static str>,
     required_features: Vec<&'static str>,
+    notes: Vec<&'static str>,
     description: &'static str,
 }
 
@@ -23,6 +24,7 @@ struct InstrumentDetails {
     transports: Vec<&'static str>,
     protocols: Vec<&'static str>,
     capabilities: Vec<&'static str>,
+    notes: Vec<&'static str>,
     connection_templates: Vec<ConnectionTemplateDetails>,
     description: &'static str,
 }
@@ -32,6 +34,7 @@ struct ConnectionTemplateDetails {
     transport: &'static str,
     connection_template: &'static str,
     required_feature: &'static str,
+    feature_note: Option<&'static str>,
 }
 
 pub fn run(command: &InstrumentsCommand) -> Result<()> {
@@ -52,7 +55,14 @@ fn list(json: bool) -> Result<()> {
     println!(
         "{}",
         ui::table(
-            &["Model", "Role", "Transports", "Protocols", "Features"],
+            &[
+                "Model",
+                "Role",
+                "Transports",
+                "Protocols",
+                "Features",
+                "Notes"
+            ],
             instruments
                 .iter()
                 .map(|item| {
@@ -62,6 +72,7 @@ fn list(json: bool) -> Result<()> {
                         item.transports.join(", "),
                         item.protocols.join(", "),
                         item.required_features.join(", "),
+                        display_list(&item.notes),
                     ]
                 })
                 .collect(),
@@ -93,6 +104,7 @@ fn explain(model: &str, json: bool) -> Result<()> {
             ("transports".to_string(), details.transports.join(", ")),
             ("protocols".to_string(), details.protocols.join(", ")),
             ("capabilities".to_string(), details.capabilities.join(", ")),
+            ("notes".to_string(), display_list(&details.notes)),
         ],
     );
     if !details.connection_templates.is_empty() {
@@ -100,7 +112,7 @@ fn explain(model: &str, json: bool) -> Result<()> {
         println!(
             "{}",
             ui::table(
-                &["Transport", "Connection template", "Feature"],
+                &["Transport", "Connection template", "Feature", "Note"],
                 details
                     .connection_templates
                     .iter()
@@ -109,6 +121,7 @@ fn explain(model: &str, json: bool) -> Result<()> {
                             example.transport.to_string(),
                             example.connection_template.to_string(),
                             example.required_feature.to_string(),
+                            example.feature_note.unwrap_or("-").to_string(),
                         ]
                     })
                     .collect(),
@@ -134,6 +147,7 @@ fn list_item(spec: &InstrumentSpec) -> InstrumentListItem {
         protocols: protocol_names(spec),
         capabilities: capability_names(spec),
         required_features: required_features(spec),
+        notes: transport_notes(spec),
         description: spec.description,
     }
 }
@@ -145,6 +159,7 @@ fn details(spec: &InstrumentSpec) -> InstrumentDetails {
         transports: transport_names(spec),
         protocols: protocol_names(spec),
         capabilities: capability_names(spec),
+        notes: transport_notes(spec),
         connection_templates: connection_templates(spec),
         description: spec.description,
     }
@@ -178,6 +193,7 @@ fn connection_templates(spec: &InstrumentSpec) -> Vec<ConnectionTemplateDetails>
             transport: transport.as_str(),
             connection_template: transport.connection_template(),
             required_feature: transport.required_feature(),
+            feature_note: transport.feature_note(),
         })
         .collect()
 }
@@ -189,6 +205,23 @@ fn required_features(spec: &InstrumentSpec) -> Vec<&'static str> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn transport_notes(spec: &InstrumentSpec) -> Vec<&'static str> {
+    spec.transports
+        .iter()
+        .filter_map(|transport| transport.feature_note())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn display_list(values: &[&str]) -> String {
+    if values.is_empty() {
+        "-".to_string()
+    } else {
+        values.join(", ")
+    }
 }
 
 #[cfg(test)]
@@ -221,6 +254,22 @@ mod tests {
             example.transport == "prologix_tcp"
                 && example.connection_template == "prologix-tcp://<host>:1234?addr=<addr>"
                 && example.required_feature == "hw-prologix-tcp"
+        }));
+    }
+
+    #[test]
+    fn usbtmc_notes_are_separate_from_feature_names() {
+        let spec = instruments::registry::find_instrument("DHO5108").unwrap();
+        let item = list_item(spec);
+        let details = details(spec);
+
+        assert!(item.required_features.contains(&"hw-gpib"));
+        assert!(!item.required_features.contains(&"hw-gpib on Windows"));
+        assert_eq!(item.notes, vec!["Windows + NI-VISA"]);
+        assert!(details.connection_templates.iter().any(|example| {
+            example.transport == "usbtmc"
+                && example.required_feature == "hw-gpib"
+                && example.feature_note == Some("Windows + NI-VISA")
         }));
     }
 }

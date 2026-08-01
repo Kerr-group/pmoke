@@ -72,6 +72,11 @@ fn known_instruments_expose_protocols_and_capabilities() {
 fn transport_metadata_provides_features_and_connection_templates() {
     assert_eq!(TransportKind::Gpib.required_feature(), "hw-gpib");
     assert_eq!(TransportKind::Gpib.connection_template(), "gpib://0/<addr>");
+    assert_eq!(TransportKind::Usbtmc.required_feature(), "hw-gpib");
+    assert_eq!(
+        TransportKind::Usbtmc.feature_note(),
+        Some("Windows + NI-VISA")
+    );
     assert_eq!(
         TransportKind::PrologixTcp.required_feature(),
         "hw-prologix-tcp"

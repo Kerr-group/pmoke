@@ -42,9 +42,16 @@ impl TransportKind {
             Self::Dummy => "none",
             Self::Gpib => "hw-gpib",
             Self::Tcpip => "hw-core",
-            Self::Usbtmc => "hw-gpib on Windows",
+            Self::Usbtmc => "hw-gpib",
             Self::PrologixTcp => "hw-prologix-tcp",
             Self::PrologixSerial => "hw-prologix-serial",
+        }
+    }
+
+    pub fn feature_note(self) -> Option<&'static str> {
+        match self {
+            Self::Usbtmc => Some("Windows + NI-VISA"),
+            _ => None,
         }
     }
 
