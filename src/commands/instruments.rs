@@ -412,7 +412,37 @@ fn display_query_connection(connection: &QueryConnection) -> String {
             format!("tcp://[{host}]:{port}")
         }
         QueryConnection::Tcpip { host, port } => format!("tcp://{host}:{port}"),
-        QueryConnection::Scpi(connection) => connection.to_string(),
+        QueryConnection::Scpi(ScpiConnection::Gpib { board, address, .. }) => {
+            format!("gpib://{board}/{address}")
+        }
+        QueryConnection::Scpi(ScpiConnection::PrologixTcp {
+            host,
+            port,
+            address,
+            read_timeout_ms,
+        }) if host.contains(':') => {
+            format!(
+                "prologix-tcp://[{host}]:{port}?addr={address}&read_timeout_ms={read_timeout_ms}"
+            )
+        }
+        QueryConnection::Scpi(ScpiConnection::PrologixTcp {
+            host,
+            port,
+            address,
+            read_timeout_ms,
+        }) => {
+            format!("prologix-tcp://{host}:{port}?addr={address}&read_timeout_ms={read_timeout_ms}")
+        }
+        QueryConnection::Scpi(ScpiConnection::PrologixSerial {
+            path,
+            address,
+            baud_rate,
+            read_timeout_ms,
+        }) => {
+            format!(
+                "prologix-serial://{path}?addr={address}&baud_rate={baud_rate}&read_timeout_ms={read_timeout_ms}"
+            )
+        }
     }
 }
 
@@ -546,6 +576,8 @@ fn timeout_ms_to_secs(timeout_ms: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+    use std::thread;
 
     #[test]
     fn list_includes_registry_metadata() {
@@ -628,12 +660,16 @@ mod tests {
         assert!(matches!(
             prologix,
             QueryConnection::Scpi(ScpiConnection::PrologixTcp {
-                host,
+                ref host,
                 port: 1234,
                 address: 17,
                 read_timeout_ms: 2500,
             }) if host == "10.249.11.17"
         ));
+        assert_eq!(
+            display_query_connection(&prologix),
+            "prologix-tcp://10.249.11.17:1234?addr=17&read_timeout_ms=2500"
+        );
     }
 
     #[test]
@@ -686,5 +722,25 @@ mod tests {
                 read_timeout_ms: 1500,
             }) if path == "/dev/cu.usbserial-XXXX"
         ));
+    }
+
+    #[test]
+    fn tcp_query_writes_command_and_reads_trimmed_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut command = String::new();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command, "*IDN?\n");
+            writeln!(reader.get_mut(), "MOCK,MODEL,SERIAL,FIRMWARE").unwrap();
+            reader.get_mut().flush().unwrap();
+        });
+
+        let response = query_tcp_text("127.0.0.1", port, "*IDN?", 1000).unwrap();
+
+        server.join().unwrap();
+        assert_eq!(response, "MOCK,MODEL,SERIAL,FIRMWARE");
     }
 }
