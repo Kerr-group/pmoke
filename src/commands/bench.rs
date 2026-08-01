@@ -129,6 +129,15 @@ fn run_transport(options: TransportOptions<'_>) -> Result<()> {
 
     let mut results = Vec::with_capacity(options.requests.len());
     for request in options.requests {
+        if session.is_none()
+            && let Err(error) = reconnect_session(&mut session, &connection, options.timeout_ms)
+                .context("failed to reconnect before the next benchmark request")
+        {
+            if let Some(progress) = progress.take() {
+                ui::finish_warning(progress, "transport benchmark interrupted");
+            }
+            return Err(error);
+        }
         let result = match benchmark_request(
             &connection,
             options.timeout_ms,
@@ -270,6 +279,7 @@ fn benchmark_request(
                     elapsed_ms,
                     error: Some(format!("{error:#}")),
                 });
+                session.take();
                 if iteration < iterations {
                     reconnect_session(session, connection, timeout_ms)
                         .context("failed to reconnect after a measured request error")?;
@@ -630,6 +640,91 @@ mod tests {
         assert_eq!(report["results"][0]["success_count"], 1);
         assert_eq!(report["results"][0]["error_count"], 1);
         assert_eq!(report["results"][0]["last_response"], "MOCK,RECOVERED,1,0");
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn transport_benchmark_reconnects_between_requests_without_warmup() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (first, _) = listener.accept().unwrap();
+            let mut first = BufReader::new(first);
+            let mut request = String::new();
+            first.read_line(&mut request).unwrap();
+            assert_eq!(request, "FIRST?\n");
+            drop(first);
+
+            let (second, _) = listener.accept().unwrap();
+            let mut second = BufReader::new(second);
+            request.clear();
+            second.read_line(&mut request).unwrap();
+            assert_eq!(request, "SECOND?\n");
+            second.get_mut().write_all(b"RECOVERED\n").unwrap();
+            second.get_mut().flush().unwrap();
+        });
+        let output = temporary_path("bench-request-boundary.json");
+        let connection = format!("tcp://{address}");
+        let requests = vec!["FIRST?".to_string(), "SECOND?".to_string()];
+
+        run_transport(TransportOptions {
+            connection: &connection,
+            protocol: BenchProtocol::Scpi,
+            requests: &requests,
+            iterations: 1,
+            warmup: 0,
+            timeout_ms: 1_000,
+            output: Some(&output),
+            json: false,
+            force: false,
+        })
+        .unwrap();
+        server.join().unwrap();
+
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(report["results"][0]["error_count"], 1);
+        assert_eq!(report["results"][1]["success_count"], 1);
+        assert_eq!(report["results"][1]["last_response"], "RECOVERED");
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn transport_benchmark_saves_a_report_when_every_request_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            assert_eq!(request, "*IDN?\n");
+            thread::sleep(Duration::from_millis(100));
+        });
+        let output = temporary_path("bench-all-timeout.json");
+        let connection = format!("tcp://{address}");
+        let requests = vec!["*IDN?".to_string()];
+
+        let error = run_transport(TransportOptions {
+            connection: &connection,
+            protocol: BenchProtocol::Scpi,
+            requests: &requests,
+            iterations: 1,
+            warmup: 0,
+            timeout_ms: 20,
+            output: Some(&output),
+            json: false,
+            force: false,
+        })
+        .unwrap_err();
+        server.join().unwrap();
+
+        assert!(error.to_string().contains("without a successful response"));
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(report["results"][0]["success_count"], 0);
+        assert_eq!(report["results"][0]["timeout_count"], 1);
+        assert_eq!(report["results"][0]["error_count"], 0);
         fs::remove_file(output).unwrap();
     }
 
