@@ -182,7 +182,33 @@ fn validate_scpi_query_command(command: &str) -> Result<()> {
     if command.contains(['\r', '\n']) {
         bail!("SCPI query command must be a single line");
     }
-    if !command.contains('?') {
+
+    let mut quote = None;
+    let mut has_query_marker = false;
+    let mut chars = command.chars().peekable();
+    while let Some(character) = chars.next() {
+        if let Some(delimiter) = quote {
+            if character == delimiter {
+                if chars.peek() == Some(&delimiter) {
+                    chars.next();
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
+
+        match character {
+            '\'' | '"' => quote = Some(character),
+            ';' => bail!("SCPI query command must contain exactly one command"),
+            '?' => has_query_marker = true,
+            _ => {}
+        }
+    }
+    if quote.is_some() {
+        bail!("SCPI query command contains an unterminated quoted string");
+    }
+    if !has_query_marker {
         bail!("SCPI query command must contain '?'");
     }
     Ok(())
@@ -294,7 +320,11 @@ fn run_scpi_text_query(
             let response = transport
                 .query_line(command)
                 .with_context(|| format!("failed to query {connection}"))?;
-            Ok(trim_scpi_line_ending(&response).to_string())
+            let response = trim_scpi_line_ending(&response);
+            if response.is_empty() {
+                bail!("received an empty SCPI response from {connection}");
+            }
+            Ok(response.to_string())
         }
     }
 }
@@ -342,11 +372,14 @@ fn query_tcp_text(host: &str, port: u16, command: &str, timeout_ms: u64) -> Resu
         response.clear();
         let read = reader.read_line(&mut response)?;
         let line = trim_scpi_line_ending(&response);
-        if read == 0 || !line.is_empty() {
+        if read == 0 {
+            bail!("connection closed before {host}:{port} returned a SCPI response");
+        }
+        if !line.is_empty() {
             return Ok(line.to_string());
         }
     }
-    Ok(String::new())
+    bail!("received only blank SCPI response lines from {host}:{port}")
 }
 
 fn parse_query_connection(value: &str, default_timeout_ms: u64) -> Result<QueryConnection> {
@@ -534,18 +567,13 @@ fn validate_query_param_keys(params: &[(&str, &str)], allowed: &[&str]) -> Resul
 }
 
 fn parse_required_address_param(params: &[(&str, &str)]) -> Result<u8> {
-    let address = params
-        .iter()
-        .find_map(|(key, value)| (*key == "addr" || *key == "address").then_some(*value))
+    let address = find_unique_query_param(params, &["addr", "address"], "Prologix address")?
         .ok_or_else(|| anyhow!("Prologix connection must include addr=0..30"))?;
     parse_gpib_address(address, "Prologix address")
 }
 
 fn parse_timeout_param(params: &[(&str, &str)], default_timeout_ms: u64) -> Result<u16> {
-    let timeout = match params
-        .iter()
-        .find_map(|(key, value)| (*key == "read_timeout_ms").then_some(*value))
-    {
+    let timeout = match find_unique_query_param(params, &["read_timeout_ms"], "read_timeout_ms")? {
         Some(value) => value
             .parse::<u64>()
             .with_context(|| format!("invalid read_timeout_ms: {value}"))?,
@@ -558,15 +586,27 @@ fn parse_timeout_param(params: &[(&str, &str)], default_timeout_ms: u64) -> Resu
 }
 
 fn parse_optional_u32_param(params: &[(&str, &str)], key: &str, default: u32) -> Result<u32> {
-    let Some(value) = params
-        .iter()
-        .find_map(|(candidate, value)| (*candidate == key).then_some(*value))
-    else {
+    let Some(value) = find_unique_query_param(params, &[key], key)? else {
         return Ok(default);
     };
     value
         .parse::<u32>()
         .with_context(|| format!("invalid {key}: {value}"))
+}
+
+fn find_unique_query_param<'a>(
+    params: &[(&str, &'a str)],
+    keys: &[&str],
+    label: &str,
+) -> Result<Option<&'a str>> {
+    let mut values = params
+        .iter()
+        .filter_map(|(key, value)| keys.contains(key).then_some(*value));
+    let value = values.next();
+    if values.next().is_some() {
+        bail!("{label} must be specified only once");
+    }
+    Ok(value)
 }
 
 fn parse_gpib_address(value: &str, label: &str) -> Result<u8> {
@@ -707,6 +747,26 @@ mod tests {
                 .to_string()
                 .contains("read_timeout_ms must be in 1..=3000")
         );
+
+        let duplicate_address =
+            parse_query_connection("prologix-tcp://host:1234?addr=17&address=18", 2500)
+                .unwrap_err();
+        assert!(
+            duplicate_address
+                .to_string()
+                .contains("address must be specified only once")
+        );
+
+        let duplicate_timeout = parse_query_connection(
+            "prologix-tcp://host:1234?addr=17&read_timeout_ms=10&read_timeout_ms=20",
+            2500,
+        )
+        .unwrap_err();
+        assert!(
+            duplicate_timeout
+                .to_string()
+                .contains("read_timeout_ms must be specified only once")
+        );
     }
 
     #[test]
@@ -759,6 +819,24 @@ mod tests {
     }
 
     #[test]
+    fn tcp_query_rejects_eof_before_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut command = String::new();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command, "*IDN?\n");
+        });
+
+        let error = query_tcp_text("127.0.0.1", port, "*IDN?", 1000).unwrap_err();
+
+        server.join().unwrap();
+        assert!(error.to_string().contains("closed before"));
+    }
+
+    #[test]
     fn scpi_response_trimming_only_removes_line_endings() {
         assert_eq!(trim_scpi_line_ending("  +1.0  \r\n"), "  +1.0  ");
         assert_eq!(trim_scpi_line_ending("  +1.0  "), "  +1.0  ");
@@ -766,15 +844,35 @@ mod tests {
     }
 
     #[test]
-    fn scpi_query_validation_rejects_writes_and_multiple_lines() {
+    fn scpi_query_validation_accepts_one_query() {
         assert!(validate_scpi_query_command("*IDN?").is_ok());
-        assert!(validate_scpi_query_command(":SYST:ERR?;:STAT?").is_ok());
+        assert!(validate_scpi_query_command(":SYST:ERR? 'A;B'").is_ok());
+        assert!(validate_scpi_query_command(":SYST:ERR? 'A''B'").is_ok());
+    }
+
+    #[test]
+    fn scpi_query_validation_rejects_writes_and_multiple_commands() {
+        let write_after_query = validate_scpi_query_command("*IDN?;*RST").unwrap_err();
+        assert!(
+            write_after_query
+                .to_string()
+                .contains("exactly one command")
+        );
+
+        let multiple_queries = validate_scpi_query_command(":SYST:ERR?;:STAT?").unwrap_err();
+        assert!(multiple_queries.to_string().contains("exactly one command"));
 
         let empty = validate_scpi_query_command("  ").unwrap_err();
         assert!(empty.to_string().contains("must not be empty"));
 
         let write = validate_scpi_query_command("*RST").unwrap_err();
         assert!(write.to_string().contains("must contain '?'"));
+
+        let quoted_marker = validate_scpi_query_command(":DISP:TEXT '?'").unwrap_err();
+        assert!(quoted_marker.to_string().contains("must contain '?'"));
+
+        let unterminated = validate_scpi_query_command(":SYST:ERR? '").unwrap_err();
+        assert!(unterminated.to_string().contains("unterminated"));
 
         let multiline = validate_scpi_query_command("*IDN?\n++addr 5").unwrap_err();
         assert!(multiline.to_string().contains("must be a single line"));

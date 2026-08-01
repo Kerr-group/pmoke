@@ -3,6 +3,9 @@ use std::fmt;
 #[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
 use std::time::Duration;
 
+#[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
+const PROLOGIX_HOST_TIMEOUT_MARGIN_MS: u64 = 250;
+
 pub trait ScpiTransport {
     fn write_line(&mut self, command: &str) -> Result<()>;
     fn query_line(&mut self, command: &str) -> Result<String>;
@@ -118,7 +121,7 @@ fn open_prologix_tcp_transport(
 ) -> Result<BoxedScpiTransport> {
     let controller = prologix_rs::Prologix::tcp(host, port)
         .address(address)
-        .timeout(prologix_io_timeout(read_timeout_ms))
+        .timeout(prologix_host_io_timeout(read_timeout_ms))
         .read_timeout_ms(read_timeout_ms)
         .open()?;
     Ok(Box::new(controller))
@@ -148,7 +151,7 @@ fn open_prologix_serial_transport(
     let controller = prologix_rs::Prologix::serial(path)
         .address(address)
         .baud_rate(baud_rate)
-        .timeout(prologix_io_timeout(read_timeout_ms))
+        .timeout(prologix_host_io_timeout(read_timeout_ms))
         .read_timeout_ms(read_timeout_ms)
         .open()?;
     Ok(Box::new(controller))
@@ -251,8 +254,10 @@ where
 }
 
 #[cfg(any(feature = "prologix-tcp", feature = "prologix-serial"))]
-fn prologix_io_timeout(read_timeout_ms: u16) -> Duration {
-    Duration::from_millis(u64::from(read_timeout_ms))
+fn prologix_host_io_timeout(read_timeout_ms: u16) -> Duration {
+    Duration::from_millis(
+        u64::from(read_timeout_ms).saturating_add(PROLOGIX_HOST_TIMEOUT_MARGIN_MS),
+    )
 }
 
 #[cfg(all(test, feature = "prologix-tcp"))]
@@ -266,6 +271,8 @@ mod tests {
 
     #[test]
     fn prologix_read_timeout_also_limits_host_io() {
+        assert_eq!(prologix_host_io_timeout(50), Duration::from_millis(300));
+
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (release_tx, release_rx) = mpsc::channel();

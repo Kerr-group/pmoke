@@ -19,7 +19,8 @@ mod windows_defs {
     pub type ViBuf = *mut u8;
     pub type ViConstBuf = *const u8;
     pub type ViUInt32Ptr = *mut u32;
-    pub type ViAttrState = u64; // Usually logic dependent, u64 covers both 32/64
+    // VISA uses an address-sized integer for attribute state.
+    pub type ViAttrState = usize;
 }
 
 #[cfg(target_os = "windows")]

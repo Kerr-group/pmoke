@@ -13,13 +13,25 @@ pub(crate) fn secs_to_tmo_code(s: u64) -> i32 {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 #[inline]
 pub(crate) fn secs_to_ms(s: u64) -> u32 {
     if s == 0 {
         // Immediate
         1
     } else {
-        (s * 1000) as u32
+        s.saturating_mul(1000).min(u64::from(u32::MAX - 1)) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::secs_to_ms;
+
+    #[test]
+    fn visa_timeout_conversion_saturates_without_overflowing() {
+        assert_eq!(secs_to_ms(0), 1);
+        assert_eq!(secs_to_ms(3), 3000);
+        assert_eq!(secs_to_ms(u64::MAX), u32::MAX - 1);
     }
 }
