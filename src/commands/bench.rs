@@ -126,20 +126,11 @@ fn run_transport(options: TransportOptions<'_>) -> Result<()> {
         .checked_mul(options.warmup.saturating_add(options.iterations))
         .and_then(|value| u64::try_from(value).ok())
         .ok_or_else(|| anyhow::anyhow!("benchmark operation count is too large"))?;
-    let mut progress = (!options.json).then(|| ui::progress("transport benchmark", total));
+    let progress = (!options.json).then(|| ui::progress("transport benchmark", total));
 
     let mut results = Vec::with_capacity(options.requests.len());
     for request in options.requests {
-        if session.is_none()
-            && let Err(error) = reconnect_session(&mut session, &connection, options.timeout_ms)
-                .context("failed to reconnect before the next benchmark request")
-        {
-            if let Some(progress) = progress.take() {
-                ui::finish_warning(progress, "transport benchmark interrupted");
-            }
-            return Err(error);
-        }
-        let result = match benchmark_request(
+        let result = benchmark_request(
             &connection,
             options.timeout_ms,
             request,
@@ -147,15 +138,7 @@ fn run_transport(options: TransportOptions<'_>) -> Result<()> {
             options.iterations,
             &mut session,
             progress.as_ref(),
-        ) {
-            Ok(result) => result,
-            Err(error) => {
-                if let Some(progress) = progress.take() {
-                    ui::finish_warning(progress, "transport benchmark interrupted");
-                }
-                return Err(error);
-            }
-        };
+        );
         results.push(result);
     }
     let has_success = results.iter().any(|result| result.success_count > 0);
@@ -246,13 +229,14 @@ fn benchmark_request(
     iterations: usize,
     session: &mut Option<TextQuerySession>,
     progress: Option<&ui::UiProgress>,
-) -> Result<RequestBenchmark> {
+) -> RequestBenchmark {
     let mut warmup_failure_count = 0;
     for _ in 0..warmup {
-        if query_session(session, request).is_err() {
+        let outcome = prepare_session(session, connection, timeout_ms)
+            .and_then(|()| query_session(session, request));
+        if outcome.is_err() {
             warmup_failure_count += 1;
-            reconnect_session(session, connection, timeout_ms)
-                .context("failed to reconnect after a warmup request error")?;
+            session.take();
         }
         if let Some(progress) = progress {
             progress.inc(1);
@@ -263,9 +247,7 @@ fn benchmark_request(
     let mut successful_latencies = Vec::with_capacity(iterations);
     let mut last_response = None;
     for iteration in 1..=iterations {
-        let started = Instant::now();
-        let outcome = query_session(session, request);
-        let elapsed = started.elapsed();
+        let (outcome, elapsed) = measured_query(session, connection, timeout_ms, request);
         let elapsed_ms = duration_ms(elapsed);
         match outcome {
             Ok(response) => {
@@ -291,10 +273,6 @@ fn benchmark_request(
                     error: Some(format!("{error:#}")),
                 });
                 session.take();
-                if iteration < iterations {
-                    reconnect_session(session, connection, timeout_ms)
-                        .context("failed to reconnect after a measured request error")?;
-                }
             }
         }
         if let Some(progress) = progress {
@@ -302,13 +280,46 @@ fn benchmark_request(
         }
     }
 
-    Ok(summarize_request(
+    summarize_request(
         request,
         warmup_failure_count,
         samples,
         successful_latencies,
         last_response,
-    ))
+    )
+}
+
+fn measured_query(
+    session: &mut Option<TextQuerySession>,
+    connection: &QueryConnection,
+    timeout_ms: u64,
+    request: &str,
+) -> (Result<String>, Duration) {
+    if session.is_none() {
+        let started = Instant::now();
+        if let Err(error) = reconnect_session(session, connection, timeout_ms) {
+            return (
+                Err(error.context("failed to reconnect before a measured request")),
+                started.elapsed(),
+            );
+        }
+    }
+
+    let started = Instant::now();
+    let outcome = query_session(session, request);
+    (outcome, started.elapsed())
+}
+
+fn prepare_session(
+    session: &mut Option<TextQuerySession>,
+    connection: &QueryConnection,
+    timeout_ms: u64,
+) -> Result<()> {
+    if session.is_none() {
+        reconnect_session(session, connection, timeout_ms)
+            .context("failed to reconnect before a warmup request")?;
+    }
+    Ok(())
 }
 
 fn query_session(session: &mut Option<TextQuerySession>, request: &str) -> Result<String> {
@@ -763,6 +774,52 @@ mod tests {
         assert_eq!(report["results"][0]["success_count"], 0);
         assert_eq!(report["results"][0]["timeout_count"], 1);
         assert_eq!(report["results"][0]["error_count"], 0);
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn transport_benchmark_records_reconnect_failures_and_finishes_report() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            drop(listener);
+            let mut reader = BufReader::new(stream);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            assert_eq!(request, "*IDN?\n");
+            thread::sleep(Duration::from_millis(100));
+        });
+        let output = temporary_path("bench-reconnect-failure.json");
+        let connection = format!("tcp://{address}");
+        let requests = vec!["*IDN?".to_string()];
+
+        let error = run_transport(TransportOptions {
+            connection: &connection,
+            protocol: BenchProtocol::Scpi,
+            requests: &requests,
+            iterations: 2,
+            warmup: 0,
+            timeout_ms: 20,
+            output: Some(&output),
+            json: false,
+            force: false,
+        })
+        .unwrap_err();
+        server.join().unwrap();
+
+        assert!(error.to_string().contains("without a successful response"));
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(report["results"][0]["attempts"], 2);
+        assert_eq!(report["results"][0]["timeout_count"], 1);
+        assert_eq!(report["results"][0]["error_count"], 1);
+        assert!(
+            report["results"][0]["samples"][1]["error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to reconnect")
+        );
         fs::remove_file(output).unwrap();
     }
 
