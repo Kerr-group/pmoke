@@ -133,6 +133,7 @@ const payload = JSON.parse(await readFile(path.join(output, '_meta/payload.json'
 if (!payload.sourceRevision || payload.sourceRevision !== sbom.metadata.component.version) {
   throw new Error('M6 release metadata does not identify one source revision');
 }
+await access(path.join(output, '_next/static', payload.sourceRevision, '_buildManifest.js'));
 const checksumLines = (await readFile(path.join(output, 'SHA256SUMS'), 'utf8')).trim().split('\n');
 const checksummed = new Set();
 for (const line of checksumLines) {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { componentsFrom, dependencyInventory, licenseFailures } from './release-metadata.mjs';
+import { componentsFrom, dependencyInventory, licenseFailures, sourceRevision } from './release-metadata.mjs';
 
 const output = path.resolve('out');
 const metadata = path.join(output, '_meta');
@@ -17,7 +17,7 @@ const sbom = {
     component: {
       type: 'application',
       name: 'pmoke-documentation',
-      version: process.env.GITHUB_SHA ?? 'development',
+      version: sourceRevision,
     },
   },
   components: componentsFrom(inventory),

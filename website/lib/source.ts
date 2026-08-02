@@ -26,6 +26,14 @@ export const source = loader({
   plugins: [],
 });
 
+export function getSortedPages(...args: Parameters<(typeof source)['getPages']>) {
+  return source.getPages(...args).toSorted((left, right) => {
+    const leftKey = `${left.locale ?? ''}:${left.url}`;
+    const rightKey = `${right.locale ?? ''}:${right.url}`;
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+}
+
 export function getPageMarkdownUrl(page: (typeof source)['$inferPage']) {
   const last = page.slugs.at(-1);
   const segments = last

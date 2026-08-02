@@ -1,7 +1,9 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
+export const sourceRevision =
+  process.env.GITHUB_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { cwd: '..', encoding: 'utf8' }).trim();
 
 export const allowedLicenses = new Set([
   '0BSD',

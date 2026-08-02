@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { sourceRevision } from './release-metadata.mjs';
 
 const output = path.resolve('out');
 const records = [];
@@ -24,7 +25,7 @@ await writeFile(path.join(output, '.nojekyll'), '');
 await scan(output);
 records.sort((left, right) => right.bytes - left.bytes);
 const summary = {
-  sourceRevision: process.env.GITHUB_SHA ?? 'development',
+  sourceRevision,
   totalBytes: records.reduce((sum, item) => sum + item.bytes, 0),
   searchBytes: records.filter((item) => item.path.startsWith('api/search')).reduce((sum, item) => sum + item.bytes, 0),
   wasmBytes: records.filter((item) => item.path.startsWith('wasm/')).reduce((sum, item) => sum + item.bytes, 0),
