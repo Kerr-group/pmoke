@@ -37,6 +37,8 @@ binary when running browser tests.
 - `app/llm` and `app/llms*.txt`: agent-facing text exports
 - `crates/pmoke-web-wasm`: pure Rust browser boundary
 - `public/workers/signal.worker.js`: off-main-thread Wasm loader
+- `public/workers/waveform-analyzer.worker.js`: bounded lock-in/Kerr analysis Worker
+- `public/fixtures/`: CC0 deterministic waveform golden fixtures
 - `scripts/verify-export.mjs`: base-path, locale, and payload gates
 
 Generated `public/wasm`, `.next`, and `out` files are intentionally untracked.

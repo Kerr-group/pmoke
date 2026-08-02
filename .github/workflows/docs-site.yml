@@ -5,6 +5,7 @@ on:
     paths:
       - "website/**"
       - "crates/pmoke-config-core/**"
+      - "crates/pmoke-analysis-core/**"
       - "crates/pmoke-web-wasm/**"
       - "src/**"
       - "xtask/**"
@@ -15,6 +16,7 @@ on:
     paths:
       - "website/**"
       - "crates/pmoke-config-core/**"
+      - "crates/pmoke-analysis-core/**"
       - "crates/pmoke-web-wasm/**"
       - "src/**"
       - "xtask/**"
@@ -49,10 +51,11 @@ jobs:
         with:
           tool: wasm-pack@0.15.0
 
-      - name: Validate shared config core
+      - name: Validate shared config and analysis cores
         run: |
-          cargo test --locked -p pmoke-config-core -p pmoke-web-wasm
-          cargo clippy --locked -p pmoke-config-core -p pmoke-web-wasm --all-targets -- -D warnings
+          cargo test --locked -p pmoke-config-core -p pmoke-analysis-core -p pmoke-web-wasm
+          cargo clippy --locked -p pmoke-config-core -p pmoke-analysis-core -p pmoke-web-wasm --all-targets -- -D warnings
+          cargo check --locked -p pmoke-analysis-core --target wasm32-unknown-unknown
           cargo check --locked -p pmoke-web-wasm --target wasm32-unknown-unknown
 
       - name: Verify generated references

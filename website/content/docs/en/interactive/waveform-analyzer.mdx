@@ -1,0 +1,22 @@
+---
+title: Waveform Analyzer
+description: Browser-local lock-in, phase rotation, and harmonics Kerr analysis with native numerical parity.
+---
+
+The analyzer runs the same Rust kernels used by native pmoke inside a dedicated Web
+Worker. Synthetic signals and local CSV files remain in the browser. Plot traces are
+decimated independently; every exported value comes from the complete analysis input.
+
+<WaveformAnalyzer locale="en" />
+
+## Parity boundary
+
+`boxcar_legacy`, phase rotation, and harmonics Kerr calculation are native-equivalent
+in M4. FIR filters, `sync_iir_zero_phase`, phase fitting, and standard Kerr remain
+outside browser parity. Use native pmoke for production analysis that requires those
+paths.
+
+CSV input accepts `time,signal` or one signal column. A time column must be finite,
+strictly increasing, and uniform. One-column input uses the sample-rate control.
+The hard limits are 16 MiB, 1,000,000 input samples, and 1,500,000 total harmonic
+output points.

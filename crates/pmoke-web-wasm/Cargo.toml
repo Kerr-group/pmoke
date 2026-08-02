@@ -15,3 +15,4 @@ wasm-bindgen = "0.2.126"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 pmoke-config-core = { path = "../pmoke-config-core" }
+pmoke-analysis-core = { path = "../pmoke-analysis-core" }

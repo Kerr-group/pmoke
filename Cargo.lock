@@ -1288,6 +1288,7 @@ dependencies = [
  "jiff",
  "num-complex",
  "numpy",
+ "pmoke-analysis-core",
  "pmoke-config-core",
  "pyo3",
  "ratatui",
@@ -1299,6 +1300,14 @@ dependencies = [
  "toml",
  "unicode-width",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "pmoke-analysis-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1316,6 +1325,7 @@ dependencies = [
 name = "pmoke-web-wasm"
 version = "0.1.0"
 dependencies = [
+ "pmoke-analysis-core",
  "pmoke-config-core",
  "serde",
  "serde_json",

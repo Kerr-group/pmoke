@@ -125,34 +125,61 @@ class KerrHarmonicsAnalyser:
         kerr = self.get_kerr(x0, li2_in, li3_in, li4_in)
         kerr = kerr * factor
 
-        plot_error = None
-        if save or interactive:
-            try:
-                gs = _load_gsplot()
-
-                indices = decimation_indices(kerr, max_points, decimation)
-                t_plot = t[indices]
-                x_plot = x[indices]
-                kerr_plot = kerr[indices]
-
-                axs = gs.axes(
-                    True,
-                    size=(6, 6),
-                    mosaic="A",
-                    ion=interactive,
-                )
-
-                gs.scatter_colormap(axs[0], x_plot, kerr_plot * 1e3, t_plot)
-                axs[0].grid()
-                title = fig_name + " using Harmonics"
-                gs.title(title)
-
-                gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
-                finish_plot(output_path, interactive)
-            except Exception as exc:
-                plot_error = str(exc)
+        plot_error = self.plot(
+            t,
+            x,
+            kerr,
+            xlabel,
+            fig_name,
+            save,
+            interactive,
+            output_path,
+            max_points,
+            decimation,
+        )
 
         return {
             "kerr": kerr,
             "plot_error": plot_error,
         }
+
+    @staticmethod
+    def plot(
+        t: NDArray,
+        x: NDArray,
+        kerr: NDArray,
+        xlabel: str,
+        fig_name: str,
+        save: bool,
+        interactive: bool,
+        output_path,
+        max_points: int,
+        decimation: str,
+    ):
+        if not (save or interactive):
+            return None
+        try:
+            gs = _load_gsplot()
+
+            indices = decimation_indices(kerr, max_points, decimation)
+            t_plot = t[indices]
+            x_plot = x[indices]
+            kerr_plot = kerr[indices]
+
+            axs = gs.axes(
+                True,
+                size=(6, 6),
+                mosaic="A",
+                ion=interactive,
+            )
+
+            gs.scatter_colormap(axs[0], x_plot, kerr_plot * 1e3, t_plot)
+            axs[0].grid()
+            title = fig_name + " using Harmonics"
+            gs.title(title)
+
+            gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
+            finish_plot(output_path, interactive)
+            return None
+        except Exception as exc:
+            return str(exc)
