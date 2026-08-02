@@ -9,6 +9,7 @@ use std::f64::consts::PI;
 
 const MAX_SYNC_AVERAGE_SAMPLES: usize = 1_000_000;
 const PHASE_RESYNC_INTERVAL: usize = 4096;
+#[cfg(test)]
 const LEGACY_EDGE_BUFFER_MIN_STRIDE: usize = 5;
 
 #[cfg(test)]
@@ -21,6 +22,7 @@ pub enum RefType {
 pub struct LockinProcessor<'a> {
     t: TimeAxisRef<'a>,
     data: &'a [f64],
+    finite_data: pmoke_analysis_core::FiniteSignal<'a>,
     omega_tref: f64,
     params: LockinParams,
     filter: Option<FilterDesign>,
@@ -96,6 +98,13 @@ impl<'a> LockinProcessor<'a> {
                 data.len()
             );
         }
+        if !t.value_at(0).is_finite() {
+            bail!("lock-in start time must be finite");
+        }
+        if !omega_tref.is_finite() {
+            bail!("lock-in reference phase must be finite");
+        }
+        let finite_data = pmoke_analysis_core::FiniteSignal::new(data)?;
 
         let params = LockinParams::from_geometry(
             t.len(),
@@ -115,6 +124,7 @@ impl<'a> LockinProcessor<'a> {
         Ok(Self {
             t,
             data,
+            finite_data,
             omega_tref,
             params,
             filter,
@@ -371,6 +381,7 @@ impl<'a> LockinProcessor<'a> {
         (re, im)
     }
 
+    #[cfg(test)]
     fn compute_real_imag_mixed_signal_range(
         &self,
         harmonic: usize,
@@ -512,180 +523,36 @@ impl<'a> LockinProcessor<'a> {
     }
 
     fn compute_legacy_lockin_pair(&self, harmonic: usize) -> HarmonicLockinResult {
-        let (i_start, i_end) = (self.params.i_start, self.params.i_end);
-        let raw_start = i_start * self.params.stride - self.params.n_half - 1;
-        let raw_end = i_end * self.params.stride + self.params.n_half + 2;
-        let (mut mixed_re, mut mixed_im) =
-            self.compute_real_imag_mixed_signal_range(harmonic, raw_start, raw_end);
-
-        if self.params.stride < LEGACY_EDGE_BUFFER_MIN_STRIDE {
-            return self.compute_legacy_lockin_pair_full_prefix(raw_start, &mixed_re, &mixed_im);
-        }
-
-        let m = if i_end >= i_start {
-            i_end - i_start + 1
-        } else {
-            0
-        };
-        let edges = (0..m)
-            .map(|k| {
-                let i_base = (i_start + k) * self.params.stride;
-                let neg_idx0 = i_base - self.params.n_half - raw_start;
-                let pos_idx0 = i_base + self.params.n_half - raw_start;
-                LegacyMixedEdges {
-                    neg0_re: mixed_re[neg_idx0],
-                    pos0_re: mixed_re[pos_idx0],
-                    neg1_re: mixed_re[neg_idx0 - 1],
-                    pos1_re: mixed_re[pos_idx0 + 1],
-                    neg0_im: mixed_im[neg_idx0],
-                    pos0_im: mixed_im[pos_idx0],
-                    neg1_im: mixed_im[neg_idx0 - 1],
-                    pos1_im: mixed_im[pos_idx0 + 1],
-                }
-            })
-            .collect::<Vec<_>>();
-        inclusive_prefix_sum_in_place(&mut mixed_re);
-        inclusive_prefix_sum_in_place(&mut mixed_im);
-
-        let mut li_x = Vec::with_capacity(m);
-        let mut li_y = Vec::with_capacity(m);
-
-        for (k, edge) in edges.into_iter().enumerate() {
-            let i_idx = i_start + k;
-            let i_base = i_idx * self.params.stride;
-            let neg_idx0 = i_base - self.params.n_half - raw_start;
-            let pos_idx0 = i_base + self.params.n_half - raw_start;
-            let integ_re = trapezoid_integral_from_inclusive_prefix(
-                &mixed_re,
-                neg_idx0,
-                pos_idx0,
-                edge.neg0_re,
-                edge.pos0_re,
-            ) * self.params.dt;
-            let integ_im = trapezoid_integral_from_inclusive_prefix(
-                &mixed_im,
-                neg_idx0,
-                pos_idx0,
-                edge.neg0_im,
-                edge.pos0_im,
-            ) * self.params.dt;
-
-            let edge_dt = self.params.t_half - (self.params.n_half as f64) * self.params.dt;
-
-            let edge_neg_re =
-                legacy_edge_integral(edge.neg0_re, edge.neg1_re, edge_dt, self.params.dt);
-            let edge_pos_re =
-                legacy_edge_integral(edge.pos0_re, edge.pos1_re, edge_dt, self.params.dt);
-            let edge_neg_im =
-                legacy_edge_integral(edge.neg0_im, edge.neg1_im, edge_dt, self.params.dt);
-            let edge_pos_im =
-                legacy_edge_integral(edge.pos0_im, edge.pos1_im, edge_dt, self.params.dt);
-
-            let scale = 1.0 / (2.0 * self.params.t_half);
-            li_x.push(-(integ_im + edge_neg_im + edge_pos_im) * scale);
-            li_y.push((integ_re + edge_neg_re + edge_pos_re) * scale);
-        }
-
+        let output = pmoke_analysis_core::analyze_boxcar_legacy_pair_finite(
+            self.finite_data,
+            pmoke_analysis_core::BoxcarLegacySettings {
+                start_time_s: self.t.value_at(0),
+                sample_interval_s: self.params.dt,
+                reference_frequency_hz: self.params.f_ref,
+                reference_phase_rad: self.omega_tref,
+                half_window_cycles: self.params.t_half * self.params.f_ref,
+                stride_samples: self.params.stride,
+                harmonic,
+            },
+        )
+        .expect("boxcar settings and waveform are validated by LockinProcessor::new");
+        debug_assert_eq!(
+            output.metadata.first_input_index,
+            self.params.i_start * self.params.stride
+        );
+        debug_assert_eq!(
+            output.metadata.last_input_index,
+            self.params.i_end * self.params.stride
+        );
         HarmonicLockinResult {
-            li_x,
-            li_y,
-            mixed_signal: None,
-        }
-    }
-
-    fn compute_legacy_lockin_pair_full_prefix(
-        &self,
-        raw_start: usize,
-        mixed_re: &[f64],
-        mixed_im: &[f64],
-    ) -> HarmonicLockinResult {
-        let prefix_re = prefix_sum(mixed_re);
-        let prefix_im = prefix_sum(mixed_im);
-        let (i_start, i_end) = (self.params.i_start, self.params.i_end);
-        let m = i_end - i_start + 1;
-        let mut li_x = Vec::with_capacity(m);
-        let mut li_y = Vec::with_capacity(m);
-
-        for i_idx in i_start..=i_end {
-            let i_base = i_idx * self.params.stride;
-            let neg_idx0 = i_base - self.params.n_half - raw_start;
-            let pos_idx0 = i_base + self.params.n_half - raw_start;
-            let integ_re = trapezoid_integral_from_prefix(mixed_re, &prefix_re, neg_idx0, pos_idx0)
-                * self.params.dt;
-            let integ_im = trapezoid_integral_from_prefix(mixed_im, &prefix_im, neg_idx0, pos_idx0)
-                * self.params.dt;
-
-            let edge_dt = self.params.t_half - (self.params.n_half as f64) * self.params.dt;
-            let edge_neg_re = legacy_edge_integral(
-                mixed_re[neg_idx0],
-                mixed_re[neg_idx0 - 1],
-                edge_dt,
-                self.params.dt,
-            );
-            let edge_pos_re = legacy_edge_integral(
-                mixed_re[pos_idx0],
-                mixed_re[pos_idx0 + 1],
-                edge_dt,
-                self.params.dt,
-            );
-            let edge_neg_im = legacy_edge_integral(
-                mixed_im[neg_idx0],
-                mixed_im[neg_idx0 - 1],
-                edge_dt,
-                self.params.dt,
-            );
-            let edge_pos_im = legacy_edge_integral(
-                mixed_im[pos_idx0],
-                mixed_im[pos_idx0 + 1],
-                edge_dt,
-                self.params.dt,
-            );
-
-            let scale = 1.0 / (2.0 * self.params.t_half);
-            li_x.push(-(integ_im + edge_neg_im + edge_pos_im) * scale);
-            li_y.push((integ_re + edge_neg_re + edge_pos_re) * scale);
-        }
-
-        HarmonicLockinResult {
-            li_x,
-            li_y,
+            li_x: output.x,
+            li_y: output.y,
             mixed_signal: None,
         }
     }
 }
 
-#[derive(Clone, Copy)]
-struct LegacyMixedEdges {
-    neg0_re: f64,
-    pos0_re: f64,
-    neg1_re: f64,
-    pos1_re: f64,
-    neg0_im: f64,
-    pos0_im: f64,
-    neg1_im: f64,
-    pos1_im: f64,
-}
-
-fn inclusive_prefix_sum_in_place(values: &mut [f64]) {
-    let mut accumulator = 0.0;
-    for value in values {
-        accumulator += *value;
-        *value = accumulator;
-    }
-}
-
-fn trapezoid_integral_from_inclusive_prefix(
-    prefix: &[f64],
-    start: usize,
-    end: usize,
-    start_value: f64,
-    end_value: f64,
-) -> f64 {
-    debug_assert!(start < end);
-    let interior = prefix[end - 1] - prefix[start];
-    0.5 * start_value + interior + 0.5 * end_value
-}
-
+#[cfg(test)]
 fn prefix_sum(values: &[f64]) -> Vec<f64> {
     let mut prefix = Vec::with_capacity(values.len() + 1);
     prefix.push(0.0);
@@ -697,12 +564,14 @@ fn prefix_sum(values: &[f64]) -> Vec<f64> {
     prefix
 }
 
+#[cfg(test)]
 fn trapezoid_integral_from_prefix(values: &[f64], prefix: &[f64], start: usize, end: usize) -> f64 {
     debug_assert!(start < end);
     debug_assert_eq!(prefix.len(), values.len() + 1);
     0.5 * values[start] + (prefix[end] - prefix[start + 1]) + 0.5 * values[end]
 }
 
+#[cfg(test)]
 fn legacy_edge_integral(y0: f64, y1: f64, edge_dt: f64, dt: f64) -> f64 {
     let ym = (y1 * edge_dt + y0 * (dt - edge_dt)) / dt;
     edge_dt * 0.5 * (y0 + ym)

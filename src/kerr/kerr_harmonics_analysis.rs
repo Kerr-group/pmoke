@@ -27,6 +27,25 @@ pub struct KerrHarmonicsAnalysisInput<'a> {
 impl KerrHarmonicsAnalyser {
     pub fn analyse(&self, input: KerrHarmonicsAnalysisInput<'_>) -> Result<Vec<f64>> {
         let output = crate::plot::prepare_plot_output(input.plot, input.output_path)?;
+        let harmonic = |index: usize, label: &str| {
+            input
+                .ys
+                .get(index)
+                .with_context(|| format!("missing rotated {label} harmonic input"))
+        };
+        let kerr = pmoke_analysis_core::calculate_harmonics_kerr(
+            harmonic(2, "second")?,
+            harmonic(4, "third")?,
+            harmonic(6, "fourth")?,
+            harmonic(10, "sixth")?,
+            input.factor,
+        )
+        .context("failed to calculate harmonics Kerr angle")?
+        .values_rad;
+        if output.is_none() && !(input.plot.enabled && input.plot.interactive) {
+            return Ok(kerr);
+        }
+
         Python::attach(|py| {
             let analysis_mod = python::cached_module(
                 py,
@@ -38,7 +57,7 @@ impl KerrHarmonicsAnalyser {
             .context("failed to load kerr_harmonics_analysis.py")?;
             let t_obj = python::f64_array1(py, input.t);
             let x_obj = python::f64_array1(py, input.x);
-            let ys_obj = python::f64_array2(py, input.ys)?;
+            let kerr_obj = python::f64_array1(py, &kerr);
             let output_string = output.map(|path| path.to_string_lossy().into_owned());
 
             let analyser = analysis_mod
@@ -46,14 +65,13 @@ impl KerrHarmonicsAnalyser {
                 .call0()
                 .context("failed to create KerrHarmonicsAnalyser instance")?;
 
-            let res = analyser
+            let plot_error: Option<String> = analyser
                 .call_method1(
-                    "analyse",
+                    "plot",
                     (
                         t_obj,
                         x_obj,
-                        ys_obj,
-                        input.factor,
+                        kerr_obj,
                         input.xlabel,
                         input.fig_name,
                         output_string.is_some(),
@@ -63,10 +81,8 @@ impl KerrHarmonicsAnalyser {
                         input.plot.decimation.as_str(),
                     ),
                 )
-                .context("python KerrHarmonicsAnalyser.analyse(...) failed")?;
-
-            let kerr = python::extract_f64_array1(&res.get_item("kerr")?)?;
-            let plot_error: Option<String> = res.get_item("plot_error")?.extract()?;
+                .context("python KerrHarmonicsAnalyser.plot(...) failed")?
+                .extract()?;
             crate::plot::finish_embedded_plot(input.plot, output, plot_error, "Kerr harmonics")?;
 
             Ok(kerr)

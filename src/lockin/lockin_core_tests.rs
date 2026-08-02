@@ -758,6 +758,27 @@ fn rejects_short_or_misaligned_input_without_panicking() {
         .err()
         .expect("misaligned input must be rejected");
     assert!(misaligned.to_string().contains("signal length"));
+
+    let time = (0..100)
+        .map(|index| index as f64 * 1.0e-4)
+        .collect::<Vec<_>>();
+    let mut non_finite_signal = vec![0.0; time.len()];
+    non_finite_signal[42] = f64::NAN;
+    let non_finite = LockinProcessor::new(&time, &non_finite_signal, 1_000.0, 0.0, &lockin)
+        .err()
+        .expect("non-finite signal must be rejected");
+    assert!(non_finite.to_string().contains("sample 42"));
+
+    let phase = LockinProcessor::new(
+        &time,
+        &vec![0.0; time.len()],
+        1_000.0,
+        f64::INFINITY,
+        &lockin,
+    )
+    .err()
+    .expect("non-finite reference phase must be rejected");
+    assert!(phase.to_string().contains("reference phase"));
 }
 
 #[test]
