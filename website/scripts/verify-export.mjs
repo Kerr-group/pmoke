@@ -1,5 +1,6 @@
 import { access, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { gzipSync } from 'node:zlib';
 
 const output = path.resolve('out');
 const required = [
@@ -17,6 +18,7 @@ const required = [
   'llm/ja/content.md',
   'wasm/pmoke_web_wasm.js',
   'wasm/pmoke_web_wasm_bg.wasm',
+  'workers/config-validator.worker.js',
   'workers/signal.worker.js',
   'og.png',
   'robots.txt',
@@ -51,9 +53,15 @@ if (!robots.includes('Sitemap: https://kerr-group.github.io/pmoke/sitemap.xml\n'
 }
 
 const wasm = await stat(path.join(output, 'wasm/pmoke_web_wasm_bg.wasm'));
-if (wasm.size > 500 * 1024) throw new Error(`M3 Wasm budget exceeded: ${wasm.size} bytes`);
+if (wasm.size > 600 * 1024) throw new Error(`M3 Wasm raw budget exceeded: ${wasm.size} bytes`);
+const wasmCompressed = gzipSync(await readFile(path.join(output, 'wasm/pmoke_web_wasm_bg.wasm')), {
+  level: 9,
+});
+if (wasmCompressed.byteLength > 210 * 1024) {
+  throw new Error(`M3 Wasm gzip budget exceeded: ${wasmCompressed.byteLength} bytes`);
+}
 
 const search = await stat(path.join(output, 'api/search'));
-if (search.size > 2500 * 1024) throw new Error(`M2 search budget exceeded: ${search.size} bytes`);
+if (search.size > 900 * 1024) throw new Error(`M2 search budget exceeded: ${search.size} bytes`);
 
 console.log(`Verified ${required.length} static artifacts under /pmoke/.`);

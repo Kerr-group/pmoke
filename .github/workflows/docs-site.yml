@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "website/**"
+      - "crates/pmoke-config-core/**"
       - "crates/pmoke-web-wasm/**"
       - "src/**"
       - "xtask/**"
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - "website/**"
+      - "crates/pmoke-config-core/**"
       - "crates/pmoke-web-wasm/**"
       - "src/**"
       - "xtask/**"
@@ -46,6 +48,12 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack@0.15.0
+
+      - name: Validate shared config core
+        run: |
+          cargo test --locked -p pmoke-config-core -p pmoke-web-wasm
+          cargo clippy --locked -p pmoke-config-core -p pmoke-web-wasm --all-targets -- -D warnings
+          cargo check --locked -p pmoke-web-wasm --target wasm32-unknown-unknown
 
       - name: Verify generated references
         run: |

@@ -28,7 +28,13 @@ for (const locale of locales) {
 test('representative routes have no serious accessibility violations', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser accessibility gate');
 
-  for (const route of ['/pmoke/en/', '/pmoke/ja/', '/pmoke/en/docs/quickstart/', '/pmoke/ja/docs/quickstart/']) {
+  for (const route of [
+    '/pmoke/en/',
+    '/pmoke/ja/',
+    '/pmoke/en/docs/quickstart/',
+    '/pmoke/ja/docs/quickstart/',
+    '/pmoke/en/docs/configuration/validation/',
+  ]) {
     await page.goto(route);
     const result = await new AxeBuilder({ page }).analyze();
     const blocking = result.violations.filter(
@@ -36,6 +42,48 @@ test('representative routes have no serious accessibility violations', async ({ 
     );
     expect(blocking, `${route}: ${blocking.map((violation) => violation.id).join(', ')}`).toEqual([]);
   }
+});
+
+test('config validator stays responsive and reports canonical v4 diagnostics', async ({ page }, testInfo) => {
+  await page.goto('/pmoke/en/docs/configuration/validation/');
+  const validator = page.locator('.config-validator');
+  await expect(validator).toBeVisible();
+  await expect(validator.getByText('Valid config', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(validator.getByText('1 / 2 / 3', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+
+  await validator.getByRole('button', { name: 'Load diagnostic sample' }).click();
+  await expect(validator.getByText('Config errors', { exact: true })).toBeVisible();
+  await expect(validator.getByText('duplicate_channel', { exact: true })).toBeVisible();
+  await expect(validator.getByText('invalid_range', { exact: true }).first()).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('config-validator.png'), fullPage: true });
+});
+
+test('config validator recovers from a Wasm load failure without losing input', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser failure-mode gate');
+
+  await page.route('**/wasm/pmoke_web_wasm.js', (route) => route.abort());
+  await page.goto('/pmoke/ja/docs/configuration/validation/');
+  const validator = page.locator('.config-validator');
+  await expect(validator.getByText('検証機能の利用不可', { exact: true })).toBeVisible();
+  await expect(validator.getByLabel('設定入力')).toHaveValue(/version = 4/u);
+
+  await page.unroute('**/wasm/pmoke_web_wasm.js');
+  await validator.getByRole('button', { name: 'Wasm 再読込' }).click();
+  await expect(validator.getByText('有効な設定', { exact: true })).toBeVisible({ timeout: 15_000 });
+});
+
+test('config validator handles the input cap off the main thread', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser size-limit gate');
+
+  await page.goto('/pmoke/en/docs/configuration/validation/');
+  const validator = page.locator('.config-validator');
+  await validator.getByLabel('Configuration input').fill('x'.repeat(1_048_577));
+  await expect(validator.getByText('input_too_large', { exact: true })).toBeVisible();
+  const validSample = validator.getByRole('button', { name: 'Load valid sample' });
+  await expect(validSample).toBeEnabled();
+  await validSample.click();
+  await expect(validator.getByText('Valid config', { exact: true })).toBeVisible();
 });
 
 test('documentation language selection preserves the current slug', async ({ page }, testInfo) => {

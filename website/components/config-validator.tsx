@@ -1,302 +1,378 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { CheckCircle2, AlertTriangle, XCircle, Copy, Download, RefreshCw, Sparkles, FileCode } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  Download,
+  FileCode2,
+  RefreshCw,
+  RotateCcw,
+  WandSparkles,
+  X,
+} from 'lucide-react';
+import { basePath } from '@/lib/shared';
+import { configSchemaVersion, sourceCommit } from '@/lib/version';
 
-interface Diagnostic {
-  kind: 'parse' | 'schema' | 'validation' | 'migration' | 'io';
-  path?: string;
+type Diagnostic = {
+  code: string;
+  severity: 'error' | 'warning';
+  path: string | null;
+  span: { start: number; end: number; line: number; column: number } | null;
   message: string;
-  suggestion?: string;
-}
+  suggestion: string | null;
+};
 
-interface ConfigSummary {
+type ConfigSummary = {
   version: number;
-  scope_model?: string;
-  scope_connection?: string;
-  generator_model?: string;
-  generator_connection?: string;
+  scope_model: string;
+  scope_connection: string;
+  generator_model: string | null;
+  generator_connection: string | null;
   sensor_channels: number[];
-  reference_channel?: number;
+  reference_channel: number;
   signal_channels: number[];
+  lockin_filter: string;
   lockin_workers: number;
   plot_mode: string;
-}
+};
 
-interface ValidationReport {
+type ValidationReport = {
+  format_version: number;
+  core_version: string;
+  core_commit: string;
+  schema_version: number | null;
   valid: boolean;
-  version?: number;
   diagnostics: Diagnostic[];
-  warnings: string[];
-  normalized_toml?: string;
-  summary?: ConfigSummary;
-}
+  normalized_toml: string | null;
+  summary: ConfigSummary | null;
+};
+
+type WorkerResponse =
+  | { type: 'ready'; build: string }
+  | { type: 'result'; id: number; report: ValidationReport }
+  | { type: 'error'; id?: number; message: string };
+
+const REPORT_FORMAT_VERSION = 1;
 
 const DEFAULT_V4_SAMPLE = `version = 4
 
 [scope]
-model = "dsox1204a"
-connection = "usbtmc://0x0957/0x1799/MY12345678"
-
-[generator]
-model = "dg1022z"
-connection = "usbtmc://0x1ab1/0x0642/DG12345678"
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
 
 [data]
-output = "both"
-input = "fetch"
+output = "raw"
+input = "raw"
 screenshot = true
 
+[[sensors]]
+channel = 1
+scale = { max_abs = 55.0, polarity = -1 }
+label = '$\\mu_0H$'
+unit = "T"
+
 [pulse]
-background_before = { start = -1e-6, end = -0.1e-6 }
-background_after = { start = 0.1e-6, end = 1.0e-6 }
+background_before = { start = -5e-3, end = -0.1e-3 }
+background_after = { start = 43e-3, end = 46e-3 }
 
 [reference]
-channel = 1
-fft_window = "hann"
-stride_samples = 1
-window_samples = 1000
+channel = 2
+fft_window = { start = 0.0, end = 15e-3 }
+stride_samples = 10_000
+window_samples = 1_000
 
 [lockin]
-signal_channels = [1, 2]
-workers = 4
-stride_samples = 1
+signal_channels = [3]
+workers = 2
+stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 
 [phase]
-offsets = [0.0, 0.0]
+offsets = [0, 0, 0, 0, 0, 0]
 
 [kerr]
 sensor = 1
-method = "polar"
-factor = 1.0
+method = "harmonics"
+factor = -1.0
 
 [plot]
 mode = "save"
-max_points = 10000
+decimation = "min_max"
 `;
 
-const INVALID_SAMPLE = `version = 4
+const INVALID_SAMPLE = DEFAULT_V4_SAMPLE.replace('channel = 2', 'channel = 1').replace(
+  'workers = 2',
+  'workers = 0',
+);
 
-[scope]
-# Missing connection URI!
-model = "dsox1204a"
-
-[lockin]
-# Invalid negative worker count
-workers = -2
-`;
+const copy = {
+  en: {
+    title: 'TOML config validator',
+    local: 'Browser-local Wasm',
+    sample: 'Load valid sample',
+    invalid: 'Load diagnostic sample',
+    input: 'Configuration input',
+    copy: 'Copy',
+    copied: 'Copied',
+    download: 'Download',
+    normalize: 'Use normalized config',
+    loading: 'Loading Wasm',
+    validating: 'Validating',
+    valid: 'Valid config',
+    invalidStatus: 'Config errors',
+    unavailable: 'Validator unavailable',
+    retry: 'Retry Wasm',
+    diagnostics: 'Diagnostics',
+    noDiagnostics: 'No diagnostics',
+    summary: 'Resolved structure',
+    mismatch: 'Validator build does not match this documentation build.',
+    copySuccess: 'Configuration copied to clipboard.',
+    copyFailure: 'Clipboard copy failed.',
+    normalized: 'Normalized configuration loaded.',
+    workerFailure: 'Wasm validator failed. Input remains available.',
+    samples: 'Configuration samples',
+  },
+  ja: {
+    title: 'TOML 設定検証',
+    local: 'ブラウザ内 Wasm',
+    sample: '正常例',
+    invalid: '診断例',
+    input: '設定入力',
+    copy: 'コピー',
+    copied: 'コピー完了',
+    download: 'ダウンロード',
+    normalize: '正規化結果の反映',
+    loading: 'Wasm 読込中',
+    validating: '検証中',
+    valid: '有効な設定',
+    invalidStatus: '設定エラー',
+    unavailable: '検証機能の利用不可',
+    retry: 'Wasm 再読込',
+    diagnostics: '診断',
+    noDiagnostics: '診断なし',
+    summary: '解決済み構造',
+    mismatch: 'ドキュメントと検証コアのビルド不一致。',
+    copySuccess: '設定のクリップボードコピー完了。',
+    copyFailure: 'クリップボードコピー失敗。',
+    normalized: '正規化設定の反映完了。',
+    workerFailure: 'Wasm検証コアの障害。入力内容の保持。',
+    samples: '設定サンプル',
+  },
+} as const;
 
 export function ConfigValidator({ locale = 'en' }: { locale?: 'en' | 'ja' }) {
-  const [tomlInput, setTomlInput] = useState(DEFAULT_V4_SAMPLE);
-  const [report, setReport] = useState<ValidationReport | null>(null);
-  const [loading, setLoading] = useState(true);
+  const text = copy[locale];
+  const [input, setInput] = useState(DEFAULT_V4_SAMPLE);
+  const [report, setReport] = useState<ValidationReport>();
+  const [workerState, setWorkerState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [validating, setValidating] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [wasmModule, setWasmModule] = useState<any>(null);
-  const ariaAnnouncementRef = useRef<HTMLDivElement>(null);
-
-  const isJa = locale === 'ja';
+  const [announcement, setAnnouncement] = useState('');
+  const [workerEpoch, setWorkerEpoch] = useState(0);
+  const workerRef = useRef<Worker | null>(null);
+  const requestId = useRef(0);
+  const latestResultId = useRef(0);
+  const byteLength = useMemo(() => new TextEncoder().encode(input).byteLength, [input]);
 
   useEffect(() => {
-    let isMounted = true;
-    async function loadWasm() {
-      try {
-        // @ts-ignore - wasm binding JS is generated during build
-        const wasm = await import('../public/wasm/pmoke_web_wasm.js');
-        await wasm.default();
-        if (isMounted) {
-          setWasmModule(wasm);
-          setLoading(false);
-        }
-      } catch (err) {
-        console.error('Failed to load Wasm validator:', err);
-        if (isMounted) {
-          setLoading(false);
-        }
+    const worker = new Worker(`${basePath}/workers/config-validator.worker.js`, {
+      type: 'module',
+      name: 'pmoke-config-validator',
+    });
+    workerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      if (workerRef.current !== worker) return;
+      const response = event.data;
+      if (response.type === 'ready') {
+        setWorkerState('ready');
+      } else if (response.type === 'result' && response.id === latestResultId.current) {
+        setReport(response.report);
+        setValidating(false);
+      } else if (
+        response.type === 'error' &&
+        (response.id === undefined || response.id === latestResultId.current)
+      ) {
+        setReport(undefined);
+        setWorkerState('error');
+        setValidating(false);
+        setAnnouncement(text.workerFailure);
       }
-    }
-    loadWasm();
-    return () => {
-      isMounted = false;
     };
-  }, []);
+    worker.onerror = () => {
+      if (workerRef.current !== worker) return;
+      setReport(undefined);
+      setWorkerState('error');
+      setValidating(false);
+      setAnnouncement(text.workerFailure);
+    };
+    worker.postMessage({ type: 'init', basePath });
+    return () => {
+      worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
+    };
+  }, [text.workerFailure, workerEpoch]);
 
   useEffect(() => {
-    if (!wasmModule) return;
-    const timer = setTimeout(() => {
-      try {
-        const jsonStr = wasmModule.validate_config_toml(tomlInput);
-        const parsed = JSON.parse(jsonStr) as ValidationReport;
-        setReport(parsed);
-      } catch (e) {
-        console.error('Validation error:', e);
-      }
-    }, 150);
+    if (workerState !== 'ready' || !workerRef.current) return;
+    const id = ++requestId.current;
+    latestResultId.current = id;
+    setValidating(true);
+    const timer = window.setTimeout(() => {
+      workerRef.current?.postMessage({ type: 'validate', id, input });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [input, workerState]);
 
-    return () => clearTimeout(timer);
-  }, [tomlInput, wasmModule]);
+  const buildMismatch =
+    report !== undefined &&
+    (report.format_version !== REPORT_FORMAT_VERSION ||
+      report.schema_version !== configSchemaVersion ||
+      (sourceCommit !== 'development' &&
+        report.core_commit !== 'development' &&
+        report.core_commit !== sourceCommit));
+  const errors = report?.diagnostics.filter((item) => item.severity === 'error') ?? [];
+  const warnings = report?.diagnostics.filter((item) => item.severity === 'warning') ?? [];
 
-  const handleCopy = async () => {
+  async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(tomlInput);
+      await navigator.clipboard.writeText(input);
       setCopied(true);
-      if (ariaAnnouncementRef.current) {
-        ariaAnnouncementRef.current.textContent = isJa ? '設定をクリップボードにコピー完了。' : 'Configuration copied to clipboard.';
-      }
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
+      setAnnouncement(text.copySuccess);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setAnnouncement(text.copyFailure);
     }
-  };
+  }
 
-  const handleDownload = () => {
-    const blob = new Blob([tomlInput], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
+  function handleDownload() {
+    const url = URL.createObjectURL(new Blob([input], { type: 'text/plain;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
     link.download = 'config.toml';
+    document.body.append(link);
     link.click();
-    URL.revokeObjectURL(url);
-  };
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function useNormalized() {
+    if (!report?.normalized_toml) return;
+    updateInput(report.normalized_toml);
+    setAnnouncement(text.normalized);
+  }
+
+  function updateInput(value: string) {
+    latestResultId.current = ++requestId.current;
+    setReport(undefined);
+    if (workerState === 'ready') setValidating(true);
+    setInput(value);
+  }
+
+  function retryWorker() {
+    setReport(undefined);
+    setWorkerState('loading');
+    setWorkerEpoch((value) => value + 1);
+  }
+
+  const status = workerState === 'loading'
+    ? { icon: RefreshCw, label: text.loading, tone: 'pending' }
+    : workerState === 'error'
+      ? { icon: X, label: text.unavailable, tone: 'error' }
+      : validating || !report
+        ? { icon: RefreshCw, label: text.validating, tone: 'pending' }
+        : report.valid
+          ? { icon: Check, label: text.valid, tone: 'valid' }
+          : { icon: X, label: text.invalidStatus, tone: 'error' };
+  const StatusIcon = status.icon;
 
   return (
-    <div className="my-8 rounded-xl border border-fd-border bg-fd-card p-6 shadow-md transition-all">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-fd-border pb-4 mb-4">
-        <div className="flex items-center gap-2">
-          <FileCode className="h-5 w-5 text-fd-primary" />
-          <h3 className="text-lg font-semibold text-fd-foreground">
-            {isJa ? 'TOML 設定インタラクティブ検証ツール' : 'Interactive TOML Config Validator'}
-          </h3>
-          <span className="rounded-full bg-fd-primary/10 px-2.5 py-0.5 text-xs font-medium text-fd-primary">
-            Wasm Core
-          </span>
+    <section className="config-validator" aria-labelledby="config-validator-title">
+      <header className="config-validator__header">
+        <div>
+          <span className="config-validator__eyebrow"><FileCode2 aria-hidden="true" /> {text.local}</span>
+          <h3 id="config-validator-title">{text.title}</h3>
         </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setTomlInput(DEFAULT_V4_SAMPLE)}
-            className="rounded-md border border-fd-border bg-fd-background px-3 py-1.5 text-xs font-medium text-fd-foreground hover:bg-fd-accent hover:text-fd-accent-foreground transition"
-          >
-            {isJa ? '標準 v4 サンプル' : 'Sample v4'}
+        <div className="config-validator__samples" aria-label={text.samples}>
+          <button type="button" onClick={() => updateInput(DEFAULT_V4_SAMPLE)} title={text.sample}>
+            <RotateCcw aria-hidden="true" /> {text.sample}
           </button>
-          <button
-            onClick={() => setTomlInput(INVALID_SAMPLE)}
-            aria-label={isJa ? 'エラーサンプル読み込み' : 'Load invalid sample'}
-            className="rounded-md border border-fd-border bg-fd-background px-3 py-1.5 text-xs font-medium text-fd-foreground hover:bg-fd-accent hover:text-fd-accent-foreground transition"
-          >
-            {isJa ? 'エラーサンプル' : 'Invalid Sample'}
+          <button type="button" onClick={() => updateInput(INVALID_SAMPLE)} title={text.invalid}>
+            <AlertTriangle aria-hidden="true" /> {text.invalid}
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Editor & Results layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Editor column */}
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-xs text-fd-muted-foreground">
-            <span>{isJa ? 'TOML 設定入力' : 'TOML Configuration Input'}</span>
-            <span>{tomlInput.length} bytes</span>
-          </div>
+      <div className="config-validator__workspace">
+        <div className="config-validator__editor">
+          <label htmlFor={`config-input-${locale}`}>{text.input}</label>
+          <span className="config-validator__bytes">{byteLength.toLocaleString()} / 1,048,576 B</span>
           <textarea
-            value={tomlInput}
-            onChange={(e) => setTomlInput(e.target.value)}
-            placeholder={isJa ? 'TOML設定を入力...' : 'Enter TOML configuration...'}
-            className="h-80 w-full rounded-lg border border-fd-border bg-fd-background p-4 font-mono text-sm leading-relaxed text-fd-foreground shadow-inner focus:border-fd-primary focus:outline-none focus:ring-1 focus:ring-fd-primary"
+            id={`config-input-${locale}`}
+            value={input}
+            onChange={(event) => updateInput(event.target.value)}
             spellCheck={false}
+            aria-describedby={`config-status-${locale}`}
           />
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              onClick={handleCopy}
-              className="inline-flex items-center gap-1.5 rounded-md bg-fd-secondary px-3 py-1.5 text-xs font-medium text-fd-secondary-foreground hover:bg-fd-secondary/80 transition"
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {copied ? (isJa ? 'コピー完了' : 'Copied!') : (isJa ? 'コピー' : 'Copy')}
+          <div className="config-validator__actions">
+            <button type="button" onClick={handleCopy} title={text.copy}>
+              <Copy aria-hidden="true" /> {copied ? text.copied : text.copy}
             </button>
-            <button
-              onClick={handleDownload}
-              className="inline-flex items-center gap-1.5 rounded-md bg-fd-primary px-3 py-1.5 text-xs font-medium text-fd-primary-foreground hover:bg-fd-primary/90 transition"
-            >
-              <Download className="h-3.5 w-3.5" />
-              {isJa ? 'ダウンロード' : 'Download'}
+            <button type="button" onClick={handleDownload} title={text.download}>
+              <Download aria-hidden="true" /> {text.download}
             </button>
-          </div>
-        </div>
-
-        {/* Diagnostic Results column */}
-        <div className="flex flex-col gap-4 rounded-lg border border-fd-border bg-fd-background/50 p-4">
-          <div className="flex items-center justify-between border-b border-fd-border pb-3">
-            <span className="text-xs font-medium text-fd-muted-foreground uppercase tracking-wider">
-              {isJa ? '検証結果 (Validation Status)' : 'Validation Status'}
-            </span>
-            {loading ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-fd-muted-foreground">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                {isJa ? 'Wasm 読み込み中...' : 'Loading Wasm...'}
-              </span>
-            ) : report?.valid ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-500">
-                <CheckCircle2 className="h-4 w-4" />
-                {isJa ? '設定正常 (Valid)' : 'Valid Configuration'}
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-500">
-                <XCircle className="h-4 w-4" />
-                {isJa ? '設定エラー (Invalid)' : 'Invalid Configuration'}
-              </span>
+            {report?.valid && report.normalized_toml && (
+              <button type="button" onClick={useNormalized} title={text.normalize}>
+                <WandSparkles aria-hidden="true" /> {text.normalize}
+              </button>
             )}
           </div>
+        </div>
 
-          {/* Diagnostics list */}
-          {report && (
-            <div className="space-y-3 overflow-y-auto max-h-64">
-              {report.warnings.map((warn, i) => (
-                <div key={`warn-${i}`} className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-semibold">{isJa ? '警告: ' : 'Warning: '}</span>
-                    {warn}
-                  </div>
-                </div>
-              ))}
+        <div className="config-validator__results">
+          <div id={`config-status-${locale}`} className={`config-validator__status is-${status.tone}`} role="status">
+            <StatusIcon className={status.tone === 'pending' ? 'is-spinning' : undefined} aria-hidden="true" />
+            <span>{status.label}</span>
+            {report && <code>core {report.core_version}</code>}
+          </div>
+          {workerState === 'error' && (
+            <button className="config-validator__retry" type="button" onClick={retryWorker}>
+              <RefreshCw aria-hidden="true" /> {text.retry}
+            </button>
+          )}
+          {buildMismatch && <p className="config-validator__mismatch"><AlertTriangle aria-hidden="true" /> {text.mismatch}</p>}
 
-              {report.diagnostics.map((diag, i) => (
-                <div key={`diag-${i}`} className="flex items-start gap-2.5 rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 dark:text-rose-400">
-                  <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <div className="font-semibold">
-                      [{diag.kind.toUpperCase()}] {diag.path ? `@ ${diag.path}` : ''}
-                    </div>
-                    <div>{diag.message}</div>
-                    {diag.suggestion && (
-                      <div className="text-fd-muted-foreground italic mt-1">
-                        💡 {diag.suggestion}
-                      </div>
-                    )}
+          <div className="config-validator__diagnostics">
+            <h4>{text.diagnostics} <span>{errors.length} / {warnings.length}</span></h4>
+            {report && report.diagnostics.length === 0 && <p>{text.noDiagnostics}</p>}
+            {report?.diagnostics.map((diagnostic, index) => (
+              <article className={`diagnostic is-${diagnostic.severity}`} key={`${diagnostic.code}-${diagnostic.path}-${index}`}>
+                {diagnostic.severity === 'error' ? <X aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}
+                <div>
+                  <div className="diagnostic__meta">
+                    <code>{diagnostic.code}</code>
+                    {diagnostic.path && <code>{diagnostic.path}</code>}
+                    {diagnostic.span && <span>L{diagnostic.span.line}:C{diagnostic.span.column}</span>}
                   </div>
+                  <p>{diagnostic.message}</p>
+                  {diagnostic.suggestion && <small>{diagnostic.suggestion}</small>}
                 </div>
-              ))}
+              </article>
+            ))}
+          </div>
 
-              {report.valid && report.summary && (
-                <div className="rounded-md border border-fd-border bg-fd-card p-4 space-y-2 text-xs">
-                  <div className="font-semibold text-fd-foreground flex items-center gap-1.5">
-                    <Sparkles className="h-4 w-4 text-fd-primary" />
-                    {isJa ? '解析・構造サマリー' : 'Configuration Structure Summary'}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-fd-muted-foreground pt-1">
-                    <div>Version: <span className="font-mono text-fd-foreground">{report.summary.version}</span></div>
-                    <div>Oscilloscope: <span className="font-mono text-fd-foreground">{report.summary.scope_model || 'None'}</span></div>
-                    <div>Generator: <span className="font-mono text-fd-foreground">{report.summary.generator_model || 'None'}</span></div>
-                    <div>Lockin Workers: <span className="font-mono text-fd-foreground">{report.summary.lockin_workers}</span></div>
-                    <div>Plot Mode: <span className="font-mono text-fd-foreground">{report.summary.plot_mode}</span></div>
-                  </div>
-                </div>
-              )}
-            </div>
+          {report?.valid && report.summary && (
+            <dl className="config-validator__summary" aria-label={text.summary}>
+              <div><dt>scope</dt><dd>{report.summary.scope_model}</dd></div>
+              <div><dt>channels</dt><dd>{[...report.summary.sensor_channels, report.summary.reference_channel, ...report.summary.signal_channels].join(' / ')}</dd></div>
+              <div><dt>filter</dt><dd>{report.summary.lockin_filter}</dd></div>
+              <div><dt>workers</dt><dd>{report.summary.lockin_workers}</dd></div>
+            </dl>
           )}
         </div>
       </div>
-
-      <div ref={ariaAnnouncementRef} className="sr-only" aria-live="polite" />
-    </div>
+      <p className="sr-only" aria-live="polite">{announcement}</p>
+    </section>
   );
 }

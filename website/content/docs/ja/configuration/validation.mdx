@@ -14,9 +14,9 @@ TOML 構文、v4 未知 key、範囲、channel role、filter 制約、接続 URI
 
 editor 向け [config.schema.json](/pmoke/config.schema.json)。cross-field・hardware semantics の最終基準となる runtime validation。
 
-## インタラクティブ Wasm 設定バリデータ
+## ブラウザ設定検証
 
-外部送信なしの WebAssembly によるブラウザ上での TOML リアルタイム検証機能：
+専用 Web Worker による canonical schema v4 の検証。入力内容のブラウザ内保持。driver、filesystem、Python package、hardware 到達性の確認先となる native `pmoke doctor`。ブラウザ検証前に必要な v1-v3 設定の migration。
 
 <ConfigValidator locale="ja" />
 
