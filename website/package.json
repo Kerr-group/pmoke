@@ -19,8 +19,9 @@
     "lint:content": "node scripts/verify-content.mjs",
     "test:export": "node scripts/verify-export.mjs",
     "test:e2e": "playwright test",
+    "test:ai": "node scripts/verify-ai-resources.mjs",
     "test:search": "node scripts/evaluate-search.mjs",
-    "check": "npm run lint && npm run lint:ja && npm run lint:content && npm run types:check && npm run test:search && npm run test:export"
+    "check": "npm run lint && npm run lint:ja && npm run lint:content && npm run types:check && npm run test:search && npm run test:ai && npm run test:export"
   },
   "dependencies": {
     "@orama/orama": "3.1.18",

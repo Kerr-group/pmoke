@@ -9,6 +9,9 @@ description: Stable documentation feeds for agents, editors, and automation.
 | --- | --- |
 | [`llms.txt`](/pmoke/llms.txt) | Concise bilingual page index |
 | [`llms-full.txt`](/pmoke/llms-full.txt) | Full processed documentation context |
+| [`llms-en.txt`](/pmoke/llms-en.txt) | English-only full context |
+| [`llms-ja.txt`](/pmoke/llms-ja.txt) | Japanese-only full context |
+| [`ai-index.json`](/pmoke/ai-index.json) | Versioned page manifest with SHA-256 digests |
 | [CLI JSON](/pmoke/generated/cli-reference.json) | Typed command and option tree |
 | [Config JSON](/pmoke/generated/config-reference.json) | Typed field registry |
 | [Config JSON Schema](/pmoke/config.schema.json) | Editor and structural validation schema |
@@ -24,3 +27,10 @@ canonical source information.
 3. Treat native `pmoke config validate` as authoritative for semantic validation.
 4. Preserve exact commands, field paths, units, and version metadata in generated output.
 5. Never infer private laboratory addresses from documentation examples.
+
+## Search boundary
+
+The documentation search combines a deterministic bilingual concept-vector index
+with full-text results entirely in the browser. Queries and telemetry are not sent
+to pmoke, Orama Cloud, or another service. See [search and privacy](./search-privacy)
+for the model, fallback, and quality boundaries.
