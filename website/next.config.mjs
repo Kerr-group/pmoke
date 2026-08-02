@@ -11,6 +11,7 @@ const sourceCommit =
 const config = {
   output: 'export',
   reactStrictMode: true,
+  generateBuildId: async () => sourceCommit,
   basePath,
   trailingSlash: true,
   images: { unoptimized: true },

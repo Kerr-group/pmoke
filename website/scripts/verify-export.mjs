@@ -1,4 +1,5 @@
 import { access, readFile, readdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 
@@ -34,6 +35,8 @@ const required = [
   'sitemap.xml',
   '.nojekyll',
   '_meta/payload.json',
+  '_meta/sbom.cdx.json',
+  'SHA256SUMS',
 ];
 
 for (const relative of required) await access(path.join(output, relative));
@@ -47,6 +50,8 @@ const sitemap = await readFile(path.join(output, 'sitemap.xml'), 'utf8');
 const robots = await readFile(path.join(output, 'robots.txt'), 'utf8');
 if (!English.includes('<html lang="en"')) throw new Error('English lang metadata is missing');
 if (!Japanese.includes('<html lang="ja"')) throw new Error('Japanese lang metadata is missing');
+if (!English.includes('Content-Security-Policy')) throw new Error('Static content security policy is missing');
+if (!English.includes('strict-origin-when-cross-origin')) throw new Error('Referrer policy is missing');
 if (!English.includes('/pmoke/_next/')) throw new Error('GitHub Pages basePath is missing');
 if (!Japanese.includes('精密信号ラボ')) throw new Error('Japanese home content is missing');
 if (!EnglishAnalyzer.includes('waveform-analyzer')) throw new Error('English waveform tool is missing');
@@ -119,6 +124,43 @@ for (const chunk of chunks.filter((file) => file.endsWith('.js'))) {
 if (semanticChunks.length !== 1) throw new Error(`expected one lazy semantic chunk, found ${semanticChunks.length}`);
 const semanticGzip = gzipSync(semanticChunks[0], { level: 9 }).byteLength;
 if (semanticGzip > 100 * 1024) throw new Error(`M5 semantic chunk gzip budget exceeded: ${semanticGzip} bytes`);
+
+const sbom = JSON.parse(await readFile(path.join(output, '_meta/sbom.cdx.json'), 'utf8'));
+if (sbom.bomFormat !== 'CycloneDX' || sbom.specVersion !== '1.6' || sbom.components?.length < 100) {
+  throw new Error('M6 CycloneDX SBOM is missing or incomplete');
+}
+const payload = JSON.parse(await readFile(path.join(output, '_meta/payload.json'), 'utf8'));
+if (!payload.sourceRevision || payload.sourceRevision !== sbom.metadata.component.version) {
+  throw new Error('M6 release metadata does not identify one source revision');
+}
+await access(path.join(output, '_next/static', payload.sourceRevision, '_buildManifest.js'));
+const checksumLines = (await readFile(path.join(output, 'SHA256SUMS'), 'utf8')).trim().split('\n');
+const checksummed = new Set();
+for (const line of checksumLines) {
+  const match = /^([a-f0-9]{64})  (.+)$/u.exec(line);
+  if (!match) throw new Error(`invalid checksum entry: ${line}`);
+  const [, expected, relative] = match;
+  if (checksummed.has(relative)) throw new Error(`duplicate checksum entry: ${relative}`);
+  checksummed.add(relative);
+  const actual = createHash('sha256').update(await readFile(path.join(output, relative))).digest('hex');
+  if (actual !== expected) throw new Error(`checksum mismatch: ${relative}`);
+}
+const exportedFiles = (await recursiveFiles(output))
+  .map((file) => path.relative(output, file).split(path.sep).join('/'))
+  .filter((file) => file !== 'SHA256SUMS');
+if (checksummed.size !== exportedFiles.length || exportedFiles.some((file) => !checksummed.has(file))) {
+  throw new Error('M6 checksum manifest does not cover the complete static export');
+}
+for (const relative of exportedFiles.filter((file) => file.endsWith('.html'))) {
+  const html = await readFile(path.join(output, relative), 'utf8');
+  const policy = html.indexOf('Content-Security-Policy');
+  if (policy < 0 || policy > html.indexOf('<script')) {
+    throw new Error(`M6 CSP is missing or follows executable content: ${relative}`);
+  }
+  if (html.indexOf('Content-Security-Policy', policy + 1) >= 0) {
+    throw new Error(`M6 CSP is duplicated: ${relative}`);
+  }
+}
 
 console.log(`Verified ${required.length} static artifacts under /pmoke/.`);
 

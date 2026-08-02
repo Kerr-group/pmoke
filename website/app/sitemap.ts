@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { languages } from '@/lib/i18n';
-import { source } from '@/lib/source';
+import { getSortedPages, source } from '@/lib/source';
 import { absoluteUrl } from '@/lib/shared';
 
 export const dynamic = 'force-static';
@@ -22,7 +22,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const seen = new Set<string>();
 
   for (const language of languages) {
-    for (const page of source.getPages(language)) {
+    for (const page of getSortedPages(language)) {
       const key = page.slugs.join('/');
       if (seen.has(key)) continue;
       seen.add(key);

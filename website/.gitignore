@@ -12,10 +12,14 @@
 /coverage
 /playwright-report/
 /test-results/
+/.lighthouseci/
 /.next/
 /out/
 /build
 *.tsbuildinfo
+
+# Visual release contracts are intentionally versioned.
+!/tests/**/*.png
 
 # misc
 .DS_Store

@@ -1,9 +1,16 @@
-import { source } from '@/lib/source';
+import { getSortedPages, source } from '@/lib/source';
 import { createFromSource } from 'fumadocs-core/search/server';
 
 export const revalidate = false;
 
-export const { staticGET: GET } = createFromSource(source, {
+const deterministicSource = new Proxy(source, {
+  get(target, property, receiver) {
+    if (property === 'getPages') return getSortedPages;
+    return Reflect.get(target, property, receiver);
+  },
+});
+
+export const { staticGET: GET } = createFromSource(deterministicSource, {
   buildIndex: async (page) => {
     const structuredData = page.data.structuredData;
     if (!structuredData) throw new Error(`missing search data for ${page.url}`);

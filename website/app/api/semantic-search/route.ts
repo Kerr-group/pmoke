@@ -1,4 +1,4 @@
-import { source } from '@/lib/source';
+import { getSortedPages, source } from '@/lib/source';
 import { MODEL_ID, VECTOR_DIMENSIONS, embedSearchText } from '@/lib/search/concept-model.mjs';
 import { versionMetadata } from '@/lib/version';
 
@@ -10,7 +10,7 @@ type StructuredData = {
 };
 
 export function GET() {
-  const records = source.getPages().flatMap((page) => buildRecords(page, page.data.structuredData));
+  const records = getSortedPages().flatMap((page) => buildRecords(page, page.data.structuredData));
   return Response.json({
     schema: 1,
     model: MODEL_ID,
