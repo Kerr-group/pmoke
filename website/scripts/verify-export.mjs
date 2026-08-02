@@ -1,4 +1,4 @@
-import { access, readFile, stat } from 'node:fs/promises';
+import { access, readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 
@@ -15,7 +15,11 @@ const required = [
   'ja/docs/interactive/waveform-analyzer/index.html',
   'llms.txt',
   'llms-full.txt',
+  'llms-en.txt',
+  'llms-ja.txt',
+  'ai-index.json',
   'api/search',
+  'api/semantic-search',
   'llm/en/content.md',
   'llm/ja/content.md',
   'wasm/pmoke_web_wasm.js',
@@ -91,4 +95,41 @@ if (fixture.expected?.harmonics?.length !== 6 || fixture.license !== 'CC0-1.0') 
 const search = await stat(path.join(output, 'api/search'));
 if (search.size > 900 * 1024) throw new Error(`M2 search budget exceeded: ${search.size} bytes`);
 
+const semanticPath = path.join(output, 'api/semantic-search');
+const semanticFile = await readFile(semanticPath);
+if (semanticFile.byteLength > 512 * 1024) {
+  throw new Error(`M5 concept index budget exceeded: ${semanticFile.byteLength} bytes`);
+}
+const semantic = JSON.parse(semanticFile.toString('utf8'));
+if (semantic.model !== 'pmoke-domain-v1' || semantic.records?.length < 100) {
+  throw new Error('M5 concept index metadata or records are incomplete');
+}
+if (semantic.records.some((record) => record.embedding?.length !== semantic.dimensions)) {
+  throw new Error('M5 concept index contains an invalid vector');
+}
+
+const chunkRoot = path.join(output, '_next/static/chunks');
+const chunks = await recursiveFiles(chunkRoot);
+const semanticChunks = [];
+for (const chunk of chunks.filter((file) => file.endsWith('.js'))) {
+  const bytes = await readFile(chunk);
+  const source = bytes.toString('utf8');
+  if (source.includes('createHybridEngine') && source.includes('hybridWeights')) semanticChunks.push(bytes);
+}
+if (semanticChunks.length !== 1) throw new Error(`expected one lazy semantic chunk, found ${semanticChunks.length}`);
+const semanticGzip = gzipSync(semanticChunks[0], { level: 9 }).byteLength;
+if (semanticGzip > 100 * 1024) throw new Error(`M5 semantic chunk gzip budget exceeded: ${semanticGzip} bytes`);
+
 console.log(`Verified ${required.length} static artifacts under /pmoke/.`);
+
+async function recursiveFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  return (
+    await Promise.all(
+      entries.map((entry) => {
+        const target = path.join(directory, entry.name);
+        return entry.isDirectory() ? recursiveFiles(target) : [target];
+      }),
+    )
+  ).flat();
+}

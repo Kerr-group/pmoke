@@ -7,6 +7,12 @@ description: ネイティブ数値一致性を備えたブラウザ内 lock-in�
 
 <WaveformAnalyzer locale="ja" />
 
+## 可視解析
+
+入力波形、lock-in X/Y、振幅・位相、Kerr 角、filter response の四つの同期 plot。
+sample rate、reference frequency、noise、boxcar half-window、stride、位相回転、
+高調波、Kerr factor の control。browser 内で完結する local CSV 解析と metadata 付き CSV export。
+
 ## 一致範囲
 
 M4 のネイティブ等価対象となる `boxcar_legacy`、位相回転、高調波 Kerr 計算。ブラウザ一致対象外となる FIR フィルター、`sync_iir_zero_phase`、位相フィッティング、標準 Kerr。これらの本番解析に必要なネイティブ pmoke。

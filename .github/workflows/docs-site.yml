@@ -88,9 +88,12 @@ jobs:
         working-directory: website
         run: pnpm build
 
-      - name: Verify export
+      - name: Verify search, AI resources, and export
         working-directory: website
-        run: pnpm test:export
+        run: |
+          pnpm test:search
+          pnpm test:ai
+          pnpm test:export
 
       - name: Install Chromium
         working-directory: website

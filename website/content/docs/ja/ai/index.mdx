@@ -9,6 +9,9 @@ description: agent、editor、自動化向けの安定 documentation feed。
 | --- | --- |
 | [`llms.txt`](/pmoke/llms.txt) | 日英 page の簡潔な索引 |
 | [`llms-full.txt`](/pmoke/llms-full.txt) | 処理済み documentation の全 context |
+| [`llms-en.txt`](/pmoke/llms-en.txt) | 英語限定の full context |
+| [`llms-ja.txt`](/pmoke/llms-ja.txt) | 日本語限定の full context |
+| [`ai-index.json`](/pmoke/ai-index.json) | SHA-256 digest 付き versioned page manifest |
 | [CLI JSON](/pmoke/generated/cli-reference.json) | 型付き command・option tree |
 | [Config JSON](/pmoke/generated/config-reference.json) | 型付き field registry |
 | [Config JSON Schema](/pmoke/config.schema.json) | editor・構造検証向け schema |
@@ -22,3 +25,9 @@ pmoke version、config schema version、build source commit を含む各 feed。
 3. semantic validation の最終基準となる native `pmoke config validate`。
 4. 生成結果で保持する正確な command、field path、unit、version metadata。
 5. documentation 例からの private 実験室 address 推測の禁止。
+
+## 検索境界
+
+browser 内で完結する deterministic bilingual concept-vector index と全文検索結果の統合。
+pmoke、Orama Cloud、外部 service への query・telemetry 送信なし。
+model、fallback、品質境界の詳細となる [検索と privacy](./search-privacy)。

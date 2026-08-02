@@ -1,0 +1,32 @@
+---
+title: Search and Privacy
+description: Local hybrid retrieval, quality gates, and full-text fallback boundaries.
+---
+
+## Local hybrid model
+
+Search uses the deterministic `pmoke-domain-v1` bilingual concept projection. English
+and Japanese domain synonyms share concept dimensions, while bounded hashed lexical
+features preserve exact command names and configuration paths. The generated index
+contains public documentation only. Orama OSS performs text/vector ranking after a
+search begins; the semantic module is absent from the initial page payload.
+
+## Privacy boundary
+
+- No query upload, analytics, cookies, account, or telemetry.
+- No indexing of local config files, CSV input, instrument addresses, or browser-tool state.
+- Same-origin static index delivery from GitHub Pages.
+- No claim of complete offline support without a service worker.
+
+## Failure boundary
+
+Failure to load the concept index or hybrid module leaves the locale-scoped ZBSearch
+full-text path available. The dialog announces **Full-text fallback** without blocking
+navigation or hiding results. English and Japanese indexes never mix.
+
+## Quality boundary
+
+The versioned relevance fixture contains at least 40 queries per locale. CI requires
+Recall@5 of 0.85 or better for each locale, zero cross-locale leakage, warm p95 below
+100 ms, readiness below one second, and explicit static asset budgets. This is a
+domain concept-vector model, not a neural embedding, LLM answer engine, or cloud search.
