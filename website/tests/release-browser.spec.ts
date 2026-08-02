@@ -6,8 +6,17 @@ test('release browser renders, searches, and navigates by keyboard', async ({ pa
   await expect(page.getByRole('heading', { level: 1, name: 'Quickstart' })).toBeVisible();
   expect(await hasHorizontalOverflow(page)).toBeFalsy();
 
-  await page.keyboard.press('Control+k');
   const search = page.getByRole('textbox');
+  const fullSearchTrigger = page.locator('[data-search-full]:visible');
+  const searchTrigger = (await fullSearchTrigger.count()) > 0
+    ? fullSearchTrigger.first()
+    : page.locator('[data-search]:visible').first();
+  await searchTrigger.click();
+  await expect(search).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(search).toBeHidden();
+
+  await page.keyboard.press('Control+k');
   await expect(search).toBeFocused();
   await search.fill('lock-in filter');
   await expect(page.getByText('Waveform Analyzer', { exact: true }).last()).toBeVisible();
