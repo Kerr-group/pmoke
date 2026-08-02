@@ -87,49 +87,6 @@ pmoke --config config.toml monitor
 
 ---
 
-## ⚙️ Example Configuration (`config.toml` v4)
-
-```toml
-version = 4
-
-[scope]
-model = "DHO5108"
-connection = "tcp://192.168.10.100:55255"
-
-[generator]
-model = "WF1946B"
-connection = "gpib://0/11" # or "prologix-tcp://192.168.1.50:1234?addr=11"
-
-[data]
-output = "raw"       # "raw", "csv", or "both"
-input = "raw"        # "raw", "csv", or "auto"
-screenshot = true
-
-[[sensors]]
-channel = 1
-scale = { max_abs = 55.0, polarity = -1 }
-label = '$\mu_0H$'
-unit = "T"
-
-[reference]
-channel = 2
-fft_window = { start = 0e-3, end = 15e-3 }
-stride_samples = 10_000
-
-[lockin]
-signal_channels = [3]
-workers = 2
-stride_samples = 100
-filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
-
-[kerr]
-sensor = 1
-method = "harmonics"
-factor = -1.0
-```
-
----
-
 ## 📁 Repository Structure
 
 ```text
