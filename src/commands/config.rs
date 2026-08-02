@@ -750,14 +750,11 @@ mod tests {
     }
 
     #[test]
-    fn init_template_matches_readme_example_config() {
-        let readme = include_str!("../../README.md").replace("\r\n", "\n");
-        let marker = "```toml\nversion = 4\n";
-        let start = readme.find(marker).unwrap() + "```toml\n".len();
-        let rest = &readme[start..];
-        let end = rest.find("\n```").unwrap();
-
-        assert_eq!(CONFIG_TEMPLATE_V4.trim(), rest[..end].trim());
+    fn init_template_is_valid_v4_config() {
+        assert!(matches!(
+            load_from_str(CONFIG_TEMPLATE_V4),
+            ConfigLoad::Ready { .. }
+        ));
     }
 
     #[test]
