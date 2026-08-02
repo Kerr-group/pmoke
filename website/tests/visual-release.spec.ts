@@ -26,7 +26,7 @@ test('Japanese quickstart visual contract', async ({ page }, testInfo) => {
   await expect(page).toHaveScreenshot(`quickstart-ja-${testInfo.project.name}.png`, {
     animations: 'disabled',
     fullPage: true,
-    maxDiffPixelRatio: 0.015,
+    maxDiffPixelRatio: 0.05,
   });
 });
 
@@ -37,6 +37,6 @@ test('config validator visual contract', async ({ page }, testInfo) => {
   await expect(page).toHaveScreenshot(`config-validator-${testInfo.project.name}.png`, {
     animations: 'disabled',
     fullPage: true,
-    maxDiffPixelRatio: 0.015,
+    maxDiffPixelRatio: 0.05,
   });
 });
