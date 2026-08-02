@@ -4,26 +4,30 @@ on:
   push:
     paths:
       - "website/**"
-      - "crates/pmoke-config-core/**"
-      - "crates/pmoke-analysis-core/**"
-      - "crates/pmoke-web-wasm/**"
+      - "crates/**"
       - "src/**"
       - "xtask/**"
       - ".github/workflows/docs-site.yml"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
   pull_request:
     paths:
       - "website/**"
-      - "crates/pmoke-config-core/**"
-      - "crates/pmoke-analysis-core/**"
-      - "crates/pmoke-web-wasm/**"
+      - "crates/**"
       - "src/**"
       - "xtask/**"
       - ".github/workflows/docs-site.yml"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy this ref to the protected GitHub Pages environment"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -33,21 +37,68 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Static export and browser smoke test
+  security:
+    name: Dependency and secret policy
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan tracked source for secrets
+        shell: bash
+        run: |
+          archive="gitleaks_8.30.1_linux_x64.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/${archive}" \
+            --output "${RUNNER_TEMP}/${archive}"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  ${RUNNER_TEMP}/${archive}" | sha256sum --check
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" gitleaks
+          "${RUNNER_TEMP}/gitleaks" dir . --redact --no-banner --max-target-megabytes 10
+
+      - name: Enforce Cargo advisory, license, and source policy
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features
+          command-arguments: advisories licenses sources
+
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: "website/.node-version"
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        working-directory: website
+        run: pnpm install --frozen-lockfile
+
+      - name: Enforce npm advisory and license policy
+        working-directory: website
+        run: |
+          pnpm audit
+          pnpm test:licenses
+
+  build:
+    name: Production static export and quality gates
+    needs: security
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      pages_artifact_id: ${{ steps.pages-artifact.outputs.artifact_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
         with:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: wasm-pack@0.15.0
 
@@ -65,7 +116,7 @@ jobs:
           git diff --exit-code -- website/generated website/public/config.schema.json website/content/docs/en/cli website/content/docs/ja/cli website/content/docs/en/configuration/reference.mdx website/content/docs/ja/configuration/reference.mdx
 
       - name: Install Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: "website/.node-version"
 
@@ -95,34 +146,44 @@ jobs:
           pnpm test:ai
           pnpm test:export
 
-      - name: Install Chromium
+      - name: Install release browsers
         working-directory: website
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium firefox webkit chrome
 
-      - name: Run browser smoke tests
+      - name: Run browser, accessibility, and visual gates
         working-directory: website
         run: pnpm test:e2e
 
+      - name: Run Lighthouse release gate
+        working-directory: website
+        run: pnpm test:lighthouse
+
       - name: Package GitHub Pages preview artifact
-        uses: actions/upload-pages-artifact@v4
+        id: pages-artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: website/out
+          retention-days: 30
+          include-hidden-files: true
 
       - name: Upload visual evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pmoke-docs-visuals-${{ github.sha }}
           path: |
             website/test-results
             website/playwright-report
+            website/.lighthouseci
           if-no-files-found: warn
           include-hidden-files: true
-          retention-days: 14
+          retention-days: 30
 
   deploy:
     name: Deploy GitHub Pages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy)
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -130,6 +191,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
+      deployments: read
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -138,10 +200,32 @@ jobs:
       cancel-in-progress: false
     outputs:
       page_url: ${{ steps.deployment.outputs.page_url }}
+      deployment_id: ${{ steps.evidence.outputs.deployment_id }}
+      artifact_id: ${{ needs.build.outputs.pages_artifact_id }}
     steps:
       - name: Deploy artifact
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+
+      - name: Record deployment evidence
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          deployment_id=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/deployments?sha=${GITHUB_SHA}&environment=github-pages" \
+            --jq '.[0].id // empty')
+          test -n "${deployment_id}"
+          echo "deployment_id=${deployment_id}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### GitHub Pages release evidence"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Workflow run: \`${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}\`"
+            echo "- Pages artifact: \`${{ needs.build.outputs.pages_artifact_id }}\`"
+            echo "- Environment deployment: \`${deployment_id}\`"
+            echo "- URL: ${{ steps.deployment.outputs.page_url }}"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   post-deploy:
     name: Verify deployed site
@@ -150,12 +234,21 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: "website/.node-version"
 
       - name: Run deployment smoke test
-        run: node website/scripts/smoke-deployment.mjs "${{ needs.deploy.outputs.page_url }}"
+        run: node website/scripts/smoke-deployment.mjs "${{ needs.deploy.outputs.page_url }}" "${{ github.sha }}"
+
+      - name: Summarize verified release
+        run: |
+          {
+            echo "### Verified production release"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Pages artifact: \`${{ needs.deploy.outputs.artifact_id }}\`"
+            echo "- Environment deployment: \`${{ needs.deploy.outputs.deployment_id }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

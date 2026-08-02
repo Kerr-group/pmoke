@@ -1,9 +1,15 @@
 const deploymentUrl = process.argv[2];
+const expectedCommit = process.argv[3];
 if (!deploymentUrl) throw new Error('deployment URL is required');
+if (!expectedCommit) throw new Error('expected commit SHA is required');
 
 const root = new URL(deploymentUrl.endsWith('/') ? deploymentUrl : `${deploymentUrl}/`);
 const checks = [
-  { path: 'en/', contains: '<h1>pmoke</h1>' },
+  {
+    path: 'en/',
+    contains: '<h1>pmoke</h1>',
+    headers: { 'strict-transport-security': 'max-age=' },
+  },
   { path: 'ja/', contains: '精密信号ラボ' },
   { path: 'en/docs/quickstart/', contains: 'Quickstart' },
   { path: 'ja/docs/quickstart/', contains: 'クイックスタート' },
@@ -22,6 +28,9 @@ const checks = [
   { path: 'wasm/pmoke_web_wasm_bg.wasm', contentType: 'application/wasm' },
   { path: 'workers/waveform-analyzer.worker.js', contains: 'max_total_harmonic_points' },
   { path: 'fixtures/m4-synthetic-reference.json', contains: 'CC0-1.0' },
+  { path: '_meta/sbom.cdx.json', contains: `"version": "${expectedCommit}"` },
+  { path: 'SHA256SUMS', contains: '_meta/sbom.cdx.json' },
+  { path: '.nojekyll' },
 ];
 
 for (const check of checks) {
@@ -34,8 +43,17 @@ for (const check of checks) {
       if (check.contentType && !response.headers.get('content-type')?.includes(check.contentType)) {
         throw new Error(`expected ${check.contentType}, received ${response.headers.get('content-type')}`);
       }
-      if (check.contains && !(await response.text()).includes(check.contains)) {
+      for (const [header, marker] of Object.entries(check.headers ?? {})) {
+        if (!response.headers.get(header)?.includes(marker)) {
+          throw new Error(`expected ${header} to contain ${marker}`);
+        }
+      }
+      const body = check.contains || check.path.endsWith('/') ? await response.text() : '';
+      if (check.contains && !body.includes(check.contains)) {
         throw new Error(`missing marker: ${check.contains}`);
+      }
+      if (check.path.endsWith('/') && (!body.includes('Content-Security-Policy') || !body.includes('strict-origin-when-cross-origin'))) {
+        throw new Error('static security metadata is missing');
       }
       lastError = undefined;
       break;
