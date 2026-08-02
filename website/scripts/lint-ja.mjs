@@ -3,6 +3,7 @@ import path from 'node:path';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkMdx from 'remark-mdx';
 import remarkParse from 'remark-parse';
+import ts from 'typescript';
 import { unified } from 'unified';
 
 const root = path.resolve('content/docs/ja');
@@ -53,10 +54,29 @@ for (const file of files) {
   });
 }
 
+const uiFiles = (
+  await Promise.all(
+    ['app', 'components', 'lib'].map((directory) => typedSourceFiles(path.resolve(directory))),
+  )
+).flat();
+for (const file of uiFiles) {
+  const source = await readFile(file, 'utf8');
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  visitTypeScript(sourceFile, sourceFile, file);
+}
+
 if (failures.length > 0) {
   throw new Error(`Japanese editorial lint failed:\n${failures.join('\n')}`);
 }
-console.log(`Japanese editorial lint passed for ${files.length} MDX files.`);
+console.log(
+  `Japanese editorial lint passed for ${files.length} MDX and ${uiFiles.length} TypeScript files.`,
+);
 
 async function mdxFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -73,4 +93,41 @@ function walk(node, ancestors, visitor) {
   visitor(node, ancestors);
   if (!Array.isArray(node.children)) return;
   for (const child of node.children) walk(child, [...ancestors, node], visitor);
+}
+
+async function typedSourceFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map((entry) => {
+      const target = path.join(directory, entry.name);
+      return entry.isDirectory()
+        ? typedSourceFiles(target)
+        : /\.(?:ts|tsx)$/u.test(entry.name)
+          ? [target]
+          : [];
+    }),
+  );
+  return nested.flat().sort();
+}
+
+function visitTypeScript(node, sourceFile, file) {
+  let value;
+  if (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    ts.isJsxText(node)
+  ) {
+    value = node.text;
+  }
+  if (value && /[\u3040-\u30ff\u3400-\u9fff]/u.test(value)) {
+    for (const rule of rules) {
+      if (rule.pattern.test(value)) {
+        const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+        failures.push(
+          `${path.relative(process.cwd(), file)}:${position.line + 1}: ${rule.name}: ${value.trim()}`,
+        );
+      }
+    }
+  }
+  ts.forEachChild(node, (child) => visitTypeScript(child, sourceFile, file));
 }

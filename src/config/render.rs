@@ -172,6 +172,7 @@ fn lockin_output_v4(lockin: &Lockin, signal_channels: &[u8]) -> LockinOutputV4 {
         debug_overwrite: lockin.lpf_debug_overwrite,
         snr_background_window: lockin.snr_background_window,
         snr_signal_window: lockin.snr_signal_window,
+        save_npy: lockin.save_npy,
     }
 }
 
