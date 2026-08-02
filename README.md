@@ -7,7 +7,7 @@
 [![CI](https://github.com/Kerr-group/pmoke/actions/workflows/ci.yml/badge.svg)](https://github.com/Kerr-group/pmoke/actions/workflows/ci.yml)
 [![Docs Site](https://img.shields.io/badge/docs-online-6366f1?style=flat-square&logo=github-pages&logoColor=white)](https://kerr-group.github.io/pmoke/)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
 [📖 Documentation Site](https://kerr-group.github.io/pmoke/) | [⚡ Quickstart](#-quickstart) | [🎛️ CLI Reference](#%EF%B8%8F-cli-reference) | [✨ Features](#-key-features)
 
@@ -159,4 +159,4 @@ Visit our official documentation website for comprehensive guides, CLI reference
 
 ## 📄 License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [Apache 2.0 License](LICENSE).
