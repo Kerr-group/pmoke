@@ -123,6 +123,52 @@ test('documentation remains readable without JavaScript', async ({ browser }, te
   await context.close();
 });
 
+test('code blocks keep one chrome and localized keyboard-scrollable viewports', async ({ page, context }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser code-block contract');
+
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.setViewportSize({ width: 320, height: 800 });
+
+  for (const [locale, name] of [['en', 'Code example'], ['ja', 'コード例']] as const) {
+    await page.goto(`/pmoke/${locale}/docs/quickstart/`);
+    const figure = page.locator('figure.shiki').first();
+    const viewport = figure.getByRole('region', { name });
+    const pre = viewport.locator('pre');
+
+    await expect(figure).toBeVisible();
+    await expect(viewport).toBeVisible();
+    const chrome = await figure.evaluate((element) => {
+      const outer = getComputedStyle(element);
+      const inner = getComputedStyle(element.querySelector('pre')!);
+      return {
+        outerBorder: Number.parseFloat(outer.borderTopWidth),
+        innerBorders: [inner.borderTopWidth, inner.borderRightWidth, inner.borderBottomWidth, inner.borderLeftWidth]
+          .map(Number.parseFloat),
+        maxHeight: getComputedStyle(element.querySelector('[role="region"]')!).maxHeight,
+        overflow: getComputedStyle(element.querySelector('[role="region"]')!).overflow,
+      };
+    });
+    expect(chrome.outerBorder).toBe(1);
+    expect(chrome.innerBorders).toEqual([0, 0, 0, 0]);
+    expect(chrome.maxHeight).toBe('600px');
+    expect(chrome.overflow).toBe('auto');
+    expect(await viewport.evaluate((element) => element.scrollWidth > element.clientWidth)).toBeTruthy();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1))
+      .toBeTruthy();
+
+    await viewport.focus();
+    await expect(viewport).toBeFocused();
+    for (let step = 0; step < 8; step += 1) await page.keyboard.press('ArrowRight');
+    const rightScroll = await viewport.evaluate((element) => element.scrollLeft);
+    expect(rightScroll).toBeGreaterThan(0);
+    await page.keyboard.press('ArrowLeft');
+    expect(await viewport.evaluate((element) => element.scrollLeft)).toBeLessThan(rightScroll);
+
+    await figure.getByRole('button', { name: locale === 'ja' ? 'テキストコピー' : 'Copy Text' }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('pmoke config init');
+  }
+});
+
 test('reduced motion keeps the signal canvas static', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser reduced-motion gate');
 

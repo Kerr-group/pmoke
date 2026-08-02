@@ -442,11 +442,6 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   backdrop-filter: blur(14px);
 }
 
-.prose pre {
-  border: 1px solid var(--color-fd-border);
-  border-radius: var(--radius);
-}
-
 .config-validator {
   margin: 2rem 0;
   overflow: hidden;
