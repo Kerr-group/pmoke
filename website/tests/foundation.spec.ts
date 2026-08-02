@@ -169,16 +169,28 @@ test('code blocks keep one chrome and localized keyboard-scrollable viewports', 
   }
 });
 
-test('reduced motion keeps the signal canvas static', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser reduced-motion gate');
+test('signal canvas sweeps continuously when active and pauses on reduced motion', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser motion contract');
 
-  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto('/pmoke/en/');
   await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
-  const first = await page.locator('canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
-  await page.waitForTimeout(150);
-  const second = await page.locator('canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
-  expect(second).toBe(first);
+  await expect(page.locator('.signal-stage')).toHaveAttribute('data-motion', 'running');
+
+  const firstFrame = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  await page.waitForTimeout(300);
+  const secondFrame = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  expect(secondFrame).not.toBe(firstFrame);
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.reload();
+  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  await expect(page.locator('.signal-stage')).toHaveAttribute('data-motion', 'reduced');
+
+  const firstStatic = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  await page.waitForTimeout(300);
+  const secondStatic = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  expect(secondStatic).toBe(firstStatic);
 });
 
 test('all rendered internal links resolve beneath the project path', async ({ page }, testInfo) => {
