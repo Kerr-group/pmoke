@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
+import { createGzip } from 'node:zlib';
 
 const root = path.resolve('out');
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/pmoke';
@@ -32,8 +33,23 @@ createServer(async (request, response) => {
       metadata = await stat(target);
     }
     if (metadata.isDirectory()) target = path.join(target, 'index.html');
-    response.writeHead(200, { 'Content-Type': mime.get(path.extname(target)) ?? 'application/octet-stream' });
-    createReadStream(target).pipe(response);
+    const contentType = mime.get(path.extname(target)) ?? 'application/octet-stream';
+    const headers = {
+      'Content-Type': contentType,
+      'Cache-Control': relative.startsWith('_next/static/')
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=0, must-revalidate',
+    };
+    const compress = metadata.size > 1_024
+      && request.headers['accept-encoding']?.includes('gzip')
+      && /^(?:text\/|application\/(?:javascript|json|xml))/u.test(contentType);
+    if (compress) {
+      response.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+      createReadStream(target).pipe(createGzip({ level: 9 })).pipe(response);
+    } else {
+      response.writeHead(200, { ...headers, 'Content-Length': metadata.size });
+      createReadStream(target).pipe(response);
+    }
   } catch {
     response.writeHead(404).end('Not found');
   }
