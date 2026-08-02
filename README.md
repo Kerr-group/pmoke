@@ -1,350 +1,119 @@
+<div align="center">
+
 # 💥 pmoke
 
-`pmoke` is a command-line tool for pulsed MOKE measurements.
+**High-Performance Pulsed MOKE Measurement & Waveform Demodulation System**
 
-It controls the oscilloscope and function generator, fetches waveform data, and
-runs the full analysis chain:
+[![CI](https://github.com/Kerr-group/pmoke/actions/workflows/ci.yml/badge.svg)](https://github.com/Kerr-group/pmoke/actions/workflows/ci.yml)
+[![Docs Site](https://img.shields.io/badge/docs-online-6366f1?style=flat-square&logo=github-pages&logoColor=white)](https://kerr-group.github.io/pmoke/)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+
+[📖 Documentation Site](https://kerr-group.github.io/pmoke/) | [⚡ Quickstart](#-quickstart) | [🎛️ CLI Reference](#%EF%B8%8F-cli-reference) | [✨ Features](#-key-features)
+
+---
+
+</div>
+
+`pmoke` is a modern, high-precision command-line tool for **pulsed Magneto-Optical Kerr Effect (MOKE)** measurements and automated waveform analysis. Built in Rust and WebAssembly, it seamlessly orchestrates hardware instruments, processes multi-channel oscilloscopes, and executes complete lock-in demodulation chains.
 
 ```text
-reference -> sensor integral -> lock-in -> phase rotation -> Kerr angle
+reference ➔ sensor integral ➔ lock-in demodulation ➔ phase rotation ➔ Kerr angle
 ```
 
-The current workflow is tuned for Rigol DHO5000-series oscilloscopes, large
-WORD waveform captures, and reproducible TOML-based analysis.
+---
 
-See [CHANGELOG.md](CHANGELOG.md) for the v0.3.0 release and compatibility notes.
+## ✨ Key Features
 
-## ✨ What It Does
+- ⚡ **High-Speed Binary Waveform Ingestion**: Direct support for Rigol DHO5000-series 16-bit WORD binary captures (`.u16le`), avoiding CSV bottlenecks in large memory acquisitions.
+- 🎛️ **Full Lock-In Demodulation**: Hardware/software lock-in with zero-phase FIR/IIR filtering and boxcar demodulation.
+- 📊 **Interactive Terminal Dashboard**: Real-time activity telemetry with `pmoke monitor` featuring paused-history navigation and calm status metrics.
+- 🌐 **WebAssembly & Web Interactive Tools**: Interactive waveform analysis and live diagnostic tools running directly in the browser via Wasm.
+- 🔧 **Multi-Transport Hardware Control**: Native SCPI controller over TCP/Ethernet, Direct GPIB, and Prologix USB/Serial bridges.
+- 🛡️ **Immutable Shot Provenance**: TOML-based reproducible configuration (`version = 4`) with isolated atomic run directories.
 
-- Runs hardware shots, waveform fetch, screenshots, and analysis from one config.
-- Stores large captures as raw DHO WORD files with scaling metadata.
-- Reads canonical `acquisition/` data, with `raw_waveform/` and `raw.csv` as legacy fallbacks.
-- Produces lock-in, phase-rotated, Kerr, and PNG plot outputs.
-- Opens an Activity-focused terminal dashboard with structured live events,
-  paused-history navigation, and warning/error counters via `pmoke monitor`.
+---
 
-## ⚡ Install
+## ⚡ Quickstart
 
-Install the Python analysis dependencies:
+### 1. Installation
 
-```sh
-python -m pip install -r requirements.txt
-```
+Build and install `pmoke` using Cargo (Rust 1.85+ required):
 
-Hardware-enabled build:
-
-```sh
+```bash
+# Hardware-enabled build (Direct TCP / Prologix / GPIB)
 cargo install --path .
-# Legacy direct-GPIB alias:
-cargo install --path . --no-default-features --features hw
-```
 
-macOS Prologix build:
-
-```sh
-cargo install --path . --no-default-features --features hw-prologix-serial
-cargo install --path . --no-default-features --features hw-prologix-tcp
-```
-
-Analysis-only build:
-
-```sh
+# Analysis-only build (Lightweight CLI for offline processing)
 cargo install --path . --no-default-features
 ```
 
-Development commands:
+Install Python plotting and analysis dependencies:
 
-```sh
-cargo run -- --config config.toml show
-cargo run --release -- --config config.toml process
-cargo run --release --no-default-features -- --config config.toml analyze
-python scripts/benchmark_plot.py # informational Agg draw/update/blit timings
+```bash
+pip install -r requirements.txt
 ```
 
-## 🚀 Commands
+### 2. Basic Workflow
+
+```bash
+# 1. Validate configuration
+pmoke --config config.toml show
+
+# 2. Check hardware connections & instrument diagnostics
+pmoke --config config.toml doctor
+
+# 3. Automated single-shot pulse, fetch & analysis
+pmoke --config config.toml auto
+
+# 4. Launch live terminal monitor dashboard
+pmoke --config config.toml monitor
+```
+
+---
+
+## 🎛️ CLI Reference
+
+| Command | Description |
+| :--- | :--- |
+| `pmoke show` | Validate configuration syntax and hardware bindings |
+| `pmoke doctor` | Preflight check for instruments, Python environment, and storage |
+| `pmoke auto` | Trigger single shot, capture waveforms, and run analysis |
+| `pmoke monitor` | Open the interactive TUI activity dashboard |
+| `pmoke fetch` | Retrieve raw waveforms from oscilloscope |
+| `pmoke analyze` | Re-run lock-in & Kerr angle analysis on existing captures |
+| `pmoke export csv` | Convert verified raw binary `.u16le` waveforms to CSV |
+| `pmoke instruments list` | List supported instrument drivers and protocols |
+
+---
+
+## 📁 Repository Structure
 
 ```text
-pmoke --config config.toml show       # validate config
-pmoke --config config.toml config migrate # preview a config migration
-pmoke --config config.toml monitor    # terminal dashboard
-pmoke --config config.toml fetch      # fetch waveforms
-pmoke --config config.toml raw verify # verify stored RAW data
-pmoke --config config.toml export csv # explicitly convert verified RAW to CSV
-pmoke --config config.toml export npy # export analysis tables for NumPy
-pmoke instruments list             # list supported instrument models
-pmoke instruments explain DHO5108  # show transport/protocol/capability metadata
-pmoke instruments query --connection 'prologix-tcp://10.249.11.17:1234?addr=17' '*IDN?'
-pmoke --run-dir shot-001 bench scpi-query --connection 'prologix-tcp://10.249.11.17:1234?addr=17'
-pmoke bench transport --connection 'prologix-tcp://10.249.11.17:1234?addr=17' --output bench.json
-pmoke --config config.toml doctor     # check storage, Python, and hardware
-pmoke --config config.toml analyze    # analyze existing data
-pmoke --config config.toml process    # fetch + analyze
-pmoke --config config.toml auto       # single + trigger + fetch + analyze
+pmoke/
+├── crates/
+│   ├── pmoke-core/      # Core numerical analysis & Rust engine
+│   └── pmoke-web-wasm/  # WebAssembly bindings for docs site & browser tools
+├── website/             # Fumadocs static documentation site & interactive tools
+├── scripts/             # Python analysis & benchmark utilities
+└── config.toml          # Example configuration file
 ```
 
-If no command is provided, `pmoke` opens `monitor`.
+---
 
-The Activity panel follows new events while it is at the bottom. Scrolling up
-pauses the view and counts unseen events; press `G` to return to the live tail.
-Child commands emit structured JSONL internally, while direct CLI use keeps the
-same concise human-readable log format.
+## 📖 Complete Documentation
 
-Activity motion defaults to `full`. Set `PMOKE_MOTION=reduced` for slower live
-updates, or `PMOKE_MOTION=off` for a static dashboard. Activity uses calm status
-labels rather than animated arrival effects.
+Visit our official documentation website for comprehensive guides, CLI reference, configuration schema, and interactive waveform tools:
 
-Install shell completion with:
+👉 **[https://kerr-group.github.io/pmoke/](https://kerr-group.github.io/pmoke/)**
 
-```powershell
-pmoke completions powershell
-```
+- 🚀 [Quickstart Guide](https://kerr-group.github.io/pmoke/docs/quickstart)
+- 💻 [CLI Reference](https://kerr-group.github.io/pmoke/docs/cli/reference)
+- ⚙️ [Configuration Reference](https://kerr-group.github.io/pmoke/docs/configuration/reference)
+- 📊 [Interactive Waveform Analyzer](https://kerr-group.github.io/pmoke/docs/interactive/waveform-analyzer)
 
-PowerShell completion is stored in `pmoke_completion.ps1` next to the profile;
-the profile contains only a managed dot-source entry. Re-running the command
-updates the completion without duplicating the entry and migrates the older
-inline pmoke completion when it is the final profile block.
+---
 
-Use `--run-dir` to isolate one shot without changing config schema v4:
+## 📄 License
 
-```sh
-pmoke --config config.toml --run-dir shot_000123 auto
-```
-
-The directory receives immutable `config.source.toml` and
-`config.resolved.toml` snapshots. Reusing it with different config contents is
-rejected, preventing artifacts from different shots from being mixed.
-
-`doctor` reports each configured instrument's normalized connection URI,
-registry compatibility, required Cargo feature, and effective timeout before
-opening hardware. It then runs only diagnostics declared by the instrument and
-transport registries. SCPI instruments are identified with `*IDN?`; Prologix
-connections first query the adapter with `++ver`, then query the instrument at
-the configured GPIB primary address. This separates controller connectivity
-from an incorrect PAD, disconnected cable, or powered-off instrument.
-
-The command only observes acquisition state by default. Add `--probe-fetch` to
-allow the preflight check to stop the oscilloscope before verifying its state.
-Use `--json` for a machine-readable report suitable for CI or support records.
-Instrument roles not present in the current config schema, including
-multimeters, remain available through `pmoke instruments query` and are not
-implicitly probed by `doctor`.
-
-### Migrate Legacy Configs
-
-Preview the migration to the latest executable config version:
-
-```sh
-pmoke --config config.toml config migrate
-```
-
-The preview does not modify files. Write to a new file with `--output`, or use
-`--in-place` to create a versioned backup and atomically replace the source:
-
-```sh
-pmoke --config config.toml config migrate --output config.migrated.toml
-pmoke --config config.toml config migrate --in-place
-```
-
-If a v1/v2 CSV has no time column, migration preserves `[timebase]`: v1 advances
-only to v2, and v2 remains v2. An explicit `--to 4` is blocked in that case.
-Other potential behavior changes, such as removing unused metadata or changing
-the artifact base directory, require `--accept-lossy`. Existing output and
-backup files are never overwritten.
-
-## ⚙️ Example Config
-
-```toml
-version = 4
-
-[scope]
-model = "DHO5108"
-connection = "tcp://192.168.10.100:55255"
-
-[generator]
-model = "WF1946B"
-connection = "gpib://0/11"
-# macOS Prologix alternatives:
-# connection = "prologix-serial:///dev/cu.usbserial-XXXX?addr=11"
-# connection = "prologix-tcp://192.168.1.50:1234?addr=11"
-
-[data]
-output = "raw"       # "csv", "raw", or "both"
-input = "raw"        # "csv", "raw", or "auto"
-screenshot = true
-
-[[sensors]]
-channel = 1
-scale = { max_abs = 55.0, polarity = -1 }
-# A TOML literal string passes one backslash to Matplotlib mathtext.
-label = '$\mu_0H$'
-unit = "T"
-
-[[sensors]]
-channel = 4
-scale = { factor = 1.0 }
-label = "sensor"
-unit = "a.u."
-
-[pulse]
-background_before = { start = -5e-3, end = -0.1e-3 }
-background_after  = { start = 43e-3, end = 46e-3 }
-
-[reference]
-channel = 2
-fft_window = { start = 0e-3, end = 15e-3 }
-stride_samples = 10_000
-window_samples = 1_000
-
-[lockin]
-signal_channels = [3]
-workers = 2
-stride_samples = 100
-filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
-
-[phase]
-offsets = [0, 0, 0, 0, 0, 0]
-
-[kerr]
-sensor = 1
-method = "harmonics" # "standard" or "harmonics"
-factor = -1.0
-
-[plot]
-mode = "both" # "off", "save", "interactive", or "both"
-decimation = "min_max" # "none", "stride", or "min_max"
-```
-
-## 📁 Data Layout
-
-Typical files after acquisition and analysis:
-
-```text
-shot_000123/
-├── config.source.toml
-├── config.resolved.toml
-├── run.toml
-├── acquisition/
-│   ├── manifest.toml
-│   ├── waveforms/
-│   │   ├── ch1.u16le
-│   │   ├── ch2.u16le
-│   │   ├── ch3.u16le
-│   │   └── ch4.u16le
-│   └── screenshots/
-│       └── oscilloscope.png
-└── analysis/
-    ├── config.source.toml
-    ├── config.resolved.toml
-    ├── manifest.toml
-    ├── lockin/
-    │   ├── ch3_xy.csv
-    │   └── ch3_rotated.csv
-    ├── kerr/
-    │   └── kerr.csv
-    ├── diagnostics/
-    │   ├── reference/
-    │   └── sensor/
-    ├── plots/
-    └── debug/
-```
-
-Optional directories such as `screenshots/`, `plots/`, and `debug/` are created only when their outputs are enabled.
-
-With v4, run artifacts are rooted at the config directory or `--run-dir` when specified. Analysis plots always use the canonical `analysis/plots/` tree; legacy `plot.output_dir` values are accepted for compatibility but ignored.
-
-Use `data.output = "raw"` for large DHO captures. It preserves the original WORD payload and avoids huge CSV files in the hot path. New acquisitions write raw files inside `acquisition/waveforms/` and metadata to `acquisition/manifest.toml`.
-
-RAW acquisition stores every distinct channel used by the configured sensor, reference, or lock-in signal roles. For the example config above, sensors use ch1 and ch4, the reference uses ch2, and the lock-in signal uses ch3, so `ch1.u16le` through `ch4.u16le` are all present. The acquisition manifest is the authoritative channel inventory.
-
-`raw_waveform/` and `raw.csv` (or `raw_waveform/raw.csv`) are recognized as legacy layouts and fully supported as fallback inputs.
-
-Waveform CSV files generated by `pmoke fetch` or `pmoke export csv` are saved to the canonical path `acquisition/waveforms/waveform.csv`. NumPy exports of analysis tables are saved beside their corresponding CSV files under `analysis/lockin/` and `analysis/kerr/`. The `analysis_npy/` directory is legacy.
-
-The run-root configuration snapshots are immutable acquisition provenance. Every published analysis generation has separate `analysis/config.source.toml` and `analysis/config.resolved.toml` snapshots, so analysis settings can change without rewriting the acquisition history. Screenshots are saved to `acquisition/screenshots/oscilloscope.png`.
-
-The standalone `pmoke screenshot` command only adds a screenshot to an existing completed canonical acquisition. To capture a display during acquisition, enable screenshots in the config and run `fetch`, `process`, or `auto`. The acquisition `manifest.toml` serves specifically as an inventory of the acquired waveform data (CSV or RAW binary waveforms) and its metadata; screenshots are stored under `acquisition/screenshots/` but are not registered in the `manifest.toml` file.
-
-Standalone `reference` and `sensor` runs update their plot trees transactionally under `analysis/plots/`; they preserve unrelated analysis artifacts and the numerical-analysis config snapshots. Their invocation configs are recorded separately under `analysis/diagnostics/`. Canonical `export csv` output is serialized with other run mutations, while a custom output outside the canonical layout remains an independent export.
-
-The `analyze`, `li`, `phase`, and `kerr` commands are rerunnable without `--force`. Each writes a new generation to `analysis.incomplete/` and publishes it atomically. A changed analysis config is accepted by full `analyze`; staged commands verify that their upstream result was produced with compatible settings. If it is stale, pmoke reports which upstream command must be rerun. A failed attempt leaves the previously published analysis generation intact.
-
-Keep acquisition on the RAW path for production runs. Convert later with `pmoke export csv`; the command verifies the manifest and checksums before it creates a new CSV and refuses to overwrite an existing destination.
-
-`analysis/manifest.toml` records the generation, published stage, config and acquisition checksums, stage fingerprints, resolved reference frequency, sample and output rates, lock-in window, ENBW estimate, cutoff, and edge trimming. Standalone `reference` and `sensor` results are recorded separately as diagnostics and do not imply that lock-in or Kerr analysis has completed.
-
-## 🎛️ Lock-In Notes
-
-The README config uses:
-
-```toml
-[lockin]
-stride_samples = 100
-filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
-```
-
-`boxcar_legacy` keeps continuity with the older moving-average style lock-in.
-`stride_samples = 100` keeps dense output, which is useful if you want to apply
-additional smoothing later.
-
-Other LPF modes are available:
-
-- `sync_iir_zero_phase`
-- `fir_zero_phase`
-- `fir_boxcar_enbw`
-- `boxcar_legacy`
-
-For FIR/IIR cutoff-based modes, keep the output rate high enough:
-
-```text
-output_rate = 1 / (x_increment * lockin.stride_samples)
-cutoff_hz < 0.45 * output_rate
-```
-
-## ✅ Config Rules
-
-- `reference.channel` is the reference input; `lockin.signal_channels` lists the demodulated inputs.
-- Each sensor defines exactly one scale: `{ factor = ... }` or `{ max_abs = ..., polarity = -1|1 }`.
-- `max_abs` scales the background-subtracted sensor integral to the requested maximum absolute value.
-- `kerr.sensor` must refer to a channel in `sensors`.
-- `phase.offsets` must contain six values.
-- Time values come from raw metadata or the CSV `time (s)` column.
-- Unknown keys in v4 configs are rejected. Legacy v1–v3 configs remain readable.
-
-## 🔌 Hardware Notes
-
-Default builds include hardware support.
-
-- Use `tcp://host:port` for the DHO5108.
-- Windows: `visa:RESOURCE` is also supported with NI-VISA installed.
-- Default builds use direct GPIB for function generators; install NI-488.2 or `linux-gpib`.
-- `--features hw` remains a legacy alias for direct-GPIB hardware builds. Prefer `hw-gpib`, `hw-prologix-serial`, or `hw-prologix-tcp` for explicit builds.
-- macOS function generator control can use Prologix without NI-488.2:
-  - Serial: build with `--no-default-features --features hw-prologix-serial`, then use `prologix-serial:///dev/cu.usbserial-XXXX?addr=11`.
-  - Ethernet: build with `--no-default-features --features hw-prologix-tcp`, then use `prologix-tcp://host:1234?addr=11`.
-- Prologix options: `addr` is the instrument GPIB address, `read_timeout_ms` defaults to `3000`, and serial `baud_rate` defaults to `115200`.
-- Use `pmoke instruments list`, `pmoke instruments explain MODEL`, and `pmoke instruments query --connection URI COMMAND` to inspect supported transports and run explicit SCPI text queries without a full experiment config.
-- Use `pmoke --run-dir DIR bench scpi-query --connection URI` for a compact, reproducible SCPI benchmark. It saves a timestamped TOML report and a regular-file `benchmarks/scpi-query/latest.toml` copy containing environment metadata, p50/p90/p99 latency, throughput, and categorized failures. Latency fields are omitted when no query succeeds, while failure counts are still saved.
-- Use `pmoke bench transport --connection URI` for exploratory multi-request measurements with full JSON samples. Repeat `--request` to compare queries, save with `--output FILE`, and use `--protocol line` for non-SCPI single-line request/response protocols.
-
-Screenshot capture uses `:DISPlay:DATA? PNG` and writes directly to:
-
-```text
-acquisition/screenshots/oscilloscope.png
-```
-
-GPIB screenshot capture is not supported.
-
-## 🎯 Precision Notes
-
-For DHO5000 large-memory measurements:
-
-- Prefer `data.output = "raw"` or `"both"`.
-- Prefer `data.input = "raw"` or `"auto"`.
-- Keep `acquisition/manifest.toml` together with `acquisition/waveforms/chN.u16le`. The older `raw_waveform/metadata.toml` layout remains a read-only compatibility input.
-- Generate CSV only when needed for inspection or external tools.
-
-Voltage reconstruction uses:
-
-```text
-voltage = (word - y_origin - y_reference) * y_increment
-```
+This project is licensed under the [Apache 2.0 License](LICENSE).
