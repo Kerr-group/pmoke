@@ -114,6 +114,20 @@ Visit our official documentation website for comprehensive guides, CLI reference
 
 ---
 
+## 📚 Publications & References
+
+If you use `pmoke` in your scientific research, please consider citing the following publications:
+
+- **Magneto-optical Kerr-effect measurements under pulsed magnetic fields over 40 T using a compact sample fixture**  
+  Atsutoshi Ikeda, Sota Nakamura, Soichiro Yamane, Kosuke Noda, Akihiko Ikeda, and Shingo Yonezawa  
+  *Phys. Rev. Research* (2026). DOI: [10.1103/vy7j-ylb4](https://journals.aps.org/prresearch/abstract/10.1103/vy7j-ylb4)
+
+- **Magneto-optical Kerr effect measurements under bipolar pulsed magnetic fields**  
+  Soichiro Yamane, Sota Nakamura, Atsutoshi Ikeda, Kosuke Noda, Akihiko Ikeda, and Shingo Yonezawa  
+  *JJAP Conf. Proc.* **12**, 011011 (2026). Article: [J-STAGE 12_011011](https://www.jstage.jst.go.jp/article/jjapcp/12/0/12_011011/_article/-char/ja)
+
+---
+
 ## 📄 License
 
 This project is licensed under the [Apache 2.0 License](LICENSE).
