@@ -76,6 +76,13 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
         }
     };
 
+    if version == 4 {
+        let report = pmoke_config_core::validate_config_toml(s);
+        if !report.valid {
+            return core_diagnostics(report);
+        }
+    }
+
     match version {
         1 => match deserialize_versioned::<ConfigV1>(s) {
             Ok(raw) => normalize_v1(raw),
@@ -128,6 +135,35 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
             })
         }
     }
+}
+
+fn core_diagnostics(report: pmoke_config_core::ValidationReport) -> ConfigLoad {
+    use pmoke_config_core::{DiagnosticCode, DiagnosticSeverity};
+
+    let diagnostics = report
+        .diagnostics
+        .into_iter()
+        .filter(|item| item.severity == DiagnosticSeverity::Error)
+        .map(|item| ConfigDiagnostic {
+            kind: match item.code {
+                DiagnosticCode::TomlSyntax | DiagnosticCode::InputTooLarge => DiagnosticKind::Parse,
+                DiagnosticCode::SchemaMismatch
+                | DiagnosticCode::MissingVersion
+                | DiagnosticCode::InvalidVersion
+                | DiagnosticCode::UnsupportedVersion => DiagnosticKind::Deserialize,
+                _ => DiagnosticKind::Validation,
+            },
+            path: item.path,
+            message: item.message,
+            suggestion: item.suggestion,
+        })
+        .collect();
+    ConfigLoad::Diagnostics(ConfigDiagnostics {
+        version: report.schema_version,
+        warnings: Vec::new(),
+        diagnostics,
+        normalized: None,
+    })
 }
 
 fn deserialize_versioned<T>(s: &str) -> std::result::Result<T, ConfigDiagnostic>

@@ -342,6 +342,8 @@ pub(super) struct LockinOutputV4 {
     pub(super) snr_background_window: Option<Window>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) snr_signal_window: Option<Window>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(super) save_npy: bool,
 }
 
 #[derive(Serialize)]

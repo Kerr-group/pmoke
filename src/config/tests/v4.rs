@@ -121,6 +121,70 @@ fn v4_normalized_output_uses_v4_schema_and_round_trips() {
 }
 
 #[test]
+fn v4_core_and_native_normalized_output_have_identical_values() {
+    let filter = "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }";
+    let fixtures = [
+        ("boxcar", v4_base()),
+        (
+            "enbw boxcar",
+            v4_base().replace(
+                filter,
+                "filter = { kind = \"fir_boxcar_enbw\", half_window_cycles = 1.5 }",
+            ),
+        ),
+        (
+            "FIR fallback cutoff",
+            v4_base().replace(
+                filter,
+                "filter = { kind = \"fir_zero_phase\", half_window_cycles = 2.0 }",
+            ),
+        ),
+        (
+            "FIR explicit cutoff",
+            v4_base().replace(
+                filter,
+                "filter = { kind = \"fir_zero_phase\", half_window_cycles = 2.0, cutoff_hz = 12000.0, stopband_atten_db = 80.0 }",
+            ),
+        ),
+        (
+            "sync IIR and NPY",
+            v4_base().replace(
+                filter,
+                "filter = { kind = \"sync_iir_zero_phase\", half_window_cycles = 2.0, cutoff_ref_ratio = 0.02, sync_average_cycles = 1.0, iir_order = 4 }\nsave_npy = true",
+            ),
+        ),
+        (
+            "canonical Prologix generator",
+            v4_base().replacen(
+                "[data]",
+                "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-tcp://192.0.2.20?addr=11\"\n\n[data]",
+                1,
+            ),
+        ),
+    ];
+
+    for (name, text) in fixtures {
+        assert_core_native_normalized(&text, name);
+    }
+}
+
+fn assert_core_native_normalized(text: &str, name: &str) {
+    let core = pmoke_config_core::validate_config_toml(text);
+    assert!(
+        core.valid,
+        "{name} core diagnostics: {:?}",
+        core.diagnostics
+    );
+    let ConfigLoad::Ready { config, .. } = load_from_str(text) else {
+        panic!("native validator rejected core-valid {name} config");
+    };
+    let native = render_normalized_config(&config).unwrap();
+    let core_value = toml::from_str::<toml::Value>(core.normalized_toml.as_ref().unwrap()).unwrap();
+    let native_value = toml::from_str::<toml::Value>(&native).unwrap();
+    assert_eq!(core_value, native_value, "normalized {name} config differs");
+}
+
+#[test]
 fn v4_rejects_removed_channels_role_table() {
     let text = v4_base()
         .replace("channel = 3\nfft_window", "fft_window")

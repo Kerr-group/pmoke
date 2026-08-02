@@ -1288,6 +1288,7 @@ dependencies = [
  "jiff",
  "num-complex",
  "numpy",
+ "pmoke-config-core",
  "pyo3",
  "ratatui",
  "rayon",
@@ -1304,10 +1305,10 @@ dependencies = [
 name = "pmoke-config-core"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "fasteval",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "toml",
 ]
 

@@ -57,8 +57,41 @@ mod tests {
     #[test]
     fn wasm_config_validation_returns_valid_json() {
         let json = validate_config_toml(
-            "version = 4\n[scope]\nmodel = 'dsox1204a'\nconnection = 'usbtmc://0x1/0x2/0x3'\n[data]\noutput = 'both'\ninput = 'fetch'\n[lockin]\nsignal_channels = [1]\nworkers = 4\nstride_samples = 1\nfilter = { kind = 'boxcar_legacy', half_window_cycles = 1.0 }",
+            r#"version = 4
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+[data]
+output = "raw"
+input = "raw"
+[[sensors]]
+channel = 1
+scale = { factor = 1.0 }
+label = "field"
+unit = "T"
+[pulse]
+background_before = { start = -0.005, end = -0.001 }
+background_after = { start = 0.01, end = 0.02 }
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.005 }
+stride_samples = 100
+window_samples = 1000
+[lockin]
+signal_channels = [3]
+workers = 2
+stride_samples = 100
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+[kerr]
+sensor = 1
+method = "harmonics"
+factor = -1.0
+"#,
         );
-        assert!(json.contains("\"valid\": true"), "json: {json}");
+        let report: pmoke_config_core::ValidationReport = serde_json::from_str(&json).unwrap();
+        assert!(report.valid, "json: {json}");
+        assert_eq!(report.summary.unwrap().signal_channels, vec![3]);
     }
 }

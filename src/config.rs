@@ -24,6 +24,11 @@ pub use migration::{
     LATEST_CONFIG_VERSION, MigrationPlan, plan_latest_executable_migration, plan_migration,
 };
 pub use paths::{ArtifactPaths, ArtifactResolver};
+pub use pmoke_config_core::{
+    ConfigDiagnostic as CoreConfigDiagnostic, DiagnosticCode as CoreDiagnosticCode,
+    DiagnosticSeverity as CoreDiagnosticSeverity, SourceSpan as CoreSourceSpan,
+    ValidationReport as CoreValidationReport, validate_config_toml as validate_config_toml_core,
+};
 pub(crate) use render::connection_uri;
 use render::render_config_v4;
 pub use render::render_normalized_config;
