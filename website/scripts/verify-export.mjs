@@ -11,6 +11,8 @@ const required = [
   'ja/docs/index.html',
   'en/docs/quickstart/index.html',
   'ja/docs/quickstart/index.html',
+  'en/docs/interactive/waveform-analyzer/index.html',
+  'ja/docs/interactive/waveform-analyzer/index.html',
   'llms.txt',
   'llms-full.txt',
   'api/search',
@@ -20,6 +22,9 @@ const required = [
   'wasm/pmoke_web_wasm_bg.wasm',
   'workers/config-validator.worker.js',
   'workers/signal.worker.js',
+  'workers/waveform-analyzer.worker.js',
+  'fixtures/LICENSE',
+  'fixtures/m4-synthetic-reference.json',
   'og.png',
   'robots.txt',
   'sitemap.xml',
@@ -32,12 +37,16 @@ for (const relative of required) await access(path.join(output, relative));
 const English = await readFile(path.join(output, 'en/index.html'), 'utf8');
 const Japanese = await readFile(path.join(output, 'ja/index.html'), 'utf8');
 const JapaneseQuickstart = await readFile(path.join(output, 'ja/docs/quickstart/index.html'), 'utf8');
+const EnglishAnalyzer = await readFile(path.join(output, 'en/docs/interactive/waveform-analyzer/index.html'), 'utf8');
+const JapaneseAnalyzer = await readFile(path.join(output, 'ja/docs/interactive/waveform-analyzer/index.html'), 'utf8');
 const sitemap = await readFile(path.join(output, 'sitemap.xml'), 'utf8');
 const robots = await readFile(path.join(output, 'robots.txt'), 'utf8');
 if (!English.includes('<html lang="en"')) throw new Error('English lang metadata is missing');
 if (!Japanese.includes('<html lang="ja"')) throw new Error('Japanese lang metadata is missing');
 if (!English.includes('/pmoke/_next/')) throw new Error('GitHub Pages basePath is missing');
 if (!Japanese.includes('精密信号ラボ')) throw new Error('Japanese home content is missing');
+if (!EnglishAnalyzer.includes('waveform-analyzer')) throw new Error('English waveform tool is missing');
+if (!JapaneseAnalyzer.includes('波形アナライザー')) throw new Error('Japanese waveform tool is missing');
 if (!JapaneseQuickstart.includes('https://kerr-group.github.io/pmoke/ja/docs/quickstart/')) {
   throw new Error('Canonical project URL is missing');
 }
@@ -53,12 +62,30 @@ if (!robots.includes('Sitemap: https://kerr-group.github.io/pmoke/sitemap.xml\n'
 }
 
 const wasm = await stat(path.join(output, 'wasm/pmoke_web_wasm_bg.wasm'));
-if (wasm.size > 600 * 1024) throw new Error(`M3 Wasm raw budget exceeded: ${wasm.size} bytes`);
+if (wasm.size > 600 * 1024) throw new Error(`M4 Wasm raw budget exceeded: ${wasm.size} bytes`);
 const wasmCompressed = gzipSync(await readFile(path.join(output, 'wasm/pmoke_web_wasm_bg.wasm')), {
   level: 9,
 });
 if (wasmCompressed.byteLength > 210 * 1024) {
-  throw new Error(`M3 Wasm gzip budget exceeded: ${wasmCompressed.byteLength} bytes`);
+  throw new Error(`M4 Wasm gzip budget exceeded: ${wasmCompressed.byteLength} bytes`);
+}
+
+const analyzerWorker = await stat(path.join(output, 'workers/waveform-analyzer.worker.js'));
+if (analyzerWorker.size > 32 * 1024) {
+  throw new Error(`M4 analysis Worker budget exceeded: ${analyzerWorker.size} bytes`);
+}
+
+const coreFixture = await readFile(
+  path.resolve('../crates/pmoke-analysis-core/tests/fixtures/m4-synthetic-reference.json'),
+);
+const publicFixture = await readFile(path.resolve('public/fixtures/m4-synthetic-reference.json'));
+const exportedFixture = await readFile(path.join(output, 'fixtures/m4-synthetic-reference.json'));
+if (!coreFixture.equals(publicFixture) || !coreFixture.equals(exportedFixture)) {
+  throw new Error('M4 public golden fixture differs from the analysis-core fixture');
+}
+const fixture = JSON.parse(coreFixture.toString('utf8'));
+if (fixture.expected?.harmonics?.length !== 6 || fixture.license !== 'CC0-1.0') {
+  throw new Error('M4 golden fixture metadata or harmonic outputs are incomplete');
 }
 
 const search = await stat(path.join(output, 'api/search'));

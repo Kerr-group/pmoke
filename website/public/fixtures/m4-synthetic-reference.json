@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "license": "CC0-1.0",
+  "generator": "pmoke-analysis-core/0.1.0",
+  "parameters": {
+    "samples": 20000,
+    "sample_rate_hz": 100000.0,
+    "reference_frequency_hz": 1000.0,
+    "amplitude": 1.0,
+    "phase_rad": 0.2,
+    "noise_rms": 0.0,
+    "kerr_angle_rad": 0.01,
+    "seed": 42,
+    "half_window_cycles": 1.0,
+    "stride_samples": 20,
+    "rotation_rad": 0.2,
+    "kerr_factor": 1.0
+  },
+  "tolerances": {
+    "lockin_phase_abs": 1e-12,
+    "lockin_phase_rel": 1e-10,
+    "kerr_abs": 1e-10,
+    "kerr_rel": 1e-8
+  },
+  "expected": {
+    "output_samples": 987,
+    "output_rate_hz": 5000.0,
+    "first_input_index": 140,
+    "last_input_index": 19860,
+    "sample_index": 493,
+    "harmonics": [
+      {
+        "harmonic": 1,
+        "time_s": 0.1,
+        "x": 0.011404567208370969,
+        "y": 0.0023118202237674013,
+        "in_phase": 0.011636522932442935,
+        "out_of_phase": -2.469378868052985e-15
+      },
+      {
+        "harmonic": 2,
+        "time_s": 0.1,
+        "x": 0.3093895333857706,
+        "y": 0.06271636329859101,
+        "in_phase": 0.31568215913172176,
+        "out_of_phase": -4.9155124415278806e-14
+      },
+      {
+        "harmonic": 3,
+        "time_s": 0.1,
+        "x": 0.0020489454840160026,
+        "y": 0.00041534181181626065,
+        "in_phase": 0.0020906186685075746,
+        "out_of_phase": -3.878462221523771e-15
+      },
+      {
+        "harmonic": 4,
+        "time_s": 0.1,
+        "x": 0.024633121614365268,
+        "y": 0.004993380957127737,
+        "in_phase": 0.025134130855295457,
+        "out_of_phase": -9.501080477924972e-15
+      },
+      {
+        "harmonic": 5,
+        "time_s": 0.1,
+        "x": 0.00009335073826056845,
+        "y": 0.00001892313146703774,
+        "in_phase": 0.00009524938445109213,
+        "out_of_phase": -5.124583212206407e-16
+      },
+      {
+        "harmonic": 6,
+        "time_s": 0.1,
+        "x": 0.0007305444620501785,
+        "y": 0.0001480886938402983,
+        "in_phase": 0.000745402892585956,
+        "out_of_phase": -2.506431477297677e-15
+      }
+    ],
+    "modulation_depth": 1.8399999999998586,
+    "kerr_rad": 0.00999999999999028
+  },
+  "parity_algorithms": [
+    "boxcar_legacy",
+    "phase_rotation",
+    "harmonics_kerr"
+  ]
+}

@@ -7,11 +7,15 @@ const checks = [
   { path: 'ja/', contains: '精密信号ラボ' },
   { path: 'en/docs/quickstart/', contains: 'Quickstart' },
   { path: 'ja/docs/quickstart/', contains: 'クイックスタート' },
+  { path: 'en/docs/interactive/waveform-analyzer/', contains: 'Waveform Analyzer' },
+  { path: 'ja/docs/interactive/waveform-analyzer/', contains: '波形アナライザー' },
   { path: 'api/search', contains: 'Kerr' },
   { path: 'llms.txt', contains: 'https://kerr-group.github.io/pmoke/en/docs/' },
   { path: 'sitemap.xml', contains: '<loc>https://kerr-group.github.io/pmoke/en/' },
   { path: 'robots.txt', contains: 'Sitemap: https://kerr-group.github.io/pmoke/sitemap.xml' },
   { path: 'wasm/pmoke_web_wasm_bg.wasm', contentType: 'application/wasm' },
+  { path: 'workers/waveform-analyzer.worker.js', contains: 'max_total_harmonic_points' },
+  { path: 'fixtures/m4-synthetic-reference.json', contains: 'CC0-1.0' },
 ];
 
 for (const check of checks) {
