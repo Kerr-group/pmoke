@@ -9,7 +9,8 @@ import {
   MarkdownCopyButton,
   ViewOptionsPopover,
 } from 'fumadocs-ui/layouts/docs/page';
-import { getMDXComponents } from '@/components/mdx';
+import { getLocalizedMDXComponents } from '@/components/mdx';
+import { isLanguage } from '@/lib/i18n';
 import { getPageMarkdownUrl, source } from '@/lib/source';
 import { absoluteUrl, gitConfig, socialImage } from '@/lib/shared';
 
@@ -17,6 +18,7 @@ type Params = { lang: string; slug?: string[] };
 
 export default async function Page({ params }: { params: Promise<Params> }) {
   const { lang, slug } = await params;
+  if (!isLanguage(lang)) notFound();
   const page = source.getPage(slug, lang);
   if (!page) notFound();
   const MDX = page.data.body;
@@ -34,7 +36,7 @@ export default async function Page({ params }: { params: Promise<Params> }) {
         />
       </div>
       <DocsBody>
-        <MDX components={getMDXComponents({ a: createRelativeLink(source, page) })} />
+        <MDX components={getLocalizedMDXComponents(lang, { a: createRelativeLink(source, page) })} />
       </DocsBody>
     </DocsPage>
   );
