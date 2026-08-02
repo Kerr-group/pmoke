@@ -1,0 +1,30 @@
+---
+title: 検索と Privacy
+description: local hybrid 検索、品質 gate、全文検索 fallback の境界。
+---
+
+## local hybrid model
+
+deterministic `pmoke-domain-v1` bilingual concept projection による検索。
+日英 domain synonym の共通 concept dimension と、正確な command 名・設定 path を保持する
+bounded hashed lexical feature。公開 documentation のみを対象とする生成 index。
+検索開始後に遅延読込される Orama OSS text/vector ranking。初期 page payload 外の semantic module。
+
+## privacy 境界
+
+- query upload、analytics、cookie、account、telemetry の不使用。
+- local config、CSV input、測定装置 address、browser tool state の非 index 化。
+- GitHub Pages からの同一 origin static index 配信。
+- service worker なしでの完全 offline 対応の非主張。
+
+## failure 境界
+
+concept index または hybrid module の読込失敗時にも利用可能な locale 限定 ZBSearch 全文検索。
+navigation と検索結果を維持したまま通知される **全文検索フォールバック**。
+日英 index 混在の禁止。
+
+## 品質境界
+
+locale ごとに 40 query 以上の versioned relevance fixture。各 locale Recall@5 0.85 以上、
+cross-locale leakage なし、warm p95 100 ms 未満、readiness 1 秒未満、static asset budget を
+要求する CI。neural embedding、LLM answer engine、cloud search ではない domain concept-vector model。

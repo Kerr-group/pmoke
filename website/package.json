@@ -8,8 +8,8 @@
     "node": "22.23.1"
   },
   "scripts": {
-    "build": "npm run build:wasm && next build && node scripts/postbuild.mjs",
-    "build:site": "next build && node scripts/postbuild.mjs",
+    "build": "npm run build:wasm && next build && node scripts/evaluate-search.mjs && node scripts/postbuild.mjs",
+    "build:site": "next build && node scripts/evaluate-search.mjs && node scripts/postbuild.mjs",
     "build:wasm": "wasm-pack build ../crates/pmoke-web-wasm --target web --out-dir ../../website/public/wasm --release --no-pack -- --locked",
     "dev": "pnpm build:wasm && next dev",
     "start": "node scripts/serve-basepath.mjs",
@@ -19,9 +19,11 @@
     "lint:content": "node scripts/verify-content.mjs",
     "test:export": "node scripts/verify-export.mjs",
     "test:e2e": "playwright test",
-    "check": "npm run lint && npm run lint:ja && npm run lint:content && npm run types:check && npm run test:export"
+    "test:search": "node scripts/evaluate-search.mjs",
+    "check": "npm run lint && npm run lint:ja && npm run lint:content && npm run types:check && npm run test:search && npm run test:export"
   },
   "dependencies": {
+    "@orama/orama": "3.1.18",
     "fumadocs-core": "16.14.0",
     "fumadocs-mdx": "15.2.1",
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.14.0",
