@@ -5,7 +5,17 @@ const MIN_SAMPLES: usize = 64;
 const MAX_SAMPLES: usize = 4_096;
 const LOCKIN_HEADER_VALUES: usize = 8;
 
-/// Generate interleaved time, source, in-phase, and quadrature preview samples.
+/// Compute raw channel values at continuous time t in [0, 1].
+pub fn sample_channels(t: f64, phase: f64) -> (f64, f64, f64) {
+    let carrier = TAU * (7.0 * t + phase);
+    let envelope = (std::f64::consts::PI * (t - 0.5)).cos().powi(2);
+    let pulse = (carrier.sin() + 0.18 * (3.0 * carrier + 0.4).sin()) * envelope;
+    let in_phase = (TAU * 2.0 * t).sin() * 0.72 + 0.12 * pulse;
+    let quadrature = (TAU * 2.0 * t + 1.12).sin() * 0.48;
+    (pulse, in_phase, quadrature)
+}
+
+/// Generate interleaved time, source, in-phase, and quadrature preview samples with C1 periodic closure.
 #[wasm_bindgen]
 pub fn generate_signal(requested_samples: usize, phase: f64) -> Box<[f64]> {
     let samples = requested_samples.clamp(MIN_SAMPLES, MAX_SAMPLES);
@@ -13,11 +23,7 @@ pub fn generate_signal(requested_samples: usize, phase: f64) -> Box<[f64]> {
 
     for index in 0..samples {
         let t = index as f64 / (samples - 1) as f64;
-        let carrier = TAU * (7.0 * t + phase);
-        let envelope = (-3.2 * (t - 0.52).powi(2)).exp();
-        let pulse = (carrier.sin() + 0.18 * (3.0 * carrier + 0.4).sin()) * envelope;
-        let in_phase = (TAU * 1.35 * t).sin() * 0.72 + 0.12 * pulse;
-        let quadrature = (TAU * 1.35 * t + 1.12).sin() * 0.48;
+        let (pulse, in_phase, quadrature) = sample_channels(t, phase);
         output.extend_from_slice(&[t, pulse, in_phase, quadrature]);
     }
 
@@ -197,6 +203,37 @@ mod tests {
         let output = generate_signal(usize::MAX, 0.25);
         assert_eq!(output.len(), MAX_SAMPLES * 4);
         assert!(output.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn signal_has_c1_periodic_closure() {
+        let phase = 0.17;
+        let (p0, i0, q0) = sample_channels(0.0, phase);
+        let (p1, i1, q1) = sample_channels(1.0, phase);
+
+        assert!((p0 - p1).abs() <= 1e-9);
+        assert!((i0 - i1).abs() <= 1e-9);
+        assert!((q0 - q1).abs() <= 1e-9);
+
+        // Analytic derivatives at t=0 and t=1
+        // d(envelope)/dt = pi * sin(2*pi*t), so at t=0 and t=1, d(envelope)/dt = 0
+        // envelope(0) = envelope(1) = 0
+        // Therefore d(pulse)/dt = 0 at both endpoints!
+        // d(in_phase)/dt = 2*pi*2.0*cos(0) * 0.72 + 0.12 * d(pulse)/dt
+        // d(quadrature)/dt = 2*pi*2.0*cos(1.12) * 0.48
+        let eps = 1e-7;
+        let (_p0_plus, i0_plus, q0_plus) = sample_channels(eps, phase);
+        let (_p0_minus, i0_minus, q0_minus) = sample_channels(-eps, phase);
+        let (_p1_plus, i1_plus, q1_plus) = sample_channels(1.0 + eps, phase);
+        let (_p1_minus, i1_minus, q1_minus) = sample_channels(1.0 - eps, phase);
+
+        let d_i0 = (i0_plus - i0_minus) / (2.0 * eps);
+        let d_i1 = (i1_plus - i1_minus) / (2.0 * eps);
+        let d_q0 = (q0_plus - q0_minus) / (2.0 * eps);
+        let d_q1 = (q1_plus - q1_minus) / (2.0 * eps);
+
+        assert!((d_i0 - d_i1).abs() <= 1e-6);
+        assert!((d_q0 - d_q1).abs() <= 1e-6);
     }
 
     #[test]
