@@ -193,6 +193,76 @@ test('signal canvas sweeps continuously when active and pauses on reduced motion
   expect(secondStatic).toBe(firstStatic);
 });
 
+test('signal renderer survives reload and Wasm readiness without restarting', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser renderer lifecycle gate');
+
+  await page.route('**/wasm/pmoke_web_wasm.js', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.continue();
+  });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/pmoke/en/');
+  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+
+  await page.reload();
+  const stage = page.locator('.signal-stage');
+  const canvas = stage.locator('canvas');
+  await expect(stage).toHaveAttribute('data-wasm', 'loading');
+  await expect(stage).toHaveAttribute('data-motion', 'running');
+  await expect(canvas).toHaveAttribute('data-render-generation', '1');
+  expect(await canvas.evaluate((element: HTMLCanvasElement) => {
+    const context = element.getContext('2d');
+    if (!context) return 0;
+    const pixels = context.getImageData(0, 0, element.width, element.height).data;
+    let painted = 0;
+    for (let index = 3; index < pixels.length; index += 128) if (pixels[index] > 0) painted += 1;
+    return painted;
+  })).toBeGreaterThan(100);
+
+  await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  await expect(canvas).toHaveAttribute('data-render-generation', '1');
+  await page.locator('.theme-toggle').click();
+  await expect(canvas).toHaveAttribute('data-render-generation', '1');
+});
+
+test('mobile signal renderer keeps a dense periodic viewport', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium', 'mobile renderer density gate');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/pmoke/en/');
+  const canvas = page.locator('.signal-stage canvas');
+  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  const metrics = await canvas.evaluate((element: HTMLCanvasElement) => ({
+    cssWidth: element.getBoundingClientRect().width,
+    renderPoints: Number(element.dataset.renderPoints),
+    generation: Number(element.dataset.renderGeneration),
+  }));
+  expect(metrics.renderPoints).toBeGreaterThanOrEqual(Math.ceil(metrics.cssWidth));
+  expect(metrics.generation).toBe(1);
+});
+
+test('brand artwork and favicon are optimized and available', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser brand asset gate');
+
+  await page.goto('/pmoke/en/');
+  const brand = page.locator('.site-header .brand-icon');
+  await expect(brand).toBeVisible();
+  expect(await brand.evaluate((image: HTMLImageElement) => ({
+    complete: image.complete,
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+  }))).toEqual({ complete: true, width: 160, height: 160 });
+
+  const favicon = page.locator('link[rel="icon"]');
+  await expect(favicon).toHaveAttribute('href', /\/pmoke\/pmoke_faviicon\.png$/u);
+  const response = await page.request.get('/pmoke/pmoke_faviicon.png');
+  expect(response.ok()).toBeTruthy();
+  expect((await response.body()).byteLength).toBeLessThan(10_000);
+
+  await page.goto('/pmoke/en/docs/');
+  await expect(page.locator('.brand-icon:visible').first()).toBeVisible();
+});
+
 test('all rendered internal links resolve beneath the project path', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser link gate');
 

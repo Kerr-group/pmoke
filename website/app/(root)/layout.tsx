@@ -1,13 +1,17 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { FontVariables } from '@/components/font-variables';
-import { absoluteUrl, siteDescription, siteUrl, socialImage } from '@/lib/shared';
+import { absoluteUrl, faviconImage, siteDescription, siteUrl, socialImage } from '@/lib/shared';
 import '../global.css';
 
 export const metadata: Metadata = {
   metadataBase: new URL(`${siteUrl}/`),
   title: 'pmoke | Documentation language',
   description: siteDescription,
+  icons: {
+    icon: [{ url: faviconImage, type: 'image/png', sizes: '64x64' }],
+    shortcut: faviconImage,
+  },
   alternates: {
     canonical: absoluteUrl('/'),
     languages: {
