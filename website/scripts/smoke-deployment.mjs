@@ -19,7 +19,7 @@ const checks = [
   { path: 'ja/docs/ai/search-privacy/', contains: 'local hybrid model' },
   { path: 'api/search', contains: 'Kerr' },
   { path: 'api/semantic-search', contains: 'pmoke-domain-v1' },
-  { path: 'llms.txt', contains: 'https://kerr-group.github.io/pmoke/en/docs/' },
+  { path: 'llms.txt', contains: 'https://kerr-group.github.io/pmoke/llm/en/' },
   { path: 'llms-en.txt', contains: '- locales: en' },
   { path: 'llms-ja.txt', contains: '- locales: ja' },
   { path: 'ai-index.json', contains: 'search_query_upload' },

@@ -1,0 +1,44 @@
+---
+title: Machine Resource Contracts
+description: Formats, stability boundaries, and integrity checks for exported machine resources.
+---
+
+## Contract map
+
+| Endpoint | Media type | Stability |
+| --- | --- | --- |
+| `llms.txt` | `text/plain; charset=utf-8` | Structured discovery index |
+| `llm/{lang}/{slug}.md` | `text/markdown; charset=utf-8` | Processed page content |
+| `llms-{lang}.txt` | `text/plain; charset=utf-8` | Locale context snapshot |
+| `ai-index.json` | `application/json` | Manifest schema 1 |
+| `generated/*.json` | `application/json` | Generated CLI/config contracts |
+| `config.schema.json` | `application/json` | Canonical config v4 structure |
+
+## Manifest record
+
+Each page entry contains locale, title, description, canonical HTML URL, Markdown
+URL, and a SHA-256 digest of the exact exported Markdown bytes. The manifest also
+identifies every top-level machine endpoint and its media type.
+
+```json
+{
+  "locale": "en",
+  "canonical_url": "https://kerr-group.github.io/pmoke/en/docs/quickstart/",
+  "markdown_url": "https://kerr-group.github.io/pmoke/llm/en/quickstart.md",
+  "sha256": "<64 lowercase hexadecimal characters>"
+}
+```
+
+## Integrity check
+
+```bash
+manifest=https://kerr-group.github.io/pmoke/ai-index.json
+url=$(curl -fsSL "$manifest" | jq -r '.pages[] | select(.locale == "en" and .title == "Quickstart") | .markdown_url')
+expected=$(curl -fsSL "$manifest" | jq -r '.pages[] | select(.locale == "en" and .title == "Quickstart") | .sha256')
+actual=$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)
+test "$actual" = "$expected"
+```
+
+Identical source commits produce deterministic feeds. New fields may be added to
+manifest schema 1; consumers must ignore unknown fields. A breaking shape change
+requires a schema increment.

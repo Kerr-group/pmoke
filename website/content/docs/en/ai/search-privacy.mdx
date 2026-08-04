@@ -1,32 +1,34 @@
 ---
 title: Search and Privacy
-description: Local hybrid retrieval, quality gates, and full-text fallback boundaries.
+description: Browser-local hybrid retrieval, measurable quality gates, and explicit failure boundaries.
 ---
 
-## Local hybrid model
+## Local retrieval
 
-Search uses the deterministic `pmoke-domain-v1` bilingual concept projection. English
-and Japanese domain synonyms share concept dimensions, while bounded hashed lexical
-features preserve exact command names and configuration paths. The generated index
-contains public documentation only. Orama OSS performs text/vector ranking after a
-search begins; the semantic module is absent from the initial page payload.
+Search uses the deterministic `pmoke-domain-v1` bilingual concept projection.
+English and Japanese domain synonyms share concept dimensions; bounded hashed
+lexical features preserve exact commands and configuration paths. Orama OSS ranks
+the static records in the browser after the semantic module is loaded on demand.
 
-## Privacy boundary
+This is concept-vector retrieval, not a neural embedding service, generative answer
+engine, or cloud search product.
 
-- No query upload, analytics, cookies, account, or telemetry.
-- No indexing of local config files, CSV input, instrument addresses, or browser-tool state.
+## Data boundary
+
+- Public documentation as the only indexed content.
 - Same-origin static index delivery from GitHub Pages.
+- No query upload, analytics, cookie, account, or telemetry.
+- No indexing of local config, CSV input, instrument address, or browser-tool state.
 - No claim of complete offline support without a service worker.
 
 ## Failure boundary
 
-Failure to load the concept index or hybrid module leaves the locale-scoped ZBSearch
-full-text path available. The dialog announces **Full-text fallback** without blocking
-navigation or hiding results. English and Japanese indexes never mix.
+Failure to load Orama, the concept index, or the hybrid module leaves locale-scoped
+ZBSearch full-text retrieval available. The dialog reports **Full-text fallback**
+without blocking navigation or mixing English and Japanese indexes.
 
-## Quality boundary
+## Quality gate
 
 The versioned relevance fixture contains at least 40 queries per locale. CI requires
-Recall@5 of 0.85 or better for each locale, zero cross-locale leakage, warm p95 below
-100 ms, readiness below one second, and explicit static asset budgets. This is a
-domain concept-vector model, not a neural embedding, LLM answer engine, or cloud search.
+Recall@5 of at least 0.85 per locale, zero cross-locale leakage, warm p95 under
+100 ms, readiness under one second, and explicit static-asset budgets.

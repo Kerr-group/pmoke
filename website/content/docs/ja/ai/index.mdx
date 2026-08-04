@@ -1,33 +1,26 @@
 ---
-title: AI・機械向け Resource
-description: agent、editor、自動化向けの安定 documentation feed。
+title: AI・機械向けリソース
+description: 信頼できるpmoke agent向けのversioned Markdown feed、型付き契約、local検索。
 ---
 
-## endpoint
+agent、editor、自動化処理に必要な最小のauthoritative inputを選択するための操作面。
+account・API key不要、documentation buildと同じversionを持つ静的endpoint。
 
-| Resource | 用途 |
-| --- | --- |
-| [`llms.txt`](/pmoke/llms.txt) | 日英 page の簡潔な索引 |
-| [`llms-full.txt`](/pmoke/llms-full.txt) | 処理済み documentation の全 context |
-| [`llms-en.txt`](/pmoke/llms-en.txt) | 英語限定の full context |
-| [`llms-ja.txt`](/pmoke/llms-ja.txt) | 日本語限定の full context |
-| [`ai-index.json`](/pmoke/ai-index.json) | SHA-256 digest 付き versioned page manifest |
-| [CLI JSON](/pmoke/generated/cli-reference.json) | 型付き command・option tree |
-| [Config JSON](/pmoke/generated/config-reference.json) | 型付き field registry |
-| [Config JSON Schema](/pmoke/config.schema.json) | editor・構造検証向け schema |
+<AIResourceHub locale="ja" />
 
-pmoke version、config schema version、build source commit を含む各 feed。locale と canonical source 情報を保持する page 別 Markdown URL。
+## 取得順序
 
-## agent 方針
+1. 探索の起点となる [`llms.txt`](https://kerr-group.github.io/pmoke/llms.txt)。
+2. 選択localeから取得する関連page限定のMarkdown URL。
+3. 正確なcommand、option、field、default値に用いる生成JSON契約。
+4. 複数pageにまたがるtaskでのみ使用するlocale別context feed。
+5. 言語横断contextが必要な場合に限定する日英統合feed。
 
-1. 関連 page 選択の起点となる `llms.txt`。
-2. render 済み table の parse より優先する生成 JSON。
-3. semantic validation の最終基準となる native `pmoke config validate`。
-4. 生成結果で保持する正確な command、field path、unit、version metadata。
-5. documentation 例からの private 実験室 address 推測の禁止。
+## 権限境界
 
-## 検索境界
+workstation・測定装置の状態を観測しないdocumentation。config semanticsの最終基準となる
+`pmoke config validate`。compiled feature・live hardwareの最終基準となる
+`pmoke doctor hardware`。credential、address、driver availability、instrument stateの推測禁止。
 
-browser 内で完結する deterministic bilingual concept-vector index と全文検索結果の統合。
-pmoke、Orama Cloud、外部 service への query・telemetry 送信なし。
-model、fallback、品質境界の詳細となる [検索と privacy](./search-privacy)。
+次の参照先となる[agent運用とversion固定](./agent-workflow)、
+[resource契約](./resource-contracts)、[検索とprivacy](./search-privacy)。

@@ -1,0 +1,42 @@
+---
+title: 機械向けResource契約
+description: export済み機械向けresourceの形式、安定性境界、integrity確認。
+---
+
+## 契約一覧
+
+| Endpoint | Media type | 安定性 |
+| --- | --- | --- |
+| `llms.txt` | `text/plain; charset=utf-8` | 構造化済み探索index |
+| `llm/{lang}/{slug}.md` | `text/markdown; charset=utf-8` | 処理済みpage content |
+| `llms-{lang}.txt` | `text/plain; charset=utf-8` | locale context snapshot |
+| `ai-index.json` | `application/json` | manifest schema 1 |
+| `generated/*.json` | `application/json` | 生成済みCLI・config契約 |
+| `config.schema.json` | `application/json` | canonical config v4構造 |
+
+## Manifest record
+
+locale、title、description、canonical HTML URL、Markdown URL、export済みMarkdown byte列の
+SHA-256 digestを持つ各page entry。top-level machine endpointとmedia typeを含むmanifest。
+
+```json
+{
+  "locale": "ja",
+  "canonical_url": "https://kerr-group.github.io/pmoke/ja/docs/quickstart/",
+  "markdown_url": "https://kerr-group.github.io/pmoke/llm/ja/quickstart.md",
+  "sha256": "<64 lowercase hexadecimal characters>"
+}
+```
+
+## Integrity確認
+
+```bash
+manifest=https://kerr-group.github.io/pmoke/ai-index.json
+url=$(curl -fsSL "$manifest" | jq -r '.pages[] | select(.locale == "ja" and .title == "クイックスタート") | .markdown_url')
+expected=$(curl -fsSL "$manifest" | jq -r '.pages[] | select(.locale == "ja" and .title == "クイックスタート") | .sha256')
+actual=$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)
+test "$actual" = "$expected"
+```
+
+同一source commitから生成されるdeterministic feed。manifest schema 1へのfield追加を許容する
+consumer側のunknown field無視。breaking shape変更時に必要となるschema更新。

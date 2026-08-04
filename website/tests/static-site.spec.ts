@@ -51,7 +51,7 @@ test('deep documentation links and static search remain under the project base p
   expect(response.ok()).toBeTruthy();
   expect(await response.text()).toContain('クイックスタート');
   const llms = await page.request.get('/pmoke/llms.txt');
-  expect(await llms.text()).toContain('https://kerr-group.github.io/pmoke/ja/docs/');
+  expect(await llms.text()).toContain('https://kerr-group.github.io/pmoke/llm/ja/');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await page.screenshot({ path: testInfo.outputPath('ja-docs.png'), fullPage: true });
 });

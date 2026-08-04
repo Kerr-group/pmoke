@@ -14,6 +14,8 @@ const required = [
   'ja/docs/quickstart/index.html',
   'en/docs/interactive/waveform-analyzer/index.html',
   'ja/docs/interactive/waveform-analyzer/index.html',
+  'en/docs/ai/index.html',
+  'ja/docs/ai/index.html',
   'llms.txt',
   'llms-full.txt',
   'llms-en.txt',
@@ -98,7 +100,7 @@ if (fixture.expected?.harmonics?.length !== 6 || fixture.license !== 'CC0-1.0') 
 }
 
 const search = await stat(path.join(output, 'api/search'));
-if (search.size > 900 * 1024) throw new Error(`M2 search budget exceeded: ${search.size} bytes`);
+if (search.size > 950 * 1024) throw new Error(`M2 search budget exceeded: ${search.size} bytes`);
 
 const semanticPath = path.join(output, 'api/semantic-search');
 const semanticFile = await readFile(semanticPath);

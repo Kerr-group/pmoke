@@ -1,0 +1,43 @@
+---
+title: Agent運用とVersion固定
+description: pmoke自動化向けの最小context取得、version固定、runtime確認。
+---
+
+## ブートストラップ
+
+documentation本文より先に取得する簡潔な索引。
+
+```bash
+curl -fsSL https://kerr-group.github.io/pmoke/llms.txt
+curl -fsSL https://kerr-group.github.io/pmoke/ai-index.json | jq '.pmoke_version, .source_commit'
+```
+
+処理済みpage別Markdownへの直接linkを持つ索引。既定での日英full feed一括投入ではなく、
+現在のtaskに必要なlinkだけの選択。
+
+## Context階層
+
+| Task | 優先source | Runtime確認 |
+| --- | --- | --- |
+| 単一commandの説明 | page別CLI Markdown | `pmoke <command> --help` |
+| config生成 | Config JSON + JSON Schema | `pmoke config validate` |
+| 通信診断 | installation・troubleshooting Markdown | `pmoke doctor hardware` |
+| 英語の横断的な案内 | `llms-en.txt` | 関連native command |
+| 日英用語の比較 | `llms-full.txt` | source link・locale metadata |
+
+## Version固定
+
+生成結果とともに記録する`ai-index.json`の`pmoke_version`、
+`config_schema_version`、`source_commit`。manifest entryのSHA-256 digestと一致しない
+cache pageの拒否。要求pmoke versionと現在のfeedが異なる場合のmanifest再取得。
+
+## 生成契約
+
+正確なfield path、unit、enum値、command表記、canonical source URLの保持。
+unsupported assumptionの明示。native validation成功前は提案状態となる生成config。
+
+```text
+最初にpmokeのllms.txt索引を参照。localeに対応する最小のMarkdown sourceを選択。
+正確なCLI・config fieldには生成JSON契約を優先。version、path、unit、canonical URLを保持。
+config semanticsはpmoke config validateで確認。hardware state、credential、addressの推測禁止。
+```

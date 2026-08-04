@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { getLLMText, getPageMarkdownUrl, source } from '@/lib/source';
 import { absoluteUrl, siteOrigin } from '@/lib/shared';
+import { machineResources } from '@/lib/machine-resources';
 import { versionMetadata } from '@/lib/version';
 
 export async function buildFullLLMText(locales: string[] = ['en', 'ja']): Promise<string> {
@@ -41,6 +42,13 @@ export async function buildAIManifest() {
       search_query_upload: false,
       browser_tools_local_only: true,
     },
+    resources: machineResources.map((resource) => ({
+      id: resource.id,
+      url: absoluteUrl(resource.path),
+      media_type: resource.mediaType,
+      group: resource.group,
+      locale: resource.locale,
+    })),
     pages: await Promise.all(
       pages.map(async (page) => {
         const markdown = await getLLMText(page);
