@@ -87,10 +87,75 @@ export function componentsFrom(inventory) {
     .filter((component, index, all) => index === 0 || component.purl !== all[index - 1].purl);
 }
 
-function licenseExpressionAllowed(expression) {
+export function licenseExpressionAllowed(expression) {
   if (allowedLicenses.has(expression)) return true;
-  const identifiers = expression.match(/[A-Za-z0-9.-]+/gu) ?? [];
-  return identifiers
-    .filter((identifier) => identifier !== 'AND' && identifier !== 'OR' && identifier !== 'WITH')
-    .every((identifier) => allowedLicenses.has(identifier));
+  // Cargo metadata still contains pre-SPDX-2.0 slash-as-OR expressions.
+  const canonicalExpression = expression.replaceAll(/\s*\/\s*/gu, ' OR ');
+  const tokens = canonicalExpression.match(/\(|\)|AND|OR|WITH|[A-Za-z0-9.+-]+/gu) ?? [];
+  if (tokens.length === 0 || normalizeExpression(tokens.join(' ')) !== normalizeExpression(canonicalExpression)) {
+    return false;
+  }
+
+  let cursor = 0;
+  const parsePrimary = () => {
+    const token = tokens[cursor];
+    if (token === '(') {
+      cursor += 1;
+      const value = parseOr();
+      if (tokens[cursor] !== ')') throw new Error('unclosed SPDX expression');
+      cursor += 1;
+      return value;
+    }
+    if (!token || token === ')' || token === 'AND' || token === 'OR' || token === 'WITH') {
+      throw new Error('expected SPDX license identifier');
+    }
+    cursor += 1;
+    return allowedLicenses.has(token);
+  };
+  const parseWith = () => {
+    let value = parsePrimary();
+    if (tokens[cursor] === 'WITH') {
+      cursor += 1;
+      const exception = tokens[cursor];
+      if (!exception || exception === '(' || exception === ')' || exception === 'AND' || exception === 'OR' || exception === 'WITH') {
+        throw new Error('expected SPDX exception identifier');
+      }
+      cursor += 1;
+      value = value && allowedLicenses.has(exception);
+    }
+    return value;
+  };
+  const parseAnd = () => {
+    let value = parseWith();
+    while (tokens[cursor] === 'AND') {
+      cursor += 1;
+      const right = parseWith();
+      value = value && right;
+    }
+    return value;
+  };
+  function parseOr() {
+    let value = parseAnd();
+    while (tokens[cursor] === 'OR') {
+      cursor += 1;
+      const right = parseAnd();
+      value = value || right;
+    }
+    return value;
+  }
+
+  try {
+    const allowed = parseOr();
+    return cursor === tokens.length && allowed;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeExpression(expression) {
+  return expression
+    .trim()
+    .replaceAll(/\s+/gu, ' ')
+    .replaceAll(/\s*\(\s*/gu, '(')
+    .replaceAll(/\s*\)\s*/gu, ')');
 }

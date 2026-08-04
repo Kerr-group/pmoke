@@ -1,23 +1,30 @@
 ---
 title: Feature Flags
-description: Cargo features for direct and adapter-based instrument transports.
+description: Platform build profiles and Cargo features for instrument transports.
 ---
 
-| Feature | Purpose | Typical platform |
+The default feature set is the complete Linux and Windows hardware build. It
+includes direct TCP/IP, direct GPIB or VISA, and both Prologix transports.
+
+| Build profile | Command | Included transports |
+| --- | --- | --- |
+| Linux / Windows | `cargo install --path . --locked` | TCP/IP, GPIB/VISA, Prologix TCP, Prologix serial |
+| macOS | See the command below | TCP/IP, Prologix TCP, Prologix serial |
+| Analysis only | `cargo install --path . --locked --no-default-features` | None |
+
+```bash
+# macOS hardware build: every supported transport except direct GPIB
+cargo install --path . --locked --no-default-features \
+  --features hw-core,hw-prologix-tcp,hw-prologix-serial
+```
+
+| Feature | Purpose | Supported hosts |
 | --- | --- | --- |
 | `hw-core` | Direct oscilloscope TCP/IP and shared hardware logic | Linux, macOS, Windows |
 | `hw-gpib` | Direct GPIB and Windows USBTMC/VISA support | Linux, Windows |
 | `hw-prologix-tcp` | Prologix Ethernet controller | Linux, macOS, Windows |
 | `hw-prologix-serial` | Prologix USB serial controller | Linux, macOS, Windows |
-| `hw` | Legacy alias for the direct-GPIB hardware build | Linux, Windows |
 
-```bash
-# macOS with direct DHO TCP/IP and Prologix Ethernet
-cargo install --path . --no-default-features --features hw-prologix-tcp
-
-# macOS with direct DHO TCP/IP and Prologix USB serial
-cargo install --path . --no-default-features --features hw-prologix-serial
-```
-
-The Prologix features include `hw-core`; the DHO5108 remains a direct TCP/IP
-instrument and does not communicate through Prologix.
+Both Prologix features include `hw-core`. The DHO5108 always uses direct TCP/IP
+and does not communicate through Prologix. Direct GPIB requires the platform
+driver and userspace library: linux-gpib on Linux or VISA on Windows.

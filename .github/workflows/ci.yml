@@ -156,31 +156,29 @@ jobs:
       - name: Lint instruments gpib
         run: cargo clippy --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib -- -D warnings
 
-      - name: Check pmoke legacy hw
-        run: cargo check --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw
+      - name: Check pmoke Linux full build
+        run: cargo check --locked -p pmoke --lib --bins --tests --examples
 
-      - name: Test pmoke legacy hw
-        run: cargo test --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw
+      - name: Test pmoke Linux full build
+        run: cargo test --locked -p pmoke --lib --bins --tests --examples
 
-      - name: Lint pmoke legacy hw
-        run: cargo clippy --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw -- -D warnings
-
-      - name: Check pmoke hw-gpib
-        run: cargo check --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw-gpib
-
-      - name: Test pmoke hw-gpib
-        run: cargo test --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw-gpib
-
-      - name: Lint pmoke hw-gpib
-        run: cargo clippy --locked -p pmoke --lib --bins --tests --examples --no-default-features --features hw-gpib -- -D warnings
+      - name: Lint pmoke Linux full build
+        run: cargo clippy --locked -p pmoke --lib --bins --tests --examples -- -D warnings
 
   windows-visa-check:
-    name: Windows VISA compile check
+    name: Windows full compile check
     runs-on: windows-latest
+    env:
+      PYO3_PYTHON: python
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
@@ -198,6 +196,12 @@ jobs:
 
       - name: Lint instruments VISA integration
         run: cargo clippy --locked -p instruments --lib --no-default-features --features gpib -- -D warnings
+
+      - name: Check pmoke Windows full build
+        run: cargo check --locked -p pmoke --all-targets
+
+      - name: Lint pmoke Windows full build
+        run: cargo clippy --locked -p pmoke --all-targets -- -D warnings
 
   crate-feature-matrix:
     name: Crate features (${{ matrix.os }}, ${{ matrix.label }})
@@ -278,6 +282,10 @@ jobs:
             label: pmoke hw-prologix-serial
             package: pmoke
             flags: --no-default-features --features hw-prologix-serial
+          - os: macos-14
+            label: pmoke macOS hardware bundle
+            package: pmoke
+            flags: --no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
           - os: windows-latest
             label: pmoke hw-prologix-tcp
             package: pmoke

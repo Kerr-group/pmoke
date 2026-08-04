@@ -19,7 +19,7 @@ test('release browser renders, searches, and navigates by keyboard', async ({ pa
   await page.keyboard.press('Control+k');
   await expect(search).toBeFocused();
   await search.fill('lock-in filter');
-  await expect(page.getByText('Waveform Analyzer', { exact: true }).last()).toBeVisible();
+  await expect(page.getByRole('option', { name: /Waveform Analyzer/u })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(search).toBeHidden();
 

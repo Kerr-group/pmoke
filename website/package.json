@@ -21,7 +21,7 @@
     "test:export": "node scripts/verify-export.mjs",
     "test:e2e": "playwright test",
     "test:lighthouse": "lhci collect --config=lighthouserc.cjs && node scripts/verify-lighthouse.mjs",
-    "test:licenses": "node scripts/verify-licenses.mjs",
+    "test:licenses": "node --test scripts/release-metadata.test.mjs && node scripts/verify-licenses.mjs",
     "test:ai": "node scripts/verify-ai-resources.mjs",
     "test:search": "node scripts/evaluate-search.mjs",
     "test:signal": "node scripts/verify-signal.mjs",

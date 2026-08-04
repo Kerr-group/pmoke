@@ -1,22 +1,27 @@
 ---
 title: Feature Flags
-description: direct 通信・adapter 通信向け Cargo feature の選択表。
+description: instrument transport 向け platform build と Cargo feature の選択表。
 ---
 
-| Feature | 用途 | 主な platform |
+default feature set は Linux・Windows 向けの完全 hardware build。direct TCP/IP、direct GPIB/VISA、Prologix TCP/serial の有効化。
+
+| Build profile | Command | Transport |
+| --- | --- | --- |
+| Linux / Windows | `cargo install --path . --locked` | TCP/IP、GPIB/VISA、Prologix TCP、Prologix serial |
+| macOS | 下記 command | TCP/IP、Prologix TCP、Prologix serial |
+| 解析専用 | `cargo install --path . --locked --no-default-features` | なし |
+
+```bash
+# direct GPIB を除く macOS hardware build
+cargo install --path . --locked --no-default-features \
+  --features hw-core,hw-prologix-tcp,hw-prologix-serial
+```
+
+| Feature | 用途 | 対応 host |
 | --- | --- | --- |
 | `hw-core` | オシロスコープ direct TCP/IP と共通 hardware logic | Linux、macOS、Windows |
 | `hw-gpib` | direct GPIB と Windows USBTMC/VISA | Linux、Windows |
 | `hw-prologix-tcp` | Prologix Ethernet controller | Linux、macOS、Windows |
 | `hw-prologix-serial` | Prologix USB serial controller | Linux、macOS、Windows |
-| `hw` | direct GPIB hardware build の legacy alias | Linux、Windows |
 
-```bash
-# direct DHO TCP/IP + Prologix Ethernet の macOS build
-cargo install --path . --no-default-features --features hw-prologix-tcp
-
-# direct DHO TCP/IP + Prologix USB serial の macOS build
-cargo install --path . --no-default-features --features hw-prologix-serial
-```
-
-`hw-core` を内包する Prologix feature。Prologix を経由せず direct TCP/IP 接続となる DHO5108。
+`hw-core`を内包する両Prologix feature。Prologixを経由しないDHO5108のdirect TCP/IP接続。Linuxではlinux-gpib、WindowsではVISAを必要とするdirect GPIB。
