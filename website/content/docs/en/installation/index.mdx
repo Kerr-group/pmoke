@@ -30,7 +30,7 @@ cargo install --path . --no-default-features
 pmoke --version
 pmoke instruments list
 pmoke config init --output config.toml
-pmoke config validate --config config.toml
+pmoke --config config.toml config validate
 ```
 
 Continue with [feature selection](./feature-flags) for a minimal platform build.
