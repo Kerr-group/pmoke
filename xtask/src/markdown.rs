@@ -103,7 +103,7 @@ pub fn render_config(reference: &ConfigReference, locale: Locale) -> String {
     .unwrap();
     writeln!(
         output,
-        "[{schema_label}](/pmoke/config.schema.json) · [`pmoke config explain`](../../cli/reference#pmoke-config-explain)\n"
+        "[{schema_label}](https://kerr-group.github.io/pmoke/config.schema.json) · [`pmoke config explain`](../../cli/reference#pmoke-config-explain)\n"
     )
     .unwrap();
 
