@@ -263,70 +263,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            label: prologix-rs no-default
-            package: prologix-rs
-            flags: --no-default-features
-          - os: ubuntu-latest
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
-          - os: ubuntu-latest
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
-          - os: macos-14
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
-          - os: macos-14
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
+          # Keep the longest observed profiles first within each hosted-runner pool.
           - os: windows-latest
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
-          - os: windows-latest
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
-          - os: ubuntu-latest
-            label: instruments no-default
-            package: instruments
-            flags: --no-default-features
-          - os: ubuntu-latest
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
-          - os: ubuntu-latest
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
-          - os: macos-14
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
-          - os: macos-14
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
-          - os: windows-latest
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
-          - os: windows-latest
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
-          - os: ubuntu-latest
-            label: pmoke hw-prologix-tcp
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-tcp
-          - os: ubuntu-latest
             label: pmoke hw-prologix-serial
             package: pmoke
             flags: --no-default-features --features hw-prologix-serial
+          - os: windows-latest
+            label: pmoke hw-prologix-tcp
+            package: pmoke
+            flags: --no-default-features --features hw-prologix-tcp
           - os: macos-14
             label: pmoke hw-prologix-tcp
             package: pmoke
@@ -339,14 +284,70 @@ jobs:
             label: pmoke macOS hardware bundle
             package: pmoke
             flags: --no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
-          - os: windows-latest
+          - os: ubuntu-latest
+            label: pmoke hw-prologix-serial
+            package: pmoke
+            flags: --no-default-features --features hw-prologix-serial
+          - os: ubuntu-latest
             label: pmoke hw-prologix-tcp
             package: pmoke
             flags: --no-default-features --features hw-prologix-tcp
           - os: windows-latest
-            label: pmoke hw-prologix-serial
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-serial
+            label: instruments prologix-serial
+            package: instruments
+            flags: --no-default-features --features prologix-serial
+          - os: windows-latest
+            label: instruments prologix-tcp
+            package: instruments
+            flags: --no-default-features --features prologix-tcp
+          - os: windows-latest
+            label: prologix-rs serial
+            package: prologix-rs
+            flags: --no-default-features --features serial
+          - os: windows-latest
+            label: prologix-rs tcp
+            package: prologix-rs
+            flags: --no-default-features --features tcp
+          - os: macos-14
+            label: instruments prologix-serial
+            package: instruments
+            flags: --no-default-features --features prologix-serial
+          - os: macos-14
+            label: instruments prologix-tcp
+            package: instruments
+            flags: --no-default-features --features prologix-tcp
+          - os: macos-14
+            label: prologix-rs tcp
+            package: prologix-rs
+            flags: --no-default-features --features tcp
+          - os: macos-14
+            label: prologix-rs serial
+            package: prologix-rs
+            flags: --no-default-features --features serial
+          - os: ubuntu-latest
+            label: prologix-rs tcp
+            package: prologix-rs
+            flags: --no-default-features --features tcp
+          - os: ubuntu-latest
+            label: prologix-rs no-default
+            package: prologix-rs
+            flags: --no-default-features
+          - os: ubuntu-latest
+            label: instruments no-default
+            package: instruments
+            flags: --no-default-features
+          - os: ubuntu-latest
+            label: instruments prologix-serial
+            package: instruments
+            flags: --no-default-features --features prologix-serial
+          - os: ubuntu-latest
+            label: prologix-rs serial
+            package: prologix-rs
+            flags: --no-default-features --features serial
+          - os: ubuntu-latest
+            label: instruments prologix-tcp
+            package: instruments
+            flags: --no-default-features --features prologix-tcp
     env:
       PYO3_PYTHON: python
       PYTHONDONTWRITEBYTECODE: "1"
