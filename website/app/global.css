@@ -242,7 +242,11 @@ button:focus-visible {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: #101517;
+  background-color: #101517;
+  background-image:
+    linear-gradient(to right, rgba(145, 164, 174, 0.13) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(145, 164, 174, 0.13) 1px, transparent 1px);
+  background-size: 48px 40px;
 }
 
 .signal-stage::after {
@@ -421,7 +425,12 @@ html:not(.dark) .home-shell { background: #eef3f1; color: #101517; }
 html:not(.dark) .site-header { border-color: #b7c2bf; }
 html:not(.dark) .site-header nav a { color: #3b4b4c; }
 html:not(.dark) .site-header nav a:hover { color: #087b7b; }
-html:not(.dark) .signal-stage { background: #e4ebe8; }
+html:not(.dark) .signal-stage {
+  background-color: #e4ebe8;
+  background-image:
+    linear-gradient(to right, rgba(40, 67, 68, 0.14) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(40, 67, 68, 0.14) 1px, transparent 1px);
+}
 html:not(.dark) .signal-stage::after { background: rgba(242, 245, 243, 0.24); }
 html:not(.dark) .signal-hud { color: #536563; }
 html:not(.dark) .signal-hud .wasm-state { color: #137946; }

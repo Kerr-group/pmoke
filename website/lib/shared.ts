@@ -24,6 +24,8 @@ export const socialImage = {
   alt: 'pmoke pulsed-MOKE precision signal lab',
 };
 
+export const faviconImage = `${basePath}/favicon.svg`;
+
 export const gitConfig = {
   user: 'Kerr-group',
   repo: 'pmoke',

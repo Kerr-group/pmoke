@@ -99,6 +99,12 @@ test('documentation language selection preserves the current slug', async ({ pag
 test('home theme selection persists into documentation', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser interaction gate');
 
+  const scriptWarnings: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().includes('Encountered a script tag while rendering React component')) {
+      scriptWarnings.push(message.text());
+    }
+  });
   await page.addInitScript((selectedTheme) => {
     if (!window.localStorage.getItem('pmoke-theme')) {
       window.localStorage.setItem('pmoke-theme', selectedTheme);
@@ -110,6 +116,7 @@ test('home theme selection persists into documentation', async ({ page }, testIn
   await expect(page.locator('html')).toHaveClass(/(^|\s)light(\s|$)/);
   await page.goto('/pmoke/en/docs/');
   await expect(page.locator('html')).toHaveClass(/(^|\s)light(\s|$)/);
+  expect(scriptWarnings).toEqual([]);
 });
 
 test('documentation remains readable without JavaScript', async ({ browser }, testInfo) => {
@@ -191,6 +198,66 @@ test('signal canvas sweeps continuously when active and pauses on reduced motion
   await page.waitForTimeout(300);
   const secondStatic = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   expect(secondStatic).toBe(firstStatic);
+});
+
+test('signal renderer survives reload and Wasm readiness without restarting', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser renderer lifecycle gate');
+
+  await page.route('**/wasm/pmoke_web_wasm.js', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.continue();
+  });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/pmoke/en/');
+  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+
+  await page.reload();
+  const stage = page.locator('.signal-stage');
+  const canvas = stage.locator('canvas');
+  await expect(stage).toHaveAttribute('data-wasm', 'loading');
+  await expect(stage).toHaveAttribute('data-motion', 'running');
+  await expect(canvas).toHaveAttribute('data-render-generation', '1');
+  expect(await canvas.evaluate((element: HTMLCanvasElement) => {
+    const context = element.getContext('2d');
+    if (!context) return 0;
+    const pixels = context.getImageData(0, 0, element.width, element.height).data;
+    let painted = 0;
+    for (let index = 3; index < pixels.length; index += 128) if (pixels[index] > 0) painted += 1;
+    return painted;
+  })).toBeGreaterThan(100);
+
+  await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  await expect(canvas).toHaveAttribute('data-render-generation', '1');
+  await page.locator('.theme-toggle').click();
+  await expect(canvas).toHaveAttribute('data-render-generation', '1');
+});
+
+test('mobile signal renderer keeps a dense periodic viewport', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium', 'mobile renderer density gate');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/pmoke/en/');
+  const canvas = page.locator('.signal-stage canvas');
+  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  const metrics = await canvas.evaluate((element: HTMLCanvasElement) => ({
+    cssWidth: element.getBoundingClientRect().width,
+    renderPoints: Number(element.dataset.renderPoints),
+    generation: Number(element.dataset.renderGeneration),
+  }));
+  expect(metrics.renderPoints).toBeGreaterThanOrEqual(Math.ceil(metrics.cssWidth));
+  expect(metrics.generation).toBe(1);
+});
+
+test('favicon is optimized and available', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser favicon asset gate');
+
+  await page.goto('/pmoke/en/');
+  const favicon = page.locator('link[rel="icon"]');
+  await expect(favicon).toHaveAttribute('href', /\/pmoke\/favicon\.svg$/u);
+  const response = await page.request.get('/pmoke/favicon.svg');
+  expect(response.ok()).toBeTruthy();
+  expect(response.headers()['content-type']).toContain('image/svg+xml');
+  expect((await response.body()).byteLength).toBeLessThan(1_000);
 });
 
 test('all rendered internal links resolve beneath the project path', async ({ page }, testInfo) => {

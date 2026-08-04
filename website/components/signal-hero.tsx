@@ -1,6 +1,5 @@
 'use client';
 
-import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import { basePath } from '@/lib/shared';
 
@@ -8,6 +7,7 @@ const TAU = Math.PI * 2;
 const LOOP_DURATION_MS = 24_000;
 const PREVIEW_SAMPLES = 720;
 const INITIAL_PHASE = 0.17;
+const MIN_RENDER_POINTS = 256;
 
 const CHANNELS = [
   { offset: 1, darkColor: '#e7edf0', lightColor: '#44575a', width: 1.15 },
@@ -39,13 +39,18 @@ export function fallbackSignal(samples: number, phase = INITIAL_PHASE): Float64A
 
 const FALLBACK_SIGNAL = fallbackSignal(PREVIEW_SAMPLES);
 
+export function previewPointCount(width: number, samples: number): number {
+  const periodicSamples = Math.max(2, samples - 1);
+  return Math.min(periodicSamples, Math.max(MIN_RENDER_POINTS, Math.ceil(width) + 1));
+}
+
 export function SignalHero({ label }: { label: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dataRef = useRef<Float64Array>(FALLBACK_SIGNAL);
+  const drawLatestRef = useRef<() => void>(() => undefined);
   const [status, setStatus] = useState<'loading' | 'ready' | 'fallback'>('loading');
   const [motionState, setMotionState] = useState<'running' | 'paused' | 'reduced'>('paused');
-  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
     let terminated = false;
@@ -54,6 +59,7 @@ export function SignalHero({ label }: { label: string }) {
       if (terminated) return;
       if (event.data.type === 'ready' && event.data.data) {
         dataRef.current = new Float64Array(event.data.data);
+        drawLatestRef.current();
         setStatus('ready');
       } else if (event.data.type === 'error') {
         setStatus('fallback');
@@ -83,7 +89,6 @@ export function SignalHero({ label }: { label: string }) {
     let cachedHeight = 0;
 
     let animationFrameId = 0;
-    let startTime: number | null = null;
     let accumulatedTime = 0;
     let lastTimestamp: number | null = null;
 
@@ -106,16 +111,22 @@ export function SignalHero({ label }: { label: string }) {
       context.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
       context.clearRect(0, 0, cachedWidth, cachedHeight);
 
-      const isDark =
-        resolvedTheme === 'dark' ||
-        (!resolvedTheme && document.documentElement.classList.contains('dark'));
+      const isDark = document.documentElement.classList.contains('dark');
 
-      drawGrid(context, cachedWidth, cachedHeight, isDark);
-      drawSignals(context, dataRef.current, cachedWidth, cachedHeight, sweepOffset, isDark);
+      const renderedPoints = drawSignals(
+        context,
+        dataRef.current,
+        cachedWidth,
+        cachedHeight,
+        sweepOffset,
+        isDark,
+      );
+      if (canvas.dataset.renderPoints !== String(renderedPoints)) {
+        canvas.dataset.renderPoints = String(renderedPoints);
+      }
     };
 
     const renderLoop = (timestamp: number) => {
-      if (startTime === null) startTime = timestamp;
       if (lastTimestamp !== null) {
         accumulatedTime += timestamp - lastTimestamp;
       }
@@ -132,6 +143,13 @@ export function SignalHero({ label }: { label: string }) {
       }
     };
 
+    const drawLatest = () => {
+      const sweepOffset = (accumulatedTime % LOOP_DURATION_MS) / LOOP_DURATION_MS;
+      drawFrame(sweepOffset);
+    };
+    drawLatestRef.current = drawLatest;
+    canvas.dataset.renderGeneration = String(Number(canvas.dataset.renderGeneration ?? '0') + 1);
+
     const updateMotionState = () => {
       if (isReducedMotion) {
         setMotionState('reduced');
@@ -144,37 +162,55 @@ export function SignalHero({ label }: { label: string }) {
 
     const syncLifecycle = () => {
       updateMotionState();
+      const shouldAnimate = isIntersecting && isDocumentVisible && !isReducedMotion;
+
+      if (shouldAnimate) {
+        if (animationFrameId === 0) {
+          lastTimestamp = null;
+          animationFrameId = requestAnimationFrame(renderLoop);
+        }
+        return;
+      }
 
       if (animationFrameId !== 0) {
         cancelAnimationFrame(animationFrameId);
         animationFrameId = 0;
-        lastTimestamp = null;
       }
-
-      if (isReducedMotion) {
-        drawFrame(0);
-      } else if (isIntersecting && isDocumentVisible) {
-        animationFrameId = requestAnimationFrame(renderLoop);
-      } else {
-        const sweepOffset = (accumulatedTime % LOOP_DURATION_MS) / LOOP_DURATION_MS;
-        drawFrame(sweepOffset);
-      }
+      lastTimestamp = null;
+      if (isReducedMotion) drawFrame(0);
+      else drawLatest();
     };
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         if (entry.target === container) {
-          cachedWidth = entry.contentRect.width;
-          cachedHeight = entry.contentRect.height;
-          syncLifecycle();
+          const nextWidth = entry.contentRect.width;
+          const nextHeight = entry.contentRect.height;
+          if (nextWidth !== cachedWidth || nextHeight !== cachedHeight) {
+            cachedWidth = nextWidth;
+            cachedHeight = nextHeight;
+            drawLatest();
+          }
         }
       }
     });
     resizeObserver.observe(container);
 
+    const initialRect = container.getBoundingClientRect();
+    cachedWidth = initialRect.width;
+    cachedHeight = initialRect.height;
+    isIntersecting =
+      initialRect.bottom > 0 &&
+      initialRect.right > 0 &&
+      initialRect.top < window.innerHeight &&
+      initialRect.left < window.innerWidth;
+    drawLatest();
+
     const intersectionObserver = new IntersectionObserver(([entry]) => {
-      isIntersecting = entry.isIntersecting;
-      syncLifecycle();
+      if (entry.isIntersecting !== isIntersecting) {
+        isIntersecting = entry.isIntersecting;
+        syncLifecycle();
+      }
     });
     intersectionObserver.observe(container);
 
@@ -183,6 +219,9 @@ export function SignalHero({ label }: { label: string }) {
       syncLifecycle();
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const themeObserver = new MutationObserver(drawLatest);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
     const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     const handleReducedMotionChange = (event: MediaQueryListEvent) => {
@@ -195,8 +234,8 @@ export function SignalHero({ label }: { label: string }) {
       const newDpr = getTargetDpr();
       if (newDpr !== currentDpr) {
         currentDpr = newDpr;
+        drawLatest();
       }
-      syncLifecycle();
     };
     window.addEventListener('resize', handleWindowResize);
 
@@ -206,11 +245,13 @@ export function SignalHero({ label }: { label: string }) {
       if (animationFrameId !== 0) cancelAnimationFrame(animationFrameId);
       resizeObserver.disconnect();
       intersectionObserver.disconnect();
+      themeObserver.disconnect();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       reducedMotionQuery.removeEventListener('change', handleReducedMotionChange);
       window.removeEventListener('resize', handleWindowResize);
+      if (drawLatestRef.current === drawLatest) drawLatestRef.current = () => undefined;
     };
-  }, [resolvedTheme, status]);
+  }, []);
 
   return (
     <div
@@ -229,13 +270,6 @@ export function SignalHero({ label }: { label: string }) {
   );
 }
 
-function drawGrid(context: CanvasRenderingContext2D, width: number, height: number, dark: boolean) {
-  context.strokeStyle = dark ? 'rgba(145, 164, 174, 0.13)' : 'rgba(40, 67, 68, 0.14)';
-  context.lineWidth = 1;
-  for (let x = 0; x <= width; x += 48) { context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke(); }
-  for (let y = 0; y <= height; y += 40) { context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke(); }
-}
-
 function drawSignals(
   context: CanvasRenderingContext2D,
   values: Float64Array,
@@ -243,29 +277,32 @@ function drawSignals(
   height: number,
   sweepOffset: number,
   dark: boolean,
-) {
+): number {
   const count = values.length / 4;
-  if (count <= 1) return;
+  if (count <= 2) return 0;
 
-  const pointsCount = Math.max(128, Math.min(count, Math.ceil(width / 2)));
+  const periodicSamples = count - 1;
+  const pointsCount = previewPointCount(width, count);
   const step = 1 / (pointsCount - 1);
+  const normalizedSweep = ((sweepOffset % 1) + 1) % 1;
 
   for (const channel of CHANNELS) {
     context.beginPath();
     context.strokeStyle = dark ? channel.darkColor : channel.lightColor;
     context.lineWidth = channel.width;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
     context.globalAlpha = channel.offset === 1 ? 0.36 : 0.92;
 
     for (let i = 0; i < pointsCount; i += 1) {
       const xRatio = i * step;
       const x = xRatio * width;
 
-      let samplePos = (xRatio + sweepOffset) % 1.0;
-      if (samplePos < 0) samplePos += 1.0;
+      const samplePos = i === pointsCount - 1 ? normalizedSweep : (xRatio + normalizedSweep) % 1;
 
-      const exactIndex = samplePos * (count - 1);
-      const idx0 = Math.floor(exactIndex);
-      const idx1 = Math.min(count - 1, idx0 + 1);
+      const exactIndex = samplePos * periodicSamples;
+      const idx0 = Math.floor(exactIndex) % periodicSamples;
+      const idx1 = (idx0 + 1) % periodicSamples;
       const frac = exactIndex - idx0;
 
       const val0 = values[idx0 * 4 + channel.offset];
@@ -280,4 +317,5 @@ function drawSignals(
     context.stroke();
   }
   context.globalAlpha = 1;
+  return pointsCount;
 }
