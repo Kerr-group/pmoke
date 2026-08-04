@@ -494,7 +494,7 @@ html:not(.dark) .capability-grid p { color: #52615f; }
 }
 
 .ai-hub__mark svg { width: 1.1rem; height: 1.1rem; }
-.ai-hub__identity span,
+.ai-hub__identity > div > span,
 .ai-hub__bootstrap-title span {
   display: block;
   color: var(--cyan);
