@@ -1,4 +1,4 @@
-<h1 align="center">⚡ pmoke</h1>
+<h1 align="center">💥 pmoke</h1>
 
 <p align="center">
   <strong>Pulsed-field MOKE, from instrument trigger to Kerr angle.</strong>
@@ -30,7 +30,7 @@ tracks reproducible run artifacts, and executes the numerical analysis chain
 used to recover a Kerr signal from large oscilloscope captures.
 
 ```mermaid
-flowchart LR
+flowchart TB
     RAW["📡 Raw waveforms"] --> REF["🎯 Reference fit"]
     RAW --> SENSOR["📈 Sensor integration"]
     REF --> LOCKIN["⚙️ Lock-in"]
