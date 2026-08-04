@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 625" role="img" aria-labelledby="title description">
+  <title id="title">pmoke analysis data flow</title>
+  <desc id="description">Raw waveforms split into reference and sensor branches. Reference fitting feeds lock-in demodulation and phase rotation. The rotated signal and integrated sensor data combine into the Kerr angle.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <style>
+    .node { fill: #ffffff; stroke-width: 2; }
+    .raw { fill: #ecfeff; stroke: #0891b2; }
+    .reference { fill: #fff1f2; stroke: #e11d48; }
+    .lockin { fill: #eff6ff; stroke: #2563eb; }
+    .sensor { fill: #fffbeb; stroke: #d97706; }
+    .phase { fill: #f5f3ff; stroke: #7c3aed; }
+    .kerr { fill: #fef2f2; stroke: #dc2626; }
+    .flow { fill: none; stroke: #64748b; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+    .join-flow { fill: none; stroke: #64748b; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .join { fill: #64748b; }
+    .label { fill: #0f172a; font: 600 18px Inter, ui-sans-serif, system-ui, sans-serif; text-anchor: middle; }
+    .detail { fill: #64748b; font: 500 12px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.08em; text-anchor: middle; }
+    .reference-detail { font-size: 10px; letter-spacing: 0.02em; }
+    @media (prefers-color-scheme: dark) {
+      .node { fill: #161b22; }
+      .label { fill: #f0f6fc; }
+      .detail { fill: #9da7b3; }
+      .flow, .join-flow { stroke: #8b949e; }
+      .join { fill: #8b949e; }
+      #arrow path { fill: #8b949e; }
+    }
+  </style>
+
+  <path class="flow" d="M300 95 V125 H145 V155"/>
+  <path class="flow" d="M300 95 V125 H455 V275"/>
+  <path class="flow" d="M145 225 V275"/>
+  <path class="flow" d="M145 345 V395"/>
+  <path class="join-flow" d="M145 465 V495 H295"/>
+  <path class="join-flow" d="M455 345 V495 H305"/>
+  <circle class="join" cx="300" cy="495" r="5"/>
+  <path class="flow" d="M300 500 V530"/>
+
+  <g>
+    <rect class="node raw" x="180" y="25" width="240" height="70" rx="8"/>
+    <text class="label" x="300" y="57">📡 Raw waveforms</text>
+    <text class="detail" x="300" y="79">OSCILLOSCOPE INPUT</text>
+  </g>
+  <g>
+    <rect class="node reference" x="35" y="155" width="220" height="70" rx="8"/>
+    <text class="label" x="145" y="187">🎯 Reference fit</text>
+    <text class="detail reference-detail" x="145" y="209">FREQUENCY · AMPLITUDE · PHASE</text>
+  </g>
+  <g>
+    <rect class="node lockin" x="35" y="275" width="220" height="70" rx="8"/>
+    <text class="label" x="145" y="307">⚙️ Lock-in</text>
+    <text class="detail" x="145" y="329">I/Q DEMODULATION</text>
+  </g>
+  <g>
+    <rect class="node sensor" x="345" y="275" width="220" height="70" rx="8"/>
+    <text class="label" x="455" y="307">📈 Sensor integration</text>
+    <text class="detail" x="455" y="329">INTEGRATED FIELD AXIS</text>
+  </g>
+  <g>
+    <rect class="node phase" x="35" y="395" width="220" height="70" rx="8"/>
+    <text class="label" x="145" y="427">🔄 Phase rotation</text>
+    <text class="detail" x="145" y="449">HARMONIC ROTATION</text>
+  </g>
+  <g>
+    <rect class="node kerr" x="180" y="530" width="240" height="70" rx="8"/>
+    <text class="label" x="300" y="562">🧲 Kerr angle</text>
+    <text class="detail" x="300" y="584">CALIBRATED OUTPUT</text>
+  </g>
+</svg>
