@@ -257,97 +257,39 @@ jobs:
         run: cargo clippy --locked -p pmoke --all-targets -- -D warnings
 
   crate-feature-matrix:
-    name: Crate features (${{ matrix.os }}, ${{ matrix.label }})
+    name: Crate feature suite (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Keep the longest observed profiles first within each hosted-runner pool.
           - os: windows-latest
-            label: pmoke hw-prologix-serial
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-serial
-          - os: windows-latest
-            label: pmoke hw-prologix-tcp
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-tcp
+            profiles: |
+              pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
+              pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
+              instruments|prologix-serial|--no-default-features --features prologix-serial
+              instruments|prologix-tcp|--no-default-features --features prologix-tcp
+              prologix-rs|serial|--no-default-features --features serial
+              prologix-rs|tcp|--no-default-features --features tcp
           - os: macos-14
-            label: pmoke hw-prologix-tcp
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-tcp
-          - os: macos-14
-            label: pmoke hw-prologix-serial
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-serial
-          - os: macos-14
-            label: pmoke macOS hardware bundle
-            package: pmoke
-            flags: --no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
+            profiles: |
+              pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
+              pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
+              pmoke|macOS hardware bundle|--no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
+              instruments|prologix-serial|--no-default-features --features prologix-serial
+              instruments|prologix-tcp|--no-default-features --features prologix-tcp
+              prologix-rs|tcp|--no-default-features --features tcp
+              prologix-rs|serial|--no-default-features --features serial
           - os: ubuntu-latest
-            label: pmoke hw-prologix-serial
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-serial
-          - os: ubuntu-latest
-            label: pmoke hw-prologix-tcp
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-tcp
-          - os: windows-latest
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
-          - os: windows-latest
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
-          - os: windows-latest
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
-          - os: windows-latest
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
-          - os: macos-14
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
-          - os: macos-14
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
-          - os: macos-14
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
-          - os: macos-14
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
-          - os: ubuntu-latest
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
-          - os: ubuntu-latest
-            label: prologix-rs no-default
-            package: prologix-rs
-            flags: --no-default-features
-          - os: ubuntu-latest
-            label: instruments no-default
-            package: instruments
-            flags: --no-default-features
-          - os: ubuntu-latest
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
-          - os: ubuntu-latest
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
-          - os: ubuntu-latest
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
+            profiles: |
+              pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
+              pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
+              prologix-rs|tcp|--no-default-features --features tcp
+              prologix-rs|no-default|--no-default-features
+              instruments|no-default|--no-default-features
+              instruments|prologix-serial|--no-default-features --features prologix-serial
+              prologix-rs|serial|--no-default-features --features serial
+              instruments|prologix-tcp|--no-default-features --features prologix-tcp
     env:
       PYO3_PYTHON: python
       PYTHONDONTWRITEBYTECODE: "1"
@@ -376,18 +318,38 @@ jobs:
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
         with:
-          shared-key: features-${{ matrix.os }}-${{ matrix.package }}
-          key: ${{ matrix.label }}
+          shared-key: feature-suite-${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Check ${{ matrix.label }}
-        run: cargo check --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }}
-
-      - name: Test ${{ matrix.label }}
-        run: cargo test --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }}
-
-      - name: Lint ${{ matrix.label }}
-        run: cargo clippy --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }} -- -D warnings
+      - name: Check, test, and lint feature profiles
+        shell: bash
+        env:
+          FEATURE_PROFILES: ${{ matrix.profiles }}
+        run: |
+          status=0
+          while IFS='|' read -r package label flags; do
+            test -n "${package}" || continue
+            profile_status=0
+            read -r -a cargo_flags <<< "${flags}"
+            echo "::group::${package} ${label}"
+            if ! cargo check --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}"; then
+              profile_status=1
+            fi
+            if ! cargo test --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}"; then
+              profile_status=1
+            fi
+            if ! cargo clippy --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}" -- -D warnings; then
+              profile_status=1
+            fi
+            echo "::endgroup::"
+            if (( profile_status == 0 )); then
+              echo "PASS  ${package} ${label}" >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo "FAIL  ${package} ${label}" >> "${GITHUB_STEP_SUMMARY}"
+              status=1
+            fi
+          done <<< "${FEATURE_PROFILES}"
+          exit "${status}"
 
   analysis-portability:
     name: Analysis-only (${{ matrix.os }}, Python ${{ matrix.python }})
