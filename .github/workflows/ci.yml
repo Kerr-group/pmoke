@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -9,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -35,6 +36,8 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install Python dependencies
         run: |
@@ -69,6 +72,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          shared-key: workspace-all-features
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -84,11 +93,41 @@ jobs:
       - name: Test
         run: cargo test --locked --workspace --lib --bins --tests --examples --all-features
 
-      - name: Performance smoke test
-        run: cargo bench --locked --no-default-features --bench performance -- --smoke
-
       - name: Lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+  performance-smoke:
+    name: Performance smoke test
+    runs-on: ubuntu-latest
+    env:
+      PYO3_PYTHON: python
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          shared-key: performance-smoke
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Run deterministic smoke benchmark
+        run: cargo bench --locked --no-default-features --bench performance -- --smoke
 
   hardware-feature-slices:
     name: Hardware feature slices
@@ -104,6 +143,8 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install Python dependencies
         run: |
@@ -137,6 +178,12 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
         with:
           components: clippy
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          shared-key: linux-full-hardware
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check gpib-rs
         run: cargo check --locked -p gpib-rs --lib --bins --tests --examples
@@ -185,6 +232,12 @@ jobs:
         with:
           components: clippy
 
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          shared-key: windows-full
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Check gpib-rs VISA bindings
         run: cargo check --locked -p gpib-rs --lib
 
@@ -204,96 +257,53 @@ jobs:
         run: cargo clippy --locked -p pmoke --all-targets -- -D warnings
 
   crate-feature-matrix:
-    name: Crate features (${{ matrix.os }}, ${{ matrix.label }})
+    name: Crate feature suite (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            label: prologix-rs no-default
-            package: prologix-rs
-            flags: --no-default-features
-          - os: ubuntu-latest
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
-          - os: ubuntu-latest
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
-          - os: macos-14
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
-          - os: macos-14
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
           - os: windows-latest
-            label: prologix-rs tcp
-            package: prologix-rs
-            flags: --no-default-features --features tcp
+            suite: pmoke hw-prologix-serial
+            cache-key: pmoke-serial
+            profiles: |
+              pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
           - os: windows-latest
-            label: prologix-rs serial
-            package: prologix-rs
-            flags: --no-default-features --features serial
-          - os: ubuntu-latest
-            label: instruments no-default
-            package: instruments
-            flags: --no-default-features
-          - os: ubuntu-latest
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
-          - os: ubuntu-latest
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
-          - os: macos-14
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
-          - os: macos-14
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
+            suite: pmoke hw-prologix-tcp
+            cache-key: pmoke-tcp
+            profiles: |
+              pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
           - os: windows-latest
-            label: instruments prologix-tcp
-            package: instruments
-            flags: --no-default-features --features prologix-tcp
-          - os: windows-latest
-            label: instruments prologix-serial
-            package: instruments
-            flags: --no-default-features --features prologix-serial
+            suite: transport crates
+            cache-key: transport-crates
+            profiles: |
+              instruments|prologix-serial|--no-default-features --features prologix-serial
+              instruments|prologix-tcp|--no-default-features --features prologix-tcp
+              prologix-rs|serial|--no-default-features --features serial
+              prologix-rs|tcp|--no-default-features --features tcp
+          - os: macos-14
+            suite: all profiles
+            cache-key: all-profiles
+            profiles: |
+              pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
+              pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
+              pmoke|macOS hardware bundle|--no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
+              instruments|prologix-serial|--no-default-features --features prologix-serial
+              instruments|prologix-tcp|--no-default-features --features prologix-tcp
+              prologix-rs|tcp|--no-default-features --features tcp
+              prologix-rs|serial|--no-default-features --features serial
           - os: ubuntu-latest
-            label: pmoke hw-prologix-tcp
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-tcp
-          - os: ubuntu-latest
-            label: pmoke hw-prologix-serial
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-serial
-          - os: macos-14
-            label: pmoke hw-prologix-tcp
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-tcp
-          - os: macos-14
-            label: pmoke hw-prologix-serial
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-serial
-          - os: macos-14
-            label: pmoke macOS hardware bundle
-            package: pmoke
-            flags: --no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
-          - os: windows-latest
-            label: pmoke hw-prologix-tcp
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-tcp
-          - os: windows-latest
-            label: pmoke hw-prologix-serial
-            package: pmoke
-            flags: --no-default-features --features hw-prologix-serial
+            suite: all profiles
+            cache-key: all-profiles
+            profiles: |
+              pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
+              pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
+              prologix-rs|tcp|--no-default-features --features tcp
+              prologix-rs|no-default|--no-default-features
+              instruments|no-default|--no-default-features
+              instruments|prologix-serial|--no-default-features --features prologix-serial
+              prologix-rs|serial|--no-default-features --features serial
+              instruments|prologix-tcp|--no-default-features --features prologix-tcp
     env:
       PYO3_PYTHON: python
       PYTHONDONTWRITEBYTECODE: "1"
@@ -306,6 +316,8 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install Python dependencies
         run: |
@@ -317,14 +329,41 @@ jobs:
         with:
           components: clippy
 
-      - name: Check ${{ matrix.label }}
-        run: cargo check --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }}
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          shared-key: feature-suite-${{ matrix.os }}-${{ matrix.cache-key }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Test ${{ matrix.label }}
-        run: cargo test --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }}
-
-      - name: Lint ${{ matrix.label }}
-        run: cargo clippy --locked -p ${{ matrix.package }} --lib --bins --tests --examples ${{ matrix.flags }} -- -D warnings
+      - name: Check, test, and lint feature profiles
+        shell: bash
+        env:
+          FEATURE_PROFILES: ${{ matrix.profiles }}
+        run: |
+          status=0
+          while IFS='|' read -r package label flags; do
+            test -n "${package}" || continue
+            profile_status=0
+            read -r -a cargo_flags <<< "${flags}"
+            echo "::group::${package} ${label}"
+            if ! cargo check --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}"; then
+              profile_status=1
+            fi
+            if ! cargo test --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}"; then
+              profile_status=1
+            fi
+            if ! cargo clippy --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}" -- -D warnings; then
+              profile_status=1
+            fi
+            echo "::endgroup::"
+            if (( profile_status == 0 )); then
+              echo "PASS  ${package} ${label}" >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo "FAIL  ${package} ${label}" >> "${GITHUB_STEP_SUMMARY}"
+              status=1
+            fi
+          done <<< "${FEATURE_PROFILES}"
+          exit "${status}"
 
   analysis-portability:
     name: Analysis-only (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -353,6 +392,8 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install Python dependencies
         run: |
@@ -363,6 +404,12 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
         with:
           components: clippy
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          shared-key: analysis-${{ matrix.os }}-${{ matrix.python }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check analysis-only targets
         run: cargo check --locked -p pmoke --all-targets --no-default-features

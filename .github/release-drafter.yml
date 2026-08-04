@@ -2,44 +2,60 @@ name-template: 'v$RESOLVED_VERSION 🌈'
 tag-template: 'v$RESOLVED_VERSION'
 
 categories:
+  - type: pre-exclude
+    when:
+      label: 'skip-changelog'
+
+  - type: version-resolver
+    semver-increment: major
+    when:
+      label: 'major'
+  - type: version-resolver
+    semver-increment: minor
+    when:
+      label: 'minor'
+  - type: version-resolver
+    semver-increment: patch
+    when:
+      label: 'patch'
+  - type: version-resolver
+    semver-increment: patch
+
   - title: '⚠️ Breaking Changes'
-    labels:
-      - 'breaking'
+    semver-increment: minor
+    when:
+      label: 'breaking'
   - title: '🚀 Features'
-    labels:
-      - 'feature'
+    semver-increment: minor
+    when:
+      label: 'feature'
   - title: '💪 Enhancement'
-    labels:
-      - 'enhancement'
+    semver-increment: minor
+    when:
+      label: 'enhancement'
   - title: '🐛 Bug Fixes'
-    labels:
-      - 'fix'
-      - 'bugfix'
-      - 'bug'
+    when:
+      label: 'bug'
   - title: '🧰 Maintenance'
-    label: 'chore'
+    when:
+      label: 'chore'
   - title: '🔧 Refactoring'
-    label: 'refactor'
+    when:
+      label: 'refactor'
   - title: '📖 Documentation'
-    label: 'documentation'
+    when:
+      label: 'documentation'
   - title: '⛓️ Dependency update'
-    label: 'dependencies'
+    when:
+      label: 'dependencies'
+  - title: '🧩 Other Changes'
 
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
 
 change-title-escapes: '\<*_&' # You can add # and @ to disable mentions, and add ` to disable code blocks.
 
-version-resolver:
-  major:
-    labels:
-      - 'major'
-  minor:
-    labels:
-      - 'minor'
-  patch:
-    labels:
-      - 'patch'
-  default: patch
+sort-by: merged_at
+sort-direction: descending
 
 template: |
   ## Changes
@@ -47,54 +63,51 @@ template: |
   $CHANGES
 
 autolabeler:
-  - label: minor
-    branch:
-      - '/^release[/]v0[.][0-9]+([/-].*)?$/'
   - label: breaking
     branch:
       - '/^release[/]v0[.][0-9]+([/-].*)?$/'
+    title:
+      - '/^[a-z]+(?:\([^)]+\))?!:/i'
+    body:
+      - '/BREAKING[ -]CHANGE:/i'
   - label: feature
     branch:
       - '/^feat(ure)?[/-].+/'
+    title:
+      - '/^feat(?:\([^)]+\))?!?:/i'
   - label: bug
     branch:
       - '/^fix[/-].+/'
+    title:
+      - '/^fix(?:\([^)]+\))?!?:/i'
   - label: chore
     branch:
       - '/^chore[/-].+/'
+      - '/^ci[/-].+/'
+    title:
+      - '/^(?:build|chore|ci|perf|test)(?:\([^)]+\))?!?:/i'
   - label: refactor
     branch:
-      - '/(refactor|refactoring)[/-].+/'
+      - '/^(?:refactor|refactoring)[/-].+/'
+    title:
+      - '/^refactor(?:\([^)]+\))?!?:/i'
   - label: documentation
     branch:
-      - '/doc(umentation)[/-].+/'
+      - '/^docs?(?:umentation)?[/-].+/'
+    title:
+      - '/^docs?(?:\([^)]+\))?!?:/i'
     files:
-      - '*.md'
-  - label: documentation
-    branch:
-      - '/docs(umentation)[/-].+/'
-    files:
-      - '*.md'
+      - 'README.md'
+      - 'docs/**'
+      - 'website/content/**'
+      - 'website/docs/**'
   - label: enhancement
     branch:
-      - '/(enhancement|improve)[/-].+/'
-
-  - label: nextjs
-    files:
-      - 'src/**/*'
-      - 'package.json'
-      - 'yarn.lock'
-      - 'next*'
-      - 'tsconfig.json'
-      - '.eslintrc.json'
-  - label: wasm
-    files:
-      - 'wasm/**/*'
-  - label: docker
-    files:
-      - 'docker/**/*'
-      - 'Dockerfile'
-      - '.dockerignore'
-  - label: github
-    files:
-      - '.github/**/*'
+      - '/^(?:enhancement|improve)[/-].+/'
+    title:
+      - '/^(?:enhance|improve|optimize|refine)(?:\([^)]+\))?!?:/i'
+  - label: dependencies
+    branch:
+      - '/^(?:dependabot|renovate)[/-].+/'
+    title:
+      - '/^(?:build|chore)\(deps\)!?:/i'
