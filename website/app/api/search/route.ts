@@ -15,13 +15,13 @@ export const { staticGET: GET } = createFromSource(deterministicSource, {
     const structuredData = page.data.structuredData;
     if (!structuredData) throw new Error(`missing search data for ${page.url}`);
 
-    const isGeneratedReference = /\/(?:cli|configuration)\/reference$/u.test(page.url);
+    const shouldCompact = /\/(?:citation|(?:cli|configuration)\/reference)$/u.test(page.url);
     return {
       id: page.url,
       title: page.data.title,
       description: page.data.description,
       url: page.url,
-      structuredData: isGeneratedReference ? compactByHeading(structuredData) : structuredData,
+      structuredData: shouldCompact ? compactByHeading(structuredData) : structuredData,
     };
   },
 });

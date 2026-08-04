@@ -1,0 +1,46 @@
+---
+title: Citation & References
+description: How to cite pmoke software and select the pulsed-MOKE method papers relevant to an experiment.
+---
+
+When `pmoke` materially contributes to data acquisition, transformation, or analysis,
+consider citing the software in the resulting publication. Cite the measurement-method
+paper or papers that describe the experimental design actually used as well.
+
+<CitationPanel locale="en" />
+
+> The software citation identifies the executable analysis implementation. It does not
+> replace citations for the experimental method, hardware design, or scientific result.
+
+## What to cite
+
+| Contribution | Recommended citation |
+| --- | --- |
+| Acquisition, configuration validation, artifact management, or numerical analysis with `pmoke` | The software citation above, pinned to the version and source commit used |
+| Phase-resolved numerical lock-in with the compact sample-fiber fixture and all-fiber loopless Sagnac apparatus | Ikeda *et al.* (2026) |
+| Measurement under bipolar pulsed magnetic fields | Yamane *et al.* (2026) |
+| A modified method | The closest method paper, together with a description of the modification |
+
+## Method references
+
+1. A. Ikeda, S. Nakamura, S. Yamane, K. Noda, A. Ikeda, and S. Yonezawa,
+   “Magneto-optical Kerr-effect measurements under pulsed magnetic fields over
+   40 T using a compact sample fixture,” *Physical Review Research* **8**, 013169
+   (2026). [doi:10.1103/vy7j-ylb4](https://doi.org/10.1103/vy7j-ylb4)
+2. S. Yamane, S. Nakamura, A. Ikeda, K. Noda, A. Ikeda, and S. Yonezawa,
+   “Magneto-optical Kerr effect measurements under bipolar pulsed magnetic
+   fields,” *JJAP Conference Proceedings* **12**, 011011 (2026).
+   [doi:10.56646/jjapcp.12.0_011011](https://doi.org/10.56646/jjapcp.12.0_011011)
+
+## Reproducibility record
+
+Record the following alongside the citation:
+
+- exact `pmoke` version and source commit;
+- normalized `config.toml` and configuration schema version;
+- command line and enabled Cargo feature set;
+- input artifact identity and any analysis parameters changed after acquisition.
+
+The generated [CLI reference](./cli/reference) and
+[configuration reference](./configuration/reference) identify the behavior associated
+with the documentation build shown in the citation panel.

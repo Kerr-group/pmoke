@@ -145,11 +145,14 @@ pmoke/
 | CLI reference | [Open](https://kerr-group.github.io/pmoke/en/docs/cli/reference/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/cli/reference/) |
 | Configuration | [Open](https://kerr-group.github.io/pmoke/en/docs/configuration/reference/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/configuration/reference/) |
 | Waveform analyzer | [Open](https://kerr-group.github.io/pmoke/en/docs/interactive/waveform-analyzer/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/interactive/waveform-analyzer/) |
+| Citation & references | [Open](https://kerr-group.github.io/pmoke/en/docs/citation/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/citation/) |
 
 ## 🔬 Publications
 
-If `pmoke` contributes to published work, cite the measurement method relevant
-to the experiment:
+If `pmoke` materially contributes to published work, consider citing the
+software version and the measurement method relevant to the experiment. See the
+[citation guide](https://kerr-group.github.io/pmoke/en/docs/citation/) for a
+version-pinned software citation and selection guidance.
 
 - A. Ikeda, S. Nakamura, S. Yamane, K. Noda, A. Ikeda, and S. Yonezawa,
   “Magneto-optical Kerr-effect measurements under pulsed magnetic fields over

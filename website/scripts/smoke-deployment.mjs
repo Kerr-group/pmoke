@@ -19,6 +19,8 @@ const checks = [
   { path: 'ja/docs/ai/', contains: 'エージェントリソースコンソール' },
   { path: 'en/docs/ai/search-privacy/', contains: 'Local retrieval' },
   { path: 'ja/docs/ai/search-privacy/', contains: 'Local検索' },
+  { path: 'en/docs/citation/', contains: 'Reproducible attribution' },
+  { path: 'ja/docs/citation/', contains: '再現可能な帰属情報' },
   { path: 'api/search', contains: 'Kerr' },
   { path: 'api/semantic-search', contains: 'pmoke-domain-v1' },
   { path: 'llms.txt', contains: 'https://kerr-group.github.io/pmoke/llm/en/' },

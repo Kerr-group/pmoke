@@ -1,0 +1,44 @@
+---
+title: 引用・参考文献
+description: pmoke softwareの引用方法と、実験条件に対応するパルスMOKE手法論文の選択指針。
+---
+
+`pmoke`によるdata取得・変換・解析が研究成果に実質的に寄与した場合のsoftware citation検討。
+実際に採用した実験設計を記述する測定手法論文の併記。
+
+<CitationPanel locale="ja" />
+
+> 実行可能な解析実装を特定するsoftware citation。実験手法、装置設計、科学的成果に対する
+> 文献引用との置換ではなく併記。
+
+## 引用対象
+
+| 寄与 | 推奨citation |
+| --- | --- |
+| `pmoke`による取得、設定検証、artifact管理、数値解析 | 使用version・source commitを固定した上記software citation |
+| compact sample-fiber fixture・all-fiber loopless Sagnac装置・phase-resolved numerical lock-in | Ikeda *et al.* (2026) |
+| bipolar pulsed magnetic field下の測定 | Yamane *et al.* (2026) |
+| 手法の変更を伴う利用 | 最も近い手法論文と変更内容の併記 |
+
+## 手法参考文献
+
+1. A. Ikeda, S. Nakamura, S. Yamane, K. Noda, A. Ikeda, and S. Yonezawa,
+   “Magneto-optical Kerr-effect measurements under pulsed magnetic fields over
+   40 T using a compact sample fixture,” *Physical Review Research* **8**, 013169
+   (2026). [doi:10.1103/vy7j-ylb4](https://doi.org/10.1103/vy7j-ylb4)
+2. S. Yamane, S. Nakamura, A. Ikeda, K. Noda, A. Ikeda, and S. Yonezawa,
+   “Magneto-optical Kerr effect measurements under bipolar pulsed magnetic
+   fields,” *JJAP Conference Proceedings* **12**, 011011 (2026).
+   [doi:10.56646/jjapcp.12.0_011011](https://doi.org/10.56646/jjapcp.12.0_011011)
+
+## 再現性記録
+
+citationと共に保存する情報:
+
+- `pmoke`の正確なversion・source commit
+- normalized `config.toml`・設定schema version
+- command line・有効化したCargo feature set
+- 入力artifactの識別情報・取得後に変更した解析parameter
+
+citation panelと同じdocumentation buildの動作を示す
+[CLIリファレンス](./cli/reference)・[設定リファレンス](./configuration/reference)。

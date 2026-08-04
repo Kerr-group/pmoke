@@ -35,6 +35,8 @@ test('representative routes have no serious accessibility violations', async ({ 
     '/pmoke/ja/docs/quickstart/',
     '/pmoke/en/docs/ai/',
     '/pmoke/ja/docs/ai/',
+    '/pmoke/en/docs/citation/',
+    '/pmoke/ja/docs/citation/',
     '/pmoke/en/docs/configuration/validation/',
   ]) {
     await page.goto(route);
@@ -44,6 +46,23 @@ test('representative routes have no serious accessibility violations', async ({ 
     );
     expect(blocking, `${route}: ${blocking.map((violation) => violation.id).join(', ')}`).toEqual([]);
   }
+});
+
+test('citation reference is copyable and mobile-safe', async ({ page, context }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser citation gate');
+
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto('/pmoke/en/docs/citation/');
+  const panel = page.getByRole('region', { name: 'pmoke software citation' });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('.citation-panel__metadata dd').first()).toHaveText(/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1))
+    .toBeTruthy();
+
+  await panel.getByRole('button', { name: 'Copy BibTeX citation' }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('@misc{kerr_group_pmoke_2026');
+  await expect(page.getByText('BibTeX citation copied')).toBeAttached();
 });
 
 test('config validator stays responsive and reports canonical v4 diagnostics', async ({ page }, testInfo) => {

@@ -16,6 +16,8 @@ const required = [
   'ja/docs/interactive/waveform-analyzer/index.html',
   'en/docs/ai/index.html',
   'ja/docs/ai/index.html',
+  'en/docs/citation/index.html',
+  'ja/docs/citation/index.html',
   'llms.txt',
   'llms-full.txt',
   'llms-en.txt',
@@ -48,6 +50,8 @@ const Japanese = await readFile(path.join(output, 'ja/index.html'), 'utf8');
 const JapaneseQuickstart = await readFile(path.join(output, 'ja/docs/quickstart/index.html'), 'utf8');
 const EnglishAnalyzer = await readFile(path.join(output, 'en/docs/interactive/waveform-analyzer/index.html'), 'utf8');
 const JapaneseAnalyzer = await readFile(path.join(output, 'ja/docs/interactive/waveform-analyzer/index.html'), 'utf8');
+const EnglishCitation = await readFile(path.join(output, 'en/docs/citation/index.html'), 'utf8');
+const JapaneseCitation = await readFile(path.join(output, 'ja/docs/citation/index.html'), 'utf8');
 const sitemap = await readFile(path.join(output, 'sitemap.xml'), 'utf8');
 const robots = await readFile(path.join(output, 'robots.txt'), 'utf8');
 if (!English.includes('<html lang="en"')) throw new Error('English lang metadata is missing');
@@ -58,6 +62,9 @@ if (!English.includes('/pmoke/_next/')) throw new Error('GitHub Pages basePath i
 if (!Japanese.includes('精密信号ラボ')) throw new Error('Japanese home content is missing');
 if (!EnglishAnalyzer.includes('waveform-analyzer')) throw new Error('English waveform tool is missing');
 if (!JapaneseAnalyzer.includes('波形アナライザー')) throw new Error('Japanese waveform tool is missing');
+if (!EnglishCitation.includes('Reproducible attribution')) throw new Error('English citation panel is missing');
+if (!JapaneseCitation.includes('再現可能な帰属情報')) throw new Error('Japanese citation panel is missing');
+if (!EnglishCitation.includes('10.1103/vy7j-ylb4')) throw new Error('Method DOI is missing from citation page');
 if (!JapaneseQuickstart.includes('https://kerr-group.github.io/pmoke/ja/docs/quickstart/')) {
   throw new Error('Canonical project URL is missing');
 }
