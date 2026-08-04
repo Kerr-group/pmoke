@@ -9,3 +9,7 @@ overrides:
   sharp: 0.35.0
   tmp: 0.2.7
   uuid: 11.1.1
+
+patchedDependencies:
+  # Remove after https://github.com/pacocoursey/next-themes/pull/386 is released.
+  next-themes@0.4.6: patches/next-themes@0.4.6.patch

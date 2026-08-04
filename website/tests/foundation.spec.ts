@@ -99,6 +99,12 @@ test('documentation language selection preserves the current slug', async ({ pag
 test('home theme selection persists into documentation', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser interaction gate');
 
+  const scriptWarnings: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().includes('Encountered a script tag while rendering React component')) {
+      scriptWarnings.push(message.text());
+    }
+  });
   await page.addInitScript((selectedTheme) => {
     if (!window.localStorage.getItem('pmoke-theme')) {
       window.localStorage.setItem('pmoke-theme', selectedTheme);
@@ -110,6 +116,7 @@ test('home theme selection persists into documentation', async ({ page }, testIn
   await expect(page.locator('html')).toHaveClass(/(^|\s)light(\s|$)/);
   await page.goto('/pmoke/en/docs/');
   await expect(page.locator('html')).toHaveClass(/(^|\s)light(\s|$)/);
+  expect(scriptWarnings).toEqual([]);
 });
 
 test('documentation remains readable without JavaScript', async ({ browser }, testInfo) => {
