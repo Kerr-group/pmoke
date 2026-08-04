@@ -30,12 +30,9 @@ tracks reproducible run artifacts, and executes the numerical analysis chain
 used to recover a Kerr signal from large oscilloscope captures.
 
 ```text
-  INSTRUMENTS        RAW WAVEFORMS         REFERENCE FIT
-       │                   │                     │
-       └──── acquire ──────┴──── calibrate ─────┘
+ACQUIRE ──▶ REFERENCE ──▶ SENSOR
                             │
-                            ▼
-   KERR ANGLE  ◀──  PHASE ROTATION  ◀──  LOCK-IN  ◀──  SENSOR
+KERR ◀── PHASE ◀── LOCK-IN ◀┘
 ```
 
 ## Why pmoke
@@ -69,13 +66,11 @@ python -m pip install -r requirements.txt
 Transport features are explicit so macOS and analysis-only installations do
 not need a system GPIB library:
 
-| Target | Cargo options |
-| --- | --- |
-| Offline analysis | `--no-default-features` |
-| Direct oscilloscope TCP/IP | `--no-default-features --features hw-core` |
-| Prologix Ethernet | `--no-default-features --features hw-prologix-tcp` |
-| Prologix USB serial | `--no-default-features --features hw-prologix-serial` |
-| Direct GPIB | `--features hw-gpib` |
+- **Offline analysis** · `--no-default-features`
+- **Direct oscilloscope TCP/IP** · `--no-default-features --features hw-core`
+- **Prologix Ethernet** · `--no-default-features --features hw-prologix-tcp`
+- **Prologix USB serial** · `--no-default-features --features hw-prologix-serial`
+- **Direct GPIB** · `--features hw-gpib`
 
 See the [feature matrix](https://kerr-group.github.io/pmoke/en/docs/installation/feature-flags/)
 for platform notes and combined builds.
@@ -105,18 +100,14 @@ pmoke --config config.toml --run-dir shot-001 auto
 
 ## Command surface
 
-| Command | Purpose |
-| --- | --- |
-| `pmoke` / `pmoke monitor` | Open the interactive terminal workspace |
-| `pmoke config init\|validate\|explain\|migrate` | Create, inspect, and migrate configuration |
-| `pmoke doctor` | Diagnose config, storage, Python, features, and connected instruments |
-| `pmoke show` | Print normalized configuration and diagnostics |
-| `pmoke analyze` | Run reference, sensor, lock-in, phase, and Kerr stages |
-| `pmoke reference\|sensor\|li\|phase\|kerr` | Run one numerical analysis stage |
-| `pmoke raw verify` | Verify waveform metadata, sizes, and checksums |
-| `pmoke instruments list\|explain\|query` | Inspect drivers or issue one SCPI text query |
-| `pmoke bench scpi-query\|transport` | Benchmark request latency and save reproducible results |
-| `pmoke export csv\|npy` | Export stored data to interchange formats |
+- **Terminal workspace** · `pmoke`, `pmoke monitor`
+- **Configuration** · `pmoke config init|validate|explain|migrate`
+- **Diagnostics** · `pmoke doctor`, `pmoke show`, `pmoke raw verify`
+- **Full analysis** · `pmoke analyze`
+- **Analysis stages** · `pmoke reference|sensor|li|phase|kerr`
+- **Instrument registry and queries** · `pmoke instruments list|explain|query`
+- **Transport benchmarks** · `pmoke bench scpi-query|transport`
+- **Data interchange** · `pmoke export csv|npy`
 
 The generated [CLI reference](https://kerr-group.github.io/pmoke/en/docs/cli/reference/)
 is the source of truth for flags and feature-gated commands.
