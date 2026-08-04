@@ -257,21 +257,33 @@ jobs:
         run: cargo clippy --locked -p pmoke --all-targets -- -D warnings
 
   crate-feature-matrix:
-    name: Crate feature suite (${{ matrix.os }})
+    name: Crate feature suite (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
+            suite: pmoke hw-prologix-serial
+            cache-key: pmoke-serial
             profiles: |
               pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
+          - os: windows-latest
+            suite: pmoke hw-prologix-tcp
+            cache-key: pmoke-tcp
+            profiles: |
               pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
+          - os: windows-latest
+            suite: transport crates
+            cache-key: transport-crates
+            profiles: |
               instruments|prologix-serial|--no-default-features --features prologix-serial
               instruments|prologix-tcp|--no-default-features --features prologix-tcp
               prologix-rs|serial|--no-default-features --features serial
               prologix-rs|tcp|--no-default-features --features tcp
           - os: macos-14
+            suite: all profiles
+            cache-key: all-profiles
             profiles: |
               pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
               pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
@@ -281,6 +293,8 @@ jobs:
               prologix-rs|tcp|--no-default-features --features tcp
               prologix-rs|serial|--no-default-features --features serial
           - os: ubuntu-latest
+            suite: all profiles
+            cache-key: all-profiles
             profiles: |
               pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
               pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
@@ -318,7 +332,7 @@ jobs:
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
         with:
-          shared-key: feature-suite-${{ matrix.os }}
+          shared-key: feature-suite-${{ matrix.os }}-${{ matrix.cache-key }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check, test, and lint feature profiles
