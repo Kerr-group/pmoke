@@ -1,4 +1,4 @@
-<h1 align="center">pmoke</h1>
+<h1 align="center">⚡ pmoke</h1>
 
 <p align="center">
   <strong>Pulsed-field MOKE, from instrument trigger to Kerr angle.</strong>
@@ -16,10 +16,10 @@
 </p>
 
 <p align="center">
-  <a href="https://kerr-group.github.io/pmoke/en/">Documentation</a>
-  · <a href="#quick-start">Quick start</a>
-  · <a href="#command-surface">Commands</a>
-  · <a href="https://kerr-group.github.io/pmoke/ja/">日本語</a>
+  <a href="https://kerr-group.github.io/pmoke/en/">📖 Documentation</a>
+  · <a href="#quick-start">⚡ Quick start</a>
+  · <a href="#command-surface">⌨️ Commands</a>
+  · <a href="https://kerr-group.github.io/pmoke/ja/">🇯🇵 日本語</a>
 </p>
 
 ---
@@ -29,26 +29,32 @@ magneto-optical Kerr effect measurements. It connects acquisition hardware,
 tracks reproducible run artifacts, and executes the numerical analysis chain
 used to recover a Kerr signal from large oscilloscope captures.
 
-```text
-ACQUIRE ──▶ REFERENCE ──▶ SENSOR
-                            │
-KERR ◀── PHASE ◀── LOCK-IN ◀┘
+```mermaid
+flowchart LR
+    RAW["📡 Raw waveforms"] --> REF["🎯 Reference fit"]
+    RAW --> SENSOR["📈 Sensor integration"]
+    REF --> LOCKIN["⚙️ Lock-in"]
+    LOCKIN --> PHASE["🔄 Phase rotation"]
+    PHASE --> KERR["🧲 Kerr angle"]
+    SENSOR --> KERR
 ```
 
-## Why pmoke
+## ✨ Why pmoke
 
 | Capability | What it provides |
 | --- | --- |
-| Binary acquisition | Rigol DHO5000-series 16-bit WORD captures without a CSV bottleneck |
-| Numerical lock-in | Boxcar, zero-phase FIR/IIR, phase rotation, and Kerr-angle analysis |
-| Instrument transports | Direct TCP/IP, Linux GPIB, Windows USBTMC/VISA, and Prologix TCP/serial |
-| Live terminal UI | One command surface for configuration, analysis, logs, selection, and monitoring |
-| Reproducible runs | Versioned TOML configuration, immutable snapshots, checksums, and isolated run directories |
-| Browser tools | Rust/Wasm configuration validation and interactive waveform analysis in the documentation site |
+| 📥 Binary acquisition | Rigol DHO5000-series 16-bit WORD captures without a CSV bottleneck |
+| 〰️ Numerical lock-in | Boxcar, zero-phase FIR/IIR, phase rotation, and Kerr-angle analysis |
+| 🔌 Instrument transports | Direct TCP/IP, Linux GPIB, Windows USBTMC/VISA, and Prologix TCP/serial |
+| 🖥️ Live terminal UI | One command surface for configuration, analysis, logs, selection, and monitoring |
+| 🧾 Reproducible runs | Versioned TOML configuration, immutable snapshots, checksums, and isolated run directories |
+| 🌐 Browser tools | Rust/Wasm configuration validation and interactive waveform analysis in the documentation site |
 
-## Quick start
+<a id="quick-start"></a>
 
-### Install
+## ⚡ Quick start
+
+### 📦 Install
 
 Clone the repository, then select only the transports required by the host:
 
@@ -66,16 +72,16 @@ python -m pip install -r requirements.txt
 Transport features are explicit so macOS and analysis-only installations do
 not need a system GPIB library:
 
-- **Offline analysis** · `--no-default-features`
-- **Direct oscilloscope TCP/IP** · `--no-default-features --features hw-core`
-- **Prologix Ethernet** · `--no-default-features --features hw-prologix-tcp`
-- **Prologix USB serial** · `--no-default-features --features hw-prologix-serial`
-- **Direct GPIB** · `--features hw-gpib`
+- 💻 **Offline analysis** · `--no-default-features`
+- 🌐 **Direct oscilloscope TCP/IP** · `--no-default-features --features hw-core`
+- 🌍 **Prologix Ethernet** · `--no-default-features --features hw-prologix-tcp`
+- 🔗 **Prologix USB serial** · `--no-default-features --features hw-prologix-serial`
+- 🔌 **Direct GPIB** · `--features hw-gpib`
 
 See the [feature matrix](https://kerr-group.github.io/pmoke/en/docs/installation/feature-flags/)
 for platform notes and combined builds.
 
-### Run
+### ▶️ Run
 
 ```bash
 # Generate, validate, and diagnose a configuration
@@ -98,21 +104,23 @@ measurement and analysis path is:
 pmoke --config config.toml --run-dir shot-001 auto
 ```
 
-## Command surface
+<a id="command-surface"></a>
 
-- **Terminal workspace** · `pmoke`, `pmoke monitor`
-- **Configuration** · `pmoke config init|validate|explain|migrate`
-- **Diagnostics** · `pmoke doctor`, `pmoke show`, `pmoke raw verify`
-- **Full analysis** · `pmoke analyze`
-- **Analysis stages** · `pmoke reference|sensor|li|phase|kerr`
-- **Instrument registry and queries** · `pmoke instruments list|explain|query`
-- **Transport benchmarks** · `pmoke bench scpi-query|transport`
-- **Data interchange** · `pmoke export csv|npy`
+## ⌨️ Command surface
+
+- 🖥️ **Terminal workspace** · `pmoke`, `pmoke monitor`
+- ⚙️ **Configuration** · `pmoke config init|validate|explain|migrate`
+- 🩺 **Diagnostics** · `pmoke doctor`, `pmoke show`, `pmoke raw verify`
+- 🚀 **Full analysis** · `pmoke analyze`
+- 🧪 **Analysis stages** · `pmoke reference|sensor|li|phase|kerr`
+- 🔌 **Instrument registry and queries** · `pmoke instruments list|explain|query`
+- ⏱️ **Transport benchmarks** · `pmoke bench scpi-query|transport`
+- 📤 **Data interchange** · `pmoke export csv|npy`
 
 The generated [CLI reference](https://kerr-group.github.io/pmoke/en/docs/cli/reference/)
 is the source of truth for flags and feature-gated commands.
 
-## Workspace
+## 🧱 Workspace
 
 ```text
 pmoke/
@@ -129,7 +137,7 @@ pmoke/
 └── xtask/                       generated CLI and configuration references
 ```
 
-## Documentation
+## 📚 Documentation
 
 | Guide | English | 日本語 |
 | --- | :---: | :---: |
@@ -138,7 +146,7 @@ pmoke/
 | Configuration | [Open](https://kerr-group.github.io/pmoke/en/docs/configuration/reference/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/configuration/reference/) |
 | Waveform analyzer | [Open](https://kerr-group.github.io/pmoke/en/docs/interactive/waveform-analyzer/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/interactive/waveform-analyzer/) |
 
-## Publications
+## 🔬 Publications
 
 If `pmoke` contributes to published work, cite the measurement method relevant
 to the experiment:
@@ -152,6 +160,6 @@ to the experiment:
   fields,” *JJAP Conference Proceedings* **12**, 011011 (2026).
   [doi:10.56646/jjapcp.12.0_011011](https://doi.org/10.56646/jjapcp.12.0_011011)
 
-## License
+## 📄 License
 
 Licensed under the [Apache License 2.0](LICENSE).
