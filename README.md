@@ -29,7 +29,9 @@ magneto-optical Kerr effect measurements. It connects acquisition hardware,
 tracks reproducible run artifacts, and executes the numerical analysis chain
 used to recover a Kerr signal from large oscilloscope captures.
 
-![pmoke analysis data flow](docs/assets/readme-pipeline.svg)
+<p align="center">
+  <img src="docs/assets/readme-pipeline.svg" alt="pmoke analysis data flow" width="600">
+</p>
 
 ## ✨ Why pmoke
 
