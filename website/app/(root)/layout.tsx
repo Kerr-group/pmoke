@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   title: 'pmoke | Documentation language',
   description: siteDescription,
   icons: {
-    icon: [{ url: faviconImage, type: 'image/png', sizes: '64x64' }],
+    icon: [{ url: faviconImage, type: 'image/svg+xml' }],
     shortcut: faviconImage,
   },
   alternates: {

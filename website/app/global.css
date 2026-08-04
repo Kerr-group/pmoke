@@ -147,12 +147,6 @@ button:focus-visible {
   color: var(--cyan);
 }
 
-.brand-icon {
-  display: block;
-  flex: 0 0 auto;
-  object-fit: contain;
-}
-
 .brand-context {
   padding-left: 0.55rem;
   border-left: 1px solid var(--color-fd-border);

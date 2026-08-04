@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   applicationName: 'pmoke',
   category: 'science',
   icons: {
-    icon: [{ url: faviconImage, type: 'image/png', sizes: '64x64' }],
+    icon: [{ url: faviconImage, type: 'image/svg+xml' }],
     shortcut: faviconImage,
   },
   openGraph: {

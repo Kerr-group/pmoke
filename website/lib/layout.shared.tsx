@@ -1,6 +1,5 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
-import { CodeXml, House } from 'lucide-react';
-import { BrandIcon } from '@/components/brand-icon';
+import { Activity, CodeXml, House } from 'lucide-react';
 import { appName, gitConfig } from './shared';
 
 export function baseOptions(lang: 'en' | 'ja'): BaseLayoutProps {
@@ -8,7 +7,7 @@ export function baseOptions(lang: 'en' | 'ja'): BaseLayoutProps {
     nav: {
       title: (
         <span className="brand-lockup">
-          <BrandIcon size={22} />
+          <Activity aria-hidden="true" size={18} />
           <span>{appName}</span>
           <span className="brand-context">DOCS</span>
         </span>

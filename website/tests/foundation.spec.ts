@@ -248,26 +248,16 @@ test('mobile signal renderer keeps a dense periodic viewport', async ({ page }, 
   expect(metrics.generation).toBe(1);
 });
 
-test('brand artwork and favicon are optimized and available', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser brand asset gate');
+test('favicon is optimized and available', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser favicon asset gate');
 
   await page.goto('/pmoke/en/');
-  const brand = page.locator('.site-header .brand-icon');
-  await expect(brand).toBeVisible();
-  expect(await brand.evaluate((image: HTMLImageElement) => ({
-    complete: image.complete,
-    width: image.naturalWidth,
-    height: image.naturalHeight,
-  }))).toEqual({ complete: true, width: 160, height: 160 });
-
   const favicon = page.locator('link[rel="icon"]');
-  await expect(favicon).toHaveAttribute('href', /\/pmoke\/pmoke_faviicon\.png$/u);
-  const response = await page.request.get('/pmoke/pmoke_faviicon.png');
+  await expect(favicon).toHaveAttribute('href', /\/pmoke\/favicon\.svg$/u);
+  const response = await page.request.get('/pmoke/favicon.svg');
   expect(response.ok()).toBeTruthy();
-  expect((await response.body()).byteLength).toBeLessThan(10_000);
-
-  await page.goto('/pmoke/en/docs/');
-  await expect(page.locator('.brand-icon:visible').first()).toBeVisible();
+  expect(response.headers()['content-type']).toContain('image/svg+xml');
+  expect((await response.body()).byteLength).toBeLessThan(1_000);
 });
 
 test('all rendered internal links resolve beneath the project path', async ({ page }, testInfo) => {

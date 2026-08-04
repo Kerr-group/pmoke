@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Activity, ArrowRight, BookOpen, CodeXml, Cpu, Search, Terminal } from 'lucide-react';
 import { notFound } from 'next/navigation';
-import { BrandIcon } from '@/components/brand-icon';
 import { SignalHero } from '@/components/signal-hero';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { isLanguage } from '@/lib/i18n';
@@ -55,7 +54,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
     <main className="home-shell">
       <header className="site-header">
         <Link className="brand-lockup" href={`/${lang}`} aria-label="pmoke home">
-          <BrandIcon size={24} />
+          <Activity aria-hidden="true" size={19} />
           <strong>pmoke</strong>
         </Link>
         <nav aria-label={lang === 'ja' ? '主要ナビゲーション' : 'Primary navigation'}>
