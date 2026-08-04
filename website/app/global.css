@@ -494,7 +494,7 @@ html:not(.dark) .capability-grid p { color: #52615f; }
 }
 
 .ai-hub__mark svg { width: 1.1rem; height: 1.1rem; }
-.ai-hub__identity span,
+.ai-hub__identity > div > span,
 .ai-hub__bootstrap-title span {
   display: block;
   color: var(--cyan);
@@ -731,17 +731,18 @@ html:not(.dark) .capability-grid p { color: #52615f; }
     grid-template-columns: repeat(3, minmax(0, 1fr));
     padding: 0;
     border-right: 0;
-    border-bottom: 1px solid var(--color-fd-border);
+    border-bottom: 0;
   }
   .ai-hub__modebar button {
     min-width: 0;
     border-left: 0;
-    border-bottom: 2px solid transparent;
+    border-bottom: 0;
+    box-shadow: inset 0 -1px 0 var(--color-fd-border);
     text-align: center;
   }
   .ai-hub__modebar button[aria-pressed='true'] {
     border-left-color: transparent;
-    border-bottom-color: var(--magenta);
+    box-shadow: inset 0 -2px 0 var(--magenta);
   }
   .ai-resource {
     grid-template-columns: 2rem minmax(0, 1fr);

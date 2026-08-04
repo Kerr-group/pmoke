@@ -23,6 +23,19 @@ test('AI resource hub exposes live manifest and bounded endpoint modes', async (
   await expect(hub).toHaveAttribute('data-manifest', 'ready');
   await expect(hub.getByText('MANIFEST ONLINE', { exact: true })).toBeVisible();
   await expect(hub.locator('.ai-resource')).toHaveCount(2);
+  const mark = hub.locator('.ai-hub__mark');
+  await expect(mark).toHaveCSS('display', 'grid');
+  const markOffset = await mark.evaluate((element) => {
+    const container = element.getBoundingClientRect();
+    const icon = element.querySelector('svg')?.getBoundingClientRect();
+    if (!icon) return { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY };
+    return {
+      x: Math.abs(container.left + container.width / 2 - (icon.left + icon.width / 2)),
+      y: Math.abs(container.top + container.height / 2 - (icon.top + icon.height / 2)),
+    };
+  });
+  expect(markOffset.x).toBeLessThanOrEqual(1);
+  expect(markOffset.y).toBeLessThanOrEqual(1);
 
   await hub.getByRole('button', { name: 'Context', exact: true }).click();
   await expect(hub.locator('.ai-resource')).toHaveCount(3);
