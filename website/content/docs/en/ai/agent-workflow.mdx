@@ -1,0 +1,46 @@
+---
+title: Agent Workflow and Versioning
+description: Minimal-context retrieval, version pinning, and runtime verification for pmoke automation.
+---
+
+## Bootstrap
+
+Retrieve the concise index before loading documentation bodies:
+
+```bash
+curl -fsSL https://kerr-group.github.io/pmoke/llms.txt
+curl -fsSL https://kerr-group.github.io/pmoke/ai-index.json | jq '.pmoke_version, .source_commit'
+```
+
+The index links directly to processed per-page Markdown. Follow only the links
+required for the current task; do not ingest both full-language feeds by default.
+
+## Context ladder
+
+| Task | Preferred source | Runtime confirmation |
+| --- | --- | --- |
+| Explain one command | Per-page CLI Markdown | `pmoke <command> --help` |
+| Generate config | Config JSON + JSON Schema | `pmoke config validate` |
+| Diagnose connectivity | Installation and troubleshooting Markdown | `pmoke doctor hardware` |
+| Build broad English guidance | `llms-en.txt` | Relevant native command |
+| Compare English and Japanese terms | `llms-full.txt` | Source links and locale metadata |
+
+## Version pinning
+
+Record `pmoke_version`, `config_schema_version`, and `source_commit` from
+`ai-index.json` beside generated output. Reject a cached page when its SHA-256 digest
+does not match the corresponding manifest entry. Re-fetch the manifest when the
+requested pmoke version differs from the current feed.
+
+## Generation contract
+
+Agent output must retain exact field paths, units, enum values, command spelling,
+and canonical source URLs. Unsupported assumptions must remain explicit. Generated
+configuration is a proposal until native validation succeeds.
+
+```text
+Read the pmoke llms.txt index first. Select the smallest relevant locale-specific
+Markdown source. Prefer generated JSON contracts for exact CLI and config fields.
+Preserve versions, paths, units, and canonical URLs. Confirm configuration semantics
+with pmoke config validate. Do not infer hardware state, credentials, or addresses.
+```

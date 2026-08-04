@@ -1,36 +1,28 @@
 ---
 title: AI and Machine Resources
-description: Stable documentation feeds for agents, editors, and automation.
+description: Versioned Markdown feeds, typed contracts, and local retrieval for reliable pmoke agents.
 ---
 
-## Endpoints
+Use this surface to select the smallest authoritative input for an agent, editor,
+or automation task. Every endpoint is static, versioned with the documentation
+build, and available without an account or API key.
 
-| Resource | Purpose |
-| --- | --- |
-| [`llms.txt`](/pmoke/llms.txt) | Concise bilingual page index |
-| [`llms-full.txt`](/pmoke/llms-full.txt) | Full processed documentation context |
-| [`llms-en.txt`](/pmoke/llms-en.txt) | English-only full context |
-| [`llms-ja.txt`](/pmoke/llms-ja.txt) | Japanese-only full context |
-| [`ai-index.json`](/pmoke/ai-index.json) | Versioned page manifest with SHA-256 digests |
-| [CLI JSON](/pmoke/generated/cli-reference.json) | Typed command and option tree |
-| [Config JSON](/pmoke/generated/config-reference.json) | Typed field registry |
-| [Config JSON Schema](/pmoke/config.schema.json) | Editor and structural validation schema |
+<AIResourceHub locale="en" />
 
-Every feed identifies the pmoke version, config schema version, and build source
-commit. Per-page Markdown URLs appear in page actions and preserve locale and
-canonical source information.
+## Retrieval order
 
-## Agent policy
+1. Start with [`llms.txt`](https://kerr-group.github.io/pmoke/llms.txt) for discovery.
+2. Fetch only the relevant per-page Markdown URL from the selected locale.
+3. Use generated JSON contracts for exact commands, options, fields, and defaults.
+4. Expand to a locale context feed only when the task spans several pages.
+5. Use the bilingual full feed only when cross-language context is required.
 
-1. Read `llms.txt` to select only relevant pages.
-2. Prefer the generated JSON over parsing rendered tables.
-3. Treat native `pmoke config validate` as authoritative for semantic validation.
-4. Preserve exact commands, field paths, units, and version metadata in generated output.
-5. Never infer private laboratory addresses from documentation examples.
+## Authority boundary
 
-## Search boundary
+Documentation describes supported behavior, but it cannot observe a workstation or
+instrument. `pmoke config validate` remains authoritative for configuration semantics;
+`pmoke doctor hardware` remains authoritative for compiled features and live hardware.
+An agent must not infer credentials, addresses, driver availability, or instrument state.
 
-The documentation search combines a deterministic bilingual concept-vector index
-with full-text results entirely in the browser. Queries and telemetry are not sent
-to pmoke, Orama Cloud, or another service. See [search and privacy](./search-privacy)
-for the model, fallback, and quality boundaries.
+Continue with [agent workflow and versioning](./agent-workflow), inspect the
+[resource contracts](./resource-contracts), or review [search and privacy](./search-privacy).

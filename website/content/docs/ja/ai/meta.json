@@ -1,4 +1,4 @@
 {
-  "title": "AI・機械向け resource",
-  "pages": ["index", "search-privacy"]
+  "title": "AI・機械向けリソース",
+  "pages": ["index", "agent-workflow", "resource-contracts", "search-privacy"]
 }

@@ -33,6 +33,8 @@ test('representative routes have no serious accessibility violations', async ({ 
     '/pmoke/ja/',
     '/pmoke/en/docs/quickstart/',
     '/pmoke/ja/docs/quickstart/',
+    '/pmoke/en/docs/ai/',
+    '/pmoke/ja/docs/ai/',
     '/pmoke/en/docs/configuration/validation/',
   ]) {
     await page.goto(route);
