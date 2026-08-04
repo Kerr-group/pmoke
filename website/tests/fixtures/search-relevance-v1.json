@@ -55,6 +55,8 @@
     { "locale": "en", "query": "required platform driver for direct GPIB", "expected": "/en/docs/installation" },
     { "locale": "en", "query": "raw waveform file error", "expected": "/en/docs/troubleshooting" },
     { "locale": "en", "query": "doctor checks for failed hardware", "expected": "/en/docs/troubleshooting" },
+    { "locale": "en", "query": "how to cite pmoke software", "expected": "/en/docs/citation" },
+    { "locale": "en", "query": "pulsed MOKE method paper DOI", "expected": "/en/docs/citation" },
 
     { "locale": "ja", "query": "pmoke とは何か", "expected": "/ja/docs" },
     { "locale": "ja", "query": "再現可能な測定と解析の概要", "expected": "/ja/docs" },
@@ -108,6 +110,8 @@
     { "locale": "ja", "query": "測定装置 timeout の診断", "expected": "/ja/docs/troubleshooting" },
     { "locale": "ja", "query": "direct GPIB に必要な platform driver", "expected": "/ja/docs/installation" },
     { "locale": "ja", "query": "raw waveform file error", "expected": "/ja/docs/troubleshooting" },
-    { "locale": "ja", "query": "失敗した hardware の doctor 確認", "expected": "/ja/docs/troubleshooting" }
+    { "locale": "ja", "query": "失敗した hardware の doctor 確認", "expected": "/ja/docs/troubleshooting" },
+    { "locale": "ja", "query": "pmoke software の引用方法", "expected": "/ja/docs/citation" },
+    { "locale": "ja", "query": "パルス MOKE 手法論文 DOI", "expected": "/ja/docs/citation" }
   ]
 }

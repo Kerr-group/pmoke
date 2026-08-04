@@ -7,6 +7,7 @@ import { ReferenceMetadata } from './reference-metadata';
 import { ConfigValidator } from './config-validator';
 import { WaveformAnalyzer } from './waveform-analyzer';
 import { AIResourceHub } from './ai-resource-hub';
+import { CitationPanel } from './citation-panel';
 
 export function getMDXComponents(components?: MDXComponents) {
   return createMDXComponents('en', components);
@@ -24,6 +25,7 @@ function createMDXComponents(locale: Language, components?: MDXComponents) {
     ConfigValidator,
     WaveformAnalyzer,
     AIResourceHub,
+    CitationPanel,
     ...components,
   } satisfies MDXComponents;
 }
