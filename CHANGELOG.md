@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- The default pmoke build now enables direct TCP/IP, direct GPIB/VISA, and
+  Prologix TCP/serial transports. macOS builds that exclude GPIB must use
+  `--no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial`.
+- The legacy `hw` Cargo feature has been removed. Use `hw-gpib` for a
+  direct-GPIB build or the default feature set for the complete Linux/Windows
+  build.
+
 ### Changes
 
 - The monitor's primary output is now an Activity view with explicit live,

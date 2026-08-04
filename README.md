@@ -50,27 +50,33 @@ used to recover a Kerr signal from large oscilloscope captures.
 
 ### 📦 Install
 
-Clone the repository, then select only the transports required by the host:
+Clone the repository, then use the platform build that matches the host:
 
 ```bash
 git clone https://github.com/Kerr-group/pmoke.git
 cd pmoke
 
-# Default: direct GPIB plus shared hardware support
+# Linux / Windows: all transports
 cargo install --path . --locked
+
+# macOS: direct TCP/IP and Prologix TCP/serial, without direct GPIB
+cargo install --path . --locked --no-default-features \
+  --features hw-core,hw-prologix-tcp,hw-prologix-serial
+
+# Analysis-only: no hardware transports
+cargo install --path . --locked --no-default-features
 
 # Plotting and Python-backed analysis
 python -m pip install -r requirements.txt
 ```
 
-Transport features are explicit so macOS and analysis-only installations do
-not need a system GPIB library:
+The default Linux/Windows build enables the complete transport surface. Custom
+builds can still select a smaller transport set:
 
-- 💻 **Offline analysis** · `--no-default-features`
-- 🌐 **Direct oscilloscope TCP/IP** · `--no-default-features --features hw-core`
-- 🌍 **Prologix Ethernet** · `--no-default-features --features hw-prologix-tcp`
-- 🔗 **Prologix USB serial** · `--no-default-features --features hw-prologix-serial`
-- 🔌 **Direct GPIB** · `--features hw-gpib`
+- 💥 **Complete Linux / Windows build** · default features
+- 🍎 **macOS hardware build** · all transport features except `hw-gpib`
+- 💻 **Analysis-only build** · `--no-default-features`
+- 🧩 **Custom transport build** · `--no-default-features --features <features>`
 
 See the [feature matrix](https://kerr-group.github.io/pmoke/en/docs/installation/feature-flags/)
 for platform notes and combined builds.

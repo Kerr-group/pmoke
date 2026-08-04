@@ -48,9 +48,13 @@ fs2 = "0.4.3"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [features]
-default = ["hw-gpib"]
+default = [
+  "hw-core",
+  "hw-gpib",
+  "hw-prologix-tcp",
+  "hw-prologix-serial",
+]
 
-hw = ["hw-gpib"]
 hw-core = []
 hw-gpib = ["hw-core", "instruments/gpib"]
 hw-prologix-tcp = ["hw-core", "instruments/prologix-tcp"]
