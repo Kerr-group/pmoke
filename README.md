@@ -29,15 +29,7 @@ magneto-optical Kerr effect measurements. It connects acquisition hardware,
 tracks reproducible run artifacts, and executes the numerical analysis chain
 used to recover a Kerr signal from large oscilloscope captures.
 
-```mermaid
-flowchart TB
-    RAW["📡 Raw waveforms"] --> REF["🎯 Reference fit"]
-    RAW --> SENSOR["📈 Sensor integration"]
-    REF --> LOCKIN["⚙️ Lock-in"]
-    LOCKIN --> PHASE["🔄 Phase rotation"]
-    PHASE --> KERR["🧲 Kerr angle"]
-    SENSOR --> KERR
-```
+![pmoke analysis data flow](docs/assets/readme-pipeline.svg)
 
 ## ✨ Why pmoke
 
