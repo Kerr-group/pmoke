@@ -1,133 +1,157 @@
-<div align="center">
+<h1 align="center">pmoke</h1>
 
-# 💥 pmoke
+<p align="center">
+  <strong>Pulsed-field MOKE, from instrument trigger to Kerr angle.</strong>
+</p>
 
-**High-Performance Pulsed MOKE Measurement & Waveform Demodulation System**
+<p align="center">
+  <code>ACQUIRE</code>&nbsp;&nbsp;·&nbsp;&nbsp;<code>DEMODULATE</code>&nbsp;&nbsp;·&nbsp;&nbsp;<code>ROTATE</code>&nbsp;&nbsp;·&nbsp;&nbsp;<code>ANALYZE</code>
+</p>
 
-[![CI](https://github.com/Kerr-group/pmoke/actions/workflows/ci.yml/badge.svg)](https://github.com/Kerr-group/pmoke/actions/workflows/ci.yml)
-[![Docs Site](https://img.shields.io/badge/docs-online-6366f1?style=flat-square&logo=github-pages&logoColor=white)](https://kerr-group.github.io/pmoke/)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+<p align="center">
+  <a href="https://github.com/Kerr-group/pmoke/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/Kerr-group/pmoke/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://kerr-group.github.io/pmoke/en/"><img alt="Documentation" src="https://img.shields.io/badge/docs-live-16a34a?style=flat-square"></a>
+  <a href="https://www.rust-lang.org/"><img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-000000?style=flat-square&logo=rust"></a>
+  <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-2563eb?style=flat-square"></a>
+</p>
 
-[📖 Documentation Site](https://kerr-group.github.io/pmoke/) | [⚡ Quickstart](#-quickstart) | [🎛️ CLI Reference](#%EF%B8%8F-cli-reference) | [✨ Features](#-key-features)
+<p align="center">
+  <a href="https://kerr-group.github.io/pmoke/en/">Documentation</a>
+  · <a href="#quick-start">Quick start</a>
+  · <a href="#command-surface">Commands</a>
+  · <a href="https://kerr-group.github.io/pmoke/ja/">日本語</a>
+</p>
 
 ---
 
-</div>
-
-`pmoke` is a modern, high-precision command-line tool for **pulsed Magneto-Optical Kerr Effect (MOKE)** measurements and automated waveform analysis. Built in Rust and WebAssembly, it seamlessly orchestrates hardware instruments, processes multi-channel oscilloscopes, and executes complete lock-in demodulation chains.
+`pmoke` is a Rust command-line and terminal application for pulsed
+magneto-optical Kerr effect measurements. It connects acquisition hardware,
+tracks reproducible run artifacts, and executes the numerical analysis chain
+used to recover a Kerr signal from large oscilloscope captures.
 
 ```text
-reference ➔ sensor integral ➔ lock-in demodulation ➔ phase rotation ➔ Kerr angle
+ACQUIRE ──▶ REFERENCE ──▶ SENSOR
+                            │
+KERR ◀── PHASE ◀── LOCK-IN ◀┘
 ```
 
----
+## Why pmoke
 
-## ✨ Key Features
+| Capability | What it provides |
+| --- | --- |
+| Binary acquisition | Rigol DHO5000-series 16-bit WORD captures without a CSV bottleneck |
+| Numerical lock-in | Boxcar, zero-phase FIR/IIR, phase rotation, and Kerr-angle analysis |
+| Instrument transports | Direct TCP/IP, Linux GPIB, Windows USBTMC/VISA, and Prologix TCP/serial |
+| Live terminal UI | One command surface for configuration, analysis, logs, selection, and monitoring |
+| Reproducible runs | Versioned TOML configuration, immutable snapshots, checksums, and isolated run directories |
+| Browser tools | Rust/Wasm configuration validation and interactive waveform analysis in the documentation site |
 
-- ⚡ **High-Speed Binary Waveform Ingestion**: Direct support for Rigol DHO5000-series 16-bit WORD binary captures (`.u16le`), avoiding CSV bottlenecks in large memory acquisitions.
-- 🎛️ **Full Lock-In Demodulation**: Hardware/software lock-in with zero-phase FIR/IIR filtering and boxcar demodulation.
-- 📊 **Interactive Terminal Dashboard**: Real-time activity telemetry with `pmoke monitor` featuring paused-history navigation and calm status metrics.
-- 🌐 **WebAssembly & Web Interactive Tools**: Interactive waveform analysis and live diagnostic tools running directly in the browser via Wasm.
-- 🔧 **Multi-Transport Hardware Control**: Native SCPI controller over TCP/Ethernet, Direct GPIB, and Prologix USB/Serial bridges.
-- 🛡️ **Immutable Shot Provenance**: TOML-based reproducible configuration (`version = 4`) with isolated atomic run directories.
+## Quick start
 
----
+### Install
 
-## ⚡ Quickstart
-
-### 1. Installation
-
-Build and install `pmoke` using Cargo (Rust 1.85+ required):
+Clone the repository, then select only the transports required by the host:
 
 ```bash
-# Hardware-enabled build (Direct TCP / Prologix / GPIB)
-cargo install --path .
+git clone https://github.com/Kerr-group/pmoke.git
+cd pmoke
 
-# Analysis-only build (Lightweight CLI for offline processing)
-cargo install --path . --no-default-features
+# Default: direct GPIB plus shared hardware support
+cargo install --path . --locked
+
+# Plotting and Python-backed analysis
+python -m pip install -r requirements.txt
 ```
 
-Install Python plotting and analysis dependencies:
+Transport features are explicit so macOS and analysis-only installations do
+not need a system GPIB library:
+
+- **Offline analysis** · `--no-default-features`
+- **Direct oscilloscope TCP/IP** · `--no-default-features --features hw-core`
+- **Prologix Ethernet** · `--no-default-features --features hw-prologix-tcp`
+- **Prologix USB serial** · `--no-default-features --features hw-prologix-serial`
+- **Direct GPIB** · `--features hw-gpib`
+
+See the [feature matrix](https://kerr-group.github.io/pmoke/en/docs/installation/feature-flags/)
+for platform notes and combined builds.
+
+### Run
 
 ```bash
-pip install -r requirements.txt
-```
-
-### 2. Basic Workflow
-
-```bash
-# 1. Validate configuration
-pmoke --config config.toml show
-
-# 2. Check hardware connections & instrument diagnostics
+# Generate, validate, and diagnose a configuration
+pmoke config init --output config.toml
+pmoke --config config.toml config validate
 pmoke --config config.toml doctor
 
-# 3. Automated single-shot pulse, fetch & analysis
-pmoke --config config.toml auto
+# Analyze existing waveforms into an isolated run directory
+pmoke --config config.toml --run-dir shot-001 analyze
 
-# 4. Launch live terminal monitor dashboard
+# Open the terminal workspace; running `pmoke` alone does the same
 pmoke --config config.toml monitor
 ```
 
----
+Hardware-enabled builds add `single`, `trigger`, `autoshot`, `fetch`,
+`screenshot`, `automeasure`, `process`, and `auto`. The complete automated
+measurement and analysis path is:
 
-## 🎛️ CLI Reference
+```bash
+pmoke --config config.toml --run-dir shot-001 auto
+```
 
-| Command | Description |
-| :--- | :--- |
-| `pmoke show` | Validate configuration syntax and hardware bindings |
-| `pmoke doctor` | Preflight check for instruments, Python environment, and storage |
-| `pmoke auto` | Trigger single shot, capture waveforms, and run analysis |
-| `pmoke monitor` | Open the interactive TUI activity dashboard |
-| `pmoke fetch` | Retrieve raw waveforms from oscilloscope |
-| `pmoke analyze` | Re-run lock-in & Kerr angle analysis on existing captures |
-| `pmoke export csv` | Convert verified raw binary `.u16le` waveforms to CSV |
-| `pmoke instruments list` | List supported instrument drivers and protocols |
+## Command surface
 
----
+- **Terminal workspace** · `pmoke`, `pmoke monitor`
+- **Configuration** · `pmoke config init|validate|explain|migrate`
+- **Diagnostics** · `pmoke doctor`, `pmoke show`, `pmoke raw verify`
+- **Full analysis** · `pmoke analyze`
+- **Analysis stages** · `pmoke reference|sensor|li|phase|kerr`
+- **Instrument registry and queries** · `pmoke instruments list|explain|query`
+- **Transport benchmarks** · `pmoke bench scpi-query|transport`
+- **Data interchange** · `pmoke export csv|npy`
 
-## 📁 Repository Structure
+The generated [CLI reference](https://kerr-group.github.io/pmoke/en/docs/cli/reference/)
+is the source of truth for flags and feature-gated commands.
+
+## Workspace
 
 ```text
 pmoke/
+├── src/                         CLI, TUI, workflows, and Python bridge
 ├── crates/
-│   ├── pmoke-core/      # Core numerical analysis & Rust engine
-│   └── pmoke-web-wasm/  # WebAssembly bindings for docs site & browser tools
-├── website/             # Fumadocs static documentation site & interactive tools
-├── scripts/             # Python analysis & benchmark utilities
-└── config.toml          # Example configuration file
+│   ├── instruments/             instrument registry and drivers
+│   ├── gpib-rs/                 direct GPIB transport
+│   ├── prologix-rs/             Prologix TCP and serial transport
+│   ├── pmoke-config-core/       shared configuration model and validation
+│   ├── pmoke-analysis-core/     shared numerical analysis
+│   └── pmoke-web-wasm/          browser bindings for shared Rust cores
+├── website/                     bilingual Fumadocs site and browser tools
+├── scripts/                     benchmark plotting and comparison utilities
+└── xtask/                       generated CLI and configuration references
 ```
 
----
+## Documentation
 
-## 📖 Complete Documentation
+| Guide | English | 日本語 |
+| --- | :---: | :---: |
+| Quick start | [Open](https://kerr-group.github.io/pmoke/en/docs/quickstart/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/quickstart/) |
+| CLI reference | [Open](https://kerr-group.github.io/pmoke/en/docs/cli/reference/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/cli/reference/) |
+| Configuration | [Open](https://kerr-group.github.io/pmoke/en/docs/configuration/reference/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/configuration/reference/) |
+| Waveform analyzer | [Open](https://kerr-group.github.io/pmoke/en/docs/interactive/waveform-analyzer/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/interactive/waveform-analyzer/) |
 
-Visit our official documentation website for comprehensive guides, CLI reference, configuration schema, and interactive waveform tools:
+## Publications
 
-👉 **[https://kerr-group.github.io/pmoke/](https://kerr-group.github.io/pmoke/)**
+If `pmoke` contributes to published work, cite the measurement method relevant
+to the experiment:
 
-- 🚀 [Quickstart Guide](https://kerr-group.github.io/pmoke/docs/quickstart)
-- 💻 [CLI Reference](https://kerr-group.github.io/pmoke/docs/cli/reference)
-- ⚙️ [Configuration Reference](https://kerr-group.github.io/pmoke/docs/configuration/reference)
-- 📊 [Interactive Waveform Analyzer](https://kerr-group.github.io/pmoke/docs/interactive/waveform-analyzer)
+- A. Ikeda, S. Nakamura, S. Yamane, K. Noda, A. Ikeda, and S. Yonezawa,
+  “Magneto-optical Kerr-effect measurements under pulsed magnetic fields over
+  40 T using a compact sample fixture,” *Physical Review Research* **8**,
+  013169 (2026). [doi:10.1103/vy7j-ylb4](https://doi.org/10.1103/vy7j-ylb4)
+- S. Yamane, S. Nakamura, A. Ikeda, K. Noda, A. Ikeda, and S. Yonezawa,
+  “Magneto-optical Kerr effect measurements under bipolar pulsed magnetic
+  fields,” *JJAP Conference Proceedings* **12**, 011011 (2026).
+  [doi:10.56646/jjapcp.12.0_011011](https://doi.org/10.56646/jjapcp.12.0_011011)
 
----
+## License
 
-## 📚 Publications & References
-
-If you use `pmoke` in your scientific research, please consider citing the following publications:
-
-- **Magneto-optical Kerr-effect measurements under pulsed magnetic fields over 40 T using a compact sample fixture**  
-  Atsutoshi Ikeda, Sota Nakamura, Soichiro Yamane, Kosuke Noda, Akihiko Ikeda, and Shingo Yonezawa  
-  *Phys. Rev. Research* (2026). DOI: [10.1103/vy7j-ylb4](https://journals.aps.org/prresearch/abstract/10.1103/vy7j-ylb4)
-
-- **Magneto-optical Kerr effect measurements under bipolar pulsed magnetic fields**  
-  Soichiro Yamane, Sota Nakamura, Atsutoshi Ikeda, Kosuke Noda, Akihiko Ikeda, and Shingo Yonezawa  
-  *JJAP Conf. Proc.* **12**, 011011 (2026). Article: [J-STAGE 12_011011](https://www.jstage.jst.go.jp/article/jjapcp/12/0/12_011011/_article/-char/ja)
-
----
-
-## 📄 License
-
-This project is licensed under the [Apache 2.0 License](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE).

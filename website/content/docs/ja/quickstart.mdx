@@ -5,7 +5,7 @@ description: 設定検証と完全解析パイプラインの実行手順。
 
 ```bash
 pmoke config init --output config.toml
-pmoke config validate --config config.toml
+pmoke --config config.toml config validate
 pmoke --config config.toml doctor
 pmoke --config config.toml --run-dir shot-001 analyze
 ```

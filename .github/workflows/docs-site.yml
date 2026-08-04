@@ -133,6 +133,7 @@ jobs:
           pnpm lint
           pnpm lint:ja
           pnpm lint:content
+          pnpm lint:readme
           pnpm types:check
 
       - name: Build static site

@@ -21,6 +21,10 @@ const forbidden = [
     pattern: /\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b/u,
   },
   { name: 'unfinished placeholder', pattern: /\b(?:TODO|TBD|coming soon)\b/iu },
+  {
+    name: 'misplaced global --config option',
+    pattern: /\bpmoke\s+config\s+validate\s+--config\b/u,
+  },
 ];
 for (const file of contentFiles) {
   const source = await readFile(file, 'utf8');

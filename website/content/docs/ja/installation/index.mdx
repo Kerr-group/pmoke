@@ -28,7 +28,7 @@ cargo install --path . --no-default-features
 pmoke --version
 pmoke instruments list
 pmoke config init --output config.toml
-pmoke config validate --config config.toml
+pmoke --config config.toml config validate
 ```
 
 platform ごとの最小 build に向けた [feature 選択](./feature-flags)。
