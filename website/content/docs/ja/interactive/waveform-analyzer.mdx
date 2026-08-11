@@ -1,20 +1,21 @@
 ---
 title: 波形アナライザー
-description: ネイティブ数値一致性を備えたブラウザ内 lock-in・位相回転・高調波 Kerr 解析。
+description: ネイティブと数値が一致する、ブラウザ内のlock-in・位相回転・高調波Kerr解析。
 ---
 
-ネイティブ pmoke と同一の Rust カーネルを専用 Web Worker 内で実行するアナライザー。合成信号とローカル CSV のブラウザ内保持。完全な解析入力と独立した表示用間引き。全入力から生成される出力値。
+ネイティブpmokeと同じRustカーネルを専用Web Workerで実行するアナライザー。合成信号とローカルCSVはブラウザ内に保持。解析に使う全入力と表示用に間引いたデータを分けて扱い、出力値は全入力から計算。
+ブラウザ内Kerr角計算とnative parityの確認に対応。
 
 <WaveformAnalyzer locale="ja" />
 
 ## 可視解析
 
-入力波形、lock-in X/Y、振幅・位相、Kerr 角、filter response の四つの同期 plot。
+入力波形、lock-in X/Y、振幅・位相、Kerr角、filter responseを四つのplotで同期表示。
 sample rate、reference frequency、noise、boxcar half-window、stride、位相回転、
-高調波、Kerr factor の control。browser 内で完結する local CSV 解析と metadata 付き CSV export。
+高調波、Kerr factorをcontrolとして指定可能。local CSVの解析からmetadata付きCSV exportまでbrowser内で完結。
 
 ## 一致範囲
 
-M4 のネイティブ等価対象となる `boxcar_legacy`、位相回転、高調波 Kerr 計算。ブラウザ一致対象外となる FIR フィルター、`sync_iir_zero_phase`、位相フィッティング、標準 Kerr。これらの本番解析に必要なネイティブ pmoke。
+M4のネイティブ等価対象は`boxcar_legacy`、位相回転、高調波Kerr計算。FIRフィルター、`sync_iir_zero_phase`、位相フィッティング、標準Kerrはブラウザの一致対象外。本番解析にはネイティブpmokeを使用。
 
-`time,signal` または信号単列に対応する CSV 入力。有限・単調増加・等間隔が必須となる時間列。信号単列で使用するサンプルレート制御。16 MiB、入力 1,000,000 点、高調波出力合計 1,500,000 点の固定上限。
+`time,signal`または信号単列のCSVを入力可能。時間列を含む場合は有限・単調増加・等間隔が必須。信号単列ではsample rateを指定。ファイルサイズ16 MiB、入力1,000,000点、高調波出力合計1,500,000点の固定上限。

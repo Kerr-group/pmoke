@@ -36,10 +36,10 @@ const copy = {
     bibtex: 'BibTeX',
     copyPlain: 'テキスト引用のコピー',
     copyBibtex: 'BibTeX引用のコピー',
-    copiedPlain: 'テキスト引用のコピー完了',
-    copiedBibtex: 'BibTeX引用のコピー完了',
+    copiedPlain: 'テキスト引用をコピー済み',
+    copiedBibtex: 'BibTeX引用をコピー済み',
     copyFailed: 'クリップボード利用不可',
-    repository: 'source repositoryの表示',
+    repository: 'ソースリポジトリを表示',
   },
 } as const;
 

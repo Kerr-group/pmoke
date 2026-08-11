@@ -13,7 +13,7 @@ description: 接続 URI、timeout、platform 制約の一覧。
 | Prologix serial | `prologix-serial:///dev/cu.usbserial-XXXX?addr=11` |
 | Windows VISA | `visa:RESOURCE` |
 
-Prologix controller 自体ではなく対象装置の GPIB primary address を示す `addr`。既定値 3000 の `read_timeout_ms`。serial 接続で指定可能な既定値 115200 の正整数 `baud_rate`。
+`addr`はPrologix controller自体ではなく、対象装置のGPIB primary addressを示す。`read_timeout_ms`の既定値は3000。serial接続では、既定値115200の正整数として`baud_rate`を指定可能。
 
 ## 接続確認
 
@@ -23,4 +23,4 @@ pmoke instruments query \
   '*IDN?'
 ```
 
-documentation 専用 TEST-NET address の例示。実験室 network 割当への置換。
+上のURIはdocumentation専用のTEST-NET address。実験室のnetwork割当に置換。

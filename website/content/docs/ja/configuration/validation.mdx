@@ -3,20 +3,20 @@ title: 検証・移行
 description: schema error の診断と legacy 設定の安全な移行。
 ---
 
-## hardware 非接続の検証
+## Hardwareに接続しない検証
 
 ```bash
 pmoke --config config.toml config validate
 pmoke config explain lockin.filter
 ```
 
-TOML 構文、v4 未知 key、範囲、channel role、filter 制約、接続 URI、model/transport compatibility の検証。装置 open を伴わない静的検証。
+TOML構文、v4で未知のkey、値の範囲、channel role、filter制約、接続URI、model/transport compatibilityを検証。装置openを伴わない静的検証。
 
-editor 向け [config.schema.json](https://kerr-group.github.io/pmoke/config.schema.json)。cross-field・hardware semantics の最終基準となる runtime validation。
+editorで利用できる[config.schema.json](https://kerr-group.github.io/pmoke/config.schema.json)も提供。cross-fieldとhardware semanticsについてはruntime validationが最終基準。
 
 ## ブラウザ設定検証
 
-専用 Web Worker による canonical schema v4 の検証。入力内容のブラウザ内保持。driver、filesystem、Python package、hardware 到達性の確認先となる native `pmoke doctor`。ブラウザ検証前に必要な v1-v3 設定の migration。
+専用Web Workerでcanonical schema v4を検証。入力内容はブラウザ内に保持。driver、filesystem、Python package、hardware到達性はnative `pmoke doctor`で確認。v1-v3設定をブラウザで検証する前にmigrationを実行。
 
 <ConfigValidator locale="ja" />
 
@@ -30,4 +30,4 @@ pmoke --config legacy.toml config migrate --output config.v4.toml
 pmoke --config legacy.toml config migrate --in-place
 ```
 
-version 付き backup 作成後の atomic 置換となる `--in-place`。動作変更の可能性がある step に必要な `--accept-lossy`。既存 destination の上書き拒否。
+`--in-place`はversion付きbackupを作成してからatomicに置換。動作が変わる可能性のあるstepでは`--accept-lossy`が必要。既存destinationは上書き不可。

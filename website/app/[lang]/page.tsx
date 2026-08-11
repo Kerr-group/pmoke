@@ -27,8 +27,8 @@ const copy = {
   },
   ja: {
     kicker: '精密信号ラボ',
-    lead: '装置を制御し、位相を推定し、Kerr応答を抽出します。',
-    description: 'パルスMOKEの取得、ロックイン処理、ハードウェア診断を行う、再現可能なRustワークフローです。',
+    lead: '装置制御、位相推定、Kerr応答抽出。',
+    description: 'パルスMOKEの取得、ロックイン処理、ハードウェア診断を行う再現可能なRustワークフロー。',
     docs: 'ドキュメント',
     quickstart: 'クイックスタート',
     signal: 'Wasm 信号プレビュー',
@@ -37,7 +37,7 @@ const copy = {
     darkTheme: 'ダークテーマへ切替',
     cards: [
       ['装置制御', 'TCP/IP、GPIB、Prologix の型付き通信。', 'terminal'],
-      ['解析パイプライン', 'Reference、sensor、lock-in、phase、Kerrを順に処理します。', 'activity'],
+      ['解析パイプライン', 'Reference、sensor、lock-in、phase、Kerrの連続処理。', 'activity'],
       ['検索可能な知識', '日英静的検索と AI エージェント向けテキスト。', 'search'],
     ],
   },

@@ -1,9 +1,9 @@
 ---
 title: 設定作成
-description: signal role と artifact を軸とする schema v4 設定。
+description: signal roleとartifactを軸にしたschema v4設定。
 ---
 
-過去の実験設定の複製ではなく、実行中 binary の現行 template を起点とする構成:
+過去の実験設定を複製せず、実行中binaryが提供する現行templateを起点に設定:
 
 ```bash
 pmoke config init --output config.toml
@@ -11,7 +11,7 @@ pmoke config init --output config.toml
 
 ## 装置 endpoint
 
-オシロスコープと direct 接続を定義する `scope`。trigger source と direct GPIB または Prologix adapter を定義する `generator`。
+オシロスコープとのdirect接続を`scope`に定義。trigger sourceと、direct GPIBまたはPrologix adapterを`generator`に定義。
 
 ```toml
 version = 4
@@ -27,7 +27,7 @@ connection = "prologix-tcp://192.0.2.20:1234?addr=11"
 
 ## channel role
 
-sensor ごとに一つだけの scale 形式。周波数・位相推定の基準となる reference channel。光学応答を含む lock-in signal channel。
+各sensorにはscale形式を一つだけ指定。周波数・位相推定の基準となるreference channelと、光学応答を含むlock-in signal channelを設定。
 
 ```toml
 [[sensors]]
@@ -47,7 +47,7 @@ filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 
 ## artifact 方針
 
-大容量 DHO capture 向け RAW 取得。shot ごとの分離と immutable な設定 snapshot を担う `--run-dir`。
+大容量DHO captureにはRAW取得を使用。shotごとの分離と不変な設定snapshotには`--run-dir`を使用。
 
 ```toml
 [data]
@@ -56,4 +56,4 @@ input = "auto"
 screenshot = true
 ```
 
-全 default・制約の確認先となる[自動生成 field リファレンス](./reference)。
+すべてのdefaultと制約は、[自動生成fieldリファレンス](./reference)で確認可能。

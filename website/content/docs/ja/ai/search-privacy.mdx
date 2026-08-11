@@ -1,32 +1,32 @@
 ---
-title: 検索とPrivacy
-description: browser-local hybrid検索、測定可能な品質gate、明示的なfailure境界。
+title: 検索とプライバシー
+description: ブラウザ内のhybrid検索、測定可能な品質gate、明示的なfailure境界。
 ---
 
-## Local検索
+## ローカル検索
 
-deterministic `pmoke-domain-v1` bilingual concept projectionによる検索。
+deterministicな`pmoke-domain-v1` bilingual concept projectionを使う検索。
 日英domain synonymの共通concept dimensionと、正確なcommand・config pathを保持する
-bounded hashed lexical feature。semantic moduleの遅延読込後にbrowser内でstatic recordを
-rankingするOrama OSS。
+bounded hashed lexical featureを使用。semantic moduleを遅延読み込みした後、browser内でstatic recordを
+rankingするOrama OSSを利用。
 
-neural embedding service、生成回答engine、cloud検索productではないconcept-vector検索。
+neural embedding service、生成回答engine、cloud検索productではなくconcept-vector検索。
 
 ## Data境界
 
-- index対象となる公開documentationのみ。
-- GitHub Pagesからの同一origin static index配信。
-- query upload、analytics、cookie、account、telemetryの不使用。
-- local config、CSV input、instrument address、browser tool stateの非index化。
-- service workerなしでの完全offline対応の非主張。
+- index対象は公開documentationのみ。
+- GitHub Pagesから同一originのstatic indexを配信。
+- query upload、analytics、cookie、account、telemetryは不使用。
+- local config、CSV input、instrument address、browser tool stateはindex化しない。
+- service workerなしで完全offlineに対応することは非主張。
 
 ## Failure境界
 
-Orama、concept index、hybrid moduleの読込失敗後も利用可能なlocale限定ZBSearch全文検索。
-navigationを妨げず、日英indexを混在させない **全文検索フォールバック** 表示。
+Orama、concept index、hybrid moduleの読み込みに失敗しても、locale限定のZBSearch全文検索を利用可能。
+navigationを妨げず、日英indexを混在させない**全文検索フォールバック**を表示。
 
 ## 品質Gate
 
-localeごとに40 query以上のversioned relevance fixture。各locale Recall@5 0.85以上、
-cross-locale leakageなし、warm p95 100 ms未満、readiness 1秒未満、明示的static asset budgetを
-要求するCI gate。
+localeごとに40 query以上のversioned relevance fixtureを用意。各localeのRecall@5は0.85以上、
+cross-locale leakageなし、warm p95は100 ms未満、readinessは1秒未満。
+これらと明示的なstatic asset budgetをCI gateで要求。

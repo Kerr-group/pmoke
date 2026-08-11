@@ -1,6 +1,6 @@
 ---
 title: 引用・参考文献
-description: pmoke softwareの引用方法と、実験条件に対応するパルスMOKE手法論文の選択指針。
+description: pmoke softwareの引用方法と、実験条件に応じたパルスMOKE手法論文の選択指針。
 ---
 
 `pmoke`によるdata取得・変換・解析が研究成果に実質的に寄与した場合のsoftware citation検討。
@@ -9,13 +9,13 @@ description: pmoke softwareの引用方法と、実験条件に対応するパ�
 <CitationPanel locale="ja" />
 
 > 実行可能な解析実装を特定するsoftware citation。実験手法、装置設計、科学的成果に対する
-> 文献引用との置換ではなく併記。
+> 文献引用に置き換えるものではなく、併記。
 
 ## 引用対象
 
 | 寄与 | 推奨citation |
 | --- | --- |
-| `pmoke`による取得、設定検証、artifact管理、数値解析 | 使用version・source commitを固定した上記software citation |
+| `pmoke`による取得、設定検証、artifact管理、数値解析 | 使用versionとsource commitを固定した上記software citation |
 | compact sample-fiber fixture・all-fiber loopless Sagnac装置・phase-resolved numerical lock-in | Ikeda *et al.* (2026) |
 | bipolar pulsed magnetic field下の測定 | Yamane *et al.* (2026) |
 | 手法の変更を伴う利用 | 最も近い手法論文と変更内容の併記 |
@@ -33,12 +33,12 @@ description: pmoke softwareの引用方法と、実験条件に対応するパ�
 
 ## 再現性記録
 
-citationと共に保存する情報:
+citationとともに保存する情報:
 
 - `pmoke`の正確なversion・source commit
 - normalized `config.toml`・設定schema version
 - command line・有効化したCargo feature set
 - 入力artifactの識別情報・取得後に変更した解析parameter
 
-citation panelと同じdocumentation buildの動作を示す
-[CLIリファレンス](./cli/reference)・[設定リファレンス](./configuration/reference)。
+citation panelと同じdocumentation buildでの動作を示す、
+[CLIリファレンス](./cli/reference)と[設定リファレンス](./configuration/reference)。

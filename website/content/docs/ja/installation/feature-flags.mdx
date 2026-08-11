@@ -1,14 +1,14 @@
 ---
 title: Feature Flags
-description: instrument transport 向け platform build と Cargo feature の選択表。
+description: instrument transport向けplatform buildとCargo featureの選択表。
 ---
 
-default feature set は Linux・Windows 向けの完全 hardware build。direct TCP/IP、direct GPIB/VISA、Prologix TCP/serial の有効化。
+default feature setはLinux・Windows向けの完全なhardware build。direct TCP/IP、direct GPIB/VISA、Prologix TCP/serialを有効化。
 
 | Build profile | Command | Transport |
 | --- | --- | --- |
 | Linux / Windows | `cargo install --path . --locked` | TCP/IP、GPIB/VISA、Prologix TCP、Prologix serial |
-| macOS | 下記 command | TCP/IP、Prologix TCP、Prologix serial |
+| macOS | 下記のcommand | TCP/IP、Prologix TCP、Prologix serial |
 | 解析専用 | `cargo install --path . --locked --no-default-features` | なし |
 
 ```bash
@@ -24,4 +24,4 @@ cargo install --path . --locked --no-default-features \
 | `hw-prologix-tcp` | Prologix Ethernet controller | Linux、macOS、Windows |
 | `hw-prologix-serial` | Prologix USB serial controller | Linux、macOS、Windows |
 
-`hw-core`を内包する両Prologix feature。Prologixを経由しないDHO5108のdirect TCP/IP接続。Linuxではlinux-gpib、WindowsではVISAを必要とするdirect GPIB。
+両Prologix featureには`hw-core`が含まれる。DHO5108はPrologixを経由せずdirect TCP/IPで接続可能。direct GPIBにはLinuxではlinux-gpib、WindowsではVISAが必要。

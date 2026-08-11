@@ -79,8 +79,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Configuration schema version.",
         "New and migrated configurations use schema version 4.",
-        "設定スキーマ版",
-        "新規設定と移行済み設定で使用するバージョン 4。",
+        "設定スキーマのバージョン",
+        "新規設定と移行済み設定で使用するバージョン4。",
         &["must equal 4"],
     ),
     field(
@@ -93,7 +93,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Oscilloscope configuration.",
         "Selects one registered scope model and its transport URI.",
         "オシロスコープ設定",
-        "登録済みモデルと通信 URI の組み合わせ。",
+        "登録済みモデルと通信URIの組み合わせ。",
         &[],
     ),
     field(
@@ -106,7 +106,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Oscilloscope driver model.",
         "The model must match an oscilloscope registered by the instruments crate.",
         "オシロスコープモデル",
-        "instruments crate の登録名との一致。",
+        "instruments crateに登録されたモデル名との一致。",
         &["must be a registered oscilloscope model"],
     ),
     field(
@@ -118,8 +118,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Oscilloscope transport URI.",
         "DHO5108 normally uses direct TCP/IP and never uses a Prologix transport.",
-        "オシロスコープ通信 URI",
-        "DHO5108 で通常使用する直接 TCP/IP。Prologix 対象外。",
+        "オシロスコープの通信URI",
+        "DHO5108で使用するdirect TCP/IP。Prologix transport対象外。",
         &["transport must be supported by the model and build features"],
     ),
     field(
@@ -132,7 +132,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Optional function-generator configuration.",
         "Required only by commands that trigger or automate a measurement.",
         "任意のファンクションジェネレータ設定",
-        "trigger または自動測定系コマンドで必要な装置設定。",
+        "triggerまたは自動測定系commandで必要な装置設定。",
         &["required by trigger, autoshot, automeasure, and auto"],
     ),
     field(
@@ -145,7 +145,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Function-generator driver model.",
         "Required when the generator table is present.",
         "ファンクションジェネレータモデル",
-        "generator table 使用時の必須登録名。",
+        "generator table使用時に必要な登録名。",
         &["must be a registered generator model"],
     ),
     field(
@@ -157,8 +157,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Function-generator transport URI.",
         "The URI selects native GPIB or a Prologix TCP/serial controller.",
-        "ファンクションジェネレータ通信 URI",
-        "native GPIB または Prologix TCP/serial の選択。",
+        "ファンクションジェネレータの通信URI",
+        "native GPIBまたはPrologix TCP/serialの選択。",
         &["transport must be supported by the model and build features"],
     ),
     field(
@@ -171,7 +171,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Acquisition storage and analysis-input policy.",
         "Controls canonical waveform formats and optional screenshot capture.",
         "取得データ方針",
-        "標準波形形式と任意スクリーンショット取得の設定。",
+        "標準波形形式と任意のスクリーンショット取得の設定。",
         &[],
     ),
     field(
@@ -184,7 +184,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Waveform format written by acquisition.",
         "Raw is preferred for very large captures; both also writes CSV.",
         "取得波形の保存形式",
-        "大規模取得向け raw、CSV 併記向け both。",
+        "大規模取得向けraw、CSV併記向けboth。",
         &[],
     ),
     field(
@@ -197,7 +197,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Waveform source used by analysis.",
         "Auto selects available canonical data, preferring verified raw data.",
         "解析波形の入力形式",
-        "利用可能な標準データを選ぶ auto。検証済み raw 優先。",
+        "利用可能な標準データを選ぶauto。検証済みraw優先。",
         &[],
     ),
     field(
@@ -210,7 +210,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Oscilloscope screenshot capture.",
         "Capture requires a scope and transport that support display transfer.",
         "オシロスコープ画面取得",
-        "display transfer 対応モデル・通信方式での任意取得。",
+        "display transfer対応モデル・通信方式での任意取得。",
         &["DHO5108 capture requires TCP/IP or USB-TMC"],
     ),
     field(
@@ -223,7 +223,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Sensor-channel metadata and scaling.",
         "Each entry assigns one channel and exactly one scaling strategy.",
         "センサーチャンネル一覧",
-        "各 channel と単一 scale 方針の対応。",
+        "各channelと単一scale方針の対応。",
         &["channels must not overlap reference or lock-in signal channels"],
     ),
     field(
@@ -236,7 +236,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Oscilloscope sensor channel.",
         "The current DHO5108 mapping accepts channels 1 through 8.",
         "センサーチャンネル番号",
-        "DHO5108 向け 1 以上 8 以下の番号。",
+        "DHO5108向け1以上8以下の番号。",
         &["1 <= value <= 8", "must be unique across all channel roles"],
     ),
     field(
@@ -288,7 +288,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Polarity for maximum-absolute scaling.",
         "Required with max_abs scaling.",
         "最大絶対値正規化の極性",
-        "max_abs 使用時の必須符号。",
+        "max_abs使用時の必須符号。",
         &["must equal -1 or 1"],
     ),
     field(
@@ -301,7 +301,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Plot label for the sensor.",
         "Matplotlib mathtext may be supplied as a TOML literal string.",
         "センサープロットラベル",
-        "TOML literal string で指定可能な Matplotlib mathtext。",
+        "TOML literal stringで指定可能なMatplotlib mathtext。",
         &["must not be empty"],
     ),
     field(
@@ -314,7 +314,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Output unit for the scaled sensor.",
         "Used in tables, plots, and saved analysis headers.",
         "変換後センサーの出力単位",
-        "表・プロット・解析保存ヘッダーでの単位。",
+        "表・プロット・解析保存headerでの単位。",
         &["must not be empty"],
     ),
     field(
@@ -340,7 +340,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Background window before the pulse.",
         "An inline table with finite start and end values.",
         "パルス前背景区間",
-        "有限な start と end の inline table。",
+        "有限なstartとendのinline table。",
         &["start < end"],
     ),
     field(
@@ -353,7 +353,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Background window after the pulse.",
         "An inline table with finite start and end values.",
         "パルス後背景区間",
-        "有限な start と end の inline table。",
+        "有限なstartとendのinline table。",
         &["start < end"],
     ),
     field(
@@ -366,7 +366,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Optical reference analysis settings.",
         "Controls the reference channel, FFT region, and fit decimation.",
         "光学参照信号の解析設定",
-        "reference channel、FFT 区間、fit 間引きの指定。",
+        "reference channel、FFT区間、fit間引きの指定。",
         &[],
     ),
     field(
@@ -379,7 +379,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Reference oscilloscope channel.",
         "The current DHO5108 mapping accepts channels 1 through 8.",
         "参照信号チャンネル",
-        "DHO5108 向け 1 以上 8 以下の番号。",
+        "DHO5108向け1以上8以下の番号。",
         &["1 <= value <= 8", "must be unique across all channel roles"],
     ),
     field(
@@ -391,8 +391,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         Some("s"),
         "Time range used by the reference FFT.",
         "Choose a stable reference segment with finite start and end values.",
-        "参照 FFT 時間区間",
-        "安定した参照信号区間を表す有限な start と end。",
+        "参照FFTの時間区間",
+        "安定した参照信号区間を表す有限なstartとend。",
         &["start < end"],
     ),
     field(
@@ -404,8 +404,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         Some("samples"),
         "Reference-fit decimation stride.",
         "Larger values reduce fitting cost at the expense of temporal detail.",
-        "参照 fit の間引き幅",
-        "計算量と時間詳細度の調整値。",
+        "参照fitの間引き幅",
+        "計算量と時間分解能の調整値。",
         &["must be positive"],
     ),
     field(
@@ -417,8 +417,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         Some("samples"),
         "Local reference-fitting window size.",
         "Used around the FFT estimate by reference analysis.",
-        "局所参照 fit の窓幅",
-        "FFT 推定値周辺で使用する sample 数。",
+        "局所参照fitの窓幅",
+        "FFT推定値周辺で使用するsample数。",
         &["must be positive"],
     ),
     field(
@@ -430,8 +430,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Numerical lock-in settings.",
         "Defines signal channels, parallelism, output stride, and low-pass filtering.",
-        "数値 lock-in 設定",
-        "信号 channel、並列度、出力間引き、low-pass filter の指定。",
+        "数値lock-in設定",
+        "信号channel、並列度、出力間引き、low-pass filterの指定。",
         &[],
     ),
     field(
@@ -444,7 +444,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Channels demodulated by lock-in analysis.",
         "At least one channel is required by lock-in and downstream analysis.",
         "lock-in 復調対象チャンネル",
-        "lock-in と後段解析で必要な 1 件以上の番号。",
+        "lock-inと後段解析で必要な1件以上のchannel番号。",
         &[
             "each value must be in 1..=8",
             "must be unique across all channel roles",
@@ -459,8 +459,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Parallel lock-in worker count.",
         "Values near the physical CPU count are a practical starting point.",
-        "lock-in 並列 worker 数",
-        "物理 CPU 数付近を初期値とする並列度。",
+        "lock-inの並列worker数",
+        "物理CPU数付近を初期値とする並列度。",
         &["must be positive"],
     ),
     field(
@@ -473,7 +473,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Lock-in output stride in input samples.",
         "Input sample rate divided by this value gives the output sample rate.",
         "lock-in 出力間引き幅",
-        "入力 sample rate を除算する sample 数。",
+        "入力sample rateを割るsample数。出力sample rateを決定。",
         &["must be positive"],
     ),
     field(
@@ -486,7 +486,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Lock-in low-pass filter configuration.",
         "Fields accepted by the table depend on the selected kind.",
         "lock-in low-pass filter 設定",
-        "kind ごとに異なる許可 field。",
+        "kindごとに異なる許可field。",
         &["fields from other filter kinds are rejected"],
     ),
     field(
@@ -504,7 +504,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Lock-in filter algorithm.",
         "sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
         "lock-in filter アルゴリズム",
-        "同期平均と zero-phase IIR 平滑化を組み合わせる sync_iir_zero_phase。",
+        "同期平均とzero-phase IIR平滑化を組み合わせるsync_iir_zero_phase。",
         &[],
     ),
     field(
@@ -517,7 +517,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Half-window scale in reference cycles.",
         "For sync_iir_zero_phase it defines half of the synchronous-average window.",
         "参照周期単位の半窓幅",
-        "sync_iir_zero_phase の同期平均 full window の半分。",
+        "sync_iir_zero_phaseの同期平均full windowの半分。",
         &["must be finite and positive"],
     ),
     field(
@@ -529,8 +529,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         Some("Hz"),
         "Absolute low-pass cutoff.",
         "Accepted by cutoff-based FIR and IIR filters.",
-        "絶対 low-pass cutoff",
-        "cutoff 型 FIR/IIR filter で使用する周波数。",
+        "絶対low-pass cutoff",
+        "cutoff型FIR/IIR filterで使用する周波数。",
         &[
             "must be finite and positive",
             "mutually exclusive with cutoff_ref_ratio",
@@ -545,8 +545,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         Some("f_ref ratio"),
         "Low-pass cutoff relative to the fitted reference frequency.",
         "A value of 0.02 gives a cutoff at two percent of f_ref.",
-        "参照周波数比の low-pass cutoff",
-        "0.02 で f_ref の 2% となる比率。",
+        "参照周波数比によるlow-pass cutoff",
+        "0.02でf_refの2%となる比率。",
         &[
             "must be finite and positive",
             "mutually exclusive with cutoff_hz",
@@ -562,7 +562,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "FIR stopband attenuation target.",
         "Used only by fir_zero_phase filter design.",
         "FIR stopband 減衰目標",
-        "fir_zero_phase 設計のみで使用する dB 値。",
+        "fir_zero_phase設計のみで使用するdB値。",
         &["must be finite and positive"],
     ),
     field(
@@ -574,8 +574,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         Some("reference cycles"),
         "Synchronous-average full-window length.",
         "Used only by sync_iir_zero_phase; two times half_window_cycles matches a symmetric full window.",
-        "同期平均の full window 長",
-        "sync_iir_zero_phase 専用。対称 full window では half_window_cycles の 2 倍。",
+        "同期平均のfull window長",
+        "sync_iir_zero_phase専用。対称full windowではhalf_window_cyclesの2倍。",
         &["0 < value <= 100", "must be finite"],
     ),
     field(
@@ -588,7 +588,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "IIR filter order.",
         "Used only by sync_iir_zero_phase.",
         "IIR filter 次数",
-        "sync_iir_zero_phase 専用の偶数次数。",
+        "sync_iir_zero_phase専用の偶数次数。",
         &[],
     ),
     field(
@@ -601,7 +601,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Lock-in debug artifact output.",
         "Enable only for filter inspection because artifacts can be large.",
         "lock-in debug artifact 出力",
-        "filter 調査時のみ有効化する大容量出力。",
+        "filter調査時のみ有効化する大容量artifact出力。",
         &[],
     ),
     field(
@@ -613,8 +613,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Safe suffix for debug artifacts.",
         "The label is restricted to a short ASCII filename-safe subset.",
-        "debug artifact の安全な suffix",
-        "短い ASCII filename-safe 文字列。",
+        "debug artifactの安全なsuffix",
+        "短いASCII filename-safe文字列。",
         &[
             "1-64 ASCII alphanumeric, '.', '_', or '-'",
             "must not be '.' or '..'",
@@ -630,7 +630,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Debug artifact overwrite policy.",
         "Allows replacement of an existing matching debug output.",
         "debug artifact 上書き方針",
-        "同名 debug 出力の置換許可。",
+        "同名debug出力の置換許可。",
         &[],
     ),
     field(
@@ -643,7 +643,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Optional background window for SNR diagnostics.",
         "An inline table with finite start and end values.",
         "SNR 診断用背景区間",
-        "有限な start と end の任意 inline table。",
+        "有限なstartとendの任意inline table。",
         &["start < end"],
     ),
     field(
@@ -656,7 +656,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Optional signal window for SNR diagnostics.",
         "An inline table with finite start and end values.",
         "SNR 診断用信号区間",
-        "有限な start と end の任意 inline table。",
+        "有限なstartとendの任意inline table。",
         &["start < end"],
     ),
     field(
@@ -668,8 +668,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "NumPy output for lock-in results.",
         "Writes NPY artifacts in addition to canonical CSV results.",
-        "lock-in 結果の NumPy 出力",
-        "標準 CSV に追加する NPY artifact。",
+        "lock-in結果のNumPy出力",
+        "標準CSVに追加するNPY artifact。",
         &[],
     ),
     field(
@@ -682,7 +682,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Phase-rotation settings.",
         "Contains offsets for the first six harmonic components.",
         "位相回転設定",
-        "第 1 から第 6 高調波の offset。",
+        "第1から第6高調波のoffset。",
         &[],
     ),
     field(
@@ -694,8 +694,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         Some("rad"),
         "Six harmonic phase offsets.",
         "Numeric expressions such as pi/2 are accepted.",
-        "6 高調波の位相 offset",
-        "pi/2 などの数式指定に対応する rad 値。",
+        "6高調波の位相offset",
+        "pi/2などの数式指定に対応するrad値。",
         &["must contain exactly 6 finite values"],
     ),
     field(
@@ -707,8 +707,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Kerr-angle conversion settings.",
         "Selects calibration sensor, calculation method, and final factor.",
-        "Kerr 角変換設定",
-        "校正 sensor、計算法、最終係数の指定。",
+        "Kerr角変換設定",
+        "校正sensor、計算法、最終係数の指定。",
         &[],
     ),
     field(
@@ -721,7 +721,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Sensor channel used for Kerr calibration.",
         "The channel must also exist in the sensors array.",
         "Kerr 校正用センサーチャンネル",
-        "sensors 配列に存在する channel。",
+        "sensors配列に存在するchannel。",
         &["must reference sensors[].channel"],
     ),
     field(
@@ -734,7 +734,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Kerr calculation method.",
         "Selects the standard or harmonic analysis implementation.",
         "Kerr 計算法",
-        "standard または harmonics 実装の選択。",
+        "standardまたはharmonics実装の選択。",
         &[],
     ),
     field(
@@ -746,8 +746,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Final Kerr conversion factor.",
         "Applied after the selected Kerr calculation.",
-        "最終 Kerr 変換係数",
-        "選択した Kerr 計算後の乗算値。",
+        "最終Kerr変換係数",
+        "選択したKerr計算後の乗算値。",
         &["must be finite"],
     ),
     field(
@@ -772,8 +772,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Plot output mode.",
         "Batch use normally selects save; interactive opens Matplotlib windows.",
-        "プロット出力 mode",
-        "batch 向け save と Matplotlib window 向け interactive。",
+        "plot出力mode",
+        "batch向けsaveとMatplotlib window向けinteractive。",
         &[],
     ),
     field(
@@ -786,7 +786,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Maximum points passed to plotting.",
         "Lower values improve Matplotlib responsiveness on large captures.",
         "プロット入力の最大点数",
-        "大規模取得時の Matplotlib 応答性調整値。",
+        "大規模取得時のMatplotlib応答性調整値。",
         &["must be positive"],
     ),
     field(
@@ -799,7 +799,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Plot downsampling algorithm.",
         "min_max preserves narrow extrema better than stride decimation.",
         "プロット間引きアルゴリズム",
-        "狭い極値の保持に適した min_max。",
+        "狭い極値の保持に適したmin_max。",
         &[],
     ),
     field(
@@ -812,7 +812,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         "Plot failure policy.",
         "Warn preserves successful analysis; fail makes plotting errors fatal.",
         "プロット失敗方針",
-        "解析成功を保持する warn と致命扱いの fail。",
+        "解析成功を保持するwarnと致命扱いのfail。",
         &[],
     ),
     field(
@@ -824,8 +824,8 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         None,
         "Deprecated plot directory compatibility field.",
         "Version 4 accepts but ignores this field; artifacts use the canonical run layout.",
-        "非推奨のプロット directory 互換 field",
-        "version 4 で受理後に無視される値。artifact は標準 run layout。",
+        "非推奨のplot directory互換field",
+        "version 4で受理後に無視される値。artifactは標準run layout。",
         &["ignored with a warning"],
     ),
 ];

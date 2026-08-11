@@ -1,6 +1,6 @@
 ---
 title: トラブルシュート
-description: 設定、transport、data、解析 failure の構造化確認。
+description: 設定、transport、data、解析failureを構造化して切り分ける手順。
 ---
 
 ## 診断からの開始
@@ -10,24 +10,24 @@ pmoke --config config.toml doctor
 pmoke --config config.toml doctor --json > doctor.json
 ```
 
-build feature、controller、装置 address、storage access、Python import、設定診断を分離した report。
+build feature、controller、装置address、storage access、Python import、設定診断を分けたreport。
 
 ## 装置応答なし
 
-1. `doctor` 出力にある normalized URI と必要 feature の比較。
-2. `pmoke instruments explain MODEL` による model 対応 transport の確認。
-3. `pmoke instruments query` による SCPI 装置への明示 query。
-4. Prologix adapter 到達性と装置 PAD failure の切り分け。
-5. cable・command terminator 確認後のみの URI timeout 延長。
+1. `doctor`出力にあるnormalized URIと必要featureの比較。
+2. `pmoke instruments explain MODEL`によるmodel対応transportの確認。
+3. `pmoke instruments query`によるSCPI装置への明示query。
+4. Prologix adapterへの到達性と装置のPAD failureの切り分け。
+5. cableとcommand terminator確認後のURI timeout延長。
 
 ## artifact 拒否
 
-- 変換・解析前の `pmoke raw verify`。
-- 全参照波形と `acquisition/manifest.toml` の一体保存。
-- stale-stage 診断が示す upstream stage の再実行。
-- 取得設定変更時の新規 `--run-dir`。
-- 最終 publish 済み解析の保持と incomplete tree 内の failed run。
+- 変換・解析前の`pmoke raw verify`。
+- すべての参照波形と`acquisition/manifest.toml`の一体保存。
+- stale-stage診断が示すupstream stageの再実行。
+- 取得設定変更時の新しい`--run-dir`。
+- 最終publish済み解析の保持とincomplete tree内のfailed run確認。
 
 ## Lock-in warning
 
-表示上の noise ではなく数値診断となる Nyquist、excessive gain、ill-conditioned integer-period coefficient、settling range warning。smoothing 増加前の安定 filter と output stride の選択。
+表示上のnoiseではなく、Nyquist、excessive gain、ill-conditioned integer-period coefficient、settling range warningなどの数値診断を確認。smoothingを増やす前に安定したfilterとoutput strideを選択。
