@@ -81,6 +81,8 @@ for (const label of ['磁場パルス', '取得窓', '参照信号', 'Kerr応答
 }
 if (!English.includes('aria-describedby="signal-description"')) throw new Error('English signal description is missing');
 if (!Japanese.includes('aria-describedby="signal-description"')) throw new Error('Japanese signal description is missing');
+if (!English.includes('aria-label="Illustrative pulsed-field MOKE signal"')) throw new Error('English signal name is missing');
+if (!Japanese.includes('aria-label="パルス磁場MOKEの説明図"')) throw new Error('Japanese signal name is missing');
 if (!EnglishAnalyzer.includes('waveform-analyzer')) throw new Error('English waveform tool is missing');
 if (!JapaneseAnalyzer.includes('波形アナライザー')) throw new Error('Japanese waveform tool is missing');
 if (!EnglishCitation.includes('Reproducible attribution')) throw new Error('English citation panel is missing');

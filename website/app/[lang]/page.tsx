@@ -16,8 +16,7 @@ const copy = {
     docs: 'Read the docs',
     quickstart: 'Quickstart',
     signal: {
-      label:
-        'Illustrative pulsed-field MOKE sequence: a magnetic-field pulse marks the acquisition window; reference and Kerr-response waveforms are shown and resolved into lock-in X and Y channels.',
+      label: 'Illustrative pulsed-field MOKE signal',
       description:
         'Illustrative pulsed-field MOKE sequence: a magnetic-field pulse marks the acquisition window; reference and Kerr-response waveforms are shown and resolved into lock-in X and Y channels.',
       sequence: 'Pulsed-field MOKE signal sequence',
@@ -53,8 +52,7 @@ const copy = {
     docs: 'ドキュメント',
     quickstart: 'クイックスタート',
     signal: {
-      label:
-        'パルス磁場MOKEの流れを示す説明図。磁場パルスに合わせた取得窓の中で、参照信号とKerr応答を可視化し、ロックイン解析でX/Y成分とKerr角を導出する様子。',
+      label: 'パルス磁場MOKEの説明図',
       description:
         'パルス磁場MOKEの流れを示す説明図。磁場パルスに合わせた取得窓の中で、参照信号とKerr応答を可視化し、ロックイン解析でX/Y成分とKerr角を導出する様子。',
       sequence: 'パルス磁場MOKEの信号シーケンス',

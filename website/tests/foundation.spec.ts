@@ -247,6 +247,10 @@ test('signal hero exposes localized sequence semantics and a user pause', async 
     const canvas = stage.locator('canvas');
     await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
     await expect(stage).toHaveAttribute('data-motion', 'running');
+    await expect(canvas).toHaveAttribute(
+      'aria-label',
+      locale === 'en' ? 'Illustrative pulsed-field MOKE signal' : 'パルス磁場MOKEの説明図',
+    );
     await expect(canvas).toHaveAttribute('aria-describedby', 'signal-description');
     await expect(page.locator('#signal-description')).toContainText(description);
     await expect(stage.locator('.signal-sequence li')).toHaveText(labels);
