@@ -1,5 +1,6 @@
 allowBuilds:
   esbuild@0.28.1: true
+  esbuild@0.28.2: true
   sharp: set this to true or false
   sharp@0.35.0: true
   unrs-resolver@1.12.2: true
