@@ -111,6 +111,66 @@ For agent-run local work, use Nix as the installation authority:
 CI may use its own installation mechanism; preserve those workflow steps unless
 changing CI is explicitly requested.
 
+## Optional real-machine validation
+
+Use the maintained Windows and Linux machines as optional platform-validation
+targets when the operator has explicitly authorized access. Keep their
+connection details private: never commit IP addresses, hostnames, usernames,
+SSH key names, private key paths, or machine-specific filesystem paths. Define
+local SSH aliases in `~/.ssh/config` or another ignored local file instead:
+
+```ssh-config
+Host pmoke-windows
+  HostName <windows-address>
+  User <windows-user>
+  IdentityFile ~/.ssh/<windows-key>
+
+Host pmoke-linux
+  HostName <linux-address>
+  User <linux-user>
+  IdentityFile ~/.ssh/<linux-key>
+```
+
+Connect only through the aliases and validate the exact revision before
+building:
+
+```bash
+# Choose the target appropriate to the validation lane.
+ssh pmoke-linux
+# or: ssh pmoke-windows
+
+# Run these commands after connecting to the target.
+git status --short --branch
+git rev-parse HEAD
+```
+
+Use a clean checkout, detached worktree, or test-owned temporary directory on
+the target. On a Nix-provisioned Linux host or WSL distribution, enter the
+repository shell and run the platform-safe build and test lane:
+
+```bash
+nix develop
+cargo build --locked --workspace --all-targets --no-default-features
+cargo test --locked --workspace --lib --bins --tests --examples --no-default-features
+cd website
+pnpm install --frozen-lockfile
+pnpm build
+```
+
+Native Windows builds additionally require the Windows feature matrix and its
+VISA SDK/native dependencies from CI. Use an already provisioned environment
+or a Nix-backed WSL workflow; do not install Rust, Node, pnpm, Python, or native
+libraries through Scoop, winget, rustup, Homebrew, or another host package
+manager. A missing Nix/WSL or native SDK is an environment limitation to
+report, not a reason to bypass the repository policy. Build and test commands
+must not trigger, fetch from, screenshot, or otherwise operate live equipment
+unless that separate hardware action is explicitly authorized.
+
+Record the target role, commit, feature profile, toolchain source, commands,
+result, and environment limitations in the private handoff. Public Issues or
+PRs should contain only the redacted summary and reproducible evidence; never
+publish endpoint details, credentials, raw captures, or unreviewed logs.
+
 ## Public progress and collaboration
 
 This repository is public, so treat branches, commits, issues, pull requests,

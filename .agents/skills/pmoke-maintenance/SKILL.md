@@ -83,6 +83,34 @@ Homebrew, or system package managers for local setup unless the user explicitly
 authorizes an exception. Do not update Nix inputs merely to obtain a tool;
 report an unavailable package as an environment block.
 
+### Optional real-machine platform lane
+
+When the user explicitly authorizes platform validation, use local SSH aliases
+for the Windows and Linux targets. Do not place their addresses, usernames,
+SSH key names, private key paths, or machine-specific directories in tracked
+files. Confirm the target and exact commit, then use a clean checkout or
+test-owned temporary worktree. On a Nix-provisioned Linux host or WSL
+distribution, run the safe build/test lane from the repository root:
+
+```bash
+nix develop
+cargo build --locked --workspace --all-targets --no-default-features
+cargo test --locked --workspace --lib --bins --tests --examples --no-default-features
+```
+
+For the website on the same target, run `pnpm install --frozen-lockfile` and
+`pnpm build` inside `website/` while the package manager comes from the Nix
+shell. Native Windows/VISA validation must follow the CI feature matrix and
+requires its pre-provisioned SDKs. A missing Nix/WSL or native dependency is a
+reported limitation; do not bypass the Nix-only installation policy. Never
+run live instrument trigger, fetch, screenshot, auto-measure, or probe
+commands as part of this lane without separate explicit authorization.
+
+Keep machine-test results private until redacted. A public handoff should
+include only the target role, commit, feature profile, toolchain source,
+commands, pass/fail result, and environment limitation; omit endpoints,
+credentials, raw captures, and unreviewed logs.
+
 ## Validation lanes
 
 Select the smallest complete set of lanes, then run the broad CI-equivalent

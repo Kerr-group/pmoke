@@ -27,7 +27,9 @@
               clippy
               lld
               nodejs_22
-              pnpm
+              (writeShellScriptBin "pnpm" ''
+                exec ${nodejs_22}/bin/node ${pnpm}/bin/pnpm "$@"
+              '')
               rustc
               rustfmt
               wasm-bindgen-cli_0_2_126
