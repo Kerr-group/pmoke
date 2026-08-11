@@ -143,12 +143,28 @@ pub fn run_phase_analysis(
 }
 
 pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnalysisOutput> {
-    if li_result.len() < 12 {
+    if li_result.len() != LI_HEADER.len() {
         bail!(
-            "phase analysis requires 12 lock-in columns (six x/y pairs), got {}",
+            "length_mismatch: phase analysis requires exactly {} lock-in columns (six x/y pairs), got {}",
+            LI_HEADER.len(),
             li_result.len()
         );
     }
+
+    if li_result.iter().any(Vec::is_empty) {
+        bail!("empty_phase_column: phase analysis columns must not be empty");
+    }
+    let sample_count = li_result[0].len();
+    if li_result.iter().any(|column| column.len() != sample_count) {
+        bail!(
+            "length_mismatch: phase analysis columns must have equal lengths (expected {}, found another length)",
+            sample_count
+        );
+    }
+    if li_result.iter().flatten().any(|value| !value.is_finite()) {
+        bail!("non_finite_phase: phase analysis columns must contain only finite values");
+    }
+
     let pairs: Vec<_> = li_result.chunks_exact(2).collect();
 
     let [
@@ -244,12 +260,12 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
     let delta_6 = PI / 2.0 - 6.0 * omega_t0;
     let deltas = [delta_1, delta_2, delta_3, delta_4, delta_5, delta_6];
 
-    let (li1_in, li1_out) = rotate_phase(li1x, li1y, delta_1);
-    let (li2_in, li2_out) = rotate_phase(li2x, li2y, delta_2);
-    let (li3_in, li3_out) = rotate_phase(li3x, li3y, delta_3);
-    let (li4_in, li4_out) = rotate_phase(li4x, li4y, delta_4);
-    let (li5_in, li5_out) = rotate_phase(li5x, li5y, delta_5);
-    let (li6_in, li6_out) = rotate_phase(li6x, li6y, delta_6);
+    let (li1_in, li1_out) = rotate_phase(li1x, li1y, delta_1)?;
+    let (li2_in, li2_out) = rotate_phase(li2x, li2y, delta_2)?;
+    let (li3_in, li3_out) = rotate_phase(li3x, li3y, delta_3)?;
+    let (li4_in, li4_out) = rotate_phase(li4x, li4y, delta_4)?;
+    let (li5_in, li5_out) = rotate_phase(li5x, li5y, delta_5)?;
+    let (li6_in, li6_out) = rotate_phase(li6x, li6y, delta_6)?;
 
     let rotated_result: Vec<Vec<f64>> = vec![
         li1_in, li1_out, li2_in, li2_out, li3_in, li3_out, li4_in, li4_out, li5_in, li5_out,
@@ -271,6 +287,38 @@ mod tests {
     fn phase_analysis_rejects_incomplete_harmonic_columns() {
         let cfg = crate::test_support::test_config(vec![1], vec![2]);
         let error = phase_analysis(&cfg, &vec![vec![0.0]; 10]).unwrap_err();
-        assert!(error.to_string().contains("requires 12 lock-in columns"));
+        assert!(error.to_string().starts_with("length_mismatch:"));
+    }
+
+    #[test]
+    fn phase_analysis_rejects_extra_harmonic_columns() {
+        let cfg = crate::test_support::test_config(vec![1], vec![2]);
+        let error = phase_analysis(&cfg, &vec![vec![0.0]; 14]).unwrap_err();
+        assert!(error.to_string().starts_with("length_mismatch:"));
+    }
+
+    #[test]
+    fn phase_analysis_rejects_empty_columns() {
+        let cfg = crate::test_support::test_config(vec![1], vec![2]);
+        let error = phase_analysis(&cfg, &vec![Vec::new(); 12]).unwrap_err();
+        assert!(error.to_string().starts_with("empty_phase_column:"));
+    }
+
+    #[test]
+    fn phase_analysis_rejects_unequal_column_lengths() {
+        let cfg = crate::test_support::test_config(vec![1], vec![2]);
+        let mut columns = vec![vec![0.0; 2]; 12];
+        columns[7].pop();
+        let error = phase_analysis(&cfg, &columns).unwrap_err();
+        assert!(error.to_string().starts_with("length_mismatch:"));
+    }
+
+    #[test]
+    fn phase_analysis_rejects_non_finite_columns() {
+        let cfg = crate::test_support::test_config(vec![1], vec![2]);
+        let mut columns = vec![vec![0.0; 2]; 12];
+        columns[4][1] = f64::NAN;
+        let error = phase_analysis(&cfg, &columns).unwrap_err();
+        assert!(error.to_string().starts_with("non_finite_phase:"));
     }
 }
