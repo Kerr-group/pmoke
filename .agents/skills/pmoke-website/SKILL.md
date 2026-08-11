@@ -36,6 +36,12 @@ its absence instead of downloading one through a package manager.
 Preserve the `/pmoke/` base path, static export behavior, English/Japanese
 parity, no-JavaScript readability, and bounded worker/WASM failure recovery.
 Treat generated references and release metadata as owned by their generators.
+For a durable website goal, use the repository's public Issue → Draft PR
+workflow. Keep the Issue's acceptance, compatibility, and security decisions
+separate from the PR's current validation state. Put UI evidence in the Issue
+or PR with route, locale, viewport, theme, and dev/export context; do not add
+an unredacted screenshot, recording, log, endpoint, or personal path to the
+repository.
 
 ## UI-first workflow
 

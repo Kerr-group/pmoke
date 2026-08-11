@@ -1,0 +1,113 @@
+name: Project goal or maintenance
+description: Propose one durable feature, maintenance, documentation, or security-hardening goal.
+title: "[Goal]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use one Issue for one durable, user-facing goal. Keep the description factual and safe to quote because this repository is public.
+
+        Do not report a suspected vulnerability here. Follow [SECURITY.md](https://github.com/Kerr-group/pmoke/security/policy) instead.
+  - type: textarea
+    id: purpose
+    attributes:
+      label: Purpose and problem
+      description: What user-facing problem or durable outcome should this Issue address?
+      placeholder: Describe the problem, affected users, and desired outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What repository surfaces, platforms, locales, APIs, or workflows are in scope?
+      placeholder: List the concrete crates, website routes, generated outputs, workflows, or documentation involved.
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: What is intentionally out of scope for this Issue?
+      placeholder: State adjacent changes that should not be included.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use observable, testable criteria. Include English/Japanese parity and static /pmoke/ behavior when relevant.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      description: Explain CLI, configuration/schema, artifact, API, dependency, platform, browser, and locale compatibility. Say "None known" when applicable.
+      placeholder: Describe migrations, versioning, supported profiles, and rollback expectations.
+    validations:
+      required: true
+  - type: dropdown
+    id: security-impact
+    attributes:
+      label: Security impact
+      description: Select the highest-level impact. Do not include vulnerability or exploit details in this public Issue.
+      options:
+        - No security impact expected
+        - Improves an existing security boundary
+        - Changes a security boundary and needs maintainer review
+        - Security impact is currently unknown
+    validations:
+      required: true
+  - type: textarea
+    id: security-notes
+    attributes:
+      label: Security notes
+      description: Describe only the high-level design impact, threat boundary, and required review. Use SECURITY.md for suspected vulnerabilities.
+      placeholder: State affected trust boundaries, data handling, permissions, or "No additional notes".
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Proposed design and rollback
+      description: Summarize the intended design, alternatives considered, and how the change can be disabled or reverted.
+      placeholder: Keep implementation details concise; the linked Draft PR will carry the active implementation state.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: List the checks, build profiles, UI routes/viewports, or release evidence needed to accept the goal.
+      placeholder: Include Nix-provided commands and any explicitly authorized real-machine lane without private endpoints.
+    validations:
+      required: true
+  - type: textarea
+    id: blockers
+    attributes:
+      label: Dependencies and blockers
+      description: Identify external dependencies, decisions, or environment limitations. Do not add private URLs or credentials.
+      placeholder: State "None known" when there are no blockers.
+    validations:
+      required: true
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Public issue hygiene
+      options:
+        - label: I searched for duplicate Issues and will keep this Issue focused on one durable goal.
+          required: true
+        - label: I removed secrets, credentials, private endpoints, raw captures, personal data, and unreviewed logs.
+          required: true
+        - label: This Issue does not disclose a suspected security vulnerability; I will follow SECURITY.md for that.
+          required: true
+  - type: markdown
+    attributes:
+      value: |
+        ## Review 1 — maintainer record
+
+        Record the design, public API/compatibility, security, and rollback decision here before implementation is treated as accepted. Start implementation in a linked Draft PR with `Refs #N`.
