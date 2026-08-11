@@ -9,11 +9,47 @@ const PREVIEW_SAMPLES = 720;
 const INITIAL_PHASE = 0.17;
 const MIN_RENDER_POINTS = 256;
 
-const CHANNELS = [
-  { offset: 1, darkColor: '#e7edf0', lightColor: '#44575a', width: 1.15 },
-  { offset: 2, darkColor: '#16d9d1', lightColor: '#087b7b', width: 1.8 },
-  { offset: 3, darkColor: '#ed4f9a', lightColor: '#bd286f', width: 1.45 },
-] as const;
+type SignalStatus = 'loading' | 'ready' | 'fallback';
+type MotionState = 'running' | 'paused' | 'reduced';
+type SequenceStage = 'acquisition' | 'field-pulse' | 'waveforms' | 'lock-in' | 'kerr-angle';
+
+export type SignalHeroLabels = {
+  label: string;
+  description: string;
+  sequence: string;
+  fieldPulse: string;
+  acquisitionWindow: string;
+  reference: string;
+  kerrResponse: string;
+  lockInX: string;
+  lockInY: string;
+  kerrAngle: string;
+  pause: string;
+  resume: string;
+  reducedMotion: string;
+  staticFallback: string;
+  wasmLoading: string;
+  wasmReady: string;
+  wasmFallback: string;
+};
+
+const DARK_COLORS = {
+  reference: '#e7edf0',
+  cyan: '#16d9d1',
+  magenta: '#ed4f9a',
+  green: '#74e1a4',
+  amber: '#f4bd6b',
+  grid: 'rgba(145, 164, 174, 0.34)',
+};
+
+const LIGHT_COLORS = {
+  reference: '#44575a',
+  cyan: '#087b7b',
+  magenta: '#bd286f',
+  green: '#137946',
+  amber: '#a05d00',
+  grid: 'rgba(40, 67, 68, 0.36)',
+};
 
 export function sampleChannels(t: number, phase: number): [number, number, number] {
   const carrier = TAU * (7.0 * t + phase);
@@ -44,29 +80,40 @@ export function previewPointCount(width: number, samples: number): number {
   return Math.min(periodicSamples, Math.max(MIN_RENDER_POINTS, Math.ceil(width) + 1));
 }
 
-export function SignalHero({ label }: { label: string }) {
+export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dataRef = useRef<Float64Array>(FALLBACK_SIGNAL);
+  const statusRef = useRef<SignalStatus>('loading');
+  const userPausedRef = useRef(false);
   const drawLatestRef = useRef<() => void>(() => undefined);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'fallback'>('loading');
-  const [motionState, setMotionState] = useState<'running' | 'paused' | 'reduced'>('paused');
+  const syncLifecycleRef = useRef<() => void>(() => undefined);
+  const [status, setStatus] = useState<SignalStatus>('loading');
+  const [userPaused, setUserPaused] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [motionState, setMotionState] = useState<MotionState>('paused');
 
   useEffect(() => {
     let terminated = false;
     const worker = new Worker(`${basePath}/workers/signal.worker.js`, { type: 'module' });
+    const updateStatus = (nextStatus: SignalStatus) => {
+      statusRef.current = nextStatus;
+      setStatus(nextStatus);
+      syncLifecycleRef.current();
+    };
+
     worker.onmessage = (event: MessageEvent<{ type: string; data?: ArrayBuffer }>) => {
       if (terminated) return;
       if (event.data.type === 'ready' && event.data.data) {
         dataRef.current = new Float64Array(event.data.data);
         drawLatestRef.current();
-        setStatus('ready');
+        updateStatus('ready');
       } else if (event.data.type === 'error') {
-        setStatus('fallback');
+        updateStatus('fallback');
       }
     };
     worker.onerror = () => {
-      if (!terminated) setStatus('fallback');
+      if (!terminated) updateStatus('fallback');
     };
     worker.postMessage({ type: 'init', basePath, samples: PREVIEW_SAMPLES });
     return () => {
@@ -104,7 +151,14 @@ export function SignalHero({ label }: { label: string }) {
       }
     };
 
-    const drawFrame = (sweepOffset: number) => {
+    const canAnimate = () =>
+      isIntersecting &&
+      isDocumentVisible &&
+      !isReducedMotion &&
+      !userPausedRef.current &&
+      statusRef.current !== 'fallback';
+
+    const drawFrame = (sweepOffset: number, complete = false) => {
       if (cachedWidth === 0 || cachedHeight === 0) return;
       updateCanvasBackingStore();
 
@@ -112,18 +166,24 @@ export function SignalHero({ label }: { label: string }) {
       context.clearRect(0, 0, cachedWidth, cachedHeight);
 
       const isDark = document.documentElement.classList.contains('dark');
+      const sequenceProgress = complete ? 1 : normalize(sweepOffset);
+      const sequenceStage = sequenceStageForProgress(sequenceProgress);
+      if (container.dataset.sequenceStage !== sequenceStage) {
+        container.dataset.sequenceStage = sequenceStage;
+      }
 
       const renderedPoints = drawSignals(
         context,
         dataRef.current,
         cachedWidth,
         cachedHeight,
-        sweepOffset,
+        sequenceProgress,
         isDark,
       );
       if (canvas.dataset.renderPoints !== String(renderedPoints)) {
         canvas.dataset.renderPoints = String(renderedPoints);
       }
+      canvas.dataset.sequenceStage = sequenceStage;
     };
 
     const renderLoop = (timestamp: number) => {
@@ -135,7 +195,7 @@ export function SignalHero({ label }: { label: string }) {
       const sweepOffset = (accumulatedTime % LOOP_DURATION_MS) / LOOP_DURATION_MS;
       drawFrame(sweepOffset);
 
-      if (isIntersecting && isDocumentVisible && !isReducedMotion) {
+      if (canAnimate()) {
         animationFrameId = requestAnimationFrame(renderLoop);
       } else {
         animationFrameId = 0;
@@ -144,8 +204,9 @@ export function SignalHero({ label }: { label: string }) {
     };
 
     const drawLatest = () => {
+      const complete = isReducedMotion || statusRef.current === 'fallback';
       const sweepOffset = (accumulatedTime % LOOP_DURATION_MS) / LOOP_DURATION_MS;
-      drawFrame(sweepOffset);
+      drawFrame(sweepOffset, complete);
     };
     drawLatestRef.current = drawLatest;
     canvas.dataset.renderGeneration = String(Number(canvas.dataset.renderGeneration ?? '0') + 1);
@@ -153,7 +214,7 @@ export function SignalHero({ label }: { label: string }) {
     const updateMotionState = () => {
       if (isReducedMotion) {
         setMotionState('reduced');
-      } else if (isIntersecting && isDocumentVisible) {
+      } else if (canAnimate()) {
         setMotionState('running');
       } else {
         setMotionState('paused');
@@ -162,9 +223,8 @@ export function SignalHero({ label }: { label: string }) {
 
     const syncLifecycle = () => {
       updateMotionState();
-      const shouldAnimate = isIntersecting && isDocumentVisible && !isReducedMotion;
 
-      if (shouldAnimate) {
+      if (canAnimate()) {
         if (animationFrameId === 0) {
           lastTimestamp = null;
           animationFrameId = requestAnimationFrame(renderLoop);
@@ -177,9 +237,9 @@ export function SignalHero({ label }: { label: string }) {
         animationFrameId = 0;
       }
       lastTimestamp = null;
-      if (isReducedMotion) drawFrame(0);
-      else drawLatest();
+      drawLatest();
     };
+    syncLifecycleRef.current = syncLifecycle;
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -226,8 +286,10 @@ export function SignalHero({ label }: { label: string }) {
     const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     const handleReducedMotionChange = (event: MediaQueryListEvent) => {
       isReducedMotion = event.matches;
+      setReducedMotion(isReducedMotion);
       syncLifecycle();
     };
+    setReducedMotion(isReducedMotion);
     reducedMotionQuery.addEventListener('change', handleReducedMotionChange);
 
     const handleWindowResize = () => {
@@ -250,8 +312,27 @@ export function SignalHero({ label }: { label: string }) {
       reducedMotionQuery.removeEventListener('change', handleReducedMotionChange);
       window.removeEventListener('resize', handleWindowResize);
       if (drawLatestRef.current === drawLatest) drawLatestRef.current = () => undefined;
+      if (syncLifecycleRef.current === syncLifecycle) syncLifecycleRef.current = () => undefined;
     };
   }, []);
+
+  const statusLabel =
+    status === 'ready' ? labels.wasmReady : status === 'fallback' ? labels.wasmFallback : labels.wasmLoading;
+  const controlLabel = reducedMotion
+    ? labels.reducedMotion
+    : status === 'fallback'
+      ? labels.staticFallback
+      : userPaused
+        ? labels.resume
+        : labels.pause;
+  const controlDisabled = reducedMotion || status === 'fallback';
+
+  const toggleUserPause = () => {
+    const nextPaused = !userPausedRef.current;
+    userPausedRef.current = nextPaused;
+    setUserPaused(nextPaused);
+    syncLifecycleRef.current();
+  };
 
   return (
     <div
@@ -259,15 +340,86 @@ export function SignalHero({ label }: { label: string }) {
       className="signal-stage"
       data-wasm={status}
       data-motion={motionState}
+      data-user-paused={userPaused ? 'true' : 'false'}
+      data-sequence-stage="acquisition"
     >
-      <canvas ref={canvasRef} aria-label={label} role="img" />
-      <div className="signal-hud" aria-hidden="true">
-        <span><i className="dot dot-cyan" />LOCK-IN X</span>
-        <span><i className="dot dot-magenta" />LOCK-IN Y</span>
-        <span className="wasm-state">{status === 'ready' ? 'WASM ONLINE' : status.toUpperCase()}</span>
+      <canvas
+        ref={canvasRef}
+        aria-label={labels.label}
+        aria-describedby="signal-description"
+        role="img"
+      />
+      <ol className="signal-sequence" aria-label={labels.sequence}>
+        <li data-step="field-pulse">{labels.fieldPulse}</li>
+        <li data-step="acquisition-window">{labels.acquisitionWindow}</li>
+        <li data-step="reference">{labels.reference}</li>
+        <li data-step="kerr-response">{labels.kerrResponse}</li>
+        <li data-step="lock-in-x">{labels.lockInX}</li>
+        <li data-step="lock-in-y">{labels.lockInY}</li>
+        <li data-step="kerr-angle">{labels.kerrAngle}</li>
+      </ol>
+      <p id="signal-description" className="signal-description">{labels.description}</p>
+      <div className="signal-hud">
+        <span className="signal-status" role="status" aria-live="polite">
+          <i className={`dot ${status === 'fallback' ? 'dot-amber' : 'dot-cyan'}`} aria-hidden="true" />
+          {statusLabel}
+        </span>
+      </div>
+      <div className="signal-controls">
+        <button
+          type="button"
+          className="signal-control"
+          aria-label={controlLabel}
+          aria-pressed={userPaused}
+          disabled={controlDisabled}
+          onClick={toggleUserPause}
+        >
+          <span aria-hidden="true">{reducedMotion ? '▣' : userPaused ? '▶' : 'Ⅱ'}</span>
+          {controlLabel}
+        </button>
       </div>
     </div>
   );
+}
+
+function normalize(value: number): number {
+  return ((value % 1) + 1) % 1;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function smoothStep(value: number): number {
+  const normalized = clamp(value, 0, 1);
+  return normalized * normalized * (3 - 2 * normalized);
+}
+
+function reveal(progress: number, start: number, end: number): number {
+  return smoothStep((progress - start) / (end - start));
+}
+
+function sequenceStageForProgress(progress: number): SequenceStage {
+  if (progress < 0.22) return 'acquisition';
+  if (progress < 0.44) return 'field-pulse';
+  if (progress < 0.68) return 'waveforms';
+  if (progress < 0.84) return 'lock-in';
+  return 'kerr-angle';
+}
+
+function finitePulseEnvelope(t: number): number {
+  const rise = smoothStep((t - 0.18) / 0.12);
+  const fall = 1 - smoothStep((t - 0.6) / 0.14);
+  return rise * fall * (0.92 + 0.08 * Math.sin(TAU * 2 * t));
+}
+
+function periodicSample(values: Float64Array, channel: number, position: number): number {
+  const periodicSamples = values.length / 4 - 1;
+  const exactIndex = normalize(position) * periodicSamples;
+  const index0 = Math.floor(exactIndex) % periodicSamples;
+  const index1 = (index0 + 1) % periodicSamples;
+  const fraction = exactIndex - index0;
+  return values[index0 * 4 + channel] * (1 - fraction) + values[index1 * 4 + channel] * fraction;
 }
 
 function drawSignals(
@@ -275,47 +427,232 @@ function drawSignals(
   values: Float64Array,
   width: number,
   height: number,
-  sweepOffset: number,
+  sequenceProgress: number,
   dark: boolean,
 ): number {
   const count = values.length / 4;
   if (count <= 2) return 0;
 
-  const periodicSamples = count - 1;
+  const palette = dark ? DARK_COLORS : LIGHT_COLORS;
   const pointsCount = previewPointCount(width, count);
-  const step = 1 / (pointsCount - 1);
-  const normalizedSweep = ((sweepOffset % 1) + 1) % 1;
+  const acquisitionStart = width * 0.15;
+  const acquisitionEnd = width * 0.78;
+  const acquisitionReveal = reveal(sequenceProgress, 0, 0.24);
+  const pulseReveal = reveal(sequenceProgress, 0.1, 0.44);
+  const waveformReveal = reveal(sequenceProgress, 0.3, 0.7);
+  const lockInReveal = reveal(sequenceProgress, 0.56, 0.86);
+  const angleReveal = reveal(sequenceProgress, 0.72, 0.96);
 
-  for (const channel of CHANNELS) {
-    context.beginPath();
-    context.strokeStyle = dark ? channel.darkColor : channel.lightColor;
-    context.lineWidth = channel.width;
-    context.lineCap = 'round';
+  drawAcquisitionWindow(context, width, height, acquisitionStart, acquisitionEnd, acquisitionReveal, palette);
+  drawFieldPulse(context, width, height, pulseReveal, palette);
+
+  drawTrace(
+    context,
+    values,
+    2,
+    acquisitionStart,
+    acquisitionEnd,
+    height * 0.49,
+    height * 0.075,
+    pointsCount,
+    sequenceProgress * 0.12,
+    waveformReveal,
+    palette.reference,
+  );
+  drawTrace(
+    context,
+    values,
+    3,
+    acquisitionStart,
+    acquisitionEnd,
+    height * 0.65,
+    height * 0.062,
+    pointsCount,
+    sequenceProgress * 0.12 + 0.08,
+    waveformReveal,
+    palette.magenta,
+  );
+  drawLockInCue(context, width, height, lockInReveal, palette);
+  drawKerrAngleCue(context, width, height, angleReveal, palette);
+
+  return pointsCount;
+}
+
+function drawAcquisitionWindow(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  startX: number,
+  endX: number,
+  active: number,
+  palette: typeof DARK_COLORS,
+): void {
+  const top = height * 0.3;
+  const bottom = height * 0.73;
+  context.save();
+  context.lineWidth = 1;
+  context.strokeStyle = palette.grid;
+  context.globalAlpha = 0.18 + active * 0.72;
+  context.setLineDash([7, 7]);
+  context.strokeRect(startX, top, endX - startX, bottom - top);
+  context.setLineDash([]);
+  context.globalAlpha = 0.35 + active * 0.65;
+  context.beginPath();
+  context.moveTo(width * 0.1, top - height * 0.06);
+  context.lineTo(width * 0.1, bottom + height * 0.04);
+  context.moveTo(startX, top - height * 0.04);
+  context.lineTo(startX, bottom + height * 0.04);
+  context.stroke();
+  context.restore();
+}
+
+function drawFieldPulse(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  active: number,
+  palette: typeof DARK_COLORS,
+): void {
+  const startT = 0.08;
+  const endT = 0.82;
+  const baseline = height * 0.2;
+  const amplitude = height * 0.14;
+  const points = 144;
+
+  const drawPulse = (revealTo: number, alpha: number, fill: boolean) => {
+    context.save();
+    context.strokeStyle = palette.cyan;
+    context.lineWidth = 2;
     context.lineJoin = 'round';
-    context.globalAlpha = channel.offset === 1 ? 0.36 : 0.92;
+    context.lineCap = 'round';
+    context.globalAlpha = alpha;
+    context.beginPath();
+    let lastX = width * startT;
+    for (let i = 0; i < points; i += 1) {
+      const local = i / (points - 1);
+      if (local > revealTo) break;
+      const t = startT + (endT - startT) * local;
+      const x = width * t;
+      const y = baseline - finitePulseEnvelope(t) * amplitude;
+      if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
+      lastX = x;
+    }
+    context.stroke();
+    if (fill && revealTo > 0) {
+      context.globalAlpha = alpha * 0.32;
+      context.lineTo(lastX, baseline);
+      context.lineTo(width * startT, baseline);
+      context.closePath();
+      context.fillStyle = palette.cyan;
+      context.fill();
+    }
+    context.restore();
+  };
 
-    for (let i = 0; i < pointsCount; i += 1) {
-      const xRatio = i * step;
-      const x = xRatio * width;
+  drawPulse(1, 0.22, false);
+  drawPulse(Math.max(active, 0.01), 0.8, true);
+}
 
-      const samplePos = i === pointsCount - 1 ? normalizedSweep : (xRatio + normalizedSweep) % 1;
-
-      const exactIndex = samplePos * periodicSamples;
-      const idx0 = Math.floor(exactIndex) % periodicSamples;
-      const idx1 = (idx0 + 1) % periodicSamples;
-      const frac = exactIndex - idx0;
-
-      const val0 = values[idx0 * 4 + channel.offset];
-      const val1 = values[idx1 * 4 + channel.offset];
-      const val = val0 * (1 - frac) + val1 * frac;
-
-      const lane = channel.offset === 1 ? 0.34 : channel.offset === 2 ? 0.58 : 0.72;
-      const y = height * lane - val * height * 0.19;
-
+function drawTrace(
+  context: CanvasRenderingContext2D,
+  values: Float64Array,
+  channel: number,
+  startX: number,
+  endX: number,
+  baseline: number,
+  amplitude: number,
+  points: number,
+  offset: number,
+  active: number,
+  color: string,
+): void {
+  const drawPath = (revealTo: number, alpha: number, lineWidth: number) => {
+    context.save();
+    context.strokeStyle = color;
+    context.lineWidth = lineWidth;
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+    context.globalAlpha = alpha;
+    context.beginPath();
+    const visiblePoints = Math.max(2, Math.ceil((points - 1) * revealTo) + 1);
+    for (let i = 0; i < visiblePoints; i += 1) {
+      const ratio = i / (points - 1);
+      const x = startX + ratio * (endX - startX);
+      const value = periodicSample(values, channel, ratio + offset);
+      const y = baseline - value * amplitude;
       if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
     }
     context.stroke();
-  }
-  context.globalAlpha = 1;
-  return pointsCount;
+    context.restore();
+  };
+
+  drawPath(1, 0.18, 1);
+  if (active > 0) drawPath(active, 0.88, 1.5);
+}
+
+function drawLockInCue(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  active: number,
+  palette: typeof DARK_COLORS,
+): void {
+  const originX = width * 0.86;
+  const originY = height * 0.58;
+  const axisWidth = Math.min(width * 0.08, 76);
+  const axisHeight = Math.min(height * 0.12, 72);
+  const vectorX = originX + axisWidth * 0.76;
+  const vectorY = originY - axisHeight * 0.72;
+
+  context.save();
+  context.lineWidth = 1;
+  context.strokeStyle = palette.grid;
+  context.globalAlpha = 0.2 + active * 0.6;
+  context.beginPath();
+  context.moveTo(originX - axisWidth * 0.14, originY);
+  context.lineTo(originX + axisWidth, originY);
+  context.moveTo(originX, originY + axisHeight * 0.18);
+  context.lineTo(originX, originY - axisHeight);
+  context.stroke();
+
+  context.strokeStyle = palette.cyan;
+  context.lineWidth = 2;
+  context.globalAlpha = 0.2 + active * 0.78;
+  context.beginPath();
+  context.moveTo(originX, originY);
+  context.lineTo(vectorX, originY);
+  context.stroke();
+
+  context.strokeStyle = palette.magenta;
+  context.beginPath();
+  context.moveTo(originX, originY);
+  context.lineTo(vectorX, vectorY);
+  context.stroke();
+
+  context.fillStyle = palette.magenta;
+  context.beginPath();
+  context.arc(vectorX, vectorY, 3.5, 0, TAU);
+  context.fill();
+  context.restore();
+}
+
+function drawKerrAngleCue(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  active: number,
+  palette: typeof DARK_COLORS,
+): void {
+  const originX = width * 0.86;
+  const originY = height * 0.58;
+  const radius = Math.min(width * 0.055, 50);
+
+  context.save();
+  context.strokeStyle = palette.green;
+  context.lineWidth = 2;
+  context.globalAlpha = 0.2 + active * 0.78;
+  context.beginPath();
+  context.arc(originX, originY, radius, -Math.PI * 0.78, -Math.PI * 0.28);
+  context.stroke();
+  context.restore();
 }

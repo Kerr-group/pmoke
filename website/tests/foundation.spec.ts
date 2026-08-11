@@ -145,6 +145,10 @@ test('documentation remains readable without JavaScript', async ({ browser }, te
 
   const context = await browser.newContext({ javaScriptEnabled: false });
   const page = await context.newPage();
+  await page.goto('http://127.0.0.1:4173/pmoke/ja/');
+  await expect(page.getByRole('heading', { level: 1, name: 'pmoke' })).toBeVisible();
+  await expect(page.locator('.signal-sequence')).toContainText('磁場パルス');
+  await expect(page.locator('#signal-description')).toContainText('パルス磁場MOKEの流れを示す説明図');
   await page.goto('http://127.0.0.1:4173/pmoke/ja/docs/quickstart/');
   await expect(page.getByRole('heading', { level: 1, name: 'クイックスタート' })).toBeVisible();
   await expect(page.locator('code').filter({ hasText: 'pmoke config init' })).toBeVisible();
@@ -219,6 +223,75 @@ test('signal canvas sweeps continuously when active and pauses on reduced motion
   await page.waitForTimeout(300);
   const secondStatic = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   expect(secondStatic).toBe(firstStatic);
+  await expect(page.getByRole('button', { name: 'Static view (reduced motion)' })).toBeDisabled();
+});
+
+test('signal hero exposes localized sequence semantics and a user pause', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser signal semantics contract');
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  for (const [locale, labels, description] of [
+    [
+      'en',
+      ['FIELD PULSE', 'ACQUISITION WINDOW', 'REFERENCE', 'KERR RESPONSE', 'LOCK-IN X', 'LOCK-IN Y', 'KERR ANGLE'],
+      'Illustrative pulsed-field MOKE sequence',
+    ],
+    [
+      'ja',
+      ['磁場パルス', '取得窓', '参照信号', 'Kerr応答', 'ロックイン X', 'ロックイン Y', 'Kerr角'],
+      'パルス磁場MOKEの流れを示す説明図',
+    ],
+  ] as const) {
+    await page.goto(`/pmoke/${locale}/`);
+    const stage = page.locator('.signal-stage');
+    const canvas = stage.locator('canvas');
+    await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+    await expect(stage).toHaveAttribute('data-motion', 'running');
+    await expect(canvas).toHaveAttribute(
+      'aria-label',
+      locale === 'en' ? 'Illustrative pulsed-field MOKE signal' : 'パルス磁場MOKEの説明図',
+    );
+    await expect(canvas).toHaveAttribute('aria-describedby', 'signal-description');
+    await expect(page.locator('#signal-description')).toContainText(description);
+    await expect(stage.locator('.signal-sequence li')).toHaveText(labels);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+
+    if (locale === 'en') {
+      const control = stage.locator('.signal-control');
+      await expect(control).toHaveAttribute('aria-label', 'Pause animation');
+      await expect(control).toHaveAttribute('aria-pressed', 'false');
+      await control.click();
+      await expect(stage).toHaveAttribute('data-motion', 'paused');
+      await expect(stage).toHaveAttribute('data-user-paused', 'true');
+      const firstPaused = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
+      await page.waitForTimeout(300);
+      const secondPaused = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
+      expect(secondPaused).toBe(firstPaused);
+
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      await expect(control).toHaveAttribute('aria-pressed', 'true');
+      await expect(stage).toHaveAttribute('data-motion', 'paused');
+
+      await expect(control).toHaveAttribute('aria-label', 'Resume animation');
+      await control.click();
+      await expect(stage).toHaveAttribute('data-motion', 'running');
+      await expect(stage).toHaveAttribute('data-user-paused', 'false');
+    }
+  }
+});
+
+test('signal hero reports an informative static fallback when Wasm is unavailable', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser signal fallback contract');
+
+  await page.route('**/wasm/pmoke_web_wasm.js', (route) => route.abort());
+  await page.goto('/pmoke/ja/');
+  const stage = page.locator('.signal-stage');
+  await expect(stage).toHaveAttribute('data-wasm', 'fallback', { timeout: 15_000 });
+  await expect(stage).toHaveAttribute('data-motion', 'paused');
+  await expect(stage.locator('.signal-status')).toHaveText('静的フォールバック');
+  await expect(page.getByRole('button', { name: '静的フォールバック（WASM利用不可）' })).toBeDisabled();
+  await expect(page.getByText('WASM ONLINE', { exact: true })).toHaveCount(0);
+  await expect(stage.locator('.signal-sequence li')).toHaveText(['磁場パルス', '取得窓', '参照信号', 'Kerr応答', 'ロックイン X', 'ロックイン Y', 'Kerr角']);
 });
 
 test('signal renderer survives reload and Wasm readiness without restarting', async ({ page }, testInfo) => {

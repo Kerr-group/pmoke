@@ -15,8 +15,26 @@ const copy = {
       'A reproducible Rust workflow for pulsed-field MOKE—from instrument trigger and waveform capture to phase-aware lock-in analysis and Kerr-angle extraction.',
     docs: 'Read the docs',
     quickstart: 'Quickstart',
-    signal:
-      'Illustrative pulsed-field MOKE sequence: a magnetic-field pulse marks the acquisition window; reference and Kerr-response waveforms are shown and resolved into lock-in X and Y channels.',
+    signal: {
+      label: 'Illustrative pulsed-field MOKE signal',
+      description:
+        'Illustrative pulsed-field MOKE sequence: a magnetic-field pulse marks the acquisition window; reference and Kerr-response waveforms are shown and resolved into lock-in X and Y channels.',
+      sequence: 'Pulsed-field MOKE signal sequence',
+      fieldPulse: 'FIELD PULSE',
+      acquisitionWindow: 'ACQUISITION WINDOW',
+      reference: 'REFERENCE',
+      kerrResponse: 'KERR RESPONSE',
+      lockInX: 'LOCK-IN X',
+      lockInY: 'LOCK-IN Y',
+      kerrAngle: 'KERR ANGLE',
+      pause: 'Pause animation',
+      resume: 'Resume animation',
+      reducedMotion: 'Static view (reduced motion)',
+      staticFallback: 'Static fallback (WASM unavailable)',
+      wasmLoading: 'WASM LOADING',
+      wasmReady: 'WASM ONLINE',
+      wasmFallback: 'STATIC FALLBACK',
+    },
     toggleTheme: 'Toggle color theme',
     lightTheme: 'Switch to light theme',
     darkTheme: 'Switch to dark theme',
@@ -33,8 +51,26 @@ const copy = {
       '装置トリガーと波形の取得から、位相回転を含むロックイン解析、Kerr角の算出までを一貫して扱う、再現可能なRustワークフロー。',
     docs: 'ドキュメント',
     quickstart: 'クイックスタート',
-    signal:
-      'パルス磁場MOKEの流れを示す説明図。磁場パルスに合わせた取得窓の中で、参照信号とKerr応答を可視化し、ロックイン解析でX/Y成分とKerr角を導出する様子。',
+    signal: {
+      label: 'パルス磁場MOKEの説明図',
+      description:
+        'パルス磁場MOKEの流れを示す説明図。磁場パルスに合わせた取得窓の中で、参照信号とKerr応答を可視化し、ロックイン解析でX/Y成分とKerr角を導出する様子。',
+      sequence: 'パルス磁場MOKEの信号シーケンス',
+      fieldPulse: '磁場パルス',
+      acquisitionWindow: '取得窓',
+      reference: '参照信号',
+      kerrResponse: 'Kerr応答',
+      lockInX: 'ロックイン X',
+      lockInY: 'ロックイン Y',
+      kerrAngle: 'Kerr角',
+      pause: 'アニメーションを一時停止',
+      resume: 'アニメーションを再開',
+      reducedMotion: '静止表示（視覚効果を低減）',
+      staticFallback: '静的フォールバック（WASM利用不可）',
+      wasmLoading: 'WASMを読み込み中',
+      wasmReady: 'WASM ONLINE',
+      wasmFallback: '静的フォールバック',
+    },
     toggleTheme: 'カラーテーマ切替',
     lightTheme: 'ライトテーマへ切替',
     darkTheme: 'ダークテーマへ切替',
@@ -71,7 +107,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
       </header>
 
       <section className="hero-band">
-        <SignalHero label={text.signal} />
+        <SignalHero labels={text.signal} />
         <div className="hero-copy">
           <p className="eyebrow"><Cpu aria-hidden="true" />{text.kicker}</p>
           <h1>pmoke</h1>
