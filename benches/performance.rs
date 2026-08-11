@@ -544,11 +544,6 @@ fn benchmark_lockin() -> Lockin {
         stride_samples: 100,
         lpf_kind: LockinLpfKind::BoxcarLegacy,
         lpf_half_window_cycles: 1.0,
-        lpf_cutoff_hz: None,
-        lpf_cutoff_ref_ratio: None,
-        lpf_stopband_atten_db: 60.0,
-        lpf_sync_average_cycles: 1.0,
-        lpf_iir_order: 2,
         lpf_debug_output: false,
         lpf_debug_label: None,
         lpf_debug_overwrite: false,
@@ -604,7 +599,7 @@ impl BenchmarkRawFixture {
             .iter()
             .map(|file| write_synthetic_raw_file(&dir.join(file), sample_count))
             .collect::<Vec<_>>();
-        let config = b"version = 4\n";
+        let config = b"version = 5\n";
         fs::write(dir.join("config.source.toml"), config).expect("write benchmark source config");
         let config_sha256 = digest_hex(Sha256::digest(config));
         fs::write(
@@ -817,7 +812,7 @@ fn unique_temp_dir(label: &str) -> PathBuf {
 }
 
 fn analysis_config() -> &'static str {
-    r#"version = 4
+    r#"version = 5
 
 [scope]
 model = "DHO5108"

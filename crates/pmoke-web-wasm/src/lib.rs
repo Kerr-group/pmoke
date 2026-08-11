@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn wasm_config_validation_returns_valid_json() {
         let json = validate_config_toml(
-            r#"version = 4
+            r#"version = 5
 [scope]
 model = "DHO5108"
 connection = "tcp://192.0.2.10:55255"

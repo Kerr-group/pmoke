@@ -183,7 +183,7 @@ factor = 1
 }
 
 #[test]
-fn v2_fir_zero_phase_without_cutoff_warns_but_loads() {
+fn v2_fixture_defaults_to_explicit_boxcar_kind() {
     let text = v2_base_lockin(
         r#"
 workers = 1
@@ -192,20 +192,34 @@ lpf_half_window_cycles = 1.0
 "#,
     );
 
-    match load_from_str(&text) {
-        ConfigLoad::Ready { warnings, .. } => {
-            assert!(
-                warnings
-                    .iter()
-                    .any(|warning| warning.message.contains("no cutoff is specified"))
-            );
-        }
-        other => panic!("expected ready load, got {:?}", other),
-    }
+    let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+        panic!("expected ready load");
+    };
+    assert_eq!(config.lockin.lpf_kind, LockinLpfKind::BoxcarLegacy);
 }
 
 #[test]
-fn v2_cutoff_hz_and_ratio_are_mutually_exclusive() {
+fn v2_removed_default_lpf_requires_explicit_migration_choice() {
+    let text = v2_base_lockin(
+        r#"
+workers = 1
+stride_samples = 1
+lpf_half_window_cycles = 1.0
+"#,
+    )
+    .replacen("lpf_kind = \"boxcar_legacy\"\n", "", 1);
+
+    let ConfigLoad::Diagnostics(diag) = load_from_str(&text) else {
+        panic!("expected migration diagnostics");
+    };
+    assert!(diag.diagnostics.iter().any(|issue| {
+        issue.path.as_deref() == Some("lockin.lpf_kind")
+            && issue.message.contains("removed fir_zero_phase default")
+    }));
+}
+
+#[test]
+fn v2_legacy_cutoff_fields_are_warned_and_ignored() {
     let text = v2_base_lockin(
         r#"
 workers = 1
@@ -216,20 +230,16 @@ lpf_cutoff_ref_ratio = 0.1
 "#,
     );
 
-    match load_from_str(&text) {
-        ConfigLoad::Diagnostics(diag) => {
-            assert!(
-                diag.diagnostics
-                    .iter()
-                    .any(|issue| issue.message.contains("mutually exclusive"))
-            );
-        }
-        other => panic!("expected diagnostics, got {:?}", other),
-    }
+    let ConfigLoad::Ready { warnings, .. } = load_from_str(&text) else {
+        panic!("expected ready load");
+    };
+    assert!(warnings.iter().any(|warning| {
+        warning.message.contains("lpf_cutoff_hz") && warning.message.contains("ignored")
+    }));
 }
 
 #[test]
-fn v2_ignored_cutoffs_do_not_block_non_fir_zero_phase_modes() {
+fn v2_removed_fir_boxcar_kind_requires_migration() {
     let text = v2_base_lockin(
         r#"
 workers = 1
@@ -241,14 +251,17 @@ lpf_cutoff_ref_ratio = -0.1
 "#,
     );
 
-    match load_from_str(&text) {
-        ConfigLoad::Ready { .. } => {}
-        other => panic!("expected ready load, got {:?}", other),
-    }
+    let ConfigLoad::Diagnostics(diag) = load_from_str(&text) else {
+        panic!("expected migration diagnostics");
+    };
+    assert!(diag.diagnostics.iter().any(|issue| {
+        issue.path.as_deref() == Some("lockin.lpf_kind")
+            && issue.message.contains("fir_boxcar_enbw")
+    }));
 }
 
 #[test]
-fn v2_sync_iir_zero_phase_loads_with_iir_options() {
+fn v2_removed_sync_iir_zero_phase_requires_migration() {
     let text = v2_base_lockin(
         r#"
 workers = 1
@@ -261,18 +274,17 @@ lpf_iir_order = 4
 "#,
     );
 
-    match load_from_str(&text) {
-        ConfigLoad::Ready { config, .. } => {
-            assert_eq!(config.lockin.lpf_kind, LockinLpfKind::SyncIirZeroPhase);
-            assert_eq!(config.lockin.lpf_sync_average_cycles, 2.0);
-            assert_eq!(config.lockin.lpf_iir_order, 4);
-        }
-        other => panic!("expected ready load, got {:?}", other),
-    }
+    let ConfigLoad::Diagnostics(diag) = load_from_str(&text) else {
+        panic!("expected migration diagnostics");
+    };
+    assert!(diag.diagnostics.iter().any(|issue| {
+        issue.path.as_deref() == Some("lockin.lpf_kind")
+            && issue.message.contains("sync_iir_zero_phase")
+    }));
 }
 
 #[test]
-fn v2_sync_iir_zero_phase_rejects_odd_iir_order() {
+fn v2_removed_sync_iir_zero_phase_requires_migration_even_with_invalid_order() {
     let text = v2_base_lockin(
         r#"
 workers = 1
@@ -286,18 +298,17 @@ lpf_iir_order = 3
 
     match load_from_str(&text) {
         ConfigLoad::Diagnostics(diag) => {
-            assert!(
-                diag.diagnostics
-                    .iter()
-                    .any(|issue| issue.path.as_deref() == Some("lockin.lpf_iir_order"))
-            );
+            assert!(diag.diagnostics.iter().any(|issue| {
+                issue.path.as_deref() == Some("lockin.lpf_kind")
+                    && issue.message.contains("sync_iir_zero_phase")
+            }));
         }
         other => panic!("expected diagnostics, got {:?}", other),
     }
 }
 
 #[test]
-fn v2_sync_iir_zero_phase_rejects_non_finite_sync_cycles() {
+fn v2_removed_sync_iir_zero_phase_requires_migration_even_with_non_finite_options() {
     let text = v2_base_lockin(
         r#"
 workers = 1
@@ -311,11 +322,10 @@ lpf_sync_average_cycles = inf
 
     match load_from_str(&text) {
         ConfigLoad::Diagnostics(diag) => {
-            assert!(
-                diag.diagnostics
-                    .iter()
-                    .any(|issue| issue.path.as_deref() == Some("lockin.lpf_sync_average_cycles"))
-            );
+            assert!(diag.diagnostics.iter().any(|issue| {
+                issue.path.as_deref() == Some("lockin.lpf_kind")
+                    && issue.message.contains("sync_iir_zero_phase")
+            }));
         }
         other => panic!("expected diagnostics, got {:?}", other),
     }

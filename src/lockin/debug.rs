@@ -1,5 +1,7 @@
 use crate::config::{Config, LockinLpfKind, Window};
-use crate::lockin::lockin_core::{FilterDesign, HarmonicLockinResult};
+use crate::lockin::lockin_core::{
+    HarmonicLockinResult, legacy_boxcar_enbw_hz, legacy_boxcar_response_abs,
+};
 use crate::lockin::lockin_params::LockinParams;
 use crate::ui;
 use anyhow::{Context, Result, bail};
@@ -23,15 +25,14 @@ pub fn write_harmonic_debug(
     signal_ch: u8,
     harmonic: usize,
     params: LockinParams,
-    filter: Option<&FilterDesign>,
     t_raw: &[f64],
     t_output: &[f64],
     result: &HarmonicLockinResult,
 ) -> Result<()> {
-    let dir = prepare_debug_dir(cfg, signal_ch, harmonic, params, filter)?;
+    let dir = prepare_debug_dir(cfg, signal_ch, harmonic, params)?;
 
-    write_metadata(&dir, cfg, signal_ch, harmonic, params, filter)?;
-    write_filter_response(&dir, params, filter)?;
+    write_metadata(&dir, cfg, signal_ch, harmonic, params)?;
+    write_filter_response(&dir, params)?;
     write_baseband_psd(&dir, cfg, t_raw, result.mixed_signal.as_deref())?;
     write_snr_summary(&dir, cfg, t_output, result)?;
 
@@ -43,13 +44,12 @@ fn prepare_debug_dir(
     signal_ch: u8,
     harmonic: usize,
     params: LockinParams,
-    filter: Option<&FilterDesign>,
 ) -> Result<PathBuf> {
     let label = cfg
         .lockin
         .lpf_debug_label
         .clone()
-        .unwrap_or_else(|| auto_label(cfg, params, filter));
+        .unwrap_or_else(|| auto_label(cfg, params));
     let dir = cfg
         .paths()
         .debug_dir()
@@ -88,37 +88,18 @@ fn prepare_debug_dir(
     Ok(dir)
 }
 
-fn auto_label(cfg: &Config, params: LockinParams, filter: Option<&FilterDesign>) -> String {
-    let cutoff = filter
-        .map(|f| format!("{:.6e}", f.cutoff_hz))
-        .unwrap_or_else(|| "none".to_string());
+fn auto_label(cfg: &Config, params: LockinParams) -> String {
     format!(
-        "{}_{}_cutoff_{}_half_{:.6}",
+        "{}_{}_cutoff_none_half_{:.6}",
         lpf_kind_name(cfg.lockin.lpf_kind),
         params.cutoff_source.as_str(),
-        sanitize_label_component(&cutoff),
         cfg.lockin.lpf_half_window_cycles
     )
 }
 
-fn sanitize_label_component(s: &str) -> String {
-    s.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 fn lpf_kind_name(kind: LockinLpfKind) -> &'static str {
     match kind {
-        LockinLpfKind::FirZeroPhase => "fir_zero_phase",
         LockinLpfKind::BoxcarLegacy => "boxcar_legacy",
-        LockinLpfKind::FirBoxcarEnbw => "fir_boxcar_enbw",
-        LockinLpfKind::SyncIirZeroPhase => "sync_iir_zero_phase",
     }
 }
 
@@ -128,9 +109,8 @@ fn write_metadata(
     signal_ch: u8,
     harmonic: usize,
     params: LockinParams,
-    filter: Option<&FilterDesign>,
 ) -> Result<()> {
-    let mut rows = vec![
+    let rows = vec![
         ("signal_ch".to_string(), signal_ch.to_string()),
         ("harmonic".to_string(), harmonic.to_string()),
         (
@@ -157,111 +137,33 @@ fn write_metadata(
             "fallback_used".to_string(),
             params.fallback_used.to_string(),
         ),
+        ("cutoff_hz".to_string(), "NaN".to_string()),
         (
-            "stopband_atten_db".to_string(),
-            cfg.lockin.lpf_stopband_atten_db.to_string(),
-        ),
-        ("attenuation_is_guaranteed".to_string(), "false".to_string()),
-    ];
-
-    if let Some(filter) = filter {
-        rows.push(("cutoff_hz".to_string(), filter.cutoff_hz.to_string()));
-        rows.push((
-            "design_cutoff_hz".to_string(),
-            filter.design_cutoff_hz.to_string(),
-        ));
-        rows.push((
-            "filter_cutoff_source".to_string(),
-            filter.cutoff_source.to_string(),
-        ));
-        rows.push(("kaiser_beta".to_string(), filter.kaiser_beta.to_string()));
-        rows.push((
-            "sync_average_samples".to_string(),
-            opt_usize(filter.sync_average_samples),
-        ));
-        rows.push(("iir_order".to_string(), opt_usize(filter.iir_order)));
-        rows.push((
-            "settling_samples".to_string(),
-            filter.settling_samples.to_string(),
-        ));
-        rows.push((
             "estimated_enbw_hz".to_string(),
-            filter.estimated_enbw_hz.to_string(),
-        ));
-        rows.push((
-            "legacy_boxcar_enbw_hz".to_string(),
-            opt_f64(filter.legacy_boxcar_enbw_hz),
-        ));
-        rows.push((
-            "enbw_match_error_hz".to_string(),
-            opt_f64(filter.enbw_match_error_hz),
-        ));
-        rows.push((
-            "enbw_match_reachable".to_string(),
-            opt_bool(filter.enbw_match_reachable),
-        ));
-        rows.push((
-            "user_cutoff_unused".to_string(),
-            filter.user_cutoff_unused.to_string(),
-        ));
-        rows.push((
-            "cutoff_hz_over_f_ref".to_string(),
-            (filter.cutoff_hz / params.f_ref).to_string(),
-        ));
-        rows.push((
-            "cutoff_hz_over_output_rate".to_string(),
-            (filter.cutoff_hz / params.output_rate).to_string(),
-        ));
-    } else {
-        rows.push(("cutoff_hz".to_string(), "NaN".to_string()));
-        rows.push(("kaiser_beta".to_string(), "NaN".to_string()));
-        rows.push(("estimated_enbw_hz".to_string(), "NaN".to_string()));
-    }
+            legacy_boxcar_enbw_hz(params).to_string(),
+        ),
+    ];
 
     write_key_value_csv(&dir.join("metadata.csv"), &rows)
 }
 
-fn opt_f64(value: Option<f64>) -> String {
-    value
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "NaN".to_string())
-}
-
-fn opt_bool(value: Option<bool>) -> String {
-    value
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "NaN".to_string())
-}
-
-fn opt_usize(value: Option<usize>) -> String {
-    value
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "NaN".to_string())
-}
-
-fn write_filter_response(
-    dir: &Path,
-    params: LockinParams,
-    filter: Option<&FilterDesign>,
-) -> Result<()> {
+fn write_filter_response(dir: &Path, params: LockinParams) -> Result<()> {
     let path = dir.join("filter_response.csv");
     let file =
         fs::File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
     let mut writer = BufWriter::new(file);
     writeln!(writer, "frequency_hz,response_abs,response_db")?;
 
-    if let Some(filter) = filter {
-        let max_freq = 0.5 * params.output_rate;
-        for idx in 0..=RESPONSE_BINS {
-            let freq = max_freq * idx as f64 / RESPONSE_BINS as f64;
-            let response = filter.response_abs(params.sample_rate, freq);
-            let response_db = if response > 0.0 {
-                20.0 * response.log10()
-            } else {
-                f64::NEG_INFINITY
-            };
-            writeln!(writer, "{freq},{response},{response_db}")?;
-        }
+    let max_freq = 0.5 * params.output_rate;
+    for idx in 0..=RESPONSE_BINS {
+        let freq = max_freq * idx as f64 / RESPONSE_BINS as f64;
+        let response = legacy_boxcar_response_abs(params, freq);
+        let response_db = if response > 0.0 {
+            20.0 * response.log10()
+        } else {
+            f64::NEG_INFINITY
+        };
+        writeln!(writer, "{freq},{response},{response_db}")?;
     }
 
     Ok(())

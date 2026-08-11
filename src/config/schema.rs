@@ -80,6 +80,25 @@ pub(super) struct ConfigV4 {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct ConfigV5 {
+    pub(super) version: u32,
+    pub(super) scope: ScopeV4,
+    #[serde(default)]
+    pub(super) generator: Option<GeneratorV4>,
+    pub(super) data: DataV4,
+    #[serde(default)]
+    pub(super) sensors: Vec<SensorV4>,
+    pub(super) pulse: PulseV4,
+    pub(super) reference: ReferenceV4,
+    pub(super) lockin: LockinV5,
+    pub(super) phase: PhaseV4,
+    pub(super) kerr: KerrV4,
+    #[serde(default)]
+    pub(super) plot: PlotV4,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ScopeV4 {
     pub(super) model: String,
     pub(super) connection: String,
@@ -176,7 +195,29 @@ pub(super) struct LockinV4 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LockinV5 {
+    pub(super) signal_channels: Vec<u8>,
+    pub(super) workers: usize,
+    pub(super) stride_samples: usize,
+    pub(super) filter: LockinFilterV5,
+    #[serde(default)]
+    pub(super) debug_output: bool,
+    #[serde(default)]
+    pub(super) debug_label: Option<String>,
+    #[serde(default)]
+    pub(super) debug_overwrite: bool,
+    #[serde(default)]
+    pub(super) snr_background_window: Option<Window>,
+    #[serde(default)]
+    pub(super) snr_signal_window: Option<Window>,
+    #[serde(default)]
+    pub(super) save_npy: bool,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(dead_code)]
 pub(super) enum LockinFilterV4 {
     BoxcarLegacy {
         half_window_cycles: f64,
@@ -204,6 +245,32 @@ pub(super) enum LockinFilterV4 {
         #[serde(default = "default_lockin_iir_order")]
         iir_order: usize,
     },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum LockinFilterV5 {
+    BoxcarLegacy { half_window_cycles: f64 },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LegacyLockinLpfKind {
+    FirZeroPhase,
+    BoxcarLegacy,
+    FirBoxcarEnbw,
+    SyncIirZeroPhase,
+}
+
+impl LegacyLockinLpfKind {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::FirZeroPhase => "fir_zero_phase",
+            Self::BoxcarLegacy => "boxcar_legacy",
+            Self::FirBoxcarEnbw => "fir_boxcar_enbw",
+            Self::SyncIirZeroPhase => "sync_iir_zero_phase",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -279,6 +346,22 @@ pub(super) struct NormalizedConfigV4 {
 }
 
 #[derive(Serialize)]
+pub(super) struct NormalizedConfigV5 {
+    pub(super) version: u32,
+    pub(super) scope: ScopeOutputV4,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) generator: Option<GeneratorOutputV4>,
+    pub(super) data: DataOutputConfigV4,
+    pub(super) sensors: Vec<SensorOutputV4>,
+    pub(super) pulse: PulseOutputV4,
+    pub(super) reference: ReferenceOutputV4,
+    pub(super) lockin: LockinOutputV5,
+    pub(super) phase: PhaseOutputV4,
+    pub(super) kerr: KerrOutputV4,
+    pub(super) plot: PlotOutputV4,
+}
+
+#[derive(Serialize)]
 pub(super) struct ScopeOutputV4 {
     pub(super) model: String,
     pub(super) connection: String,
@@ -347,31 +430,35 @@ pub(super) struct LockinOutputV4 {
 }
 
 #[derive(Serialize)]
+pub(super) struct LockinOutputV5 {
+    pub(super) signal_channels: Vec<u8>,
+    pub(super) workers: usize,
+    pub(super) stride_samples: usize,
+    pub(super) filter: LockinFilterOutputV5,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(super) debug_output: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) debug_label: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(super) debug_overwrite: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) snr_background_window: Option<Window>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) snr_signal_window: Option<Window>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(super) save_npy: bool,
+}
+
+#[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum LockinFilterOutputV4 {
-    BoxcarLegacy {
-        half_window_cycles: f64,
-    },
-    FirBoxcarEnbw {
-        half_window_cycles: f64,
-    },
-    FirZeroPhase {
-        half_window_cycles: f64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cutoff_hz: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cutoff_ref_ratio: Option<f64>,
-        stopband_atten_db: f64,
-    },
-    SyncIirZeroPhase {
-        half_window_cycles: f64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cutoff_hz: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cutoff_ref_ratio: Option<f64>,
-        sync_average_cycles: f64,
-        iir_order: usize,
-    },
+    BoxcarLegacy { half_window_cycles: f64 },
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(super) enum LockinFilterOutputV5 {
+    BoxcarLegacy { half_window_cycles: f64 },
 }
 
 #[derive(Serialize)]
@@ -591,7 +678,7 @@ pub(super) struct LockinV1 {
     #[serde(default)]
     pub(super) demodulation: Option<LockinDemodulationV1>,
     #[serde(default)]
-    pub(super) lpf_kind: Option<LockinLpfKind>,
+    pub(super) lpf_kind: Option<LegacyLockinLpfKind>,
     #[serde(default)]
     pub(super) lpf_half_window_cycles: Option<f64>,
     #[serde(default)]
@@ -624,7 +711,7 @@ pub(super) struct LockinV2 {
     pub(super) workers: usize,
     pub(super) stride_samples: usize,
     #[serde(default)]
-    pub(super) lpf_kind: Option<LockinLpfKind>,
+    pub(super) lpf_kind: Option<LegacyLockinLpfKind>,
     pub(super) lpf_half_window_cycles: f64,
     #[serde(default)]
     pub(super) lpf_cutoff_hz: Option<f64>,

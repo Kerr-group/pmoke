@@ -539,7 +539,7 @@ memory_depth = 200_000_000"#,
 }
 
 #[test]
-fn v3_loads_without_timebase_and_normalized_config_omits_timebase() {
+fn v3_without_instruments_keeps_legacy_normalized_shape() {
     let text = v3_base_lockin(
         r#"
 workers = 1
@@ -555,6 +555,9 @@ lpf_half_window_cycles = 1.0
             let normalized = toml::to_string_pretty(&config).unwrap();
             assert!(!normalized.contains("[timebase]"));
             assert!(!normalized.contains("legacy_timebase"));
+            let resolved = render_normalized_config(&config).unwrap();
+            assert!(resolved.contains("version = 3"));
+            assert!(!resolved.contains("[timebase]"));
         }
         other => panic!("expected ready load, got {other:?}"),
     }

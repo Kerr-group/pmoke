@@ -34,7 +34,6 @@ pub struct LockinProvenance {
 impl LockinProvenance {
     pub fn from_processor(processor: &LockinProcessor<'_>) -> Self {
         let params = processor.params();
-        let filter = processor.filter_design();
         let (base_index_start, base_index_end) = processor.base_index_range();
         let (output_index_start, output_index_end) = processor.output_index_range();
         Self {
@@ -44,17 +43,14 @@ impl LockinProvenance {
             output_sample_rate_hz: params.output_rate,
             reference_frequency_hz: params.f_ref,
             effective_window_seconds: 2.0 * params.t_half,
-            estimated_enbw_hz: filter.map_or_else(
-                || legacy_boxcar_enbw_hz(params),
-                |design| design.estimated_enbw_hz,
-            ),
+            estimated_enbw_hz: legacy_boxcar_enbw_hz(params),
             edge_policy: "trim",
             base_index_start,
             base_index_end,
             output_index_start,
             output_index_end,
-            cutoff_hz: filter.map(|design| design.cutoff_hz),
-            filter_settling_samples: filter.map(|design| design.settling_samples),
+            cutoff_hz: None,
+            filter_settling_samples: None,
         }
     }
 }
@@ -1084,7 +1080,6 @@ mod tests {
         cfg.lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
         cfg.lockin.stride_samples = 10;
         cfg.lockin.lpf_half_window_cycles = 1.0;
-        cfg.lockin.lpf_cutoff_hz = None;
         let dt = 1.0e-5;
         let f_ref = 1_000.0;
         let time = (0..4_000)

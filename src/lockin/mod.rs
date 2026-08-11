@@ -262,7 +262,6 @@ pub fn li_process<'a>(
         let harmonic_results: Vec<lockin_core::HarmonicLockinResult> = if include_debug {
             let t_output = li_processor.output_times();
             let params = li_processor.params();
-            let filter = li_processor.filter_design();
             let mut results = Vec::with_capacity(harmonics.len());
             for &harmonic in &harmonics {
                 pb.set_message(format!("lock-in ch{sig_ch} h{harmonic}"));
@@ -273,7 +272,6 @@ pub fn li_process<'a>(
                         sig_ch,
                         harmonic,
                         params,
-                        filter,
                         debug_time
                             .as_deref()
                             .expect("debug time is available when debug output is enabled"),

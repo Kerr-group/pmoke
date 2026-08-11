@@ -1,5 +1,6 @@
 use super::{
     Config, ConfigLoad, FetchAnalysisInput, Plot, load_from_path, load_from_str, render_config_v4,
+    render_config_v5,
 };
 use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR};
 use anyhow::{Context, Result, anyhow, bail};
@@ -8,7 +9,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const LATEST_CONFIG_VERSION: u32 = 4;
+pub const LATEST_CONFIG_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MigrationLevel {
@@ -130,6 +131,9 @@ pub fn plan_latest_executable_migration(
         .into_iter()
         .map(|warning| MigrationIssue::notice(warning.message))
         .collect::<Vec<_>>();
+    issues.push(MigrationIssue::notice(
+        "no newer executable schema can represent this configuration; the validated legacy source is preserved",
+    ));
     issues.extend(blockers.into_iter().map(|blocker| {
         MigrationIssue::notice(format!("a newer config version was skipped: {blocker}"))
     }));
@@ -161,7 +165,7 @@ pub fn plan_migration(
 
     if !matches!(target_version, 2..=LATEST_CONFIG_VERSION) {
         bail!(
-            "unsupported migration target v{target_version}; this pmoke supports migration to v2, v3, or v{LATEST_CONFIG_VERSION}"
+            "unsupported migration target v{target_version}; this pmoke supports migration to v2, v3, v4, or v{LATEST_CONFIG_VERSION}"
         );
     }
     if source_version > target_version {
@@ -241,25 +245,35 @@ pub fn plan_migration(
         ));
     }
 
-    inspect_channel_losses(&config, &mut issues);
+    inspect_channel_losses(&config, target_version, &mut issues);
     if config.plot.output_dir != Plot::default().output_dir {
         issues.push(MigrationIssue::notice(
             "plot.output_dir is omitted because canonical plots are written under analysis/plots",
         ));
     }
-    inspect_artifact_base_change(source_path, &destination_path, &mut issues)?;
+    inspect_artifact_base_change(source_path, &destination_path, target_version, &mut issues)?;
 
-    let target_toml = render_config_v4(&config)
-        .context("source config cannot be represented by the v4 output schema")?;
-    let (target_config, target_warnings) =
-        ready_config(load_from_str(&target_toml), "generated v4 config")?;
+    let (target_toml, target_label) = if target_version == 4 {
+        (
+            render_config_v4(&config)
+                .context("source config cannot be represented by the v4 output schema")?,
+            "generated v4 config",
+        )
+    } else {
+        (
+            render_config_v5(&config)
+                .context("source config cannot be represented by the v5 output schema")?,
+            "generated v5 config",
+        )
+    };
+    let (target_config, target_warnings) = ready_config(load_from_str(&target_toml), target_label)?;
     issues.extend(
         target_warnings
             .into_iter()
             .map(|warning| MigrationIssue::notice(warning.message)),
     );
 
-    verify_preserved_semantics(config, target_config)?;
+    verify_preserved_semantics(config, target_config, target_version)?;
 
     Ok(MigrationPlan {
         source_version,
@@ -520,7 +534,7 @@ fn ready_config(load: ConfigLoad, label: &str) -> Result<(Config, Vec<super::Con
     }
 }
 
-fn inspect_channel_losses(config: &Config, issues: &mut Vec<MigrationIssue>) {
+fn inspect_channel_losses(config: &Config, target_version: u32, issues: &mut Vec<MigrationIssue>) {
     let mut used = BTreeSet::new();
     used.extend(config.roles.sensor_ch.iter().copied());
     used.extend(config.roles.signal_ch.iter().copied());
@@ -534,7 +548,7 @@ fn inspect_channel_losses(config: &Config, issues: &mut Vec<MigrationIssue>) {
         .collect::<Vec<_>>();
     if !unused.is_empty() {
         issues.push(MigrationIssue::lossy(format!(
-            "unused channel definitions are not representable in v4 and will be removed: {}",
+            "unused channel definitions are not representable in v{target_version} and will be removed: {}",
             unused.join(", ")
         )));
     }
@@ -553,7 +567,7 @@ fn inspect_channel_losses(config: &Config, issues: &mut Vec<MigrationIssue>) {
         .collect::<Vec<_>>();
     if !metadata.is_empty() {
         issues.push(MigrationIssue::lossy(format!(
-            "metadata on non-sensor channels is not representable in v4 and will be removed: {}",
+            "metadata on non-sensor channels is not representable in v{target_version} and will be removed: {}",
             metadata.join(", ")
         )));
     }
@@ -562,6 +576,7 @@ fn inspect_channel_losses(config: &Config, issues: &mut Vec<MigrationIssue>) {
 fn inspect_artifact_base_change(
     source_path: &Path,
     destination_path: &Path,
+    target_version: u32,
     issues: &mut Vec<MigrationIssue>,
 ) -> Result<()> {
     let cwd = env::current_dir().context("failed to determine current directory")?;
@@ -570,14 +585,14 @@ fn inspect_artifact_base_change(
     let destination_parent = absolute_parent(destination_path, &cwd);
     if destination_parent != cwd {
         issues.push(MigrationIssue::lossy(format!(
-            "v4 resolves data artifacts from the config directory ({}), while legacy configs resolve them from the process directory ({})",
+            "v{target_version} resolves data artifacts from the config directory ({}), while legacy configs resolve them from the process directory ({})",
             destination_parent.display(),
             cwd.display()
         )));
     } else {
-        issues.push(MigrationIssue::notice(
-            "v4 resolves data artifacts from the config directory instead of the process current directory",
-        ));
+        issues.push(MigrationIssue::notice(format!(
+            "v{target_version} resolves data artifacts from the config directory instead of the process current directory"
+        )));
     }
     if source_parent != destination_parent {
         issues.push(MigrationIssue::lossy(format!(
@@ -603,20 +618,24 @@ fn absolute_parent(path: &Path, cwd: &Path) -> PathBuf {
     fs::canonicalize(&parent).unwrap_or(parent)
 }
 
-fn verify_preserved_semantics(mut source: Config, target: Config) -> Result<()> {
-    canonicalize_for_v4(&mut source);
+fn verify_preserved_semantics(
+    mut source: Config,
+    target: Config,
+    target_version: u32,
+) -> Result<()> {
+    canonicalize_for_current_schema(&mut source, target_version);
     let source = toml::Value::try_from(&source).context("failed to compare source semantics")?;
     let target = toml::Value::try_from(&target).context("failed to compare target semantics")?;
     if source != target {
         bail!(
-            "generated v4 config does not preserve the normalized source semantics; migration was blocked"
+            "generated config does not preserve the normalized source semantics; migration was blocked"
         );
     }
     Ok(())
 }
 
-fn canonicalize_for_v4(config: &mut Config) {
-    config.version = LATEST_CONFIG_VERSION;
+fn canonicalize_for_current_schema(config: &mut Config, target_version: u32) {
+    config.version = target_version;
     config.legacy_timebase = None;
 
     let mut used = BTreeSet::new();

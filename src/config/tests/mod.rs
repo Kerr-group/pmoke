@@ -1,7 +1,7 @@
 use super::{
-    ConfigLoad, Connection, FetchAnalysisInput, FetchOutput, LockinLpfKind, PlotDecimation,
-    ValidationTarget, load_from_path, load_from_str, render_normalized_config, validate_for_target,
-    validate_sensor_metadata,
+    ConfigLoad, Connection, DiagnosticKind, FetchAnalysisInput, FetchOutput, LockinLpfKind,
+    PlotDecimation, ValidationTarget, load_from_path, load_from_str, render_normalized_config,
+    validate_for_target, validate_sensor_metadata,
 };
 use std::fs;
 
@@ -10,6 +10,11 @@ mod legacy;
 mod v4;
 
 fn v2_base_lockin(lockin: &str) -> String {
+    let lockin = if lockin.contains("lpf_kind") {
+        lockin.to_string()
+    } else {
+        format!("lpf_kind = \"boxcar_legacy\"\n{lockin}")
+    };
     format!(
         r#"
 version = 2
@@ -59,6 +64,11 @@ factor = 1
 }
 
 fn v3_base_lockin(lockin: &str) -> String {
+    let lockin = if lockin.contains("lpf_kind") {
+        lockin.to_string()
+    } else {
+        format!("lpf_kind = \"boxcar_legacy\"\n{lockin}")
+    };
     format!(
         r#"
 version = 3

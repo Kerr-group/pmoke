@@ -1,5 +1,4 @@
 use crate::config::{Lockin, LockinLpfKind};
-use crate::ui;
 use anyhow::{Result, anyhow, bail};
 use std::f64::consts::PI;
 
@@ -14,9 +13,6 @@ pub struct LockinParams {
     #[allow(dead_code)]
     pub f_ref: f64,
     pub lpf_kind: LockinLpfKind,
-    pub lpf_stopband_atten_db: f64,
-    pub lpf_sync_average_cycles: f64,
-    pub lpf_iir_order: usize,
     pub cutoff_hz: Option<f64>,
     pub cutoff_source: CutoffSource,
     pub fallback_used: bool,
@@ -72,34 +68,6 @@ impl LockinParams {
         let n_int = ((length - 1) / stride) + 1;
         let i_start = 2 + (n_half + 1) / stride;
         let i_end = n_int.saturating_sub(i_start);
-        let (cutoff_hz, cutoff_source, fallback_used) = resolve_cutoff_hz(lockin, f_ref, t_half)?;
-
-        if let Some(cutoff_hz) = cutoff_hz {
-            if cutoff_hz >= 0.45 * output_rate {
-                bail!(
-                    "lockin cutoff_hz ({}) must be < 0.45 * output_rate ({})",
-                    cutoff_hz,
-                    0.45 * output_rate
-                );
-            }
-            if cutoff_hz >= 0.4 * output_rate {
-                ui::warn(format!(
-                    "lockin cutoff_hz ({cutoff_hz}) is close to output Nyquist; output_rate={output_rate}"
-                ));
-            }
-            if lockin.lpf_kind == LockinLpfKind::SyncIirZeroPhase {
-                let design_cutoff_hz =
-                    zero_phase_butterworth_design_cutoff(cutoff_hz, lockin.lpf_iir_order);
-                if design_cutoff_hz >= 0.45 * sample_rate {
-                    bail!(
-                        "sync_iir_zero_phase design_cutoff_hz ({}) must be < 0.45 * sample_rate ({})",
-                        design_cutoff_hz,
-                        0.45 * sample_rate
-                    );
-                }
-            }
-        }
-
         Ok(Self {
             dt,
             sample_rate,
@@ -108,12 +76,9 @@ impl LockinParams {
             length,
             f_ref,
             lpf_kind: lockin.lpf_kind,
-            lpf_stopband_atten_db: lockin.lpf_stopband_atten_db,
-            lpf_sync_average_cycles: lockin.lpf_sync_average_cycles,
-            lpf_iir_order: lockin.lpf_iir_order,
-            cutoff_hz,
-            cutoff_source,
-            fallback_used,
+            cutoff_hz: None,
+            cutoff_source: CutoffSource::None,
+            fallback_used: false,
             omega,
             t_half,
             n_half,
@@ -148,27 +113,3 @@ impl LockinParams {
 #[cfg(test)]
 #[path = "lockin_params_tests.rs"]
 mod tests;
-
-fn zero_phase_butterworth_design_cutoff(target_cutoff_hz: f64, order: usize) -> f64 {
-    target_cutoff_hz / (2.0_f64.sqrt() - 1.0).powf(1.0 / (2.0 * order as f64))
-}
-
-fn resolve_cutoff_hz(
-    lockin: &Lockin,
-    f_ref: f64,
-    t_half: f64,
-) -> Result<(Option<f64>, CutoffSource, bool)> {
-    match lockin.lpf_kind {
-        LockinLpfKind::BoxcarLegacy => Ok((None, CutoffSource::None, false)),
-        LockinLpfKind::FirBoxcarEnbw => Ok((None, CutoffSource::EnbwMatch, false)),
-        LockinLpfKind::FirZeroPhase | LockinLpfKind::SyncIirZeroPhase => {
-            if let Some(cutoff_hz) = lockin.lpf_cutoff_hz {
-                Ok((Some(cutoff_hz), CutoffSource::ExplicitHz, false))
-            } else if let Some(ratio) = lockin.lpf_cutoff_ref_ratio {
-                Ok((Some(ratio * f_ref), CutoffSource::ReferenceRatio, false))
-            } else {
-                Ok((Some(0.5 / t_half), CutoffSource::Fallback, true))
-            }
-        }
-    }
-}
