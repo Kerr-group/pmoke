@@ -10,6 +10,7 @@ const checks = [
     contains: '<h1>pmoke</h1>',
     headers: { 'strict-transport-security': 'max-age=' },
   },
+  { path: 'en/', contains: 'FIELD PULSE' },
   { path: 'ja/', contains: 'パルス磁場MOKE' },
   { path: 'en/docs/quickstart/', contains: 'Quickstart' },
   { path: 'ja/docs/quickstart/', contains: 'クイックスタート' },

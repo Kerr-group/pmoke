@@ -73,6 +73,14 @@ if (!English.includes('Capture the field pulse. Resolve the phase. Extract the K
 if (!Japanese.includes('磁場パルスを捉え、位相を解析し、Kerr角を抽出する。')) {
   throw new Error('Japanese pulsed-field MOKE hero content is missing');
 }
+for (const label of ['FIELD PULSE', 'ACQUISITION WINDOW', 'REFERENCE', 'KERR RESPONSE', 'LOCK-IN X', 'LOCK-IN Y', 'KERR ANGLE']) {
+  if (!English.includes(label)) throw new Error(`English signal label is missing: ${label}`);
+}
+for (const label of ['磁場パルス', '取得窓', '参照信号', 'Kerr応答', 'ロックイン X', 'ロックイン Y', 'Kerr角']) {
+  if (!Japanese.includes(label)) throw new Error(`Japanese signal label is missing: ${label}`);
+}
+if (!English.includes('aria-describedby="signal-description"')) throw new Error('English signal description is missing');
+if (!Japanese.includes('aria-describedby="signal-description"')) throw new Error('Japanese signal description is missing');
 if (!EnglishAnalyzer.includes('waveform-analyzer')) throw new Error('English waveform tool is missing');
 if (!JapaneseAnalyzer.includes('波形アナライザー')) throw new Error('Japanese waveform tool is missing');
 if (!EnglishCitation.includes('Reproducible attribution')) throw new Error('English citation panel is missing');
