@@ -1,0 +1,4 @@
+interface:
+  display_name: "pmoke Maintenance"
+  short_description: "Review and maintain pmoke across Rust, Python, and web"
+  default_prompt: "Use $pmoke-maintenance to review and validate a pmoke repository change."
