@@ -18,7 +18,7 @@ const checks = [
   { path: 'en/docs/ai/', contains: 'Agent resource console' },
   { path: 'ja/docs/ai/', contains: 'エージェントリソースコンソール' },
   { path: 'en/docs/ai/search-privacy/', contains: 'Local retrieval' },
-  { path: 'ja/docs/ai/search-privacy/', contains: 'Local検索' },
+  { path: 'ja/docs/ai/search-privacy/', contains: 'ローカル検索' },
   { path: 'en/docs/citation/', contains: 'Reproducible attribution' },
   { path: 'ja/docs/citation/', contains: '再現可能な帰属情報' },
   { path: 'api/search', contains: 'Kerr' },
