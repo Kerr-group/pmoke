@@ -1,6 +1,36 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 
+test('Wasm phase adapter preserves typed input errors', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser Wasm boundary gate');
+  await page.goto('/pmoke/en/');
+  const messages = await page.evaluate(async () => {
+    const wasm = (await import('/pmoke/wasm/pmoke_web_wasm.js')) as unknown as {
+      default: () => Promise<unknown>;
+      rotate_phase_interleaved: (x: Float64Array, y: Float64Array, delta: number) => Float64Array;
+    };
+    await wasm.default();
+    const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+    const capture = (operation: () => unknown) => {
+      try {
+        operation();
+        return 'no error';
+      } catch (error) {
+        return messageOf(error);
+      }
+    };
+    return {
+      length: capture(() => wasm.rotate_phase_interleaved(new Float64Array([1, 2]), new Float64Array([3]), 0.2)),
+      finite: capture(() => wasm.rotate_phase_interleaved(new Float64Array([Number.NaN]), new Float64Array([1]), 0.2)),
+      valid: Array.from(wasm.rotate_phase_interleaved(new Float64Array([1]), new Float64Array([0]), 0)),
+    };
+  });
+  expect(messages.length).toMatch(/^length_mismatch:/u);
+  expect(messages.finite).toMatch(/^non_finite_phase:/u);
+  expect(messages.valid).toEqual([1, 0]);
+  testInfo.annotations.push({ type: 'boundary', description: 'Wasm adapter returns stable phase error prefixes' });
+});
+
 for (const locale of ['en', 'ja'] as const) {
   test(`${locale} waveform analyzer completes native-parity demo`, async ({ page }, testInfo) => {
     await page.goto(`/pmoke/${locale}/docs/interactive/waveform-analyzer/`);
