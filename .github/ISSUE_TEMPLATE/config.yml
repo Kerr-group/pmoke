@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Kerr-group/pmoke/security/policy
+    about: Do not disclose vulnerability details publicly. Follow SECURITY.md and use a private channel.

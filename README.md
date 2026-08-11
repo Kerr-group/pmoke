@@ -187,6 +187,15 @@ pmoke/
 | Waveform analyzer | [Open](https://kerr-group.github.io/pmoke/en/docs/interactive/waveform-analyzer/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/interactive/waveform-analyzer/) |
 | Citation & references | [Open](https://kerr-group.github.io/pmoke/en/docs/citation/) | [開く](https://kerr-group.github.io/pmoke/ja/docs/citation/) |
 
+## 🧭 Project governance
+
+Stable product, compatibility, and security boundaries are documented in the
+[project requirements](docs/project/requirements.md). Public work follows one
+GitHub Issue per durable goal, a linked Draft PR for implementation, and
+explicit validation before the PR is marked ready. See the
+[security policy](SECURITY.md) for private vulnerability reporting; do not
+disclose security details in public Issues or PRs.
+
 ## 🔬 Publications
 
 If `pmoke` materially contributes to published work, consider citing the

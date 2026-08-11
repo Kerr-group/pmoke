@@ -1,0 +1,89 @@
+name: Bug report
+description: Report a reproducible behavior problem without disclosing security-sensitive details.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, search existing Issues and remove secrets, credentials, private endpoints, raw captures, personal data, and unreviewed logs.
+
+        Do not use this form for a suspected vulnerability. Follow [SECURITY.md](https://github.com/Kerr-group/pmoke/security/policy).
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What happened? Include the smallest safe excerpt that demonstrates the problem.
+      placeholder: Describe the actual result and its impact.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria for the fix
+      description: What observable result would confirm that this bug is fixed? Keep the fix boundary explicit.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Give safe, deterministic steps. Use dummy transports and sanitized fixtures; never include live instrument details.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: pmoke version or commit
+      placeholder: e.g. v0.3.0 or a short commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Give platform and selected feature profile only; do not include private paths or host identifiers.
+      placeholder: e.g. Linux x86_64, Nix shell, no-default-features
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      description: Which CLI, config/schema, artifact, API, platform, browser, or locale behavior is affected? Say "Unknown" if unsure.
+    validations:
+      required: true
+  - type: dropdown
+    id: security-impact
+    attributes:
+      label: Security impact
+      description: Do not include vulnerability details here. Use SECURITY.md for a suspected vulnerability.
+      options:
+        - No security impact expected
+        - Security impact is unknown
+    validations:
+      required: true
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Public issue hygiene
+      options:
+        - label: I searched for duplicates and removed sensitive or machine-specific data.
+          required: true
+        - label: This report does not disclose a suspected vulnerability or exploit details.
+          required: true

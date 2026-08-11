@@ -30,6 +30,28 @@ tracked generated outputs as a dependency chain. Do not hand-edit generated
 references. Keep `website/content/docs/en` and `website/content/docs/ja`
 paired, and keep all public routes below `/pmoke/`.
 
+## Public work tracking
+
+Read `docs/project/requirements.md` before changing a stable product,
+compatibility, or security contract. Keep the public work-item split explicit:
+
+- Use one GitHub Issue for each durable user-facing goal. The Issue should state
+  the purpose, scope, non-goals, acceptance criteria, compatibility impact,
+  security impact, design decision, and validation plan.
+- When implementation starts, create a Draft PR linked with `Refs #N`. Keep
+  the PR description limited to the current outcome, changed surface,
+  validation evidence, blockers, residual risks, and next work; do not write a
+  chronological diary.
+- Review 1 records the Issue/design/API/security decision. Review 2 records the
+  complete staged diff, tests, and generated artifacts. Mark the PR ready only
+  after the acceptance criteria and validation evidence are complete. After
+  merge, perform deployment/release verification when applicable, then close
+  the Issue explicitly.
+- Use `SECURITY.md` for vulnerability reporting. Never put vulnerability
+  details, credentials, private URLs, raw captures, or exploit material in a
+  public Issue or PR. A GitHub Project is optional and is only a dashboard;
+  it does not replace the Issue, requirements document, or PR description.
+
 ## Operating procedure
 
 ### 1. Triage
