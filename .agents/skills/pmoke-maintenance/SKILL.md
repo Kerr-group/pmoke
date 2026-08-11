@@ -98,6 +98,14 @@ cargo build --locked --workspace --all-targets --no-default-features
 cargo test --locked --workspace --lib --bins --tests --examples --no-default-features
 ```
 
+For native Windows SSH sessions, initialize the installed MSVC environment
+through Visual Studio's `vswhere.exe` and `VsDevCmd.bat -arch=x64` before
+checking `link.exe` and `cl.exe`. Do not hard-code a versioned Visual Studio
+path in tracked files. The repository flake is for Linux/macOS systems; use
+WSL2 or NixOS-WSL for the Nix lane on Windows, and bootstrap Nix there using
+the [official Nix installation instructions](https://nix.dev/manual/nix/stable/installation/)
+rather than Scoop or another Windows package manager.
+
 For the website on the same target, run `pnpm install --frozen-lockfile` and
 `pnpm build` inside `website/` while the package manager comes from the Nix
 shell. Native Windows/VISA validation must follow the CI feature matrix and

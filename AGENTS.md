@@ -131,6 +131,21 @@ Host pmoke-linux
   IdentityFile ~/.ssh/<linux-key>
 ```
 
+For native Windows builds, an SSH-launched PowerShell session may not inherit
+the Visual Studio Developer Command Prompt environment. Initialize the
+installed MSVC toolchain through `vswhere.exe` and `VsDevCmd.bat -arch=x64`
+using a local profile or helper, then verify the tools before building:
+
+```powershell
+Get-Command link.exe, cl.exe
+```
+
+Do not hard-code a versioned Visual Studio directory into the repository. The
+helper should discover the installation through the Visual Studio installer and
+import its environment. Rust may fall back to its bundled `rust-lld.exe`, but
+native Windows FFI/VISA validation must still expose and verify `link.exe` and
+`cl.exe`.
+
 Connect only through the aliases and validate the exact revision before
 building:
 
@@ -158,13 +173,20 @@ pnpm build
 ```
 
 Native Windows builds additionally require the Windows feature matrix and its
-VISA SDK/native dependencies from CI. Use an already provisioned environment
-or a Nix-backed WSL workflow; do not install Rust, Node, pnpm, Python, or native
-libraries through Scoop, winget, rustup, Homebrew, or another host package
-manager. A missing Nix/WSL or native SDK is an environment limitation to
-report, not a reason to bypass the repository policy. Build and test commands
-must not trigger, fetch from, screenshot, or otherwise operate live equipment
-unless that separate hardware action is explicitly authorized.
+VISA SDK/native dependencies from CI. The repository flake targets Linux and
+macOS; it is not a native Windows package manager environment. For Nix-backed
+Windows development, use WSL2 or NixOS-WSL and install Nix inside that Linux
+environment using the [official Nix installation instructions](https://nix.dev/manual/nix/stable/installation/)
+and [WSL guidance](https://wiki.nixos.org/wiki/WSL). Do not install the Nix
+package manager through Scoop, winget, or another Windows package manager.
+The one-time Nix bootstrap is an environment prerequisite; after it is
+available, install project tools and enter the repository shell with Nix. Do
+not install Rust, Node, pnpm, Python, or native libraries through Scoop,
+winget, rustup, Homebrew, or another host package manager. A missing Nix/WSL or
+native SDK is an environment limitation to report, not a reason to bypass the
+repository policy. Build and test commands must not trigger, fetch from,
+screenshot, or otherwise operate live equipment unless that separate hardware
+action is explicitly authorized.
 
 Record the target role, commit, feature profile, toolchain source, commands,
 result, and environment limitations in the private handoff. Public Issues or
