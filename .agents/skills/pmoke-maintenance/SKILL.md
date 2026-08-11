@@ -83,13 +83,15 @@ Homebrew, or system package managers for local setup unless the user explicitly
 authorizes an exception. Do not update Nix inputs merely to obtain a tool;
 report an unavailable package as an environment block.
 
-The repository shell provides Python 3.12 with the Nix-packaged NumPy runtime
-required by the Rust/PyO3 tests, sets `PYO3_PYTHON` to that interpreter, and
-exposes its site-packages to embedded Python. The pinned nixpkgs revision does
-not currently provide a complete buildable environment for `scipy`, `lmfit`,
-`matplotlib`, and `gsplot` on every supported host. Do not install those
-packages with pip; report checks that require them as an environment
-limitation.
+The repository shell provides Python 3.12 with the Nix-packaged NumPy, SciPy,
+lmfit, matplotlib, and pinned PyPI `gsplot` runtimes required by the Rust/PyO3
+and analysis tests, sets `PYO3_PYTHON` to that interpreter, and exposes its
+site-packages to embedded Python. The shell applies a narrow override for one
+known SciPy precision-test failure with the pinned NumPy/SciPy pair while
+retaining the rest of the dependency checks. Linux shells additionally provide
+Chromium, `pkg-config`, and the Nix-packaged linux-gpib userspace library for
+the GPIB build lane. Do not install these dependencies with pip or another host
+package manager.
 
 ### WSL boundary
 

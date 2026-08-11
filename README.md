@@ -66,16 +66,16 @@ from this repository. Do not install Nix or project dependencies through
 Scoop, winget, global npm/pnpm, `rustup`, or `pip`. WSL builds are Linux-native;
 native Windows MSVC/VISA validation is a separate lane.
 
-The shell pins Python 3.12, provides the Nix-packaged NumPy runtime required by
-the Rust/PyO3 tests, sets `PYO3_PYTHON` to that interpreter, and exposes its
-site-packages to embedded Python. It also provides Chromium for browser checks
-on Linux. On macOS, use an existing Nix-managed Chrome/Chromium executable; if
-none is available, report browser validation as an environment limitation. The
-pinned nixpkgs revision does not currently provide a complete buildable
-environment for `scipy`, `lmfit`, `matplotlib`, and `gsplot` on every supported
-host. Do not install those packages with pip; report checks that require them
-as an environment limitation until their Nix packaging is available and
-validated.
+The shell pins Python 3.12 and provides the Nix-packaged NumPy, SciPy, lmfit,
+matplotlib, and the pinned PyPI `gsplot` package required by the Rust/PyO3 and
+analysis tests. It sets `PYO3_PYTHON` to that interpreter and exposes its
+site-packages to embedded Python. It applies a narrow override for one known
+SciPy precision-test failure with the pinned NumPy/SciPy pair while retaining
+the rest of SciPy's checks. Linux shells also provide Chromium, `pkg-config`,
+and the Nix-packaged linux-gpib userspace library for the GPIB build lane. On
+macOS, use an existing Nix-managed Chrome/Chromium executable; if none is
+available, report browser validation as an environment limitation. Do not
+install Python or native dependencies with pip or another host package manager.
 
 The host's WSL profile is managed outside this repository. GUI, systemd, and
 GPIB USB/IP integration are optional capabilities and are not enabled by
