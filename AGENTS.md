@@ -275,6 +275,52 @@ split:
   validation status, known environment limitation, and next decision. Keep
   public wording factual and safe to quote.
 
+## Long-running implementation and branch policy
+
+For a change that spans multiple crates, platforms, generated outputs, or
+review concerns, split the work into independently reviewable slices. The
+number of slices is determined by ownership and rollback boundaries, not by a
+fixed quota. Do not keep an otherwise separable change in one oversized branch
+or PR merely because it belongs to the same Issue.
+
+- Start from an up-to-date `main` after the Issue and acceptance criteria are
+  clear. Use a private local branch first when external publication has not
+  been authorized, then use a descriptive branch such as
+  `feat/<goal>/<slice>`, `fix/<goal>/<slice>`, or
+  `docs/<goal>/<slice>`. Do not put hostnames, usernames, paths, or other
+  private context in branch names.
+- Prefer one normal PR per independently reviewable slice: for example,
+  contract/core behavior, integration/generated output, and website/UI
+  evidence when those boundaries are genuinely independent. Every PR remains
+  linked to the same Issue and contains only its current scope, outcome,
+  validation, blocker, residual risk, and next work. Never reintroduce a Draft
+  PR phase for this workflow.
+- If a slice depends on another unmerged slice, use a stacked branch and a
+  normal dependent PR. Make the dependency and merge order explicit in the PR
+  body; after the base slice merges, retarget the next PR to `main`, update it
+  to the current head, and rerun all relevant checks before merging it. Do not
+  treat a green check from an old base or old head as current evidence.
+- Keep each commit cohesive, conventionally named, and as buildable/testable
+  as the slice permits. A commit should represent one logical behavior,
+  contract, test, generated-output, or documentation change; do not create
+  commits that only move unrelated files or leave known broken intermediate
+  states. Required generated output belongs with the source change it records,
+  unless the generator necessarily requires a later integration slice.
+- For each slice, run the narrowest relevant validation before committing,
+  perform Review 1 on the complete working-tree behavior, stage only the
+  intended files, perform Review 2 on the staged diff, and then commit. If a
+  review or fix changes any file, repeat both reviews and the affected tests.
+- When external handoff is authorized, push the slice branch and open its
+  normal PR early enough for review. Merge slices in dependency order only
+  after the exact PR head is current, required and relevant CI checks pass,
+  conversations are resolved, and no blocking review remains. After each
+  merge, verify `main` before advancing a stacked slice; delete local and
+  remote topic branches only after the merge is confirmed.
+- A single maintainer must still record Review 1 and Review 2 as separate,
+  explicit checklists and rely on reproducible CI and local evidence; do not
+  fabricate an approval from a second reviewer. Community review is welcome
+  but does not replace the maintainer's responsibility for the gates.
+
 ## Working procedure
 
 1. Start with `git status --short --branch`, `git remote -v`, and
@@ -285,7 +331,9 @@ split:
    inspect both Rust and website consumers instead of inferring behavior from a
    single module.
 3. Make a small plan. State the affected crate, platform/feature profiles,
-   generated outputs, external systems, and validation commands.
+   generated outputs, external systems, validation commands, and—if the change
+   is long-running—the slice map, branch topology, dependency order, and
+   merge/rollback boundaries.
 4. Edit source files with `apply_patch`. Keep generated files synchronized by
    running their owner (`cargo xtask docs-export`) and reviewing the result;
    never conceal generated drift with manual edits.
@@ -295,9 +343,11 @@ split:
    restart Review 1.
 7. Stage only the intended files and perform Review 2 on the staged diff. If
    anything changes after Review 2, repeat both reviews.
-8. Use a concise conventional commit when the user requested a commit. Do not
-   push, merge, deploy, or delete the branch unless the user explicitly asks
-   for that handoff.
+8. Use a concise conventional commit for each reviewed slice when the user
+   requested commits. Keep commits small without splitting a behavior from
+   its required test or generated output. Do not push, merge, deploy, or delete
+   the branch unless the user explicitly asks for that handoff; once asked,
+   apply the exact-head CI and stacked-branch gates above.
 
 ## Toolchain and validation matrix
 

@@ -44,6 +44,33 @@ validation state. Put UI evidence in the Issue or PR with route, locale,
 viewport, theme, and dev/export context; do not add an unredacted screenshot,
 recording, log, endpoint, or personal path to the repository.
 
+## Long website changes
+
+For a website task that spans content, components, workers/WASM, generated
+references, or release checks, split it into independently reviewable slices
+with clear ownership and rollback boundaries. Use one normal PR per slice when
+it can be validated independently; use explicitly stacked branches and
+dependent normal PRs when a later UI slice requires an earlier Rust/WASM or
+route slice. State the dependency and merge order, then retarget the next PR
+to `main` and rerun CI after the base merges.
+
+Keep commits cohesive: pair a route/component behavior with its tests, keep
+English/Japanese content changes together when they describe one public
+contract, and include generator-owned output with the source change that
+produced it. Do not split commits only by directory or leave a known broken
+intermediate state. For each slice, run the narrowest checks, perform Review 1
+on behavior and rendered output, stage and perform Review 2 on the complete
+diff, then commit. If a fix changes the reviewed surface, repeat both reviews
+and the affected checks.
+
+For UI slices, use `pnpm run build:dev` as the iterative visual checkpoint and
+record the route, locale, viewport, theme, and dev/export context. Push and
+open the normal PR only when external handoff is authorized; merge only after
+the exact head has passing required and relevant CI (including browser,
+accessibility, visual, and Lighthouse gates when applicable), resolved
+conversations, and no blocking review. A single maintainer records Review 1
+and Review 2 explicitly rather than fabricating a second approval.
+
 ## UI-first workflow
 
 1. Inspect the owning route/component, its locale counterpart, styles, tests,

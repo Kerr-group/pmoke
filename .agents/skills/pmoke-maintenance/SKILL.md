@@ -55,6 +55,38 @@ compatibility, or security contract. Keep the public work-item split explicit:
   public Issue or PR. A GitHub Project is optional and is only a dashboard;
   it does not replace the Issue, requirements document, or PR description.
 
+## Long-running changes and stacked slices
+
+For work that crosses crates, platforms, generated references, website
+surfaces, or multiple risk areas, turn the goal into independently reviewable
+implementation slices. Choose boundaries by ownership, validation lane, and
+rollback behavior; do not use a single oversized branch or PR when a slice can
+stand on its own.
+
+- Start each slice from an up-to-date `main` when possible, using a descriptive
+  branch such as `feat/<goal>/<slice>`, `fix/<goal>/<slice>`, or
+  `docs/<goal>/<slice>`. Keep private machine information out of names.
+- Use one normal PR per independent slice and link all of them to the same
+  Issue. If a slice must depend on an unmerged slice, use an explicit stacked
+  branch/PR, state the dependency and merge order, and retarget the next PR to
+  `main` after its base merges. Re-run CI on the resulting head; an old green
+  check is not evidence for a new base or commit.
+- Keep commits cohesive and conventionally named. Keep a behavior with its
+  tests and required generated output in the same logical slice unless the
+  generator or dependency order makes a later integration commit unavoidable.
+  Avoid knowingly broken intermediate commits and avoid splitting commits only
+  by file.
+- For every slice, run targeted checks, perform Review 1 on the complete
+  working-tree behavior, stage only the intended files, perform Review 2 on the
+  staged diff, then commit. Any fix after either review restarts both reviews
+  and the affected checks. A solo maintainer records both reviews as explicit
+  gates rather than inventing a second approval.
+- Once handoff is authorized, push and open the normal PR early, keep its body
+  limited to current scope/outcome/validation/blockers/residual risks/next
+  work, and merge slices in dependency order only after the exact head is
+  current, required and relevant CI passes, conversations are resolved, and no
+  blocking review remains. Delete topic branches only after confirming merge.
+
 ## Operating procedure
 
 ### 1. Triage
@@ -70,6 +102,10 @@ git log -5 --oneline --decorate
 Preserve unrelated work. Identify the changed crate/site area, public contract,
 feature profiles, generated outputs, native dependencies, and whether the task
 could contact hardware or write external state.
+
+For a long-running change, also record the slice map, branch topology,
+dependency order, per-slice validation lane, and the merge/rollback boundary
+before editing.
 
 ### 2. Inspect before editing
 
