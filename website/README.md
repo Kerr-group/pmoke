@@ -21,11 +21,12 @@ nix develop
 Check the versions after entering the shell. The website pins exact Node and
 pnpm versions; a close Nix package version is not a reason to ignore an engine
 warning. Do not use `cargo install`, `rustup target add`, or
-`pnpm exec playwright install` on the Nix-managed workstation. Use an existing
-Nix-provided or Nix-wrapped Chrome/Chromium executable for browser checks. If a
-required Rust target or browser is not available through Nix, report the
-validation as blocked and add it to a repository dev shell in a separate,
-reviewed change; do not enable unsupported packages just for a local pass.
+`pnpm exec playwright install` on the Nix-managed workstation. The repository
+shell provides pinned Chromium on Linux and selects it for
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; use that Nix-provided executable for
+browser checks. On macOS, use an existing Nix-managed Chrome/Chromium
+executable. If a required Rust target or browser is not available through Nix,
+report the validation as blocked rather than installing outside the shell.
 
 ## UI development loop
 
@@ -54,10 +55,10 @@ cd website
 pnpm install --frozen-lockfile
 pnpm build
 pnpm check
-if command -v google-chrome >/dev/null 2>&1; then
-  export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome)"
-elif command -v chromium >/dev/null 2>&1; then
+if command -v chromium >/dev/null 2>&1; then
   export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v chromium)"
+elif command -v google-chrome >/dev/null 2>&1; then
+  export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome)"
 else
   echo "A Nix-provided Chrome/Chromium executable is required for test:e2e" >&2
   exit 1

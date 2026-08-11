@@ -107,6 +107,13 @@ For agent-run local work, use Nix as the installation authority:
   missing package and keep the validation blocked rather than bypassing Nix.
 - Use Nix-provided browsers and native libraries for local validation. Record
   the package source/version and any environment limitation in the handoff.
+- The repository shell provides Python 3.12 with the Nix-packaged NumPy
+  runtime required by the Rust/PyO3 tests; it sets `PYO3_PYTHON` to that
+  interpreter and exposes its site-packages to embedded Python. The pinned
+  nixpkgs revision does not currently provide a complete buildable environment
+  for `scipy`, `lmfit`, `matplotlib`, and `gsplot` on every supported host. Do
+  not install those packages with pip; report checks that require them as an
+  environment limitation.
 
 ### WSL and the unified Nix host configuration
 

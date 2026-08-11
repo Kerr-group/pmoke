@@ -61,10 +61,21 @@ cargo build --locked --workspace --all-targets --no-default-features
 
 For WSL, bootstrap Nix inside WSL using the [official Nix installation
 instructions](https://nix.dev/manual/nix/stable/installation/) and the
-[NixOS-WSL guidance](https://wiki.nixos.org/wiki/WSL), then run `nix develop`
+[official WSL guidance](https://wiki.nixos.org/wiki/WSL), then run `nix develop`
 from this repository. Do not install Nix or project dependencies through
 Scoop, winget, global npm/pnpm, `rustup`, or `pip`. WSL builds are Linux-native;
 native Windows MSVC/VISA validation is a separate lane.
+
+The shell pins Python 3.12, provides the Nix-packaged NumPy runtime required by
+the Rust/PyO3 tests, sets `PYO3_PYTHON` to that interpreter, and exposes its
+site-packages to embedded Python. It also provides Chromium for browser checks
+on Linux. On macOS, use an existing Nix-managed Chrome/Chromium executable; if
+none is available, report browser validation as an environment limitation. The
+pinned nixpkgs revision does not currently provide a complete buildable
+environment for `scipy`, `lmfit`, `matplotlib`, and `gsplot` on every supported
+host. Do not install those packages with pip; report checks that require them
+as an environment limitation until their Nix packaging is available and
+validated.
 
 The host's WSL profile is managed outside this repository. GUI, systemd, and
 GPIB USB/IP integration are optional capabilities and are not enabled by
@@ -72,13 +83,14 @@ ordinary build or test commands. Hardware preflight must remain read-only;
 builds and tests use dummy transports unless live hardware access is explicitly
 authorized.
 
-### 📦 Install
+### 📦 Install outside Nix
 
 Clone the repository, then use the platform build that matches the host:
 
-The commands below describe end-user installation options. Contributors and
-agents working on a Nix-managed workstation should use the `nix develop` shell
-above rather than installing repository tools into the host environment.
+The commands below describe installation for users who are not using the
+repository's Nix shell. Contributors and agents working on a Nix-managed
+workstation should use the `nix develop` shell above rather than installing
+repository tools into the host environment.
 
 ```bash
 git clone https://github.com/Kerr-group/pmoke.git
