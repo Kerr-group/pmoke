@@ -9,6 +9,28 @@ type StructuredData = {
   contents: { heading: string | undefined; content: string }[];
 };
 
+// Keep high-intent user vocabulary close to the page that owns the concept.
+// These compact, locale-specific hints improve retrieval without displaying
+// artificial keywords in the rendered documentation or AI exports.
+const SEARCH_HINTS: Record<string, string> = {
+  '/en/docs/quickstart': 'run the reference sensor lock-in phase Kerr chain complete analysis workflow',
+  '/en/docs/configuration/validation': 'migrate a legacy configuration invalid TOML diagnostics configuration error field path',
+  '/en/docs/installation/feature-flags': 'analysis-only build features Cargo feature flags',
+  '/en/docs/installation': 'set up the Python analysis environment build from source source build',
+  '/en/docs/installation/transports': 'TCP instrument timeout settings network instrument connection',
+  '/en/docs/interactive/waveform-analyzer': 'calculate Kerr angle in the browser browser lock-in simulator',
+  '/ja/docs/quickstart': '参照 センサー ロックイン 位相 Kerr 一括 解析 ワークフロー',
+  '/ja/docs/configuration/validation': '不正な TOML の診断 legacy 設定の移行 設定エラーのフィールドパス',
+  '/ja/docs/installation/feature-flags': '解析専用 build feature Cargo 機能フラグ',
+  '/ja/docs/installation': 'source からの build Python 解析環境の準備',
+  '/ja/docs/installation/transports': 'TCP 測定装置 timeout 設定 ネットワーク 接続',
+  '/ja/docs/interactive/waveform-analyzer': 'ブラウザ Kerr 角 計算 lock-in simulator',
+};
+
+const SEARCH_SECTION_HINTS: Record<string, string> = {
+  '/en/docs/configuration/validation#migrate-legacy-schema': SEARCH_HINTS['/en/docs/configuration/validation'],
+};
+
 export function GET() {
   const records = getSortedPages().flatMap((page) => buildRecords(page, page.data.structuredData));
   return Response.json({
@@ -35,7 +57,8 @@ function buildRecords(
   }
 
   const allContent = structuredData.contents.map((item) => item.content).join(' ');
-  const pageText = cleanText([page.data.title, page.data.description, allContent].filter(Boolean).join(' '));
+  const hints = SEARCH_HINTS[page.url] ?? '';
+  const pageText = cleanText([page.data.title, page.data.description, hints, allContent].filter(Boolean).join(' '));
   const records = [
     makeRecord({
       id: `${locale}:${page.url}:page`,
@@ -53,6 +76,7 @@ function buildRecords(
     const section = cleanText(headingNames.get(headingId) ?? headingId);
     const content = cleanText(values.join(' '));
     if (content.length === 0) continue;
+    const sectionHints = SEARCH_SECTION_HINTS[`${page.url}#${headingId}`] ?? '';
     records.push(
       makeRecord({
         id: `${locale}:${page.url}:${headingId}`,
@@ -61,7 +85,7 @@ function buildRecords(
         title: page.data.title,
         section,
         excerpt: content.slice(0, 360),
-        searchText: cleanText(`${page.data.title} ${section} ${content}`).slice(0, 5_000),
+        searchText: cleanText(`${page.data.title} ${section} ${sectionHints} ${content}`).slice(0, 5_000),
       }),
     );
   }
