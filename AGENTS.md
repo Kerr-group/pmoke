@@ -243,20 +243,21 @@ split:
   `docs/project/requirements.md` contains stable product requirements,
   compatibility promises, and security boundaries; GitHub Issues contain the
   purpose, scope, non-goals, acceptance criteria, compatibility impact, and
-  security impact of a durable goal; Draft PRs contain the active
-  implementation state and validation evidence; `SECURITY.md` contains private
+  security impact of a durable goal; PRs contain the active implementation
+  state and validation evidence; `SECURITY.md` contains private
   vulnerability-reporting instructions. A GitHub Project may provide an
   optional dashboard, but it is not a requirements or status source of truth.
-- Track one durable, user-facing goal in a GitHub Issue; use a Draft PR for
-  active implementation and its description for a short scope/outcome/
-  validation/blocker checklist.
-- When implementation starts, link the Draft PR to the Issue with `Refs #N`.
-  Keep the PR in Draft while work or validation remains; record Review 1 on the
-  Issue or design discussion and Review 2 on the complete staged PR diff,
-  tests, and generated artifacts. Mark the PR Ready for review only after the
-  acceptance criteria and validation evidence are complete. Merge first, then
-  perform any required deployment or release verification and close the Issue
-  explicitly.
+- Track one durable, user-facing goal in a GitHub Issue; open a normal linked
+  PR when implementation starts and keep its description as a short
+  scope/outcome/validation/blocker checklist. Do not use a Draft PR phase.
+- When implementation starts, link the PR to the Issue with `Refs #N` and keep
+  it open for review from the beginning. Record Review 1 on the Issue or design
+  discussion and Review 2 on the complete staged PR diff, tests, and generated
+  artifacts. Merge only after the acceptance criteria and validation evidence
+  are complete, the current head is up to date, required and relevant checks
+  pass on that head, conversations are resolved, and no blocking review remains.
+  With explicit maintainer authorization, merge first, then perform any
+  required deployment or release verification and close the Issue explicitly.
 - Record stable instructions in README or docs and released user-visible
   changes in the changelog. Do not turn the repository into a chronological
   progress diary or commit private deliberation.

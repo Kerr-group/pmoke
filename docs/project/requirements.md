@@ -84,13 +84,15 @@ The following surfaces are part of the product contract:
 
 Every durable public change has one Issue with purpose, scope, non-goals,
 acceptance criteria, compatibility impact, and security impact. Implementation
-starts in a linked Draft PR. Review 1 covers the Issue, design, API or public
-contract, compatibility, security, and rollback decision. Review 2 covers the
-complete staged diff, tests, generated outputs, and public-artifact hygiene.
+starts in a linked normal PR that is open for review from the beginning. Review
+1 covers the Issue, design, API or public contract, compatibility, security,
+and rollback decision. Review 2 covers the complete staged diff, tests,
+generated outputs, and public-artifact hygiene.
 
 A change is ready for merge only when its acceptance criteria and relevant
-validation evidence are complete, known limitations are stated, and the PR has
-been marked ready for review. After merge, deployment or release verification
-is completed when applicable before the Issue is closed. User-visible release
-changes are recorded in `CHANGELOG.md`; temporary planning and private
-deliberation stay out of the repository.
+validation evidence are complete, known limitations are stated, the current PR
+head is up to date, required and relevant checks pass on that head,
+conversations are resolved, and no blocking review remains. After merge,
+deployment or release verification is completed when applicable before the
+Issue is closed. User-visible release changes are recorded in `CHANGELOG.md`;
+temporary planning and private deliberation stay out of the repository.

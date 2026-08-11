@@ -191,8 +191,8 @@ pmoke/
 
 Stable product, compatibility, and security boundaries are documented in the
 [project requirements](docs/project/requirements.md). Public work follows one
-GitHub Issue per durable goal, a linked Draft PR for implementation, and
-explicit validation before the PR is marked ready. See the
+GitHub Issue per durable goal, a linked normal PR opened when implementation
+starts, and explicit validation before merge. See the
 [security policy](SECURITY.md) for private vulnerability reporting; do not
 disclose security details in public Issues or PRs.
 

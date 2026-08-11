@@ -12,9 +12,9 @@ Refs #<!-- one durable goal per Issue; use an auto-closing keyword only after po
 
 ## Current status
 
-- [ ] Acceptance criteria in the linked Issue are complete.
-- [ ] This PR is still Draft while implementation or validation remains.
-- [ ] This PR is Ready for review only after the evidence below is complete.
+- [ ] This normal PR is open for review from implementation start.
+- [ ] Acceptance criteria in the linked Issue are complete before merge.
+- [ ] Current head, required checks, relevant validation, and blockers are current.
 
 ## Review 1 — Issue, design, API, and security
 
@@ -54,11 +54,12 @@ Refs #<!-- one durable goal per Issue; use an auto-closing keyword only after po
 ## Residual risks and next work
 
 - Residual risk:
-- Next work before Ready/merge:
+- Next work before merge:
 - Post-merge or release verification needed:
 
 ## Handoff
 
 - [ ] CI is green or the remaining failure is explicitly explained.
-- [ ] The PR is ready for review.
+- [ ] Review 1 and Review 2 are complete and no blocking review remains.
+- [ ] The current head is up to date and conversations are resolved.
 - [ ] After merge, required deployment/release verification will be completed before closing the linked Issue.
