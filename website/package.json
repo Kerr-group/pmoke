@@ -2,7 +2,7 @@
   "name": "website",
   "version": "0.1.0",
   "private": true,
-  "description": "Static bilingual documentation for the pmoke pulsed-MOKE CLI.",
+  "description": "Static bilingual documentation for reproducible pulsed-field MOKE acquisition and analysis with the pmoke Rust CLI.",
   "packageManager": "pnpm@11.18.0",
   "engines": {
     "node": ">=22.23.1 <22.24.0"

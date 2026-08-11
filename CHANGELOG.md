@@ -16,6 +16,9 @@
 
 ### Changes
 
+- The bilingual website now presents pmoke as a reproducible pulsed-field
+  MOKE workflow from field-pulse capture through phase-aware lock-in analysis
+  and Kerr-angle extraction.
 - The monitor's primary output is now an Activity view with explicit live,
   paused, history, and unseen-event states plus logical warning/error counts.
 - Monitor child commands use structured JSONL events internally; direct CLI

@@ -10,7 +10,7 @@ const checks = [
     contains: '<h1>pmoke</h1>',
     headers: { 'strict-transport-security': 'max-age=' },
   },
-  { path: 'ja/', contains: '精密信号ラボ' },
+  { path: 'ja/', contains: 'パルス磁場MOKE' },
   { path: 'en/docs/quickstart/', contains: 'Quickstart' },
   { path: 'ja/docs/quickstart/', contains: 'クイックスタート' },
   { path: 'en/docs/interactive/waveform-analyzer/', contains: 'Waveform Analyzer' },

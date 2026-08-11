@@ -2,9 +2,9 @@ export const appName = 'pmoke';
 export const docsRoute = '/docs';
 export const docsContentRoute = '/llm';
 export const siteDescription =
-  'Precision pulsed-MOKE acquisition, lock-in analysis, and instrument control.';
+  'A reproducible Rust workflow for pulsed-field MOKE—from instrument trigger and waveform capture to phase-aware lock-in analysis and Kerr-angle extraction.';
 export const siteDescriptionJa =
-  '再現可能なパルスMOKE取得、ロックイン解析、計測器制御。';
+  '装置トリガーと波形の取得から、位相回転を含むロックイン解析、Kerr角の算出までを一貫して扱う、再現可能なRustワークフロー。';
 const configuredBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/pmoke';
 export const basePath = configuredBasePath === '/' ? '' : configuredBasePath.replace(/\/$/, '');
 export const siteOrigin = (process.env.NEXT_PUBLIC_SITE_ORIGIN ?? 'https://kerr-group.github.io').replace(
@@ -23,7 +23,7 @@ export const socialImage = {
   url: absoluteUrl('/og.png'),
   width: 1200,
   height: 630,
-  alt: 'pmoke pulsed-MOKE precision signal lab',
+  alt: 'pmoke pulsed-field MOKE reproducible measurement',
 };
 
 export const faviconImage = `${basePath}/favicon.svg`;
