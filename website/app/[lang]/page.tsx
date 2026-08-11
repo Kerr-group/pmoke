@@ -109,13 +109,15 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
       <section className="hero-band">
         <SignalHero labels={text.signal} />
         <div className="hero-copy">
-          <p className="eyebrow"><Cpu aria-hidden="true" />{text.kicker}</p>
-          <h1>pmoke</h1>
-          <p className="hero-lead">{text.lead}</p>
-          <p className="hero-description">{text.description}</p>
-          <div className="hero-actions">
-            <Link className="primary-action" href={`/${lang}/docs`} prefetch={false}>{text.docs}<ArrowRight aria-hidden="true" /></Link>
-            <Link className="secondary-action" href={`/${lang}/docs/quickstart`} prefetch={false}>{text.quickstart}</Link>
+          <div className="hero-copy-panel">
+            <p className="eyebrow"><Cpu aria-hidden="true" />{text.kicker}</p>
+            <h1>pmoke</h1>
+            <p className="hero-lead">{text.lead}</p>
+            <p className="hero-description">{text.description}</p>
+            <div className="hero-actions">
+              <Link className="primary-action" href={`/${lang}/docs`} prefetch={false}>{text.docs}<ArrowRight aria-hidden="true" /></Link>
+              <Link className="secondary-action" href={`/${lang}/docs/quickstart`} prefetch={false}>{text.quickstart}</Link>
+            </div>
           </div>
         </div>
       </section>

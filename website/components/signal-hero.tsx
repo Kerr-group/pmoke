@@ -407,10 +407,16 @@ function sequenceStageForProgress(progress: number): SequenceStage {
   return 'kerr-angle';
 }
 
-function finitePulseEnvelope(t: number): number {
-  const rise = smoothStep((t - 0.18) / 0.12);
-  const fall = 1 - smoothStep((t - 0.6) / 0.14);
-  return rise * fall * (0.92 + 0.08 * Math.sin(TAU * 2 * t));
+function finitePulseEnvelope(localTime: number): number {
+  // The site illustration follows the measured pulse morphology: a fast
+  // positive lobe, a smaller negative undershoot, and a return to baseline.
+  // It is deliberately normalized; no private capture or instrument scale is
+  // embedded in the public hero graphic.
+  const onset = smoothStep(localTime / 0.1);
+  const settle = 1 - smoothStep((localTime - 0.78) / 0.22);
+  const positiveLobe = Math.exp(-0.5 * ((localTime - 0.28) / 0.16) ** 2);
+  const negativeUndershoot = 0.24 * Math.exp(-0.5 * ((localTime - 0.62) / 0.12) ** 2);
+  return onset * settle * (positiveLobe - negativeUndershoot);
 }
 
 function periodicSample(values: Float64Array, channel: number, position: number): number {
@@ -435,25 +441,31 @@ function drawSignals(
 
   const palette = dark ? DARK_COLORS : LIGHT_COLORS;
   const pointsCount = previewPointCount(width, count);
-  const acquisitionStart = width * 0.15;
-  const acquisitionEnd = width * 0.78;
-  const acquisitionReveal = reveal(sequenceProgress, 0, 0.24);
-  const pulseReveal = reveal(sequenceProgress, 0.1, 0.44);
-  const waveformReveal = reveal(sequenceProgress, 0.3, 0.7);
-  const lockInReveal = reveal(sequenceProgress, 0.56, 0.86);
-  const angleReveal = reveal(sequenceProgress, 0.72, 0.96);
+  const compactLayout = width < 860;
+  const plotLeft = compactLayout ? width * 0.08 : width * 0.56;
+  const plotRight = compactLayout ? width * 0.92 : width * 0.95;
+  const plotWidth = plotRight - plotLeft;
+  const acquisitionStart = plotLeft;
+  const acquisitionEnd = plotRight;
+  const traceStart = acquisitionStart + plotWidth * 0.08;
+  const traceEnd = acquisitionEnd - plotWidth * 0.06;
+  const acquisitionReveal = reveal(sequenceProgress, 0, 0.18);
+  const pulseReveal = reveal(sequenceProgress, 0, 0.36);
+  const waveformReveal = reveal(sequenceProgress, 0.22, 0.62);
+  const lockInReveal = reveal(sequenceProgress, 0.48, 0.82);
+  const angleReveal = reveal(sequenceProgress, 0.68, 0.94);
 
   drawAcquisitionWindow(context, width, height, acquisitionStart, acquisitionEnd, acquisitionReveal, palette);
-  drawFieldPulse(context, width, height, pulseReveal, palette);
+  drawFieldPulse(context, height, traceStart, traceEnd, pulseReveal, compactLayout, palette);
 
   drawTrace(
     context,
     values,
     2,
-    acquisitionStart,
-    acquisitionEnd,
-    height * 0.49,
-    height * 0.075,
+    traceStart,
+    traceEnd,
+    height * (compactLayout ? 0.32 : 0.49),
+    height * (compactLayout ? 0.04 : 0.075),
     pointsCount,
     sequenceProgress * 0.12,
     waveformReveal,
@@ -463,10 +475,10 @@ function drawSignals(
     context,
     values,
     3,
-    acquisitionStart,
-    acquisitionEnd,
-    height * 0.65,
-    height * 0.062,
+    traceStart,
+    traceEnd,
+    height * (compactLayout ? 0.365 : 0.65),
+    height * (compactLayout ? 0.035 : 0.062),
     pointsCount,
     sequenceProgress * 0.12 + 0.08,
     waveformReveal,
@@ -487,8 +499,9 @@ function drawAcquisitionWindow(
   active: number,
   palette: typeof DARK_COLORS,
 ): void {
-  const top = height * 0.3;
-  const bottom = height * 0.73;
+  const compactLayout = width < 860;
+  const top = height * (compactLayout ? 0.3 : 0.36);
+  const bottom = height * (compactLayout ? 0.4 : 0.72);
   context.save();
   context.lineWidth = 1;
   context.strokeStyle = palette.grid;
@@ -496,27 +509,35 @@ function drawAcquisitionWindow(
   context.setLineDash([7, 7]);
   context.strokeRect(startX, top, endX - startX, bottom - top);
   context.setLineDash([]);
+  context.globalAlpha = 0.04 + active * 0.1;
+  context.fillStyle = palette.cyan;
+  context.fillRect(startX, top, (endX - startX) * active, bottom - top);
   context.globalAlpha = 0.35 + active * 0.65;
   context.beginPath();
-  context.moveTo(width * 0.1, top - height * 0.06);
-  context.lineTo(width * 0.1, bottom + height * 0.04);
   context.moveTo(startX, top - height * 0.04);
   context.lineTo(startX, bottom + height * 0.04);
+  context.moveTo(endX, top - height * 0.04);
+  context.lineTo(endX, bottom + height * 0.04);
+  const gateX = startX + (endX - startX) * active;
+  context.strokeStyle = palette.cyan;
+  context.globalAlpha = 0.18 + active * 0.72;
+  context.moveTo(gateX, top);
+  context.lineTo(gateX, bottom);
   context.stroke();
   context.restore();
 }
 
 function drawFieldPulse(
   context: CanvasRenderingContext2D,
-  width: number,
   height: number,
+  startX: number,
+  endX: number,
   active: number,
+  compactLayout: boolean,
   palette: typeof DARK_COLORS,
 ): void {
-  const startT = 0.08;
-  const endT = 0.82;
-  const baseline = height * 0.2;
-  const amplitude = height * 0.14;
+  const baseline = height * 0.24;
+  const amplitude = height * (compactLayout ? 0.065 : 0.14);
   const points = 144;
 
   const drawPulse = (revealTo: number, alpha: number, fill: boolean) => {
@@ -527,13 +548,12 @@ function drawFieldPulse(
     context.lineCap = 'round';
     context.globalAlpha = alpha;
     context.beginPath();
-    let lastX = width * startT;
+    let lastX = startX;
     for (let i = 0; i < points; i += 1) {
       const local = i / (points - 1);
       if (local > revealTo) break;
-      const t = startT + (endT - startT) * local;
-      const x = width * t;
-      const y = baseline - finitePulseEnvelope(t) * amplitude;
+      const x = startX + (endX - startX) * local;
+      const y = baseline - finitePulseEnvelope(local) * amplitude;
       if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
       lastX = x;
     }
@@ -541,9 +561,18 @@ function drawFieldPulse(
     if (fill && revealTo > 0) {
       context.globalAlpha = alpha * 0.32;
       context.lineTo(lastX, baseline);
-      context.lineTo(width * startT, baseline);
+      context.lineTo(startX, baseline);
       context.closePath();
       context.fillStyle = palette.cyan;
+      context.fill();
+
+      const markerProgress = clamp(revealTo, 0, 1);
+      const markerX = startX + (endX - startX) * markerProgress;
+      const markerY = baseline - finitePulseEnvelope(markerProgress) * amplitude;
+      context.globalAlpha = Math.min(1, alpha + 0.14);
+      context.fillStyle = palette.cyan;
+      context.beginPath();
+      context.arc(markerX, markerY, 3.5, 0, TAU);
       context.fill();
     }
     context.restore();
