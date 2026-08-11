@@ -44,7 +44,7 @@ test('deep documentation links and static search remain under the project base p
   await searchInput.fill('Kerr');
   await expect(page.getByText('概要', { exact: true }).last()).toBeVisible();
   await searchInput.fill('lockin.filter.iir_order');
-  await expect(page.getByText('設定リファレンス', { exact: true }).last()).toBeVisible();
+  await expect(page.getByText('検証・移行', { exact: true }).last()).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('textbox')).toBeHidden();
   const response = await page.request.get('/pmoke/api/search');

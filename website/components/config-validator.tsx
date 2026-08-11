@@ -56,7 +56,7 @@ type WorkerResponse =
 
 const REPORT_FORMAT_VERSION = 1;
 
-const DEFAULT_V4_SAMPLE = `version = 4
+const DEFAULT_V5_SAMPLE = `version = 5
 
 [scope]
 model = "DHO5108"
@@ -102,7 +102,7 @@ mode = "save"
 decimation = "min_max"
 `;
 
-const INVALID_SAMPLE = DEFAULT_V4_SAMPLE.replace('channel = 2', 'channel = 1').replace(
+const INVALID_SAMPLE = DEFAULT_V5_SAMPLE.replace('channel = 2', 'channel = 1').replace(
   'workers = 2',
   'workers = 0',
 );
@@ -164,7 +164,7 @@ const copy = {
 
 export function ConfigValidator({ locale = 'en' }: { locale?: 'en' | 'ja' }) {
   const text = copy[locale];
-  const [input, setInput] = useState(DEFAULT_V4_SAMPLE);
+  const [input, setInput] = useState(DEFAULT_V5_SAMPLE);
   const [report, setReport] = useState<ValidationReport>();
   const [workerState, setWorkerState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [validating, setValidating] = useState(false);
@@ -295,7 +295,7 @@ export function ConfigValidator({ locale = 'en' }: { locale?: 'en' | 'ja' }) {
           <h3 id="config-validator-title">{text.title}</h3>
         </div>
         <div className="config-validator__samples" aria-label={text.samples}>
-          <button type="button" onClick={() => updateInput(DEFAULT_V4_SAMPLE)} title={text.sample}>
+          <button type="button" onClick={() => updateInput(DEFAULT_V5_SAMPLE)} title={text.sample}>
             <RotateCcw aria-hidden="true" /> {text.sample}
           </button>
           <button type="button" onClick={() => updateInput(INVALID_SAMPLE)} title={text.invalid}>

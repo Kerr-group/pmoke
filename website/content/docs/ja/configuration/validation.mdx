@@ -10,13 +10,16 @@ pmoke --config config.toml config validate
 pmoke config explain lockin.filter
 ```
 
-TOML構文、v4で未知のkey、値の範囲、channel role、filter制約、接続URI、model/transport compatibilityを検証。装置openを伴わない静的検証。
+TOML構文、v5で未知のkey、値の範囲、channel role、filter制約、接続URI、model/transport compatibilityを検証。装置openを伴わない静的検証。
+
+v5 runtimeの`lockin.filter.kind`は`boxcar_legacy`のみ受理。`fir_zero_phase`、
+`sync_iir_zero_phase`、`lockin.filter.iir_order`など過去のFIR/IIR kind・fieldは移行専用入力であり、解析を黙って変更せず明示的なmigration diagnosticを返す。
 
 editorで利用できる[config.schema.json](https://kerr-group.github.io/pmoke/config.schema.json)も提供。cross-fieldとhardware semanticsについてはruntime validationが最終基準。
 
 ## ブラウザ設定検証
 
-専用Web Workerでcanonical schema v4を検証。入力内容はブラウザ内に保持。driver、filesystem、Python package、hardware到達性はnative `pmoke doctor`で確認。v1-v3設定をブラウザで検証する前にmigrationを実行。
+専用Web Workerでcanonical schema v5を検証。入力内容はブラウザ内に保持。driver、filesystem、Python package、hardware到達性はnative `pmoke doctor`で確認。v1-v4設定をブラウザで検証する前にmigrationを実行。
 
 <ConfigValidator locale="ja" />
 
@@ -26,7 +29,7 @@ editorで利用できる[config.schema.json](https://kerr-group.github.io/pmoke/
 
 ```bash
 pmoke --config legacy.toml config migrate
-pmoke --config legacy.toml config migrate --output config.v4.toml
+pmoke --config legacy.toml config migrate --output config.v5.toml
 pmoke --config legacy.toml config migrate --in-place
 ```
 
