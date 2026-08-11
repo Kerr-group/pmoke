@@ -36,12 +36,13 @@ its absence instead of downloading one through a package manager.
 Preserve the `/pmoke/` base path, static export behavior, English/Japanese
 parity, no-JavaScript readability, and bounded worker/WASM failure recovery.
 Treat generated references and release metadata as owned by their generators.
-For a durable website goal, use the repository's public Issue → Draft PR
-workflow. Keep the Issue's acceptance, compatibility, and security decisions
-separate from the PR's current validation state. Put UI evidence in the Issue
-or PR with route, locale, viewport, theme, and dev/export context; do not add
-an unredacted screenshot, recording, log, endpoint, or personal path to the
-repository.
+For a durable website goal, use the repository's public Issue → normal PR
+workflow. Open the PR when implementation starts and keep it available for
+review; do not use a Draft PR phase. Keep the Issue's acceptance,
+compatibility, and security decisions separate from the PR's current
+validation state. Put UI evidence in the Issue or PR with route, locale,
+viewport, theme, and dev/export context; do not add an unredacted screenshot,
+recording, log, endpoint, or personal path to the repository.
 
 ## UI-first workflow
 
@@ -123,12 +124,12 @@ repository.
 
 ## Public progress and handoff
 
-Use a GitHub Issue for the durable user-facing goal, a Draft PR for active work,
-and the PR description for a concise checklist of scope, visible outcome,
-validation, screenshots, and blockers. Keep private deliberation and temporary
-notes out of tracked files. Use README/docs for stable instructions and a
-changelog for released user-visible changes; do not add a chronological public
-work diary unless the project explicitly wants one.
+Use a GitHub Issue for the durable user-facing goal, a normal PR opened at the
+start of active work, and the PR description for a concise checklist of scope,
+visible outcome, validation, screenshots, and blockers. Keep private
+deliberation and temporary notes out of tracked files. Use README/docs for
+stable instructions and a changelog for released user-visible changes; do not
+add a chronological public work diary unless the project explicitly wants one.
 
 For UI checkpoints, record the route, locale, viewport, theme, and whether the
 evidence came from `next dev` or the exported site. Never include tokens,

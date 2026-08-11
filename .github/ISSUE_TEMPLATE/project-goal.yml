@@ -75,7 +75,7 @@ body:
     attributes:
       label: Proposed design and rollback
       description: Summarize the intended design, alternatives considered, and how the change can be disabled or reverted.
-      placeholder: Keep implementation details concise; the linked Draft PR will carry the active implementation state.
+      placeholder: Keep implementation details concise; the linked PR will carry the active implementation state.
     validations:
       required: true
   - type: textarea
@@ -110,4 +110,4 @@ body:
       value: |
         ## Review 1 — maintainer record
 
-        Record the design, public API/compatibility, security, and rollback decision here before implementation is treated as accepted. Start implementation in a linked Draft PR with `Refs #N`.
+        Record the design, public API/compatibility, security, and rollback decision here before implementation is treated as accepted. Start implementation in a linked normal PR with `Refs #N` and keep it open for review from the beginning.
