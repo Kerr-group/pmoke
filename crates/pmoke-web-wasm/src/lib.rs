@@ -109,17 +109,8 @@ pub fn rotate_phase_interleaved(
     y: &[f64],
     delta_rad: f64,
 ) -> Result<Box<[f64]>, JsError> {
-    if x.len() != y.len() {
-        return Err(JsError::new(
-            "length_mismatch: x and y must have equal lengths",
-        ));
-    }
-    if !delta_rad.is_finite() || x.iter().chain(y).any(|value| !value.is_finite()) {
-        return Err(JsError::new(
-            "non_finite_phase: x, y, and delta must be finite",
-        ));
-    }
-    let (in_phase, out_of_phase) = pmoke_analysis_core::rotate_phase(x, y, delta_rad);
+    let (in_phase, out_of_phase) =
+        pmoke_analysis_core::rotate_phase(x, y, delta_rad).map_err(analysis_error)?;
     let mut packed = Vec::with_capacity(x.len() * 2);
     for (in_phase, out_of_phase) in in_phase.into_iter().zip(out_of_phase) {
         packed.extend_from_slice(&[in_phase, out_of_phase]);
@@ -203,6 +194,32 @@ mod tests {
         let output = generate_signal(usize::MAX, 0.25);
         assert_eq!(output.len(), MAX_SAMPLES * 4);
         assert!(output.iter().all(|value| value.is_finite()));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[test]
+    fn phase_rotation_preserves_shared_error_codes() {
+        let length_error = rotate_phase_interleaved(&[1.0, 2.0], &[3.0], 0.2).unwrap_err();
+        assert!(
+            JsValue::from(length_error)
+                .as_string()
+                .unwrap()
+                .starts_with("length_mismatch:")
+        );
+
+        for (x, y, delta) in [
+            (vec![f64::NAN], vec![1.0], 0.2),
+            (vec![1.0], vec![f64::INFINITY], 0.2),
+            (vec![1.0], vec![2.0], f64::NAN),
+        ] {
+            let error = rotate_phase_interleaved(&x, &y, delta).unwrap_err();
+            assert!(
+                JsValue::from(error)
+                    .as_string()
+                    .unwrap()
+                    .starts_with("non_finite_phase:")
+            );
+        }
     }
 
     #[test]

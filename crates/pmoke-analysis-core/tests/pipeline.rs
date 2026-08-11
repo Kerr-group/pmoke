@@ -89,7 +89,7 @@ fn shared_pipeline_recovers_the_reference_kerr_fixture() {
                 },
             )
             .unwrap();
-            let rotated = rotate_phase(&output.x, &output.y, parameters.rotation_rad);
+            let rotated = rotate_phase(&output.x, &output.y, parameters.rotation_rad).unwrap();
             (output, rotated)
         })
         .collect::<Vec<_>>();
