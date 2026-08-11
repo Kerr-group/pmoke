@@ -11,12 +11,11 @@ GitHub Pages project path `/pmoke/`.
 - Rust stable with `wasm32-unknown-unknown`
 - wasm-pack 0.15.0
 
-This workstation is Nix-managed. Prefer a repository-provided `nix develop`
-shell. Until this repository provides one, enter a temporary shell for the
-website tools:
+This workstation is Nix-managed, and this repository provides a pinned
+development shell for the website tools:
 
 ```bash
-nix shell nixpkgs#nodejs_22 nixpkgs#pnpm nixpkgs#wasm-pack nixpkgs#wasm-bindgen-cli_0_2_126 nixpkgs#lld
+nix develop
 ```
 
 Check the versions after entering the shell. The website pins exact Node and
@@ -50,7 +49,7 @@ use `pnpm build` before handoff when the full release-shaped build is needed.
 ## Local verification
 
 ```bash
-nix shell nixpkgs#nodejs_22 nixpkgs#pnpm nixpkgs#wasm-pack nixpkgs#wasm-bindgen-cli_0_2_126 nixpkgs#lld
+nix develop
 cd website
 pnpm install --frozen-lockfile
 pnpm build

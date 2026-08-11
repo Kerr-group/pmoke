@@ -34,12 +34,12 @@ Treat generated references and release metadata as owned by their generators.
 
 1. Inspect the owning route/component, its locale counterpart, styles, tests,
    worker/WASM consumer, and any generated-file owner before editing.
-2. From `website/`, use the repository Nix shell when available. Otherwise,
-   provide the missing website tools ephemerally with Nix, then restore the
-   project dependencies:
+2. From the repository root, enter the pinned development shell, then switch
+   to `website/` and restore the project dependencies:
 
    ```bash
-   nix shell nixpkgs#nodejs_22 nixpkgs#pnpm nixpkgs#wasm-pack nixpkgs#wasm-bindgen-cli_0_2_126 nixpkgs#lld
+   nix develop
+   cd website
    pnpm install --frozen-lockfile
    ```
 

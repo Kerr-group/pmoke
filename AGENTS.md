@@ -14,6 +14,9 @@ documentation site.
 - `Cargo.toml` and `Cargo.lock` define the Rust workspace and its locked
   dependency graph. Keep the lockfile intentional and review dependency,
   license, source, and feature changes together.
+- `flake.nix` and `flake.lock` define the reproducible local Nix development
+  shell for Rust, Node, pnpm, WASM, and linker tooling. Keep Nix input updates
+  intentional and review their platform coverage.
 - `src/` contains the CLI, terminal UI, configuration loading and migration,
   run-directory/provenance management, acquisition and analysis workflows,
   plotting, and the Python bridge.
@@ -160,16 +163,15 @@ split:
 Use the repository-pinned tools where possible: Nix-provided Rust stable with
 edition 2024 and the `wasm32-unknown-unknown` target, Python 3.12 in CI,
 Node.js `22.23.1` from `website/.node-version`, pnpm `11.18.0`, and wasm-pack
-`0.15.0`. Use `--locked` for normal Rust verification. When a repository-local
-Nix shell is not available, the current Nix package set exposes a temporary
-website tool shell such as:
+`0.15.0`. Enter the repository shell before local validation:
 
 ```bash
-nix shell nixpkgs#nodejs_22 nixpkgs#pnpm nixpkgs#wasm-pack nixpkgs#wasm-bindgen-cli_0_2_126 nixpkgs#lld
+nix develop
 ```
 
 Check the resulting versions against the repository pins; do not suppress an
-engine or toolchain mismatch by installing outside Nix.
+engine or toolchain mismatch by installing outside Nix. Validate the shell
+definition itself with `nix flake check --all-systems` when changing it.
 
 ### Rust and Python baseline
 
@@ -227,15 +229,15 @@ git diff --exit-code -- \
 ```
 
 Review and commit generated changes when they are the expected result of a
-source change. For the site/WASM path, enter the repository Nix shell or use a
-temporary Nix shell containing the pinned wasm-pack, then run the relevant
-`cargo check` commands for `pmoke-analysis-core` and `pmoke-web-wasm` against
-`wasm32-unknown-unknown`.
+source change. For the site/WASM path, enter `nix develop`, then run the
+relevant `cargo check` commands for `pmoke-analysis-core` and `pmoke-web-wasm`
+against `wasm32-unknown-unknown`.
 
 ### Website
 
-From `website/`, install with `pnpm install --frozen-lockfile`. Then run the
-checks relevant to the change; `pnpm check` is the normal source gate and
+From the repository root, enter `nix develop`, then switch to `website/` and
+install with `pnpm install --frozen-lockfile`. Run the checks relevant to the
+change; `pnpm check` is the normal source gate and
 includes lint, Japanese editorial checks, content/readme verification, type
 checking, search, signal, AI-resource, and export checks.
 
