@@ -7,7 +7,13 @@ const index = JSON.parse(await readFile(new URL('../out/api/semantic-search', im
 const fixture = JSON.parse(await readFile(new URL('../tests/fixtures/search-relevance-v1.json', import.meta.url), 'utf8'));
 if (index.model !== MODEL_ID || fixture.model !== MODEL_ID) throw new Error('search model metadata mismatch');
 
-const report = { model: MODEL_ID, locales: {}, overall: { hits: 0, queries: 0, recall_at_5: 0 } };
+const MIN_RECALL_AT_5 = 0.95;
+const report = {
+  model: MODEL_ID,
+  quality_gate: { minimum_recall_at_5: MIN_RECALL_AT_5 },
+  locales: {},
+  overall: { hits: 0, queries: 0, recall_at_5: 0 },
+};
 const failures = [];
 for (const locale of ['en', 'ja']) {
   const records = index.records.filter((record) => record.locale === locale);
@@ -44,11 +50,15 @@ for (const locale of ['en', 'ja']) {
   };
   report.overall.hits += hits;
   report.overall.queries += queries.length;
-  if (recall < 0.85) failures.push(`${locale} Recall@5 ${recall.toFixed(3)} is below 0.85`);
+  if (recall < MIN_RECALL_AT_5) {
+    failures.push(`${locale} Recall@5 ${recall.toFixed(3)} is below ${MIN_RECALL_AT_5}`);
+  }
   if (p95 > 100) failures.push(`${locale} warm p95 ${p95.toFixed(2)} ms exceeds 100 ms`);
   if (readinessMs > 1_000) failures.push(`${locale} readiness ${readinessMs.toFixed(2)} ms exceeds 1,000 ms`);
 }
 report.overall.recall_at_5 = report.overall.hits / report.overall.queries;
-if (report.overall.recall_at_5 < 0.85) failures.push('overall Recall@5 is below 0.85');
+if (report.overall.recall_at_5 < MIN_RECALL_AT_5) {
+  failures.push(`overall Recall@5 is below ${MIN_RECALL_AT_5}`);
+}
 console.log(JSON.stringify(report, null, 2));
 if (failures.length > 0) throw new Error(failures.join('; '));
