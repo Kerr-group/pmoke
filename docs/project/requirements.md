@@ -3,8 +3,8 @@
 This document defines the stable product, compatibility, and security
 boundaries of `pmoke`. It changes only when a product contract changes: it is
 not a roadmap, an Issue tracker, or a chronological progress diary. Durable
-goals belong in GitHub Issues, and implementation state belongs in linked Draft
-PRs.
+goals belong in GitHub Issues, and implementation state belongs in linked pull
+requests.
 
 ## Product scope
 
@@ -33,10 +33,17 @@ The following surfaces are part of the product contract:
 
 - `Cargo.lock` remains intentional and reviewable. Source, dependency,
   feature, license, and platform changes are reviewed together.
-- Configuration schema version 4 is canonical. Versions 1–3 remain readable
-  and can be migrated when their recorded data is sufficient. Migration is
+- Configuration schema version 5 is canonical. Versions 1–4 remain readable
+  when their structure is recognized. Historical LPF kinds that cannot be
+  represented by the active runtime produce an explicit migration diagnostic;
+  they are never silently changed to `boxcar_legacy`. Migration is
   preview-only by default; potentially behavior-changing migration requires
-  explicit acceptance.
+  explicit acceptance. A validated legacy `[timebase]` is preserved when a
+  CSV without a recorded time axis still requires it, even when that prevents
+  rendering a v5 resolved snapshot.
+- The active lock-in LPF is `boxcar_legacy` only. The configuration keeps the
+  `kind` discriminator so a future LPF can be added as a separately specified
+  schema and runtime contract.
 - Canonical acquisition and analysis artifacts use the versioned run layout,
   immutable configuration snapshots, checksums, and transactional publication.
   Legacy inputs remain compatibility behavior only where the current changelog

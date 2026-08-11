@@ -10,6 +10,9 @@
 - The legacy `hw` Cargo feature has been removed. Use `hw-gpib` for a
   direct-GPIB build or the default feature set for the complete Linux/Windows
   build.
+- Configuration schema v5 is now canonical. The active lock-in LPF is
+  `boxcar_legacy`; historical FIR/IIR kinds and their algorithm-specific
+  fields are migration-only and require an explicit compatibility decision.
 
 ### Changes
 
@@ -53,7 +56,7 @@
 
 ### Compatibility
 
-- Config versions 1–3 remain readable and can be migrated to the latest executable schema when their recorded data is sufficient.
+- Config versions 1–4 remain readable and can be migrated to the latest executable schema when their recorded data is sufficient. Legacy LPF kinds that cannot be represented by the active runtime produce a migration diagnostic.
 - Legacy `raw_waveform/`, `raw.csv`, legacy analysis CSV names, and `analysis_npy/` remain supported as fallback inputs.
 - Config migration remains preview-only by default and requires explicit acceptance for lossy changes.
 
