@@ -4,6 +4,10 @@
 # generated content
 .source
 
+# Next.js development-only agent guidance; repository instructions live at the root.
+/AGENTS.md
+/CLAUDE.md
+
 # source route whose segment intentionally carries an image extension
 !/app/og.png/
 !/app/og.png/route.tsx

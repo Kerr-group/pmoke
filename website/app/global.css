@@ -539,6 +539,7 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 0.6rem;
+  white-space: nowrap;
   border: 1px solid #536165;
   color: #edf2f0;
   font-size: 0.84rem;
