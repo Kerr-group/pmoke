@@ -16,6 +16,6 @@ sample rate、reference frequency、noise、boxcar half-window、stride、位相
 
 ## 一致範囲
 
-M4のネイティブ等価対象は`boxcar_legacy`、位相回転、高調波Kerr計算。FIRフィルター、`sync_iir_zero_phase`、位相フィッティング、標準Kerrはブラウザの一致対象外。本番解析にはネイティブpmokeを使用。
+ネイティブと数値が一致する対象は`boxcar_legacy`、位相回転、高調波Kerr計算。過去のFIR/IIR filterは移行専用で、現在のruntime pathではない。位相フィッティングと標準Kerrもブラウザの一致対象外。本番workflowにはnative pmoke CLIを使用。
 
 `time,signal`または信号単列のCSVを入力可能。時間列を含む場合は有限・単調増加・等間隔が必須。信号単列ではsample rateを指定。ファイルサイズ16 MiB、入力1,000,000点、高調波出力合計1,500,000点の固定上限。

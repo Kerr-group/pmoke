@@ -11,7 +11,7 @@ pub fn build(reference: &ConfigReference) -> Value {
         "additionalProperties": false,
         "required": ["version", "scope", "data", "pulse", "reference", "lockin", "phase", "kerr"],
         "properties": {
-            "version": annotate(reference, "version", json!({"type": "integer", "const": 4})),
+            "version": annotate(reference, "version", json!({"type": "integer", "const": 5})),
             "scope": annotate(reference, "scope", instrument(reference, "scope", false)),
             "generator": annotate(reference, "generator", instrument(reference, "generator", true)),
             "data": annotate(reference, "data", object(
@@ -72,7 +72,7 @@ pub fn build(reference: &ConfigReference) -> Value {
                 "channel assignments must be unique across sensors, reference, and lock-in signals",
                 "kerr.sensor must reference a configured sensor channel",
                 "pulse background windows must not overlap",
-                "cutoff_hz and cutoff_ref_ratio are mutually exclusive"
+                "lockin.filter must use the active boxcar_legacy fields only"
             ]
         }
     })
@@ -236,33 +236,11 @@ fn lockin(reference: &ConfigReference) -> Value {
 }
 
 fn filter(reference: &ConfigReference) -> Value {
-    let half_window = || {
-        annotate(
-            reference,
-            "lockin.filter.half_window_cycles",
-            json!({"type": "number", "exclusiveMinimum": 0}),
-        )
-    };
-    let cutoff_fields = || {
-        [
-            (
-                "cutoff_hz",
-                annotate(
-                    reference,
-                    "lockin.filter.cutoff_hz",
-                    json!({"type": "number", "exclusiveMinimum": 0}),
-                ),
-            ),
-            (
-                "cutoff_ref_ratio",
-                annotate(
-                    reference,
-                    "lockin.filter.cutoff_ref_ratio",
-                    json!({"type": "number", "exclusiveMinimum": 0}),
-                ),
-            ),
-        ]
-    };
+    let half_window = annotate(
+        reference,
+        "lockin.filter.half_window_cycles",
+        json!({"type": "number", "exclusiveMinimum": 0}),
+    );
     let kind = |value: &str| {
         annotate(
             reference,
@@ -270,10 +248,6 @@ fn filter(reference: &ConfigReference) -> Value {
             json!({"type": "string", "const": value}),
         )
     };
-    let cutoff_exclusion = json!({
-        "not": {"required": ["cutoff_hz", "cutoff_ref_ratio"]}
-    });
-
     annotate(
         reference,
         "lockin.filter",
@@ -281,46 +255,7 @@ fn filter(reference: &ConfigReference) -> Value {
             "oneOf": [
                 object(
                     &["kind", "half_window_cycles"],
-                    [("kind", kind("boxcar_legacy")), ("half_window_cycles", half_window())],
-                ),
-                object(
-                    &["kind", "half_window_cycles"],
-                    [("kind", kind("fir_boxcar_enbw")), ("half_window_cycles", half_window())],
-                ),
-                with_all_of(
-                    object(
-                        &["kind", "half_window_cycles"],
-                        [
-                            ("kind", kind("fir_zero_phase")),
-                            ("half_window_cycles", half_window()),
-                            cutoff_fields()[0].clone(),
-                            cutoff_fields()[1].clone(),
-                            ("stopband_atten_db", annotate(
-                                reference,
-                                "lockin.filter.stopband_atten_db",
-                                json!({"type": "number", "exclusiveMinimum": 0, "default": 60.0}),
-                            )),
-                        ],
-                    ),
-                    cutoff_exclusion.clone(),
-                ),
-                with_all_of(
-                    object(
-                        &["kind", "half_window_cycles"],
-                        [
-                            ("kind", kind("sync_iir_zero_phase")),
-                            ("half_window_cycles", half_window()),
-                            cutoff_fields()[0].clone(),
-                            cutoff_fields()[1].clone(),
-                            ("sync_average_cycles", annotate(
-                                reference,
-                                "lockin.filter.sync_average_cycles",
-                                json!({"type": "number", "exclusiveMinimum": 0, "maximum": 100, "default": 1.0}),
-                            )),
-                            ("iir_order", enum_integer(reference, "lockin.filter.iir_order")),
-                        ],
-                    ),
-                    cutoff_exclusion,
+                    [("kind", kind("boxcar_legacy")), ("half_window_cycles", half_window)],
                 )
             ]
         }),
@@ -445,14 +380,6 @@ fn with_default(mut schema: Value, default: impl Into<Value>) -> Value {
     schema
 }
 
-fn with_all_of(mut schema: Value, constraint: Value) -> Value {
-    schema
-        .as_object_mut()
-        .expect("schema must be an object")
-        .insert("allOf".to_string(), json!([constraint]));
-    schema
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,13 +388,13 @@ mod tests {
     fn generated_schema_uses_registry_metadata() {
         let reference = pmoke::config::config_reference();
         let schema = build(&reference);
-        assert_eq!(schema["properties"]["version"]["const"], 4);
+        assert_eq!(schema["properties"]["version"]["const"], 5);
         assert_eq!(
             schema["properties"]["lockin"]["properties"]["filter"]["oneOf"]
                 .as_array()
                 .unwrap()
                 .len(),
-            4
+            1
         );
         assert_eq!(
             schema["x-pmoke"]["fields"].as_array().unwrap().len(),

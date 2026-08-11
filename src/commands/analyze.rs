@@ -310,7 +310,6 @@ mod tests {
         cfg.lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
         cfg.lockin.stride_samples = 20;
         cfg.lockin.lpf_half_window_cycles = 1.0;
-        cfg.lockin.lpf_cutoff_hz = None;
         cfg.phase.m_omega_t0_offset = vec![0.0; 6];
         cfg.kerr.kerr_type = KerrType::Harmonics;
 
@@ -414,7 +413,6 @@ mod tests {
         cfg.lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
         cfg.lockin.stride_samples = 20;
         cfg.lockin.lpf_half_window_cycles = 1.0;
-        cfg.lockin.lpf_cutoff_hz = None;
         cfg.phase.m_omega_t0_offset = vec![0.0; 6];
         cfg.kerr.kerr_type = KerrType::Harmonics;
 

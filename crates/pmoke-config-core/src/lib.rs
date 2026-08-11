@@ -1,16 +1,16 @@
-//! Deterministic, platform-independent validation for canonical pmoke config v4.
+//! Deterministic, platform-independent validation for canonical pmoke config v5.
 
 pub mod connection;
 mod model;
 
 use connection::{ConnectionDefaults, ConnectionUri};
-use model::{ConfigV4, Filter, SensorScale, Window};
+use model::{ConfigV5, SensorScale, Window};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 pub const REPORT_FORMAT_VERSION: u32 = 1;
-pub const CONFIG_SCHEMA_VERSION: u32 = 4;
+pub const CONFIG_SCHEMA_VERSION: u32 = 5;
 pub const MAX_CONFIG_BYTES: usize = 1_048_576;
 pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CORE_COMMIT: &str = env!("PMOKE_SOURCE_COMMIT");
@@ -173,7 +173,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
                 Some("version".to_string()),
                 None,
                 "missing required top-level `version`",
-                Some("add `version = 4` at the top of the configuration".to_string()),
+                Some("add `version = 5` at the top of the configuration".to_string()),
             );
             return report;
         }
@@ -191,7 +191,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
                     Some("version".to_string()),
                     None,
                     "version must be a non-negative integer",
-                    Some("set `version = 4`".to_string()),
+                    Some("set `version = 5`".to_string()),
                 );
                 return report;
             }
@@ -231,7 +231,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
             return report;
         }
     };
-    let mut config = match serde_path_to_error::deserialize::<_, ConfigV4>(deserializer) {
+    let mut config = match serde_path_to_error::deserialize::<_, ConfigV5>(deserializer) {
         Ok(config) => config,
         Err(error) => {
             let mut report = ValidationReport::new(Some(version));
@@ -250,7 +250,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
     };
 
     let mut report = ValidationReport::new(Some(version));
-    validate_v4(&mut config, &mut report);
+    validate_v5(&mut config, &mut report);
     report.valid = report.error_count() == 0;
     if report.valid {
         report.summary = Some(summary(&config));
@@ -271,14 +271,14 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
     report
 }
 
-fn validate_v4(config: &mut ConfigV4, report: &mut ValidationReport) {
+fn validate_v5(config: &mut ConfigV5, report: &mut ValidationReport) {
     if config.version != CONFIG_SCHEMA_VERSION {
         error(
             report,
             DiagnosticCode::InvalidVersion,
             "version",
             format!(
-                "version 4 schema must declare version = 4 (got {})",
+                "version 5 schema must declare version = 5 (got {})",
                 config.version
             ),
         );
@@ -449,7 +449,7 @@ fn validate_v4(config: &mut ConfigV4, report: &mut ValidationReport) {
     }
 }
 
-fn validate_channels(config: &ConfigV4, report: &mut ValidationReport) {
+fn validate_channels(config: &ConfigV5, report: &mut ValidationReport) {
     let mut assignments = BTreeMap::<u8, String>::new();
     let mut assign = |channel: u8, path: String, report: &mut ValidationReport| {
         if !(1..=8).contains(&channel) {
@@ -531,7 +531,7 @@ fn validate_channels(config: &ConfigV4, report: &mut ValidationReport) {
     }
 }
 
-fn validate_windows(config: &ConfigV4, report: &mut ValidationReport) {
+fn validate_windows(config: &ConfigV5, report: &mut ValidationReport) {
     check_window(
         report,
         "pulse.background_before",
@@ -561,83 +561,13 @@ fn validate_windows(config: &ConfigV4, report: &mut ValidationReport) {
     }
 }
 
-fn validate_filter(config: &ConfigV4, report: &mut ValidationReport) {
+fn validate_filter(config: &ConfigV5, report: &mut ValidationReport) {
     let filter = &config.lockin.filter;
     positive_f64(
         report,
         "lockin.filter.half_window_cycles",
         filter.half_window_cycles(),
     );
-    match filter {
-        Filter::BoxcarLegacy { .. } | Filter::FirBoxcarEnbw { .. } => {}
-        Filter::FirZeroPhase {
-            cutoff_hz,
-            cutoff_ref_ratio,
-            stopband_atten_db,
-            ..
-        } => {
-            validate_cutoffs(report, *cutoff_hz, *cutoff_ref_ratio);
-            positive_f64(
-                report,
-                "lockin.filter.stopband_atten_db",
-                *stopband_atten_db,
-            );
-        }
-        Filter::SyncIirZeroPhase {
-            cutoff_hz,
-            cutoff_ref_ratio,
-            sync_average_cycles,
-            iir_order,
-            ..
-        } => {
-            validate_cutoffs(report, *cutoff_hz, *cutoff_ref_ratio);
-            if !sync_average_cycles.is_finite()
-                || *sync_average_cycles <= 0.0
-                || *sync_average_cycles > 100.0
-            {
-                error(
-                    report,
-                    DiagnosticCode::InvalidRange,
-                    "lockin.filter.sync_average_cycles",
-                    format!(
-                        "sync_average_cycles must be finite and in (0, 100] (got {sync_average_cycles})"
-                    ),
-                );
-            }
-            if !matches!(iir_order, 2 | 4 | 6 | 8) {
-                error(
-                    report,
-                    DiagnosticCode::InvalidRange,
-                    "lockin.filter.iir_order",
-                    format!("iir_order must be one of 2, 4, 6, or 8 (got {iir_order})"),
-                );
-            }
-        }
-    }
-}
-
-fn validate_cutoffs(report: &mut ValidationReport, hz: Option<f64>, ratio: Option<f64>) {
-    if let Some(value) = hz {
-        positive_f64(report, "lockin.filter.cutoff_hz", value);
-    }
-    if let Some(value) = ratio {
-        positive_f64(report, "lockin.filter.cutoff_ref_ratio", value);
-    }
-    if hz.is_some() && ratio.is_some() {
-        error(
-            report,
-            DiagnosticCode::MutuallyExclusive,
-            "lockin.filter",
-            "cutoff_hz and cutoff_ref_ratio are mutually exclusive",
-        );
-    } else if hz.is_none() && ratio.is_none() {
-        warning(
-            report,
-            DiagnosticCode::ImplicitFallback,
-            "lockin.filter",
-            "cutoff-based filter has no explicit cutoff; runtime will use the compatibility fallback cutoff 0.5 / t_half",
-        );
-    }
 }
 
 fn check_window(report: &mut ValidationReport, path: &str, window: Window) {
@@ -696,7 +626,7 @@ fn safe_debug_label(label: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
-fn summary(config: &ConfigV4) -> ConfigSummary {
+fn summary(config: &ConfigV5) -> ConfigSummary {
     ConfigSummary {
         version: config.version,
         scope_model: config.scope.model.clone(),
@@ -789,7 +719,7 @@ fn push(
 mod tests {
     use super::*;
 
-    const VALID: &str = r#"version = 4
+    const VALID: &str = r#"version = 5
 [scope]
 model = "DHO5108"
 connection = "tcp://192.0.2.10:55255"
@@ -823,7 +753,7 @@ factor = -1.0
 "#;
 
     #[test]
-    fn valid_v4_has_actual_summary_and_normalized_output() {
+    fn valid_v5_has_actual_summary_and_normalized_output() {
         let report = validate_config_toml(VALID);
         assert!(report.valid, "{:#?}", report.diagnostics);
         let summary = report.summary.unwrap();
@@ -863,7 +793,7 @@ factor = -1.0
 
     #[test]
     fn syntax_diagnostic_has_a_source_span() {
-        let report = validate_config_toml("version = 4\n[scope\n");
+        let report = validate_config_toml("version = 5\n[scope\n");
         let span = report.diagnostics[0].span.as_ref().unwrap();
         assert!(span.line >= 2);
         assert!(span.column >= 1);
@@ -877,7 +807,7 @@ factor = -1.0
 
     #[test]
     fn exact_size_limit_is_still_parsed() {
-        let input = format!("version = 4\n#{}", "x".repeat(MAX_CONFIG_BYTES - 13));
+        let input = format!("version = 5\n#{}", "x".repeat(MAX_CONFIG_BYTES - 13));
         assert_eq!(input.len(), MAX_CONFIG_BYTES);
         let report = validate_config_toml(&input);
         assert_ne!(report.diagnostics[0].code, DiagnosticCode::InputTooLarge);
@@ -890,7 +820,7 @@ factor = -1.0
         );
         assert_eq!(unknown.diagnostics[0].code, DiagnosticCode::SchemaMismatch);
 
-        let legacy = validate_config_toml(&VALID.replacen("version = 4", "version = 3", 1));
+        let legacy = validate_config_toml(&VALID.replacen("version = 5", "version = 3", 1));
         assert_eq!(
             legacy.diagnostics[0].code,
             DiagnosticCode::UnsupportedVersion
@@ -898,7 +828,7 @@ factor = -1.0
         assert_eq!(legacy.schema_version, Some(3));
 
         let oversized_version =
-            validate_config_toml(&VALID.replacen("version = 4", "version = 4294967300", 1));
+            validate_config_toml(&VALID.replacen("version = 5", "version = 4294967300", 1));
         assert_eq!(
             oversized_version.diagnostics[0].code,
             DiagnosticCode::InvalidVersion
@@ -906,16 +836,24 @@ factor = -1.0
     }
 
     #[test]
-    fn cutoff_filter_without_cutoff_reports_the_runtime_fallback() {
-        let report = validate_config_toml(&VALID.replace(
-            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+    fn rejects_removed_and_unknown_filter_kinds_and_fields() {
+        for replacement in [
             "filter = { kind = \"fir_zero_phase\", half_window_cycles = 1.0 }",
-        ));
-        assert!(report.valid);
-        assert!(report.diagnostics.iter().any(|item| {
-            item.code == DiagnosticCode::ImplicitFallback
-                && item.severity == DiagnosticSeverity::Warning
-        }));
+            "filter = { kind = \"future_filter\", half_window_cycles = 1.0 }",
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0, cutoff_hz = 10.0 }",
+        ] {
+            let report = validate_config_toml(&VALID.replace(
+                "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+                replacement,
+            ));
+            assert!(!report.valid, "unexpectedly accepted {replacement}");
+            assert_eq!(
+                report.diagnostics[0].code,
+                DiagnosticCode::SchemaMismatch,
+                "diagnostics: {:?}",
+                report.diagnostics
+            );
+        }
     }
 
     #[test]

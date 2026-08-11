@@ -52,7 +52,7 @@ test('semantic index failure preserves locale-scoped full-text search', async ({
   const status = page.locator('[data-search-mode]');
   await expect(status).toHaveAttribute('data-search-mode', 'fallback', { timeout: 10_000 });
   await expect(status.getByText('全文検索フォールバック', { exact: true })).toBeVisible();
-  await expect(page.getByText('設定リファレンス', { exact: true }).last()).toBeVisible();
+  await expect(page.getByText('検証・移行', { exact: true }).last()).toBeVisible();
   await expect(input).toHaveValue('lockin.filter.iir_order');
   await page.screenshot({ path: testInfo.outputPath('ja-search-fallback.png'), fullPage: true });
 });

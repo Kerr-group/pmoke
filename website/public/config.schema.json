@@ -2,7 +2,7 @@
   "$id": "https://kerr-group.github.io/pmoke/config.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "pmoke 0.4.0 configuration schema v4",
+  "description": "pmoke 0.4.0 configuration schema v5",
   "properties": {
     "data": {
       "additionalProperties": false,
@@ -162,13 +162,13 @@
           "x-pmoke-path": "lockin.debug_overwrite"
         },
         "filter": {
-          "description": "Lock-in low-pass filter configuration. Fields accepted by the table depend on the selected kind.",
+          "description": "Lock-in low-pass filter configuration. The current runtime accepts the boxcar_legacy kind; fields from other kinds are not part of schema v5.",
           "oneOf": [
             {
               "additionalProperties": false,
               "properties": {
                 "half_window_cycles": {
-                  "description": "Half-window scale in reference cycles. For sync_iir_zero_phase it defines half of the synchronous-average window.",
+                  "description": "Half-window scale in reference cycles. The boxcar integration window extends symmetrically by this many reference cycles.",
                   "exclusiveMinimum": 0,
                   "title": "Half-window scale in reference cycles",
                   "type": "number",
@@ -180,200 +180,10 @@
                 },
                 "kind": {
                   "const": "boxcar_legacy",
-                  "description": "Lock-in filter algorithm. sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
+                  "description": "Lock-in filter algorithm. boxcar_legacy is the only active LPF. Historical FIR and IIR kinds are readable only for migration diagnostics.",
                   "title": "Lock-in filter algorithm",
                   "type": "string",
                   "x-pmoke-path": "lockin.filter.kind"
-                }
-              },
-              "required": [
-                "kind",
-                "half_window_cycles"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "half_window_cycles": {
-                  "description": "Half-window scale in reference cycles. For sync_iir_zero_phase it defines half of the synchronous-average window.",
-                  "exclusiveMinimum": 0,
-                  "title": "Half-window scale in reference cycles",
-                  "type": "number",
-                  "x-constraints": [
-                    "must be finite and positive"
-                  ],
-                  "x-pmoke-path": "lockin.filter.half_window_cycles",
-                  "x-units": "reference cycles"
-                },
-                "kind": {
-                  "const": "fir_boxcar_enbw",
-                  "description": "Lock-in filter algorithm. sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
-                  "title": "Lock-in filter algorithm",
-                  "type": "string",
-                  "x-pmoke-path": "lockin.filter.kind"
-                }
-              },
-              "required": [
-                "kind",
-                "half_window_cycles"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "allOf": [
-                {
-                  "not": {
-                    "required": [
-                      "cutoff_hz",
-                      "cutoff_ref_ratio"
-                    ]
-                  }
-                }
-              ],
-              "properties": {
-                "cutoff_hz": {
-                  "description": "Absolute low-pass cutoff. Accepted by cutoff-based FIR and IIR filters.",
-                  "exclusiveMinimum": 0,
-                  "title": "Absolute low-pass cutoff",
-                  "type": "number",
-                  "x-constraints": [
-                    "must be finite and positive",
-                    "mutually exclusive with cutoff_ref_ratio"
-                  ],
-                  "x-pmoke-path": "lockin.filter.cutoff_hz",
-                  "x-units": "Hz"
-                },
-                "cutoff_ref_ratio": {
-                  "description": "Low-pass cutoff relative to the fitted reference frequency. A value of 0.02 gives a cutoff at two percent of f_ref.",
-                  "exclusiveMinimum": 0,
-                  "title": "Low-pass cutoff relative to the fitted reference frequency",
-                  "type": "number",
-                  "x-constraints": [
-                    "must be finite and positive",
-                    "mutually exclusive with cutoff_hz"
-                  ],
-                  "x-pmoke-path": "lockin.filter.cutoff_ref_ratio",
-                  "x-units": "f_ref ratio"
-                },
-                "half_window_cycles": {
-                  "description": "Half-window scale in reference cycles. For sync_iir_zero_phase it defines half of the synchronous-average window.",
-                  "exclusiveMinimum": 0,
-                  "title": "Half-window scale in reference cycles",
-                  "type": "number",
-                  "x-constraints": [
-                    "must be finite and positive"
-                  ],
-                  "x-pmoke-path": "lockin.filter.half_window_cycles",
-                  "x-units": "reference cycles"
-                },
-                "kind": {
-                  "const": "fir_zero_phase",
-                  "description": "Lock-in filter algorithm. sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
-                  "title": "Lock-in filter algorithm",
-                  "type": "string",
-                  "x-pmoke-path": "lockin.filter.kind"
-                },
-                "stopband_atten_db": {
-                  "default": 60.0,
-                  "description": "FIR stopband attenuation target. Used only by fir_zero_phase filter design.",
-                  "exclusiveMinimum": 0,
-                  "title": "FIR stopband attenuation target",
-                  "type": "number",
-                  "x-constraints": [
-                    "must be finite and positive"
-                  ],
-                  "x-pmoke-path": "lockin.filter.stopband_atten_db",
-                  "x-units": "dB"
-                }
-              },
-              "required": [
-                "kind",
-                "half_window_cycles"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "allOf": [
-                {
-                  "not": {
-                    "required": [
-                      "cutoff_hz",
-                      "cutoff_ref_ratio"
-                    ]
-                  }
-                }
-              ],
-              "properties": {
-                "cutoff_hz": {
-                  "description": "Absolute low-pass cutoff. Accepted by cutoff-based FIR and IIR filters.",
-                  "exclusiveMinimum": 0,
-                  "title": "Absolute low-pass cutoff",
-                  "type": "number",
-                  "x-constraints": [
-                    "must be finite and positive",
-                    "mutually exclusive with cutoff_ref_ratio"
-                  ],
-                  "x-pmoke-path": "lockin.filter.cutoff_hz",
-                  "x-units": "Hz"
-                },
-                "cutoff_ref_ratio": {
-                  "description": "Low-pass cutoff relative to the fitted reference frequency. A value of 0.02 gives a cutoff at two percent of f_ref.",
-                  "exclusiveMinimum": 0,
-                  "title": "Low-pass cutoff relative to the fitted reference frequency",
-                  "type": "number",
-                  "x-constraints": [
-                    "must be finite and positive",
-                    "mutually exclusive with cutoff_hz"
-                  ],
-                  "x-pmoke-path": "lockin.filter.cutoff_ref_ratio",
-                  "x-units": "f_ref ratio"
-                },
-                "half_window_cycles": {
-                  "description": "Half-window scale in reference cycles. For sync_iir_zero_phase it defines half of the synchronous-average window.",
-                  "exclusiveMinimum": 0,
-                  "title": "Half-window scale in reference cycles",
-                  "type": "number",
-                  "x-constraints": [
-                    "must be finite and positive"
-                  ],
-                  "x-pmoke-path": "lockin.filter.half_window_cycles",
-                  "x-units": "reference cycles"
-                },
-                "iir_order": {
-                  "description": "IIR filter order. Used only by sync_iir_zero_phase.",
-                  "enum": [
-                    2,
-                    4,
-                    6,
-                    8
-                  ],
-                  "title": "IIR filter order",
-                  "type": "integer",
-                  "x-pmoke-path": "lockin.filter.iir_order"
-                },
-                "kind": {
-                  "const": "sync_iir_zero_phase",
-                  "description": "Lock-in filter algorithm. sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
-                  "title": "Lock-in filter algorithm",
-                  "type": "string",
-                  "x-pmoke-path": "lockin.filter.kind"
-                },
-                "sync_average_cycles": {
-                  "default": 1.0,
-                  "description": "Synchronous-average full-window length. Used only by sync_iir_zero_phase; two times half_window_cycles matches a symmetric full window.",
-                  "exclusiveMinimum": 0,
-                  "maximum": 100,
-                  "title": "Synchronous-average full-window length",
-                  "type": "number",
-                  "x-constraints": [
-                    "0 < value <= 100",
-                    "must be finite"
-                  ],
-                  "x-pmoke-path": "lockin.filter.sync_average_cycles",
-                  "x-units": "reference cycles"
                 }
               },
               "required": [
@@ -578,7 +388,7 @@
           "x-pmoke-path": "plot.on_error"
         },
         "output_dir": {
-          "description": "Deprecated plot directory compatibility field. Version 4 accepts but ignores this field; artifacts use the canonical run layout.",
+          "description": "Deprecated plot directory compatibility field. Version 5 accepts but ignores this field; artifacts use the canonical run layout.",
           "title": "Deprecated plot directory compatibility field",
           "type": "string",
           "x-constraints": [
@@ -879,12 +689,12 @@
       "x-pmoke-path": "sensors"
     },
     "version": {
-      "const": 4,
-      "description": "Configuration schema version. New and migrated configurations use schema version 4.",
+      "const": 5,
+      "description": "Configuration schema version. New and migrated configurations use schema version 5.",
       "title": "Configuration schema version",
       "type": "integer",
       "x-constraints": [
-        "must equal 4"
+        "must equal 5"
       ],
       "x-pmoke-path": "version"
     }
@@ -905,11 +715,11 @@
     "fields": [
       {
         "constraints": [
-          "must equal 4"
+          "must equal 5"
         ],
         "default": null,
-        "details_en": "New and migrated configurations use schema version 4.",
-        "details_ja": "新規設定と移行済み設定で使用するバージョン4。",
+        "details_en": "New and migrated configurations use schema version 5.",
+        "details_ja": "新規設定と移行済み設定で使用するバージョン5。",
         "id": "version",
         "path": "version",
         "required": "required",
@@ -918,7 +728,7 @@
         "summary_ja": "設定スキーマのバージョン",
         "units": null,
         "valid_values": [
-          "4"
+          "5"
         ],
         "value_type": "integer"
       },
@@ -1457,8 +1267,8 @@
           "fields from other filter kinds are rejected"
         ],
         "default": null,
-        "details_en": "Fields accepted by the table depend on the selected kind.",
-        "details_ja": "kindごとに異なる許可field。",
+        "details_en": "The current runtime accepts the boxcar_legacy kind; fields from other kinds are not part of schema v5.",
+        "details_ja": "schema v5ではboxcar_legacyのみを使用。",
         "id": "lockin.filter",
         "path": "lockin.filter",
         "required": "required",
@@ -1472,8 +1282,8 @@
       {
         "constraints": [],
         "default": null,
-        "details_en": "sync_iir_zero_phase combines synchronous averaging and zero-phase IIR smoothing.",
-        "details_ja": "同期平均とzero-phase IIR平滑化を組み合わせるsync_iir_zero_phase。",
+        "details_en": "boxcar_legacy is the only active LPF. Historical FIR and IIR kinds are readable only for migration diagnostics.",
+        "details_ja": "現在のLPFはboxcar_legacyのみ。過去のFIR/IIR kindは移行診断のためだけに読み取る。",
         "id": "lockin.filter.kind",
         "path": "lockin.filter.kind",
         "required": "required",
@@ -1482,10 +1292,7 @@
         "summary_ja": "lock-in filter アルゴリズム",
         "units": null,
         "valid_values": [
-          "boxcar_legacy",
-          "fir_boxcar_enbw",
-          "fir_zero_phase",
-          "sync_iir_zero_phase"
+          "boxcar_legacy"
         ],
         "value_type": "string enum"
       },
@@ -1494,8 +1301,8 @@
           "must be finite and positive"
         ],
         "default": null,
-        "details_en": "For sync_iir_zero_phase it defines half of the synchronous-average window.",
-        "details_ja": "sync_iir_zero_phaseの同期平均full windowの半分。",
+        "details_en": "The boxcar integration window extends symmetrically by this many reference cycles.",
+        "details_ja": "boxcar積分窓を参照周期単位で指定する半窓幅。",
         "id": "lockin.filter.half_window_cycles",
         "path": "lockin.filter.half_window_cycles",
         "required": "required",
@@ -1505,97 +1312,6 @@
         "units": "reference cycles",
         "valid_values": [],
         "value_type": "float"
-      },
-      {
-        "constraints": [
-          "must be finite and positive",
-          "mutually exclusive with cutoff_ref_ratio"
-        ],
-        "default": "absent",
-        "details_en": "Accepted by cutoff-based FIR and IIR filters.",
-        "details_ja": "cutoff型FIR/IIR filterで使用する周波数。",
-        "id": "lockin.filter.cutoff_hz",
-        "path": "lockin.filter.cutoff_hz",
-        "required": "optional",
-        "since": 4,
-        "summary_en": "Absolute low-pass cutoff.",
-        "summary_ja": "絶対low-pass cutoff",
-        "units": "Hz",
-        "valid_values": [],
-        "value_type": "float"
-      },
-      {
-        "constraints": [
-          "must be finite and positive",
-          "mutually exclusive with cutoff_hz"
-        ],
-        "default": "absent",
-        "details_en": "A value of 0.02 gives a cutoff at two percent of f_ref.",
-        "details_ja": "0.02でf_refの2%となる比率。",
-        "id": "lockin.filter.cutoff_ref_ratio",
-        "path": "lockin.filter.cutoff_ref_ratio",
-        "required": "optional",
-        "since": 4,
-        "summary_en": "Low-pass cutoff relative to the fitted reference frequency.",
-        "summary_ja": "参照周波数比によるlow-pass cutoff",
-        "units": "f_ref ratio",
-        "valid_values": [],
-        "value_type": "float"
-      },
-      {
-        "constraints": [
-          "must be finite and positive"
-        ],
-        "default": "60.0",
-        "details_en": "Used only by fir_zero_phase filter design.",
-        "details_ja": "fir_zero_phase設計のみで使用するdB値。",
-        "id": "lockin.filter.stopband_atten_db",
-        "path": "lockin.filter.stopband_atten_db",
-        "required": "conditional",
-        "since": 4,
-        "summary_en": "FIR stopband attenuation target.",
-        "summary_ja": "FIR stopband 減衰目標",
-        "units": "dB",
-        "valid_values": [],
-        "value_type": "float"
-      },
-      {
-        "constraints": [
-          "0 < value <= 100",
-          "must be finite"
-        ],
-        "default": "1.0",
-        "details_en": "Used only by sync_iir_zero_phase; two times half_window_cycles matches a symmetric full window.",
-        "details_ja": "sync_iir_zero_phase専用。対称full windowではhalf_window_cyclesの2倍。",
-        "id": "lockin.filter.sync_average_cycles",
-        "path": "lockin.filter.sync_average_cycles",
-        "required": "conditional",
-        "since": 4,
-        "summary_en": "Synchronous-average full-window length.",
-        "summary_ja": "同期平均のfull window長",
-        "units": "reference cycles",
-        "valid_values": [],
-        "value_type": "float"
-      },
-      {
-        "constraints": [],
-        "default": "2",
-        "details_en": "Used only by sync_iir_zero_phase.",
-        "details_ja": "sync_iir_zero_phase専用の偶数次数。",
-        "id": "lockin.filter.iir_order",
-        "path": "lockin.filter.iir_order",
-        "required": "conditional",
-        "since": 4,
-        "summary_en": "IIR filter order.",
-        "summary_ja": "IIR filter 次数",
-        "units": null,
-        "valid_values": [
-          "2",
-          "4",
-          "6",
-          "8"
-        ],
-        "value_type": "integer enum"
       },
       {
         "constraints": [],
@@ -1896,8 +1612,8 @@
           "ignored with a warning"
         ],
         "default": "absent",
-        "details_en": "Version 4 accepts but ignores this field; artifacts use the canonical run layout.",
-        "details_ja": "version 4で受理後に無視される値。artifactは標準run layout。",
+        "details_en": "Version 5 accepts but ignores this field; artifacts use the canonical run layout.",
+        "details_ja": "version 5で受理後に無視される値。artifactは標準run layout。",
         "id": "plot.output_dir",
         "path": "plot.output_dir",
         "required": "optional",
@@ -1911,12 +1627,12 @@
     ],
     "format_version": 1,
     "pmoke_version": "0.4.0",
-    "schema_version": 4,
+    "schema_version": 5,
     "semantic_constraints": [
       "channel assignments must be unique across sensors, reference, and lock-in signals",
       "kerr.sensor must reference a configured sensor channel",
       "pulse background windows must not overlap",
-      "cutoff_hz and cutoff_ref_ratio are mutually exclusive"
+      "lockin.filter must use the active boxcar_legacy fields only"
     ]
   }
 }

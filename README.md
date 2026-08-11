@@ -38,7 +38,7 @@ used to recover a Kerr signal from large oscilloscope captures.
 | Capability | What it provides |
 | --- | --- |
 | 📥 Binary acquisition | Rigol DHO5000-series 16-bit WORD captures without a CSV bottleneck |
-| 〰️ Numerical lock-in | Boxcar, zero-phase FIR/IIR, phase rotation, and Kerr-angle analysis |
+| 〰️ Numerical lock-in | Boxcar legacy, phase rotation, and Kerr-angle analysis |
 | 🔌 Instrument transports | Direct TCP/IP, Linux GPIB, Windows USBTMC/VISA, and Prologix TCP/serial |
 | 🖥️ Live terminal UI | One command surface for configuration, analysis, logs, selection, and monitoring |
 | 🧾 Reproducible runs | Versioned TOML configuration, immutable snapshots, checksums, and isolated run directories |

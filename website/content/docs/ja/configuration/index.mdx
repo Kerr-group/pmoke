@@ -1,6 +1,6 @@
 ---
 title: 設定作成
-description: signal roleとartifactを軸にしたschema v4設定。
+description: signal roleとartifactを軸にしたschema v5設定。
 ---
 
 過去の実験設定を複製せず、実行中binaryが提供する現行templateを起点に設定:
@@ -14,7 +14,7 @@ pmoke config init --output config.toml
 オシロスコープとのdirect接続を`scope`に定義。trigger sourceと、direct GPIBまたはPrologix adapterを`generator`に定義。
 
 ```toml
-version = 4
+version = 5
 
 [scope]
 model = "DHO5108"

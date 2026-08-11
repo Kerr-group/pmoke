@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::render_normalized_config;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -93,6 +94,31 @@ fn v2_without_recorded_time_stays_at_latest_executable_version() {
 }
 
 #[test]
+fn resolved_config_preserves_required_legacy_timebase() {
+    let v2 = v3_config().replacen(
+        "version = 3",
+        "version = 2\n\n[timebase]\nt0 = -8.5e-3\ndt = 0.5e-9",
+        1,
+    );
+    let fixture = TempConfig::new(&v2);
+    fs::write(
+        fixture.dir.join("raw.csv"),
+        "Channel 1 (V),Channel 2 (V),Channel 3 (V)\n0.1,0.2,0.3\n",
+    )
+    .unwrap();
+    let ConfigLoad::Ready { mut config, .. } = load_from_path(&fixture.path) else {
+        panic!("expected the legacy configuration to load");
+    };
+    config.set_artifact_root(fixture.dir.clone());
+
+    let resolved = render_normalized_config(&config).unwrap();
+    assert!(resolved.contains("version = 3"));
+    assert!(resolved.contains("[timebase]"));
+    assert!(resolved.contains("t0 = -0.0085"));
+    assert!(resolved.contains("dt = 0.0000000005"));
+}
+
+#[test]
 fn v1_filter_length_is_migrated_with_explicit_lossy_warning() {
     let v1 = v3_config()
         .replacen(
@@ -117,7 +143,7 @@ fn v1_filter_length_is_migrated_with_explicit_lossy_warning() {
 }
 
 #[test]
-fn v2_raw_input_can_advance_to_v4_without_legacy_timebase() {
+fn v2_raw_input_can_advance_to_v5_without_legacy_timebase() {
     let v2 = v3_config()
         .replacen(
             "version = 3",
@@ -131,7 +157,7 @@ fn v2_raw_input_can_advance_to_v4_without_legacy_timebase() {
         );
     let fixture = TempConfig::new(&v2);
     let plan = plan_latest_executable_migration(&fixture.path, Some(&fixture.path)).unwrap();
-    assert_eq!(plan.target_version, 4);
+    assert_eq!(plan.target_version, 5);
     assert!(plan.changed);
     assert!(!plan.target_toml.contains("[timebase]"));
 }
@@ -196,19 +222,31 @@ fn artifact_base_comparison_accepts_the_process_directory_on_all_platforms() {
     let path = cwd.join("config.toml");
     let mut issues = Vec::new();
 
-    inspect_artifact_base_change(&path, &path, &mut issues).unwrap();
+    inspect_artifact_base_change(&path, &path, 5, &mut issues).unwrap();
 
     assert!(
         issues
             .iter()
             .all(|issue| issue.level != MigrationLevel::Lossy)
     );
+    assert!(issues.iter().any(|issue| {
+        issue
+            .message
+            .contains("v5 resolves data artifacts from the config directory")
+    }));
 }
 
 #[test]
-fn all_legacy_lockin_filter_variants_round_trip_to_v4() {
+fn legacy_lockin_filter_variants_require_explicit_compatibility_handling() {
+    let boxcar = TempConfig::new(&v3_config());
+    let plan = plan_migration(&boxcar.path, Some(&boxcar.path), 5).unwrap();
+    assert!(plan.target_toml.contains("version = 5"));
+    assert!(matches!(
+        load_from_str(&plan.target_toml),
+        ConfigLoad::Ready { .. }
+    ));
+
     for replacement in [
-        "lpf_kind = \"boxcar_legacy\"\nlpf_half_window_cycles = 1.0",
         "lpf_kind = \"fir_boxcar_enbw\"\nlpf_half_window_cycles = 1.0",
         "lpf_kind = \"fir_zero_phase\"\nlpf_half_window_cycles = 1.0\nlpf_cutoff_ref_ratio = 0.25\nlpf_stopband_atten_db = 80.0",
         "lpf_kind = \"sync_iir_zero_phase\"\nlpf_half_window_cycles = 1.0\nlpf_cutoff_hz = 100.0\nlpf_sync_average_cycles = 2.0\nlpf_iir_order = 4",
@@ -218,11 +256,8 @@ fn all_legacy_lockin_filter_variants_round_trip_to_v4() {
             replacement,
         );
         let fixture = TempConfig::new(&config);
-        let plan = plan_migration(&fixture.path, Some(&fixture.path), 4).unwrap();
-        assert!(matches!(
-            load_from_str(&plan.target_toml),
-            ConfigLoad::Ready { .. }
-        ));
+        let error = plan_migration(&fixture.path, Some(&fixture.path), 5).unwrap_err();
+        assert!(format!("{error:#}").contains("no longer supported"));
     }
 }
 

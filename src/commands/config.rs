@@ -40,7 +40,7 @@ pub fn run(config_path: &str, command: &ConfigCommand) -> Result<ConfigCommandOu
     }
 }
 
-const CONFIG_TEMPLATE_V4: &str = r#"version = 4
+const CONFIG_TEMPLATE_V5: &str = r#"version = 5
 
 [scope]
 model = "DHO5108"
@@ -106,15 +106,15 @@ fn run_init(source: &Path, output: Option<&Path>, force: bool) -> Result<ConfigC
 
     ensure_template_is_valid()?;
     if stdout_output {
-        print!("{CONFIG_TEMPLATE_V4}");
+        print!("{CONFIG_TEMPLATE_V5}");
         io::stdout()
             .flush()
             .context("failed to flush config template to stdout")?;
     } else if force {
-        replace_output(destination, CONFIG_TEMPLATE_V4.as_bytes())?;
+        replace_output(destination, CONFIG_TEMPLATE_V5.as_bytes())?;
         ui::saved(format!("initialized config at {}", destination.display()));
     } else {
-        write_new_output(destination, CONFIG_TEMPLATE_V4.as_bytes())?;
+        write_new_output(destination, CONFIG_TEMPLATE_V5.as_bytes())?;
         ui::saved(format!("initialized config at {}", destination.display()));
     }
 
@@ -201,7 +201,7 @@ fn print_field_docs(title: &str, docs: &[ConfigFieldDoc]) {
 }
 
 fn ensure_template_is_valid() -> Result<()> {
-    match load_from_str(CONFIG_TEMPLATE_V4) {
+    match load_from_str(CONFIG_TEMPLATE_V5) {
         ConfigLoad::Ready { .. } => Ok(()),
         ConfigLoad::Diagnostics(diagnostics) => bail!(
             "bundled config template is invalid: {} diagnostic(s)",
@@ -655,7 +655,7 @@ mod tests {
     fn replacement_plan(source: &Path, before: &[u8], after: &str) -> MigrationPlan {
         MigrationPlan {
             source_version: 3,
-            target_version: 4,
+            target_version: 5,
             source_path: source.to_path_buf(),
             destination_path: source.to_path_buf(),
             target_toml: after.to_string(),
@@ -705,7 +705,7 @@ mod tests {
         let dir = TempDir::new();
         let source = dir.0.join("config.toml");
         let before = b"version = 3\n";
-        let after = "version = 4\n";
+        let after = "version = 5\n";
         fs::write(&source, before).unwrap();
 
         replace_in_place(&replacement_plan(&source, before, after)).unwrap();
@@ -726,7 +726,7 @@ mod tests {
         fs::write(backup_path(&source, 3), b"existing backup").unwrap();
 
         let error =
-            replace_in_place(&replacement_plan(&source, before, "version = 4\n")).unwrap_err();
+            replace_in_place(&replacement_plan(&source, before, "version = 5\n")).unwrap_err();
 
         assert!(error.to_string().contains("refusing to overwrite backup"));
         assert_eq!(fs::read(&source).unwrap(), before);
@@ -737,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn init_writes_a_valid_v4_template() {
+    fn init_writes_a_valid_v5_template() {
         let dir = TempDir::new();
         let source = dir.0.join("config.toml");
 
@@ -745,14 +745,14 @@ mod tests {
 
         assert_eq!(outcome.exit_code, 0);
         let text = fs::read_to_string(&source).unwrap();
-        assert!(text.contains("version = 4"));
+        assert!(text.contains("version = 5"));
         assert!(matches!(load_from_str(&text), ConfigLoad::Ready { .. }));
     }
 
     #[test]
-    fn init_template_is_valid_v4_config() {
+    fn init_template_is_valid_v5_config() {
         assert!(matches!(
-            load_from_str(CONFIG_TEMPLATE_V4),
+            load_from_str(CONFIG_TEMPLATE_V5),
             ConfigLoad::Ready { .. }
         ));
     }
@@ -813,7 +813,7 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&target).unwrap(), "target contents");
         let text = fs::read_to_string(&source).unwrap();
-        assert!(text.contains("version = 4"));
+        assert!(text.contains("version = 5"));
         assert!(
             !fs::symlink_metadata(&source)
                 .unwrap()
@@ -826,9 +826,9 @@ mod tests {
     fn validate_returns_zero_for_valid_config_and_one_for_invalid_config() {
         let dir = TempDir::new();
         let valid = dir.0.join("valid.toml");
-        fs::write(&valid, CONFIG_TEMPLATE_V4).unwrap();
+        fs::write(&valid, CONFIG_TEMPLATE_V5).unwrap();
         let invalid = dir.0.join("invalid.toml");
-        fs::write(&invalid, "version = 4\nunknown = true\n").unwrap();
+        fs::write(&invalid, "version = 5\nunknown = true\n").unwrap();
 
         assert_eq!(run_validate(&valid).unwrap().exit_code, 0);
         assert_eq!(run_validate(&invalid).unwrap().exit_code, 1);
@@ -850,7 +850,7 @@ mod tests {
         fs::write(&source, changed).unwrap();
 
         let error =
-            replace_in_place(&replacement_plan(&source, planned, "version = 4\n")).unwrap_err();
+            replace_in_place(&replacement_plan(&source, planned, "version = 5\n")).unwrap_err();
 
         assert!(error.to_string().contains("changed"));
         assert_eq!(fs::read(&source).unwrap(), changed);
@@ -860,7 +860,7 @@ mod tests {
     #[test]
     fn output_writer_refuses_to_overwrite_existing_file() {
         let dir = TempDir::new();
-        let output = dir.0.join("config.v4.toml");
+        let output = dir.0.join("config.v5.toml");
         fs::write(&output, b"keep me").unwrap();
 
         assert!(write_new_output(&output, b"replacement").is_err());
@@ -880,7 +880,7 @@ mod tests {
         symlink(&real, &source).unwrap();
 
         let error =
-            replace_in_place(&replacement_plan(&source, before, "version = 4\n")).unwrap_err();
+            replace_in_place(&replacement_plan(&source, before, "version = 5\n")).unwrap_err();
 
         assert!(error.to_string().contains("symlink"));
         assert_eq!(fs::read(&real).unwrap(), before);

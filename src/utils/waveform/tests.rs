@@ -544,8 +544,8 @@ y_reference = 0.0
 fn raw_read_tolerates_stale_config_snapshots_but_verifies_payload() {
     let dir = unique_test_dir("raw_v2_checksums");
     fs::create_dir(&dir).unwrap();
-    let config = b"version = 4\n";
-    let resolved_config = b"version = 4\n# resolved\n";
+    let config = b"version = 5\n";
+    let resolved_config = b"version = 5\n# resolved\n";
     let raw = [0_u8, 0, 1, 0];
     fs::write(dir.join("config.source.toml"), config).unwrap();
     fs::write(dir.join("config.resolved.toml"), resolved_config).unwrap();
@@ -625,7 +625,7 @@ y_reference = 0.0
     fs::write(dir.join("config.source.toml"), config).unwrap();
     fs::write(
         dir.join("config.resolved.toml"),
-        b"version = 4\n# changed\n",
+        b"version = 5\n# changed\n",
     )
     .unwrap();
     read_raw_waveform_channels_from_dir(&dir, &[1]).unwrap();

@@ -30,8 +30,8 @@ pub use pmoke_config_core::{
     ValidationReport as CoreValidationReport, validate_config_toml as validate_config_toml_core,
 };
 pub(crate) use render::connection_uri;
-use render::render_config_v4;
 pub use render::render_normalized_config;
+use render::{render_config_v4, render_config_v5};
 use schema::*;
 use validation::validate_common;
 pub use validation::validate_for_target;
@@ -409,11 +409,6 @@ pub struct Lockin {
     pub stride_samples: usize,
     pub lpf_kind: LockinLpfKind,
     pub lpf_half_window_cycles: f64,
-    pub lpf_cutoff_hz: Option<f64>,
-    pub lpf_cutoff_ref_ratio: Option<f64>,
-    pub lpf_stopband_atten_db: f64,
-    pub lpf_sync_average_cycles: f64,
-    pub lpf_iir_order: usize,
     pub lpf_debug_output: bool,
     pub lpf_debug_label: Option<String>,
     pub lpf_debug_overwrite: bool,
@@ -425,10 +420,7 @@ pub struct Lockin {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LockinLpfKind {
-    FirZeroPhase,
     BoxcarLegacy,
-    FirBoxcarEnbw,
-    SyncIirZeroPhase,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -509,6 +501,15 @@ pub struct ConfigDiagnostic {
     pub path: Option<String>,
     pub message: String,
     pub suggestion: Option<String>,
+}
+
+fn removed_lpf_migration_diagnostic(path: &str, kind: &str) -> ConfigDiagnostic {
+    ConfigDiagnostic::new(
+        DiagnosticKind::Migration,
+        Some(path.to_string()),
+        format!("legacy LPF kind `{kind}` is no longer supported by the current runtime"),
+        Some("set kind = \"boxcar_legacy\" only after reviewing the behavior change".to_string()),
+    )
 }
 
 impl ConfigDiagnostic {
@@ -651,62 +652,64 @@ impl From<PlotV4> for Plot {
     }
 }
 
-impl From<LockinV4> for Lockin {
-    fn from(value: LockinV4) -> Self {
-        let mut lockin = Self {
+impl TryFrom<LockinV4> for Lockin {
+    type Error = ConfigDiagnostic;
+
+    fn try_from(value: LockinV4) -> Result<Self, Self::Error> {
+        let (lpf_kind, lpf_half_window_cycles) = match value.filter {
+            LockinFilterV4::BoxcarLegacy { half_window_cycles } => {
+                (LockinLpfKind::BoxcarLegacy, half_window_cycles)
+            }
+            LockinFilterV4::FirBoxcarEnbw { .. } => {
+                return Err(removed_lpf_migration_diagnostic(
+                    "lockin.filter.kind",
+                    "fir_boxcar_enbw",
+                ));
+            }
+            LockinFilterV4::FirZeroPhase { .. } => {
+                return Err(removed_lpf_migration_diagnostic(
+                    "lockin.filter.kind",
+                    "fir_zero_phase",
+                ));
+            }
+            LockinFilterV4::SyncIirZeroPhase { .. } => {
+                return Err(removed_lpf_migration_diagnostic(
+                    "lockin.filter.kind",
+                    "sync_iir_zero_phase",
+                ));
+            }
+        };
+
+        Ok(Self {
             workers: value.workers,
             stride_samples: value.stride_samples,
-            lpf_kind: LockinLpfKind::BoxcarLegacy,
-            lpf_half_window_cycles: 0.0,
-            lpf_cutoff_hz: None,
-            lpf_cutoff_ref_ratio: None,
-            lpf_stopband_atten_db: default_lockin_stopband_atten_db(),
-            lpf_sync_average_cycles: default_lockin_sync_average_cycles(),
-            lpf_iir_order: default_lockin_iir_order(),
+            lpf_kind,
+            lpf_half_window_cycles,
             lpf_debug_output: value.debug_output,
             lpf_debug_label: value.debug_label,
             lpf_debug_overwrite: value.debug_overwrite,
             snr_background_window: value.snr_background_window,
             snr_signal_window: value.snr_signal_window,
             save_npy: value.save_npy,
-        };
-        match value.filter {
-            LockinFilterV4::BoxcarLegacy { half_window_cycles } => {
-                lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
-                lockin.lpf_half_window_cycles = half_window_cycles;
-            }
-            LockinFilterV4::FirBoxcarEnbw { half_window_cycles } => {
-                lockin.lpf_kind = LockinLpfKind::FirBoxcarEnbw;
-                lockin.lpf_half_window_cycles = half_window_cycles;
-            }
-            LockinFilterV4::FirZeroPhase {
-                half_window_cycles,
-                cutoff_hz,
-                cutoff_ref_ratio,
-                stopband_atten_db,
-            } => {
-                lockin.lpf_kind = LockinLpfKind::FirZeroPhase;
-                lockin.lpf_half_window_cycles = half_window_cycles;
-                lockin.lpf_cutoff_hz = cutoff_hz;
-                lockin.lpf_cutoff_ref_ratio = cutoff_ref_ratio;
-                lockin.lpf_stopband_atten_db = stopband_atten_db;
-            }
-            LockinFilterV4::SyncIirZeroPhase {
-                half_window_cycles,
-                cutoff_hz,
-                cutoff_ref_ratio,
-                sync_average_cycles,
-                iir_order,
-            } => {
-                lockin.lpf_kind = LockinLpfKind::SyncIirZeroPhase;
-                lockin.lpf_half_window_cycles = half_window_cycles;
-                lockin.lpf_cutoff_hz = cutoff_hz;
-                lockin.lpf_cutoff_ref_ratio = cutoff_ref_ratio;
-                lockin.lpf_sync_average_cycles = sync_average_cycles;
-                lockin.lpf_iir_order = iir_order;
-            }
+        })
+    }
+}
+
+impl From<LockinV5> for Lockin {
+    fn from(value: LockinV5) -> Self {
+        let LockinFilterV5::BoxcarLegacy { half_window_cycles } = value.filter;
+        Self {
+            workers: value.workers,
+            stride_samples: value.stride_samples,
+            lpf_kind: LockinLpfKind::BoxcarLegacy,
+            lpf_half_window_cycles: half_window_cycles,
+            lpf_debug_output: value.debug_output,
+            lpf_debug_label: value.debug_label,
+            lpf_debug_overwrite: value.debug_overwrite,
+            snr_background_window: value.snr_background_window,
+            snr_signal_window: value.snr_signal_window,
+            save_npy: value.save_npy,
         }
-        lockin
     }
 }
 

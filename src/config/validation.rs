@@ -1,22 +1,15 @@
 use super::*;
 
-fn uses_explicit_cutoff(kind: LockinLpfKind) -> bool {
-    matches!(
-        kind,
-        LockinLpfKind::FirZeroPhase | LockinLpfKind::SyncIirZeroPhase
-    )
-}
-
 pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
 
-    if !matches!(cfg.version, 3 | 4) {
+    if !matches!(cfg.version, 3..=5) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("version".to_string()),
             format!(
-                "normalized config must have version 3 or 4 (got {})",
+                "normalized config must have version 3, 4, or 5 (got {})",
                 cfg.version
             ),
             None,
@@ -76,78 +69,16 @@ pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
-    if !cfg.lockin.lpf_stopband_atten_db.is_finite() || cfg.lockin.lpf_stopband_atten_db <= 0.0 {
+    if !matches!(cfg.lockin.lpf_kind, LockinLpfKind::BoxcarLegacy) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
-            Some("lockin.lpf_stopband_atten_db".to_string()),
-            format!(
-                "lockin.lpf_stopband_atten_db must be positive (got {})",
-                cfg.lockin.lpf_stopband_atten_db
+            Some("lockin.lpf_kind".to_string()),
+            "the active runtime supports only the boxcar_legacy LPF",
+            Some(
+                "set lockin.filter.kind = \"boxcar_legacy\" after reviewing the behavior change"
+                    .to_string(),
             ),
-            None,
         ));
-    }
-    if cfg.lockin.lpf_kind == LockinLpfKind::SyncIirZeroPhase {
-        let max_sync_cycles = 100.0;
-        if !cfg.lockin.lpf_sync_average_cycles.is_finite()
-            || cfg.lockin.lpf_sync_average_cycles <= 0.0
-            || cfg.lockin.lpf_sync_average_cycles > max_sync_cycles
-        {
-            errors.push(ConfigDiagnostic::new(
-                DiagnosticKind::Validation,
-                Some("lockin.lpf_sync_average_cycles".to_string()),
-                format!(
-                    "lockin.lpf_sync_average_cycles must be finite and in (0, {max_sync_cycles}] (got {})",
-                    cfg.lockin.lpf_sync_average_cycles
-                ),
-                None,
-            ));
-        }
-    }
-    if cfg.lockin.lpf_kind == LockinLpfKind::SyncIirZeroPhase
-        && (cfg.lockin.lpf_iir_order == 0
-            || !cfg.lockin.lpf_iir_order.is_multiple_of(2)
-            || cfg.lockin.lpf_iir_order > 8)
-    {
-        errors.push(ConfigDiagnostic::new(
-            DiagnosticKind::Validation,
-            Some("lockin.lpf_iir_order".to_string()),
-            format!(
-                "lockin.lpf_iir_order must be one of 2, 4, 6, or 8 (got {})",
-                cfg.lockin.lpf_iir_order
-            ),
-            None,
-        ));
-    }
-    if uses_explicit_cutoff(cfg.lockin.lpf_kind) {
-        if let Some(cutoff_hz) = cfg.lockin.lpf_cutoff_hz
-            && (!cutoff_hz.is_finite() || cutoff_hz <= 0.0)
-        {
-            errors.push(ConfigDiagnostic::new(
-                DiagnosticKind::Validation,
-                Some("lockin.lpf_cutoff_hz".to_string()),
-                format!("lockin.lpf_cutoff_hz must be positive (got {cutoff_hz})"),
-                None,
-            ));
-        }
-        if let Some(cutoff_ratio) = cfg.lockin.lpf_cutoff_ref_ratio
-            && (!cutoff_ratio.is_finite() || cutoff_ratio <= 0.0)
-        {
-            errors.push(ConfigDiagnostic::new(
-                DiagnosticKind::Validation,
-                Some("lockin.lpf_cutoff_ref_ratio".to_string()),
-                format!("lockin.lpf_cutoff_ref_ratio must be positive (got {cutoff_ratio})"),
-                None,
-            ));
-        }
-        if cfg.lockin.lpf_cutoff_hz.is_some() && cfg.lockin.lpf_cutoff_ref_ratio.is_some() {
-            errors.push(ConfigDiagnostic::new(
-                DiagnosticKind::Validation,
-                Some("lockin".to_string()),
-                "lockin.lpf_cutoff_hz and lockin.lpf_cutoff_ref_ratio are mutually exclusive for cutoff-based LPF modes",
-                None,
-            ));
-        }
     }
     if let Some(label) = &cfg.lockin.lpf_debug_label
         && !is_safe_debug_label(label)
@@ -279,15 +210,6 @@ pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
         && let Some(diag) = check_win("lockin.snr_signal_window", window)
     {
         errors.push(diag);
-    }
-
-    if uses_explicit_cutoff(cfg.lockin.lpf_kind)
-        && cfg.lockin.lpf_cutoff_hz.is_none()
-        && cfg.lockin.lpf_cutoff_ref_ratio.is_none()
-    {
-        warnings.push(ConfigWarning::new(
-            "lockin.lpf_kind uses an explicit cutoff but no cutoff is specified; runtime will use the compatibility fallback cutoff 0.5 / t_half",
-        ));
     }
 
     let mut used = BTreeSet::new();

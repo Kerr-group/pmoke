@@ -19,7 +19,8 @@ also needs strict resource limits, cancellation, and static GitHub Pages deliver
    harmonics Kerr plotting.
    The boxcar kernel uses a compensated rolling window, so working memory is
    proportional to the filter support and output length rather than input length.
-3. FIR, synchronous IIR, phase fitting, and standard Kerr are excluded from M4
+3. Historical FIR and synchronous IIR filters are migration-only and are not
+   active runtime algorithms. Phase fitting and standard Kerr are excluded from
    browser parity and are labeled as unsupported in the tool and exports.
 4. Browser computation runs in a dedicated Worker. The UI cancels by terminating
    the Worker and rejects stale generations. Input controls and selected files are
@@ -34,7 +35,7 @@ also needs strict resource limits, cancellation, and static GitHub Pages deliver
 ## Consequences
 
 - Browser parity claims are narrow, testable, and tied to the native call path.
-- M4 does not reproduce every native filter or Python fit.
+- The browser does not reproduce every analysis path or Python fit.
 - Cancellation is immediate because terminating a Worker interrupts synchronous
   Wasm without requiring callbacks inside numerical loops.
 - Supporting another browser algorithm requires moving its native implementation

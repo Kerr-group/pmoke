@@ -18,10 +18,10 @@ and Kerr factor. Local CSV analysis and metadata-rich CSV export remain browser-
 
 ## Parity boundary
 
-`boxcar_legacy`, phase rotation, and harmonics Kerr calculation are native-equivalent
-in M4. FIR filters, `sync_iir_zero_phase`, phase fitting, and standard Kerr remain
-outside browser parity. Use native pmoke for production analysis that requires those
-paths.
+`boxcar_legacy`, phase rotation, and harmonics Kerr calculation are native-equivalent.
+Historical FIR/IIR filters are migration-only and are not active runtime paths. Phase
+fitting and standard Kerr are also outside browser parity. Use the native pmoke CLI
+for the supported production workflow.
 
 CSV input accepts `time,signal` or one signal column. A time column must be finite,
 strictly increasing, and uniform. One-column input uses the sample-rate control.

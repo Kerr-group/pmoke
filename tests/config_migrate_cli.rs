@@ -61,7 +61,7 @@ fn v3_config() -> String {
 fn check_and_output_enforce_lossy_acceptance_end_to_end() {
     let dir = TempDir::new();
     let source = dir.0.join("config.toml");
-    let target = dir.0.join("config.v4.toml");
+    let target = dir.0.join("config.v5.toml");
     let original = v3_config();
     fs::write(&source, &original).unwrap();
 
@@ -94,7 +94,7 @@ fn check_and_output_enforce_lossy_acceptance_end_to_end() {
         "stderr: {}",
         String::from_utf8_lossy(&written.stderr)
     );
-    assert!(fs::read_to_string(&target).unwrap().contains("version = 4"));
+    assert!(fs::read_to_string(&target).unwrap().contains("version = 5"));
     assert_eq!(fs::read_to_string(&source).unwrap(), original);
 
     let latest = pmoke(&target, &["config", "migrate", "--check"]);
@@ -102,7 +102,7 @@ fn check_and_output_enforce_lossy_acceptance_end_to_end() {
 }
 
 #[test]
-fn v2_csv_without_time_stays_executable_instead_of_advancing_to_v4() {
+fn v2_csv_without_time_stays_executable_instead_of_advancing_to_v5() {
     let dir = TempDir::new();
     let source = dir.0.join("config.toml");
     let v2 = v3_config().replacen(
@@ -122,7 +122,7 @@ fn v2_csv_without_time_stays_executable_instead_of_advancing_to_v4() {
     assert!(String::from_utf8_lossy(&compatible.stdout).contains("Status: LIMITED"));
     assert_eq!(fs::read_to_string(&source).unwrap(), v2);
 
-    let forced_v4 = pmoke_in_dir(
+    let forced_v5 = pmoke_in_dir(
         &dir.0,
         &source,
         &[
@@ -130,20 +130,20 @@ fn v2_csv_without_time_stays_executable_instead_of_advancing_to_v4() {
             "migrate",
             "--check",
             "--to",
-            "4",
+            "5",
             "--accept-lossy",
         ],
     );
-    assert_eq!(forced_v4.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&forced_v4.stderr).contains("would not be executable"));
+    assert_eq!(forced_v5.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&forced_v5.stderr).contains("would not be executable"));
     assert_eq!(fs::read_to_string(&source).unwrap(), v2);
 }
 
 #[test]
-fn v2_csv_with_recorded_time_can_advance_to_v4() {
+fn v2_csv_with_recorded_time_can_advance_to_v5() {
     let dir = TempDir::new();
     let source = dir.0.join("config.toml");
-    let target = dir.0.join("config.v4.toml");
+    let target = dir.0.join("config.v5.toml");
     let v2 = v3_config().replacen(
         "version = 3",
         "version = 2\n\n[timebase]\nt0 = -8.5e-3\ndt = 0.5e-9",
@@ -176,6 +176,6 @@ fn v2_csv_with_recorded_time_can_advance_to_v4() {
         String::from_utf8_lossy(&written.stderr)
     );
     let migrated = fs::read_to_string(&target).unwrap();
-    assert!(migrated.contains("version = 4"));
+    assert!(migrated.contains("version = 5"));
     assert!(!migrated.contains("[timebase]"));
 }

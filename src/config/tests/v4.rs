@@ -84,7 +84,7 @@ fn v4_base_schema_normalizes_to_runtime_config() {
 }
 
 #[test]
-fn v4_normalized_output_uses_v4_schema_and_round_trips() {
+fn historical_v4_normalized_output_uses_v5_schema_and_round_trips() {
     let text = v4_base().replace(
         "scale = { factor = -39364.84663082185 }",
         "scale = { max_abs = 55.0, polarity = -1 }",
@@ -108,7 +108,7 @@ fn v4_normalized_output_uses_v4_schema_and_round_trips() {
         config: round_trip, ..
     } = load_from_str(&rendered)
     else {
-        panic!("rendered v4 config must be readable:\n{rendered}");
+        panic!("rendered v5 config must be readable:\n{rendered}");
     };
     let sensor = round_trip
         .channels
@@ -121,45 +121,18 @@ fn v4_normalized_output_uses_v4_schema_and_round_trips() {
 }
 
 #[test]
-fn v4_core_and_native_normalized_output_have_identical_values() {
-    let filter = "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }";
+fn v5_core_and_native_normalized_output_have_identical_values() {
     let fixtures = [
-        ("boxcar", v4_base()),
-        (
-            "enbw boxcar",
-            v4_base().replace(
-                filter,
-                "filter = { kind = \"fir_boxcar_enbw\", half_window_cycles = 1.5 }",
-            ),
-        ),
-        (
-            "FIR fallback cutoff",
-            v4_base().replace(
-                filter,
-                "filter = { kind = \"fir_zero_phase\", half_window_cycles = 2.0 }",
-            ),
-        ),
-        (
-            "FIR explicit cutoff",
-            v4_base().replace(
-                filter,
-                "filter = { kind = \"fir_zero_phase\", half_window_cycles = 2.0, cutoff_hz = 12000.0, stopband_atten_db = 80.0 }",
-            ),
-        ),
-        (
-            "sync IIR and NPY",
-            v4_base().replace(
-                filter,
-                "filter = { kind = \"sync_iir_zero_phase\", half_window_cycles = 2.0, cutoff_ref_ratio = 0.02, sync_average_cycles = 1.0, iir_order = 4 }\nsave_npy = true",
-            ),
-        ),
+        ("boxcar", v4_base().replace("version = 4", "version = 5")),
         (
             "canonical Prologix generator",
-            v4_base().replacen(
-                "[data]",
-                "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-tcp://192.0.2.20?addr=11\"\n\n[data]",
-                1,
-            ),
+            v4_base()
+                .replace("version = 4", "version = 5")
+                .replacen(
+                    "[data]",
+                    "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-tcp://192.0.2.20?addr=11\"\n\n[data]",
+                    1,
+                ),
         ),
     ];
 
@@ -463,22 +436,74 @@ fn v4_prologix_generator_connections_normalize() {
 }
 
 #[test]
-fn v4_output_both_and_filter_variants_normalize() {
+fn v4_removed_filter_kind_is_reported_as_migration_diagnostic() {
     let text = v4_base()
         .replace("output = \"raw\"", "output = \"both\"")
         .replace(
             "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
             "filter = { kind = \"sync_iir_zero_phase\", half_window_cycles = 2.0, cutoff_ref_ratio = 0.25, sync_average_cycles = 1.5, iir_order = 4 }",
         );
-    let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
-        panic!("expected ready v4 sync-IIR config");
+    let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
+        panic!("expected removed-filter migration diagnostics");
     };
-    assert_eq!(config.fetch.output, FetchOutput::CsvAndRaw);
-    assert_eq!(config.lockin.lpf_kind, LockinLpfKind::SyncIirZeroPhase);
-    assert_eq!(config.lockin.lpf_half_window_cycles, 2.0);
-    assert_eq!(config.lockin.lpf_cutoff_ref_ratio, Some(0.25));
-    assert_eq!(config.lockin.lpf_sync_average_cycles, 1.5);
-    assert_eq!(config.lockin.lpf_iir_order, 4);
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        matches!(diagnostic.kind, DiagnosticKind::Migration)
+            && diagnostic.path.as_deref() == Some("lockin.filter.kind")
+            && diagnostic.message.contains("sync_iir_zero_phase")
+            && diagnostic.message.contains("no longer supported")
+    }));
+}
+
+#[test]
+fn v5_removed_filter_kind_is_reported_as_migration_diagnostic() {
+    let text = v4_base().replace("version = 4", "version = 5").replace(
+        "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+        "filter = { kind = \"fir_zero_phase\", half_window_cycles = 1.0 }",
+    );
+    let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
+        panic!("expected removed-filter migration diagnostics");
+    };
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        matches!(diagnostic.kind, DiagnosticKind::Migration)
+            && diagnostic.message.contains("fir_zero_phase")
+            && diagnostic
+                .suggestion
+                .as_deref()
+                .is_some_and(|suggestion| suggestion.contains("boxcar_legacy"))
+    }));
+}
+
+#[test]
+fn v5_removed_filter_field_is_reported_as_migration_diagnostic() {
+    let text = v4_base().replace("version = 4", "version = 5").replace(
+        "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+        "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0, cutoff_hz = 10.0 }",
+    );
+    let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
+        panic!("expected removed-filter field migration diagnostics");
+    };
+    assert!(
+        diagnostics.diagnostics.iter().any(|diagnostic| {
+            matches!(diagnostic.kind, DiagnosticKind::Migration)
+                && diagnostic.message.contains("cutoff_hz")
+        }),
+        "diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn v5_unknown_filter_kind_remains_a_schema_diagnostic() {
+    let text = v4_base().replace("version = 4", "version = 5").replace(
+        "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+        "filter = { kind = \"future_filter\", half_window_cycles = 1.0 }",
+    );
+    let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
+        panic!("expected unknown-filter schema diagnostics");
+    };
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        matches!(diagnostic.kind, DiagnosticKind::Deserialize)
+            && diagnostic.message.contains("future_filter")
+    }));
 }
 
 #[test]
@@ -491,7 +516,7 @@ fn v4_filter_rejects_fields_from_another_variant() {
 }
 
 #[test]
-fn v4_validation_reports_v4_field_names() {
+fn historical_v4_validation_reports_current_field_names() {
     let text = v4_base()
         .replace(
             "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",

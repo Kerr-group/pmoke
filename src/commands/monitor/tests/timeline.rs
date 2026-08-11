@@ -5,7 +5,7 @@ fn keeps_lockin_settings_in_live_output() {
     let mut app = test_app();
     app.push_output(
             OutputStream::Stdout,
-            "\x1b[1mLock-in settings\x1b[0m\n  \x1b[36m•\x1b[0m lpf_kind = SyncIirZeroPhase\n  • tap_count = 17121\n[  OK   ] done",
+            "\x1b[1mLock-in settings\x1b[0m\n  \x1b[36m•\x1b[0m lpf_kind = BoxcarLegacy\n  • tap_count = 17121\n[  OK   ] done",
         );
 
     assert_eq!(
@@ -15,7 +15,7 @@ fn keeps_lockin_settings_in_live_output() {
             .collect::<Vec<_>>(),
         vec![
             "Lock-in settings".to_string(),
-            "  • lpf_kind = SyncIirZeroPhase".to_string(),
+            "  • lpf_kind = BoxcarLegacy".to_string(),
             "  • tap_count = 17121".to_string(),
             "[  OK   ] done".to_string(),
         ]

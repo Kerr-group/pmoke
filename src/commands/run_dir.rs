@@ -1051,12 +1051,12 @@ mod tests {
         let paths = ArtifactPaths::new(&directory);
         let path = paths.source_config();
 
-        write_once_or_verify(&path, b"version = 4\n").unwrap();
-        write_once_or_verify(&path, b"version = 4\n").unwrap();
+        write_once_or_verify(&path, b"version = 5\n").unwrap();
+        write_once_or_verify(&path, b"version = 5\n").unwrap();
         let error = write_once_or_verify(&path, b"version = 3\n").unwrap_err();
 
         assert!(error.to_string().contains("choose a new --run-dir"));
-        assert_eq!(fs::read(&path).unwrap(), b"version = 4\n");
+        assert_eq!(fs::read(&path).unwrap(), b"version = 5\n");
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -86,12 +86,12 @@ fn source_config_snapshot_uses_the_text_that_was_loaded() {
     fs::create_dir(&dir).unwrap();
     let mut config = crate::test_support::test_config(vec![1], vec![3]);
     config.source_path = dir.join("missing-config.toml");
-    config.source_text = Some("version = 4\n# loaded snapshot\n".to_string());
+    config.source_text = Some("version = 5\n# loaded snapshot\n".to_string());
 
     let checksums = snapshot_configs(&config, &dir).unwrap();
 
     let contents = fs::read(dir.join("config.source.toml")).unwrap();
-    assert_eq!(contents, b"version = 4\n# loaded snapshot\n");
+    assert_eq!(contents, b"version = 5\n# loaded snapshot\n");
     assert_eq!(checksums.source, sha256_hex(&contents));
     let resolved = fs::read(dir.join("config.resolved.toml")).unwrap();
     assert_eq!(checksums.resolved, sha256_hex(&resolved));
@@ -555,7 +555,7 @@ fn test_export_properties() {
     let mut config = crate::test_support::test_config(vec![1], vec![2]);
     config.set_artifact_root(dir.clone());
     config.source_path = dir.join("config.toml");
-    config.source_text = Some("version = 4\n".to_string());
+    config.source_text = Some("version = 5\n".to_string());
 
     // Export CSV --output does not change canonical acquisition
     let acq_dir = dir.join("acquisition");
@@ -563,8 +563,8 @@ fn test_export_properties() {
     let u16le_bytes = b"\x00\x00";
     let mut metadata = single_channel_raw_metadata("waveforms/ch1.u16le", 1);
     metadata.channels[0].sha256 = sha256_hex(u16le_bytes);
-    let source_config = b"version = 4\n";
-    let resolved_config = b"version = 4\n";
+    let source_config = b"version = 5\n";
+    let resolved_config = b"version = 5\n";
     fs::write(dir.join("config.source.toml"), source_config).unwrap();
     fs::write(dir.join("config.resolved.toml"), resolved_config).unwrap();
     metadata.config_file = "../config.source.toml";
@@ -687,7 +687,7 @@ fn test_force_fetch_analysis_invalidation_and_transaction() {
     let mut config = crate::test_support::test_config(vec![1], vec![2]);
     config.set_artifact_root(new_dir.clone());
     config.source_path = new_dir.join("config.toml");
-    config.source_text = Some("version = 4\n".to_string());
+    config.source_text = Some("version = 5\n".to_string());
     config.force = true;
 
     let result = fetch_with_options(&config, Some(FetchFormat::Csv));
@@ -878,7 +878,7 @@ fn test_normal_fetch_fails_before_modifying_state() {
     let mut config = crate::test_support::test_config(vec![1], vec![2]);
     config.set_artifact_root(dir.clone());
     config.source_path = dir.join("config.toml");
-    config.source_text = Some("version = 4\n".to_string());
+    config.source_text = Some("version = 5\n".to_string());
     config.force = false;
 
     // Create the run directory and pre-create an acquisition directory to trigger exists failure
@@ -902,7 +902,7 @@ fn test_normal_fetch_rejects_orphan_analysis() {
     let mut config = crate::test_support::test_config(vec![1], vec![2]);
     config.set_artifact_root(dir.clone());
     config.source_path = dir.join("config.toml");
-    config.source_text = Some("version = 4\n".to_string());
+    config.source_text = Some("version = 5\n".to_string());
     config.force = false;
 
     // Create run directory and pre-create analysis directory (no acquisition exists, so it's an orphan analysis)
@@ -928,7 +928,7 @@ fn process_auto_and_automeasure_preflight_before_state_or_hardware() {
     let mut config = crate::test_support::test_config(vec![1], vec![2]);
     config.set_artifact_root(dir.clone());
     config.source_path = dir.join("config.toml");
-    config.source_text = Some("version = 4\n".to_string());
+    config.source_text = Some("version = 5\n".to_string());
     config.instruments = Some(crate::config::Instruments {
         oscilloscope: crate::config::Oscilloscope {
             connection: crate::config::Connection::Tcpip {

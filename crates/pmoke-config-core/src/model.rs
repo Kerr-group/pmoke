@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ConfigV4 {
+pub(crate) struct ConfigV5 {
     pub version: u32,
     pub scope: Scope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,55 +134,19 @@ pub(crate) struct Lockin {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Filter {
-    BoxcarLegacy {
-        half_window_cycles: f64,
-    },
-    FirBoxcarEnbw {
-        half_window_cycles: f64,
-    },
-    FirZeroPhase {
-        half_window_cycles: f64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cutoff_hz: Option<f64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cutoff_ref_ratio: Option<f64>,
-        #[serde(default = "default_stopband_atten_db")]
-        stopband_atten_db: f64,
-    },
-    SyncIirZeroPhase {
-        half_window_cycles: f64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cutoff_hz: Option<f64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cutoff_ref_ratio: Option<f64>,
-        #[serde(default = "default_sync_average_cycles")]
-        sync_average_cycles: f64,
-        #[serde(default = "default_iir_order")]
-        iir_order: usize,
-    },
+    BoxcarLegacy { half_window_cycles: f64 },
 }
 
 impl Filter {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::BoxcarLegacy { .. } => "boxcar_legacy",
-            Self::FirBoxcarEnbw { .. } => "fir_boxcar_enbw",
-            Self::FirZeroPhase { .. } => "fir_zero_phase",
-            Self::SyncIirZeroPhase { .. } => "sync_iir_zero_phase",
         }
     }
 
     pub fn half_window_cycles(&self) -> f64 {
-        match self {
-            Self::BoxcarLegacy { half_window_cycles }
-            | Self::FirBoxcarEnbw { half_window_cycles }
-            | Self::FirZeroPhase {
-                half_window_cycles, ..
-            }
-            | Self::SyncIirZeroPhase {
-                half_window_cycles, ..
-            } => *half_window_cycles,
-        }
+        let Self::BoxcarLegacy { half_window_cycles } = self;
+        *half_window_cycles
     }
 }
 
@@ -347,18 +311,6 @@ pub(crate) enum PlotDecimation {
     #[default]
     Stride,
     MinMax,
-}
-
-fn default_stopband_atten_db() -> f64 {
-    60.0
-}
-
-fn default_sync_average_cycles() -> f64 {
-    1.0
-}
-
-fn default_iir_order() -> usize {
-    2
 }
 
 fn is_false(value: &bool) -> bool {
