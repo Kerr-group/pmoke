@@ -108,6 +108,37 @@ For agent-run local work, use Nix as the installation authority:
 - Use Nix-provided browsers and native libraries for local validation. Record
   the package source/version and any environment limitation in the handoff.
 
+### WSL and the unified Nix host configuration
+
+The separate unified Nix configuration repository is the host-environment
+owner. It may provide a standalone Home Manager profile for WSL, but `pmoke`
+must not import a private checkout, local filesystem path, host registry, or
+machine-specific module from that repository. This public repository owns its
+own pinned `flake.nix`/`flake.lock` and project development shell.
+
+- Bootstrap Nix inside WSL using the official Nix and WSL guidance. Do not
+  install Nix, Rust, Node.js, pnpm, Python, or native libraries through Scoop,
+  winget, or another Windows package manager.
+- In WSL, enter this repository's `nix develop` shell before building or
+  testing. WSL is a Linux-native validation environment; do not describe a
+  WSL build as a native Windows MSVC/VISA build.
+- Resolve the WSL architecture from the host/profile and the Nix system. Do
+  not hard-code `x86_64-linux` into WSL-specific scripts or claim that a
+  different architecture is supported without adding and validating its shell.
+  The current pmoke flake exposes `x86_64-linux` and `aarch64-darwin` shells.
+- Windows clipboard/browser integration may be an opt-in host capability, but
+  GUI integrations, systemd user services, and GPIB USB/IP support are not
+  prerequisites for ordinary pmoke builds or tests. Do not enable them as a
+  side effect of validation.
+- If an explicitly authorized WSL GPIB preflight is needed, it must be
+  read-only. Do not run `usbipd` bind/attach, load kernel modules, change udev,
+  create `/dev/gpib0`, or access instruments as part of a build/test lane.
+  Use dummy transports, loopback fixtures, and isolated temporary directories
+  unless a separate hardware operation has been approved.
+- WSL profile activation, `/etc/wsl.conf`, Windows integration, and Windows
+  package state remain outside pmoke's ownership. A missing WSL capability is
+  an environment limitation to report, not a reason to bypass the Nix policy.
+
 CI may use its own installation mechanism; preserve those workflow steps unless
 changing CI is explicitly requested.
 

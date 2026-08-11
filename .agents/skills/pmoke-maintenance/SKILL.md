@@ -83,6 +83,24 @@ Homebrew, or system package managers for local setup unless the user explicitly
 authorizes an exception. Do not update Nix inputs merely to obtain a tool;
 report an unavailable package as an environment block.
 
+### WSL boundary
+
+The unified Nix host repository may own a standalone Home Manager profile for
+WSL, but it is not a dependency of this public repository. Do not import its
+private checkout, host registry, local paths, or machine-specific modules.
+Bootstrap Nix inside WSL using the official Nix/WSL guidance, then use this
+repository's `nix develop` shell as the project environment. WSL is a
+Linux-native lane and must not be reported as native Windows MSVC/VISA
+validation.
+
+Resolve the WSL architecture from the host/profile instead of hard-coding it.
+The current pmoke shell exposes `x86_64-linux` and `aarch64-darwin`; adding a
+new system requires an explicit shell and validation change. Windows
+integration can be an opt-in profile capability, while GUI, systemd, and GPIB
+USB/IP are not ordinary build prerequisites. A GPIB preflight, when separately
+authorized, is read-only: never bind or attach USB/IP devices, load modules,
+change udev, create `/dev/gpib0`, or contact instruments during source checks.
+
 ### Optional real-machine platform lane
 
 When the user explicitly authorizes platform validation, use local SSH aliases
@@ -113,6 +131,11 @@ requires its pre-provisioned SDKs. A missing Nix/WSL or native dependency is a
 reported limitation; do not bypass the Nix-only installation policy. Never
 run live instrument trigger, fetch, screenshot, auto-measure, or probe
 commands as part of this lane without separate explicit authorization.
+
+On WSL, website and Rust checks use the Linux-native Nix shell. Do not enable
+GUI/systemd/USB-IP integration merely to run `build`, `check`, or `test`; use a
+Nix-provided browser when visual or browser validation is required and report
+its absence as an environment limitation.
 
 Keep machine-test results private until redacted. A public handoff should
 include only the target role, commit, feature profile, toolchain source,

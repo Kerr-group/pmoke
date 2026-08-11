@@ -16,6 +16,13 @@ there is no repository shell, use a temporary Nix shell for the missing tools;
 do not use `cargo install`, `rustup target add`, global npm/pnpm, or
 `pnpm exec playwright install` on the workstation.
 
+When running in WSL, treat the repository shell as a Linux-native project
+environment. The separate host Nix profile may expose optional Windows
+clipboard/browser adapters, but website builds do not require GUI, systemd, or
+USB/IP integration. Do not enable or mutate those capabilities just to run a
+site build; use an already provisioned Nix browser for visual checks and report
+its absence instead of downloading one through a package manager.
+
 ## Product map
 
 - `website/app/`, `components/`, and `styles/`: Next.js routes and UI.

@@ -48,9 +48,37 @@ used to recover a Kerr signal from large oscilloscope captures.
 
 ## ⚡ Quick start
 
+### 🧰 Nix-managed development
+
+The repository provides a pinned Nix development shell for the supported local
+systems. On a Nix-managed workstation, use the shell for project tools and
+validation:
+
+```bash
+nix develop
+cargo build --locked --workspace --all-targets --no-default-features
+```
+
+For WSL, bootstrap Nix inside WSL using the [official Nix installation
+instructions](https://nix.dev/manual/nix/stable/installation/) and the
+[NixOS-WSL guidance](https://wiki.nixos.org/wiki/WSL), then run `nix develop`
+from this repository. Do not install Nix or project dependencies through
+Scoop, winget, global npm/pnpm, `rustup`, or `pip`. WSL builds are Linux-native;
+native Windows MSVC/VISA validation is a separate lane.
+
+The host's WSL profile is managed outside this repository. GUI, systemd, and
+GPIB USB/IP integration are optional capabilities and are not enabled by
+ordinary build or test commands. Hardware preflight must remain read-only;
+builds and tests use dummy transports unless live hardware access is explicitly
+authorized.
+
 ### 📦 Install
 
 Clone the repository, then use the platform build that matches the host:
+
+The commands below describe end-user installation options. Contributors and
+agents working on a Nix-managed workstation should use the `nix develop` shell
+above rather than installing repository tools into the host environment.
 
 ```bash
 git clone https://github.com/Kerr-group/pmoke.git
