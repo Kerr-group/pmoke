@@ -3,6 +3,8 @@ export const docsRoute = '/docs';
 export const docsContentRoute = '/llm';
 export const siteDescription =
   'Precision pulsed-MOKE acquisition, lock-in analysis, and instrument control.';
+export const siteDescriptionJa =
+  '再現可能なパルスMOKE取得、ロックイン解析、計測器制御。';
 const configuredBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/pmoke';
 export const basePath = configuredBasePath === '/' ? '' : configuredBasePath.replace(/\/$/, '');
 export const siteOrigin = (process.env.NEXT_PUBLIC_SITE_ORIGIN ?? 'https://kerr-group.github.io').replace(

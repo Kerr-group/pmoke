@@ -86,11 +86,11 @@ test('config validator recovers from a Wasm load failure without losing input', 
   await page.route('**/wasm/pmoke_web_wasm.js', (route) => route.abort());
   await page.goto('/pmoke/ja/docs/configuration/validation/');
   const validator = page.locator('.config-validator');
-  await expect(validator.getByText('検証機能の利用不可', { exact: true })).toBeVisible();
+  await expect(validator.getByText('検証機能は利用不可', { exact: true })).toBeVisible();
   await expect(validator.getByLabel('設定入力')).toHaveValue(/version = 4/u);
 
   await page.unroute('**/wasm/pmoke_web_wasm.js');
-  await validator.getByRole('button', { name: 'Wasm 再読込' }).click();
+  await validator.getByRole('button', { name: 'Wasmを再読み込み' }).click();
   await expect(validator.getByText('有効な設定', { exact: true })).toBeVisible({ timeout: 15_000 });
 });
 
@@ -192,7 +192,7 @@ test('code blocks keep one chrome and localized keyboard-scrollable viewports', 
     await page.keyboard.press('ArrowLeft');
     expect(await viewport.evaluate((element) => element.scrollLeft)).toBeLessThan(rightScroll);
 
-    await figure.getByRole('button', { name: locale === 'ja' ? 'テキストコピー' : 'Copy Text' }).click();
+    await figure.getByRole('button', { name: locale === 'ja' ? 'テキストをコピー' : 'Copy Text' }).click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('pmoke config init');
   }
 });

@@ -8,6 +8,9 @@ const output = path.resolve('out');
 // retaining the compressed budget as the stricter transfer-size guard.
 const M4_WASM_RAW_BUDGET_BYTES = 640 * 1024;
 const M4_WASM_GZIP_BUDGET_BYTES = 210 * 1024;
+// Keep room for the bilingual documentation search index while retaining a
+// fixed static-asset budget and a similar margin to the previous limit.
+const M2_SEARCH_INDEX_BUDGET_BYTES = 960 * 1024;
 const required = [
   'index.html',
   'en/index.html',
@@ -113,7 +116,9 @@ if (fixture.expected?.harmonics?.length !== 6 || fixture.license !== 'CC0-1.0') 
 }
 
 const search = await stat(path.join(output, 'api/search'));
-if (search.size > 950 * 1024) throw new Error(`M2 search budget exceeded: ${search.size} bytes`);
+if (search.size > M2_SEARCH_INDEX_BUDGET_BYTES) {
+  throw new Error(`M2 search budget exceeded: ${search.size} bytes`);
+}
 
 const semanticPath = path.join(output, 'api/semantic-search');
 const semanticFile = await readFile(semanticPath);

@@ -1,22 +1,22 @@
 ---
 title: インストール
-description: 解析・装置制御向け build の導入手順。
+description: 解析・装置制御向けbuildの導入手順。
 ---
 
-Rust executable と Python 解析 package の組合せ。workstation で必要な hardware transport のみを選択する構成。
+Rust executableとPython解析packageを組み合わせる構成。workstationでは必要なhardware transportだけを選択可能。
 
 ## 前提環境
 
-- stable Rust toolchain と Cargo
-- `requirements.txt` 固定版 package を備えた Python 3
-- direct GPIB または VISA 利用時のみの platform driver
+- stable Rust toolchainとCargo
+- `requirements.txt`の固定版packageを備えたPython 3
+- direct GPIBまたはVISAを利用する場合のplatform driver
 
 ```bash
 python -m pip install -r requirements.txt
 cargo install --path .
 ```
 
-project 標準 hardware 一式を含む default build。hardware driver 不要の解析専用 install:
+project標準のhardware一式を含むdefault build。hardware driverが不要な解析専用install:
 
 ```bash
 cargo install --path . --no-default-features
@@ -31,4 +31,4 @@ pmoke config init --output config.toml
 pmoke --config config.toml config validate
 ```
 
-platform ごとの最小 build に向けた [feature 選択](./feature-flags)。
+platformごとの最小buildについては、[feature選択](./feature-flags)を参照。

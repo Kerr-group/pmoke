@@ -33,7 +33,10 @@ createServer(async (request, response) => {
       target = `${target}.html`;
       metadata = await stat(target);
     }
-    if (metadata.isDirectory()) target = path.join(target, 'index.html');
+    if (metadata.isDirectory()) {
+      target = path.join(target, 'index.html');
+      metadata = await stat(target);
+    }
     const contentType = mime.get(path.extname(target)) ?? 'application/octet-stream';
     const headers = {
       'Content-Type': contentType,

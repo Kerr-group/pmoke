@@ -30,8 +30,8 @@ pub fn render_cli(reference: &CliReference, locale: Locale) -> Result<String> {
         ),
         Locale::Japanese => (
             "CLI リファレンス",
-            "pmoke 全 feature を対象とする command・option の自動生成リファレンス。",
-            "型付き clap metadata からの自動生成。手動編集は上書き対象。",
+            "pmokeの全featureを対象とする、commandとoptionの自動生成リファレンス。",
+            "型付きclap metadataから自動生成。手動編集は上書き対象。",
             "コマンド索引",
             "グローバル option",
         ),
@@ -52,7 +52,7 @@ pub fn render_cli(reference: &CliReference, locale: Locale) -> Result<String> {
         "| {} | {} | {} |",
         label(locale, "Command", "コマンド"),
         label(locale, "Description", "説明"),
-        label(locale, "Feature", "必要 feature")
+        label(locale, "Feature", "必要なfeature")
     )?;
     writeln!(output, "| --- | --- | --- |")?;
     for command in &reference.command.subcommands {
@@ -84,8 +84,8 @@ pub fn render_config(reference: &ConfigReference, locale: Locale) -> String {
         ),
         Locale::Japanese => (
             "設定リファレンス",
-            "pmoke config schema version 4 の自動生成 field リファレンス。",
-            "型付き config metadata registry からの自動生成。手動編集は上書き対象。",
+            "pmoke config schema version 4の自動生成fieldリファレンス。",
+            "型付きconfig metadata registryから自動生成。手動編集は上書き対象。",
             "JSON Schema",
         ),
     };
@@ -133,7 +133,7 @@ fn render_command(
         writeln!(
             output,
             "> **{}:** `{feature}`\n",
-            label(locale, "Required feature", "必要 feature")
+            label(locale, "Required feature", "必要なfeature")
         )?;
     }
     writeln!(output, "```text\n{}\n```\n", usage(command))?;
@@ -313,152 +313,146 @@ fn translated(text: &str, locale: Locale) -> Result<&str> {
 fn japanese(text: &str) -> Option<&'static str> {
     Some(match text {
         "A CLI tool to conduct pulsed MOKE experiments and analyze the data." => {
-            "パルス MOKE 実験と解析の CLI。"
+            "パルスMOKEの実験とデータ解析を行うCLI。"
         }
-        "Display the contents of the configuration file" => "設定内容の表示",
+        "Display the contents of the configuration file" => "設定ファイルの内容表示",
         "Open a live terminal dashboard for configuration and analysis artifacts" => {
-            "設定・解析 artifact の live terminal dashboard"
+            "設定・解析artifactのライブ端末ダッシュボード"
         }
         "Inspect and migrate configuration files" => "設定ファイルの確認・移行",
-        "Inspect and verify stored RAW waveform data" => "保存済み RAW 波形の確認・検証",
+        "Inspect and verify stored RAW waveform data" => "保存済みRAW波形の確認・検証",
         "Inspect supported instruments and hardware capabilities" => {
-            "対応装置・hardware capability の確認"
+            "対応装置とhardware capabilityの確認"
         }
         "Benchmark instrument transport request latency" => {
-            "装置 transport request latency の benchmark"
+            "装置transportのリクエスト遅延benchmark"
         }
-        "Export stored data to interchange formats" => "保存データの交換形式 export",
+        "Export stored data to interchange formats" => "保存データの交換形式export",
         "Diagnose config, storage, Python, and connected instruments" => {
-            "設定・storage・Python・接続装置の診断"
+            "設定、ストレージ、Python、接続装置の診断"
         }
-        "Set single mode to the oscilloscope" => "オシロスコープの single mode 設定",
+        "Set single mode to the oscilloscope" => "オシロスコープのsingle mode設定",
         "Send trigger signal from the function generator" => {
-            "ファンクションジェネレータからの trigger 送信"
+            "ファンクションジェネレータからのtrigger送信"
         }
-        "Set single mode and send trigger signal" => "single mode 設定と trigger 送信",
+        "Set single mode and send trigger signal" => "single mode設定とtrigger送信",
         "Fetch data from the oscilloscope and save to a file" => "オシロスコープデータの取得・保存",
-        "Capture an oscilloscope screenshot directly to the PC" => {
-            "オシロスコープ画面の PC 直接取得"
-        }
+        "Capture an oscilloscope screenshot directly to the PC" => "オシロスコープ画面のPC直接取得",
         "Perform auto measurement (set single mode, trigger, fetch)" => {
-            "single mode・trigger・fetch の自動測定"
+            "single mode・trigger・fetchの自動測定"
         }
         "Analyze the reference signal" => "参照信号解析",
         "Analyze the sensor signal" => "センサー信号解析",
-        "Run numerical lock-in analysis" => "数値 lock-in 解析",
-        "Rotate the reference phase for lock-in analysis" => "lock-in 解析の参照位相回転",
-        "Calculate the Kerr angle" => "Kerr 角計算",
+        "Run numerical lock-in analysis" => "数値lock-in解析",
+        "Rotate the reference phase for lock-in analysis" => "lock-in解析の参照位相回転",
+        "Calculate the Kerr angle" => "Kerr角計算",
         "Run all analysis steps: reference, sensor, lock-in, phase, Kerr" => {
-            "reference・sensor・lock-in・phase・Kerr の全解析"
+            "reference・sensor・lock-in・phase・Kerrの全解析"
         }
         "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)" => {
-            "手動 pulse trigger 後の fetch・lock-in・phase・Kerr 自動解析"
+            "手動pulse trigger後のfetch・lock-in・phase・Kerr自動解析"
         }
         "Run the full automatic measurement and analysis" => "完全自動測定・解析",
-        "Generate shell completion script" => "shell completion script の生成",
+        "Generate shell completion script" => "shell completion scriptの生成",
         "Create a starter config file" => "初期設定ファイルの生成",
         "Validate the config file without running an analysis command" => {
             "解析を伴わない設定ファイル検証"
         }
-        "Explain config sections and fields" => "設定 section・field の説明",
-        "Migrate the config to the latest executable schema" => {
-            "設定の最新実行可能 schema への移行"
-        }
+        "Explain config sections and fields" => "設定section・fieldの説明",
+        "Migrate the config to the latest executable schema" => "設定の最新実行可能schemaへの移行",
         "Verify RAW metadata, file sizes, and available checksums" => {
-            "RAW metadata・file size・checksum の検証"
+            "RAW metadata・file size・checksumの検証"
         }
         "List supported instrument models" => "対応装置モデル一覧",
         "Explain a supported instrument model" => "対応装置モデルの説明",
-        "Send one SCPI text query to a connection URI" => "接続 URI への単一 SCPI text query",
+        "Send one SCPI text query to a connection URI" => "接続URIへの単一SCPI text query",
         "Benchmark one SCPI query and save a compact reproducibility report" => {
-            "単一 SCPI query の benchmark と再現性 report 保存"
+            "単一SCPI queryのbenchmarkと再現性report保存"
         }
         "Measure text request/response latency for a connection URI" => {
-            "接続 URI の text request/response latency 計測"
+            "接続URIのtext request/response latency計測"
         }
-        "Convert a verified RAW waveform directory to CSV" => {
-            "検証済み RAW 波形 directory の CSV 変換"
-        }
-        "Convert analysis result CSV files to NumPy tables" => "解析結果 CSV の NumPy table 変換",
+        "Convert a verified RAW waveform directory to CSV" => "検証済みRAW波形directoryのCSV変換",
+        "Convert analysis result CSV files to NumPy tables" => "解析結果CSVのNumPy table変換",
         "Path to the configuration file (default: ./config.toml)" => {
-            "設定ファイル path。既定値 ./config.toml。"
+            "設定ファイルpath。既定値./config.toml。"
         }
         "Store and read run artifacts under this directory" => {
-            "run artifact の保存・読込 directory"
+            "run artifactを保存・読み込むdirectory"
         }
-        "Overwrite existing run artifacts without error" => "既存 run artifact の上書き許可",
-        "Print help" | "Print help (see a summary with '-h')" => "help 表示",
-        "Print version" => "version 表示",
+        "Overwrite existing run artifacts without error" => "既存run artifactの上書き許可",
+        "Print help" | "Print help (see a summary with '-h')" => "help表示",
+        "Print version" => "version表示",
         "Write the template to FILE instead of --config; use '-' for standard output" => {
-            "--config の代わりに FILE へ template 出力。標準出力は '-'。"
+            "--configの代わりにFILEへtemplate出力。標準出力は'-'。"
         }
         "Overwrite an existing output file" => "既存出力ファイルの上書き許可",
         "Field or section path to explain, for example lockin.filter" => {
-            "説明対象 field または section path。例: lockin.filter。"
+            "説明対象fieldまたはsection path。例: lockin.filter。"
         }
         "Write the migrated TOML to FILE; use '-' for standard output" => {
-            "移行済み TOML の FILE 出力。標準出力は '-'。"
+            "移行済みTOMLのFILE出力。標準出力は'-'。"
         }
         "Atomically replace the source config after creating a versioned backup" => {
-            "version 付き backup 作成後の設定原本の atomic 置換"
+            "version付きbackup作成後の設定原本のatomic置換"
         }
         "Only report whether a migration is required" => "移行要否のみの報告",
         "Accept migration steps that can change legacy behavior" => {
-            "legacy 動作を変更し得る移行 step の許可"
+            "legacy動作を変更し得る移行stepの許可"
         }
         "Require a specific target version instead of the latest executable version" => {
-            "最新実行可能版に代わる移行先 version の固定"
+            "最新実行可能版に代わる移行先versionの固定"
         }
         "RAW acquisition directory (defaults to acquisition/ with legacy fallback)" => {
-            "RAW 取得 directory。既定値 acquisition/、legacy fallback あり。"
+            "RAW取得directory。既定値acquisition/、legacy fallbackあり。"
         }
-        "Emit machine-readable JSON" => "machine-readable JSON 出力",
+        "Emit machine-readable JSON" => "machine-readable JSON出力",
         "Instrument model name, for example Keithley2010" => "装置モデル名。例: Keithley2010。",
         "Connection URI, for example prologix-tcp://host:1234?addr=17" => {
-            "接続 URI。例: prologix-tcp://host:1234?addr=17。"
+            "接続URI。例: prologix-tcp://host:1234?addr=17。"
         }
         "Timeout used when the URI does not include a transport-specific timeout" => {
-            "URI に transport 固有 timeout がない場合の timeout"
+            "URIにtransport固有のtimeoutがない場合に使用するtimeout"
         }
         "SCPI query command, for example *IDN?" => "SCPI query command。例: *IDN?。",
         "Connection URI accepted by `pmoke instruments query`" => {
-            "`pmoke instruments query` 対応の接続 URI"
+            "`pmoke instruments query`で使用する接続URI"
         }
-        "SCPI query command to benchmark" => "benchmark 対象の SCPI query command",
-        "Measured query count" => "計測 query 回数",
-        "Unmeasured query count before measurement" => "計測前の非記録 query 回数",
+        "SCPI query command to benchmark" => "benchmark対象のSCPI query command",
+        "Measured query count" => "計測するquery回数",
+        "Unmeasured query count before measurement" => "計測前に実行する非記録query回数",
         "Timeout used when the URI has no transport-specific timeout" => {
-            "URI に transport 固有 timeout がない場合の timeout"
+            "URIにtransport固有のtimeoutがない場合に使用するtimeout"
         }
         "Save TOML to FILE instead of the run benchmark directory" => {
-            "run benchmark directory に代わる FILE への TOML 保存"
+            "run benchmark directoryに代わるFILEへのTOML保存"
         }
         "Emit the compact report as JSON after saving TOML" => {
-            "TOML 保存後の compact report JSON 出力"
+            "TOML保存後のcompact report JSON出力"
         }
-        "Text protocol used to validate each request" => "各 request 検証用 text protocol",
+        "Text protocol used to validate each request" => "各requestを検証するtext protocol",
         "Request to benchmark; repeat for multiple requests" => {
-            "benchmark 対象 request。複数指定時の反復 option。"
+            "benchmark対象request。複数指定時の反復option。"
         }
-        "Measured request count per request" => "request ごとの計測回数",
-        "Unmeasured request count before each measurement" => "各計測前の非記録 request 回数",
-        "Save the complete JSON report to a file" => "完全 JSON report のファイル保存",
-        "Emit the complete report as JSON" => "完全 report の JSON 出力",
-        "Emit a machine-readable JSON report" => "machine-readable JSON report 出力",
+        "Measured request count per request" => "requestごとの計測回数",
+        "Unmeasured request count before each measurement" => "各計測前に実行する非記録request回数",
+        "Save the complete JSON report to a file" => "完全JSON reportのファイル保存",
+        "Emit the complete report as JSON" => "完全reportのJSON出力",
+        "Emit a machine-readable JSON report" => "machine-readable JSON report出力",
         "Allow active checks such as stopping the oscilloscope" => {
-            "オシロスコープ停止などの active check 許可"
+            "オシロスコープ停止などのactive check許可"
         }
         "Override output format from config [fetch].output" => {
-            "config [fetch].output に対する出力形式 override"
+            "config [fetch].outputに対する出力形式override"
         }
         "CSV destination (defaults to acquisition/waveforms/waveform.csv)" => {
-            "CSV 出力先。既定値 acquisition/waveforms/waveform.csv。"
+            "CSV出力先。既定値acquisition/waveforms/waveform.csv。"
         }
         "Destination directory (defaults to NPY files beside canonical analysis CSVs)" => {
-            "出力 directory。既定値は標準解析 CSV と同じ場所の NPY。"
+            "出力directory。既定値は標準解析CSVと同じ場所のNPY。"
         }
         "Shell to generate for: bash, zsh, fish, powershell, elvish" => {
-            "生成対象 shell: bash、zsh、fish、powershell、elvish。"
+            "生成対象shell: bash、zsh、fish、powershell、elvish。"
         }
         _ => return None,
     })

@@ -5,7 +5,7 @@ import { notFound } from 'next/navigation';
 import { SignalHero } from '@/components/signal-hero';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { isLanguage } from '@/lib/i18n';
-import { absoluteUrl, siteDescription, socialImage } from '@/lib/shared';
+import { absoluteUrl, siteDescription, siteDescriptionJa, socialImage } from '@/lib/shared';
 
 const copy = {
   en: {
@@ -27,8 +27,8 @@ const copy = {
   },
   ja: {
     kicker: '精密信号ラボ',
-    lead: '装置取得、位相推定、Kerr 応答抽出。',
-    description: 'パルス MOKE 取得、ロックイン処理、ハードウェア診断の再現可能な Rust ワークフロー。',
+    lead: '装置制御、位相推定、Kerr応答抽出。',
+    description: 'パルスMOKEの取得、ロックイン処理、ハードウェア診断を行う再現可能なRustワークフロー。',
     docs: 'ドキュメント',
     quickstart: 'クイックスタート',
     signal: 'Wasm 信号プレビュー',
@@ -37,7 +37,7 @@ const copy = {
     darkTheme: 'ダークテーマへ切替',
     cards: [
       ['装置制御', 'TCP/IP、GPIB、Prologix の型付き通信。', 'terminal'],
-      ['解析パイプライン', 'Reference、sensor、lock-in、phase、Kerr の連続処理。', 'activity'],
+      ['解析パイプライン', 'Reference、sensor、lock-in、phase、Kerrの連続処理。', 'activity'],
       ['検索可能な知識', '日英静的検索と AI エージェント向けテキスト。', 'search'],
     ],
   },
@@ -99,11 +99,12 @@ export async function generateMetadata({
   const { lang } = await params;
   if (!isLanguage(lang)) notFound();
   const title = lang === 'ja' ? 'pmoke | パルス MOKE 精密信号ラボ' : 'pmoke | Pulsed-MOKE precision signal lab';
+  const description = lang === 'ja' ? siteDescriptionJa : siteDescription;
   const canonical = absoluteUrl(`/${lang}`);
 
   return {
     title: { absolute: title },
-    description: siteDescription,
+    description,
     alternates: {
       canonical,
       languages: {
@@ -114,12 +115,12 @@ export async function generateMetadata({
     },
     openGraph: {
       title,
-      description: siteDescription,
+      description,
       url: canonical,
       locale: lang === 'ja' ? 'ja_JP' : 'en_US',
       alternateLocale: lang === 'ja' ? ['en_US'] : ['ja_JP'],
       images: [socialImage],
     },
-    twitter: { title, description: siteDescription, images: [socialImage.url] },
+    twitter: { title, description, images: [socialImage.url] },
   };
 }

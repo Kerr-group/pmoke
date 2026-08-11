@@ -4,31 +4,41 @@ import { notFound } from 'next/navigation';
 import { FontVariables } from '@/components/font-variables';
 import { SiteThemeProvider } from '@/components/site-theme-provider';
 import { isLanguage, languages } from '@/lib/i18n';
-import { faviconImage, siteDescription, siteUrl, socialImage } from '@/lib/shared';
+import { faviconImage, siteDescription, siteDescriptionJa, siteUrl, socialImage } from '@/lib/shared';
 import '../global.css';
 
-export const metadata: Metadata = {
-  metadataBase: new URL(`${siteUrl}/`),
-  title: { default: 'pmoke', template: '%s | pmoke' },
-  description: siteDescription,
-  applicationName: 'pmoke',
-  category: 'science',
-  icons: {
-    icon: [{ url: faviconImage, type: 'image/svg+xml' }],
-    shortcut: faviconImage,
-  },
-  openGraph: {
-    type: 'website',
-    siteName: 'pmoke',
-    description: siteDescription,
-    images: [socialImage],
-  },
-  twitter: {
-    card: 'summary_large_image',
-    description: siteDescription,
-    images: [socialImage.url],
-  },
-};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ lang: string }>;
+}): Promise<Metadata> {
+  const { lang } = await params;
+  if (!isLanguage(lang)) notFound();
+  const description = lang === 'ja' ? siteDescriptionJa : siteDescription;
+
+  return {
+    metadataBase: new URL(`${siteUrl}/`),
+    title: { default: 'pmoke', template: '%s | pmoke' },
+    description,
+    applicationName: 'pmoke',
+    category: 'science',
+    icons: {
+      icon: [{ url: faviconImage, type: 'image/svg+xml' }],
+      shortcut: faviconImage,
+    },
+    openGraph: {
+      type: 'website',
+      siteName: 'pmoke',
+      description,
+      images: [socialImage],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      description,
+      images: [socialImage.url],
+    },
+  };
+}
 
 export function generateStaticParams() {
   return languages.map((lang) => ({ lang }));

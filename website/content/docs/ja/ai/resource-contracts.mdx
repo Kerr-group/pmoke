@@ -1,6 +1,6 @@
 ---
 title: 機械向けResource契約
-description: export済み機械向けresourceの形式、安定性境界、integrity確認。
+description: エクスポートされた機械向けresourceの形式、安定性境界、integrity確認。
 ---
 
 ## 契約一覧
@@ -16,8 +16,8 @@ description: export済み機械向けresourceの形式、安定性境界、integ
 
 ## Manifest record
 
-locale、title、description、canonical HTML URL、Markdown URL、export済みMarkdown byte列の
-SHA-256 digestを持つ各page entry。top-level machine endpointとmedia typeを含むmanifest。
+各page entryにはlocale、title、description、canonical HTML URL、Markdown URL、
+エクスポート済みMarkdown byte列のSHA-256 digestを含む。manifestにはtop-level machine endpointとmedia typeも含む。
 
 ```json
 {
@@ -38,5 +38,5 @@ actual=$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)
 test "$actual" = "$expected"
 ```
 
-同一source commitから生成されるdeterministic feed。manifest schema 1へのfield追加を許容する
-consumer側のunknown field無視。breaking shape変更時に必要となるschema更新。
+同一source commitからdeterministic feedを生成。consumerはmanifest schema 1に追加されたunknown fieldを無視可能。
+breakingなshape変更にはschema更新が必要。

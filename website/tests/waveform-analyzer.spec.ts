@@ -7,7 +7,7 @@ for (const locale of ['en', 'ja'] as const) {
     const analyzer = page.locator('.waveform-analyzer');
     await expect(analyzer).toHaveAttribute('data-state', 'complete', { timeout: 20_000 });
     await expect(analyzer.locator('canvas')).toHaveCount(4);
-    await expect(analyzer.getByText(locale === 'ja' ? 'ネイティブ完全一致' : 'Native exact')).toBeVisible();
+    await expect(analyzer.getByText(locale === 'ja' ? 'ネイティブと完全一致' : 'Native exact')).toBeVisible();
     await expect(analyzer.getByText(/pmoke-web-wasm\/0\.1\.0/u)).toBeVisible();
     const nonBlank = await analyzer.locator('canvas').evaluateAll((canvases) =>
       canvases.map((canvas) => {
@@ -104,10 +104,10 @@ test('waveform worker load failure is recoverable without losing input', async (
   await expect(analyzer).toHaveAttribute('data-state', 'error', { timeout: 20_000 });
   await analyzer.getByLabel('サンプル数').fill('24000');
   await page.unroute('**/wasm/pmoke_web_wasm.js');
-  await analyzer.getByRole('button', { name: 'コア再読込' }).click();
+  await analyzer.getByRole('button', { name: 'コアを再読み込み' }).click();
   await expect(analyzer).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
   await expect(analyzer.getByLabel('サンプル数')).toHaveValue('24000');
-  await analyzer.getByRole('button', { name: '解析実行' }).click();
+  await analyzer.getByRole('button', { name: '解析を実行' }).click();
   await expect(analyzer).toHaveAttribute('data-state', 'complete', { timeout: 20_000 });
 });
 

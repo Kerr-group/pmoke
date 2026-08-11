@@ -1,26 +1,26 @@
 ---
 title: AI・機械向けリソース
-description: 信頼できるpmoke agent向けのversioned Markdown feed、型付き契約、local検索。
+description: pmokeエージェント向けのバージョン管理済みMarkdown feed、型付き契約、ローカル検索。
 ---
 
-agent、editor、自動化処理に必要な最小のauthoritative inputを選択するための操作面。
-account・API key不要、documentation buildと同じversionを持つ静的endpoint。
+agent、editor、自動化処理が必要とする最小限のauthoritative inputを選択する操作面。
+accountやAPI keyは不要。documentation buildと同じversionを持つ静的endpoint。
 
 <AIResourceHub locale="ja" />
 
 ## 取得順序
 
-1. 探索の起点となる [`llms.txt`](https://kerr-group.github.io/pmoke/llms.txt)。
-2. 選択localeから取得する関連page限定のMarkdown URL。
-3. 正確なcommand、option、field、default値に用いる生成JSON契約。
+1. 探索の起点となる[`llms.txt`](https://kerr-group.github.io/pmoke/llms.txt)。
+2. 選択したlocaleに対応する関連pageのMarkdown URL。
+3. 正確なcommand、option、field、default値を確認する生成JSON契約。
 4. 複数pageにまたがるtaskでのみ使用するlocale別context feed。
-5. 言語横断contextが必要な場合に限定する日英統合feed。
+5. 言語横断のcontextが必要な場合に限って使用する日英統合feed。
 
 ## 権限境界
 
-workstation・測定装置の状態を観測しないdocumentation。config semanticsの最終基準となる
-`pmoke config validate`。compiled feature・live hardwareの最終基準となる
+このdocumentationはworkstationや測定装置の状態を観測しない。config semanticsの最終基準は
+`pmoke config validate`、compiled featureとlive hardwareの最終基準は
 `pmoke doctor hardware`。credential、address、driver availability、instrument stateの推測禁止。
 
-次の参照先となる[agent運用とversion固定](./agent-workflow)、
-[resource契約](./resource-contracts)、[検索とprivacy](./search-privacy)。
+次の参照先は、[agent運用とversion固定](./agent-workflow)、
+[resource契約](./resource-contracts)、[検索とプライバシー](./search-privacy)。

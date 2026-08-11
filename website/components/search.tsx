@@ -63,18 +63,18 @@ function SearchStatus({ locale, mode }: { locale: string; mode: SearchMode }) {
     },
     loading: {
       Icon: Database,
-      label: japanese ? 'Concept index 準備中' : 'Preparing concept index',
-      detail: japanese ? '同一 origin の静的 asset' : 'Same-origin static asset',
+      label: japanese ? '概念インデックスを準備中' : 'Preparing concept index',
+      detail: japanese ? '同一オリジンの静的アセット' : 'Same-origin static asset',
     },
     hybrid: {
       Icon: Sparkles,
       label: japanese ? 'ローカル・ハイブリッド' : 'Local hybrid',
-      detail: japanese ? '外部送信・telemetry なし' : 'No query upload or telemetry',
+      detail: japanese ? '外部送信・テレメトリなし' : 'No query upload or telemetry',
     },
     fallback: {
       Icon: ShieldCheck,
       label: japanese ? '全文検索フォールバック' : 'Full-text fallback',
-      detail: japanese ? '同一 origin の ZBSearch' : 'Same-origin ZBSearch',
+      detail: japanese ? '同一オリジンのZBSearch' : 'Same-origin ZBSearch',
     },
   }[mode];
   return (
