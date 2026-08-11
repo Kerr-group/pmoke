@@ -412,6 +412,55 @@ button:focus-visible {
   display: block;
 }
 
+.signal-sequence {
+  position: absolute;
+  top: 1.25rem;
+  left: max(24px, calc((100vw - 1440px) / 2));
+  right: max(24px, calc((100vw - 1440px) / 2));
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+.signal-sequence li {
+  min-width: 0;
+  padding: 0.42rem 0.5rem;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(147, 161, 165, 0.38);
+  background: rgba(16, 21, 23, 0.66);
+  color: #aebcba;
+  font: 650 0.58rem/1.25 var(--font-mono), monospace;
+  letter-spacing: 0.025em;
+}
+
+.signal-stage[data-sequence-stage='acquisition'] .signal-sequence [data-step='acquisition-window'],
+.signal-stage[data-sequence-stage='field-pulse'] .signal-sequence [data-step='field-pulse'],
+.signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='reference'],
+.signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='kerr-response'],
+.signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in-x'],
+.signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in-y'],
+.signal-stage[data-sequence-stage='kerr-angle'] .signal-sequence [data-step='kerr-angle'] {
+  border-color: var(--cyan);
+  color: #effffd;
+}
+
+.signal-description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .signal-hud {
   position: absolute;
   right: max(24px, calc((100vw - 1440px) / 2));
@@ -425,8 +474,34 @@ button:focus-visible {
 }
 
 .signal-hud span { display: inline-flex; align-items: center; gap: 0.35rem; }
-.signal-hud .wasm-state { color: var(--green); }
-.signal-stage[data-wasm='fallback'] .wasm-state { color: var(--amber); }
+.signal-status { color: #aebcba; }
+.signal-stage[data-wasm='fallback'] .signal-status { color: var(--amber); }
+
+.signal-controls {
+  position: absolute;
+  top: 5rem;
+  right: max(24px, calc((100vw - 1440px) / 2));
+  z-index: 4;
+}
+
+.signal-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 34px;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid rgba(147, 161, 165, 0.58);
+  background: rgba(16, 21, 23, 0.8);
+  color: #e7edf0;
+  cursor: pointer;
+  font: 650 0.61rem/1.2 var(--font-mono), monospace;
+}
+
+.signal-control:hover,
+.signal-control:focus-visible { border-color: var(--cyan); color: #effffd; }
+.signal-control:disabled { cursor: default; opacity: 0.82; }
+.signal-stage[data-motion='reduced'] .signal-control { border-color: var(--green); }
+.signal-stage[data-wasm='fallback'] .signal-control { border-color: var(--amber); }
 
 .search-status {
   display: grid;
@@ -482,6 +557,7 @@ button:focus-visible {
 .dot { width: 7px; height: 7px; border-radius: 50%; }
 .dot-cyan { background: var(--cyan); }
 .dot-magenta { background: var(--magenta); }
+.dot-amber { background: var(--amber); }
 
 .hero-copy {
   position: relative;
@@ -583,7 +659,19 @@ html:not(.dark) .signal-stage {
 }
 html:not(.dark) .signal-stage::after { background: rgba(242, 245, 243, 0.24); }
 html:not(.dark) .signal-hud { color: #536563; }
-html:not(.dark) .signal-hud .wasm-state { color: #137946; }
+html:not(.dark) .signal-sequence li { border-color: rgba(68, 87, 90, 0.42); background: rgba(238, 243, 241, 0.78); color: #44575a; }
+html:not(.dark) .signal-stage[data-sequence-stage='acquisition'] .signal-sequence [data-step='acquisition-window'],
+html:not(.dark) .signal-stage[data-sequence-stage='field-pulse'] .signal-sequence [data-step='field-pulse'],
+html:not(.dark) .signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='reference'],
+html:not(.dark) .signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='kerr-response'],
+html:not(.dark) .signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in-x'],
+html:not(.dark) .signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in-y'],
+html:not(.dark) .signal-stage[data-sequence-stage='kerr-angle'] .signal-sequence [data-step='kerr-angle'] { color: #164b4a; }
+html:not(.dark) .signal-control { border-color: #82908e; background: rgba(238, 243, 241, 0.86); color: #172023; }
+html:not(.dark) .signal-control:hover,
+html:not(.dark) .signal-control:focus-visible { color: #164b4a; }
+html:not(.dark) .signal-stage[data-wasm='fallback'] .signal-status { color: #a05d00; }
+html:not(.dark) .signal-stage[data-wasm='fallback'] .signal-control { border-color: #a05d00; }
 html:not(.dark) .hero-copy h1,
 html:not(.dark) .hero-lead { color: #101517; }
 html:not(.dark) .hero-description { color: #52615f; }
@@ -1270,8 +1358,11 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   .hero-copy h1 { font-size: 5rem; }
   .hero-lead { font-size: 1.55rem; }
   .hero-description { font-size: 0.9rem; }
+  .signal-sequence { top: 0.9rem; left: 14px; right: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem; }
+  .signal-sequence li { padding: 0.35rem 0.4rem; font-size: 0.54rem; }
+  .signal-controls { top: 10rem; right: 14px; }
   .signal-hud { left: 14px; right: auto; bottom: 18px; }
-  .signal-hud span:not(.wasm-state) { display: none; }
+  .signal-hud span:not(.signal-status) { display: none; }
   .capability-grid { width: 100%; grid-template-columns: 1fr; }
   .capability-grid article { min-height: 170px; padding: 1.5rem; border-right: 0; border-bottom: 1px solid #354044; }
   .capability-grid article:last-child { border-bottom: 0; }
