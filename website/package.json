@@ -5,7 +5,7 @@
   "description": "Static bilingual documentation for the pmoke pulsed-MOKE CLI.",
   "packageManager": "pnpm@11.18.0",
   "engines": {
-    "node": "22.23.1"
+    "node": ">=22.23.1 <22.24.0"
   },
   "scripts": {
     "build": "npm run build:wasm && next build && node scripts/evaluate-search.mjs && node scripts/postbuild.mjs && node scripts/generate-release-metadata.mjs",
