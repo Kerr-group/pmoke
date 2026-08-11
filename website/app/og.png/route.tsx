@@ -35,13 +35,13 @@ export function GET() {
         />
       ))}
       <div style={{ position: 'absolute', left: 70, top: 62, display: 'flex', color: '#16d9d1', fontSize: 24 }}>
-        PRECISION SIGNAL LAB
+        PULSED-FIELD MOKE / REPRODUCIBLE MEASUREMENT
       </div>
       <div style={{ position: 'absolute', left: 64, top: 126, display: 'flex', fontSize: 150, fontWeight: 800 }}>
         pmoke
       </div>
       <div style={{ position: 'absolute', left: 72, top: 300, display: 'flex', fontSize: 31, color: '#aebbb8' }}>
-        Pulsed-MOKE acquisition · lock-in analysis · instrument control
+        Capture the field pulse · resolve the phase · extract the Kerr angle
       </div>
       {traces.flatMap((trace, traceIndex) =>
         trace.turns.map((turn, index) => (

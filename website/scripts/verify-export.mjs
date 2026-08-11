@@ -67,7 +67,12 @@ if (!Japanese.includes('<html lang="ja"')) throw new Error('Japanese lang metada
 if (!English.includes('Content-Security-Policy')) throw new Error('Static content security policy is missing');
 if (!English.includes('strict-origin-when-cross-origin')) throw new Error('Referrer policy is missing');
 if (!English.includes('/pmoke/_next/')) throw new Error('GitHub Pages basePath is missing');
-if (!Japanese.includes('精密信号ラボ')) throw new Error('Japanese home content is missing');
+if (!English.includes('Capture the field pulse. Resolve the phase. Extract the Kerr angle.')) {
+  throw new Error('English pulsed-field MOKE hero content is missing');
+}
+if (!Japanese.includes('磁場パルスを捉え、位相を解析し、Kerr角を抽出する。')) {
+  throw new Error('Japanese pulsed-field MOKE hero content is missing');
+}
 if (!EnglishAnalyzer.includes('waveform-analyzer')) throw new Error('English waveform tool is missing');
 if (!JapaneseAnalyzer.includes('波形アナライザー')) throw new Error('Japanese waveform tool is missing');
 if (!EnglishCitation.includes('Reproducible attribution')) throw new Error('English citation panel is missing');

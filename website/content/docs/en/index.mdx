@@ -1,17 +1,19 @@
 ---
 title: Overview
-description: Reproducible pulsed-MOKE acquisition and analysis in one Rust CLI.
+description: Reproducible pulsed-field MOKE acquisition, phase-aware lock-in analysis, and Kerr-angle extraction in one Rust CLI.
 ---
 
-`pmoke` coordinates instrument communication, waveform acquisition, lock-in processing, phase rotation, and Kerr-angle calculation.
+`pmoke` coordinates instrument trigger, waveform capture, phase-aware lock-in processing, and Kerr-angle extraction for reproducible pulsed-field MOKE measurements.
+
+This is pulsed-field MOKE: the magnetic-field pulse is the measurement event. It is not a time-resolved pump/probe MOKE (TRMOKE) implementation.
 
 ## Pipeline
 
-1. Acquire oscilloscope channels and metadata.
+1. Trigger acquisition and capture oscilloscope channels with metadata.
 2. Fit the optical reference signal.
 3. Integrate sensor channels.
-4. Demodulate signals with the configured lock-in filter.
-5. Rotate phase and calculate the Kerr response.
+4. Demodulate signals with the configured `boxcar_legacy` lock-in filter.
+5. Rotate phase and extract the Kerr angle.
 
 ## Design priorities
 

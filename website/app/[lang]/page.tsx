@@ -9,13 +9,14 @@ import { absoluteUrl, siteDescription, siteDescriptionJa, socialImage } from '@/
 
 const copy = {
   en: {
-    kicker: 'PRECISION SIGNAL LAB',
-    lead: 'Acquire instruments. Resolve phase. Extract Kerr response.',
+    kicker: 'PULSED-FIELD MOKE / REPRODUCIBLE MEASUREMENT',
+    lead: 'Capture the field pulse. Resolve the phase. Extract the Kerr angle.',
     description:
-      'A reproducible Rust workflow for pulsed-MOKE acquisition, lock-in processing, and hardware diagnostics.',
+      'A reproducible Rust workflow for pulsed-field MOKE—from instrument trigger and waveform capture to phase-aware lock-in analysis and Kerr-angle extraction.',
     docs: 'Read the docs',
     quickstart: 'Quickstart',
-    signal: 'Live Wasm signal preview',
+    signal:
+      'Illustrative pulsed-field MOKE sequence: a magnetic-field pulse marks the acquisition window; reference and Kerr-response waveforms are shown and resolved into lock-in X and Y channels.',
     toggleTheme: 'Toggle color theme',
     lightTheme: 'Switch to light theme',
     darkTheme: 'Switch to dark theme',
@@ -26,12 +27,14 @@ const copy = {
     ],
   },
   ja: {
-    kicker: '精密信号ラボ',
-    lead: '装置制御、位相推定、Kerr応答抽出。',
-    description: 'パルスMOKEの取得、ロックイン処理、ハードウェア診断を行う再現可能なRustワークフロー。',
+    kicker: 'パルス磁場MOKE / 再現可能な計測',
+    lead: '磁場パルスを捉え、位相を解析し、Kerr角を抽出する。',
+    description:
+      '装置トリガーと波形の取得から、位相回転を含むロックイン解析、Kerr角の算出までを一貫して扱う、再現可能なRustワークフロー。',
     docs: 'ドキュメント',
     quickstart: 'クイックスタート',
-    signal: 'Wasm 信号プレビュー',
+    signal:
+      'パルス磁場MOKEの流れを示す説明図。磁場パルスに合わせた取得窓の中で、参照信号とKerr応答を可視化し、ロックイン解析でX/Y成分とKerr角を導出する様子。',
     toggleTheme: 'カラーテーマ切替',
     lightTheme: 'ライトテーマへ切替',
     darkTheme: 'ダークテーマへ切替',
@@ -98,7 +101,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { lang } = await params;
   if (!isLanguage(lang)) notFound();
-  const title = lang === 'ja' ? 'pmoke | パルス MOKE 精密信号ラボ' : 'pmoke | Pulsed-MOKE precision signal lab';
+  const title = lang === 'ja' ? 'pmoke | パルス磁場MOKE ワークフロー' : 'pmoke | Pulsed-field MOKE workflow';
   const description = lang === 'ja' ? siteDescriptionJa : siteDescription;
   const canonical = absoluteUrl(`/${lang}`);
 

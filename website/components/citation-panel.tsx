@@ -53,7 +53,7 @@ export function CitationPanel({ locale }: { locale: Locale }) {
   const bibtex = useMemo(() => [
     '@misc{kerr_group_pmoke_2026,',
     '  author  = {{Kerr-group contributors}},',
-    '  title   = {pmoke: Pulsed-MOKE acquisition and analysis software},',
+    '  title   = {pmoke: Pulsed-field MOKE acquisition and analysis software},',
     '  year    = {2026},',
     `  version = {${pmokeVersion}},`,
     `  url     = {${repositoryUrl}},`,

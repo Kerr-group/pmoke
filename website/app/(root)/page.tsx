@@ -5,7 +5,7 @@ export default function LocaleIndexPage() {
   return (
     <main className="locale-index">
       <Activity aria-hidden="true" size={30} />
-      <p className="eyebrow">PRECISION SIGNAL LAB</p>
+      <p className="eyebrow">PULSED-FIELD MOKE</p>
       <h1>pmoke</h1>
       <p>Select documentation language / ドキュメント言語の選択</p>
       <div className="locale-actions">
