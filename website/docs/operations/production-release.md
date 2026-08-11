@@ -8,6 +8,8 @@ gates pass:
 - Rust native/Wasm tests, clippy, generated-reference drift, and cargo-deny
 - Gitleaks 8.30.1, full npm audit, and explicit Cargo/npm license policy
 - lint, type checking, bilingual content, search relevance, AI resources, and export
+- Wasm payload budgets: raw output up to 640 KiB for host-specific build variance,
+  with a stricter 210 KiB gzip limit for transfer size
 - Chromium at four viewport sizes plus representative Firefox and WebKit flows
 - axe serious/critical count of zero, keyboard focus, reduced motion, JavaScript-off,
   200% zoom proxy, and Wasm/search failure recovery
