@@ -40,6 +40,16 @@ documentation site.
   action pins, least-privilege permissions, path filters, feature coverage,
   generated-file checks, and deployment evidence intact.
 
+## Skill routing
+
+- Use `$pmoke-maintenance` for cross-cutting Rust, hardware transport, Python,
+  WASM, generated documentation, website, benchmark, CI, and repository-policy
+  work.
+- Use `$pmoke-website` for website routes, components, styles, MDX, browser
+  workers, site builds, browser tests, and visual UI review. Use both skills
+  when a website change crosses the Rust/WASM or generated-documentation
+  boundary.
+
 Tracked generated files include `website/generated/`,
 `website/public/config.schema.json`, and the generated CLI/configuration MDX
 references. Build-only output such as `website/public/wasm/`, `website/.next/`,
@@ -72,6 +82,55 @@ private URLs, machine-specific paths, or generated artifacts containing such
 data. Keep external downloads and CI actions pinned and integrity-checked when
 editing workflows.
 
+## Nix-managed local environment
+
+The primary development workstation for this repository is managed by Nix.
+For agent-run local work, use Nix as the installation authority:
+
+- Inspect repository-local `flake.nix`, `flake.lock`, `devenv.nix`, and `.envrc`
+  first. Enter a repository development shell with `nix develop` when one is
+  provided.
+- If the repository has no development shell, prefer an existing managed Nix
+  flake. For a one-off tool, use a temporary `nix shell` or `nix run` from a
+  pinned flake input; if only a registry package is available, record its
+  evaluated version and do not claim repository-level reproducibility.
+- Do not use `cargo install`, `rustup target add`, `pip install`/`pipx`, global
+  `npm`/`pnpm` installs, Homebrew, apt, or similar host package managers unless
+  the user explicitly authorizes an exception. `pnpm install --frozen-lockfile`
+  is an allowed project-local dependency restore; do not use `pnpm add` unless a
+  dependency change is in scope.
+- Do not run `nix flake update` or rewrite a lockfile merely to obtain a tool.
+  If a required tool is absent from the available Nix inputs, report the
+  missing package and keep the validation blocked rather than bypassing Nix.
+- Use Nix-provided browsers and native libraries for local validation. Record
+  the package source/version and any environment limitation in the handoff.
+
+CI may use its own installation mechanism; preserve those workflow steps unless
+changing CI is explicitly requested.
+
+## Public progress and collaboration
+
+This repository is public, so treat branches, commits, issues, pull requests,
+logs, screenshots, and generated reports as public artifacts. Use the following
+split:
+
+- Track one durable, user-facing goal in a GitHub Issue; use a Draft PR for
+  active implementation and its description for a short scope/outcome/
+  validation/blocker checklist.
+- Record stable instructions in README or docs and released user-visible
+  changes in the changelog. Do not turn the repository into a chronological
+  progress diary or commit private deliberation.
+- Keep temporary planning in the conversation or ignored local files. Never
+  commit secrets, credentials, raw measurements, personal data, private URLs,
+  internal-only roadmap details, local filesystem paths, or unreviewed logs.
+- For UI work, attach concise screenshot or recording evidence to the Issue or
+  PR with route, locale, viewport, theme, and dev/export context. Keep large or
+  sensitive captures out of the repository unless versioned snapshots are an
+  explicit project contract.
+- Report progress at meaningful milestones: scope, user-visible result,
+  validation status, known environment limitation, and next decision. Keep
+  public wording factual and safe to quote.
+
 ## Working procedure
 
 1. Start with `git status --short --branch`, `git remote -v`, and
@@ -98,10 +157,19 @@ editing workflows.
 
 ## Toolchain and validation matrix
 
-Use the repository-pinned tools where possible: Rust stable with edition 2024,
-Python 3.12 in CI, Node.js `22.23.1` from `website/.node-version`, pnpm
-`11.18.0`, `wasm32-unknown-unknown`, and wasm-pack `0.15.0`. Use `--locked` for
-normal Rust verification.
+Use the repository-pinned tools where possible: Nix-provided Rust stable with
+edition 2024 and the `wasm32-unknown-unknown` target, Python 3.12 in CI,
+Node.js `22.23.1` from `website/.node-version`, pnpm `11.18.0`, and wasm-pack
+`0.15.0`. Use `--locked` for normal Rust verification. When a repository-local
+Nix shell is not available, the current Nix package set exposes a temporary
+website tool shell such as:
+
+```bash
+nix shell nixpkgs#nodejs_22 nixpkgs#pnpm nixpkgs#wasm-pack nixpkgs#wasm-bindgen-cli_0_2_126 nixpkgs#lld
+```
+
+Check the resulting versions against the repository pins; do not suppress an
+engine or toolchain mismatch by installing outside Nix.
 
 ### Rust and Python baseline
 
@@ -159,9 +227,10 @@ git diff --exit-code -- \
 ```
 
 Review and commit generated changes when they are the expected result of a
-source change. For the site/WASM path, install the pinned target and wasm-pack,
-then run the relevant `cargo check` commands for `pmoke-analysis-core` and
-`pmoke-web-wasm` against `wasm32-unknown-unknown`.
+source change. For the site/WASM path, enter the repository Nix shell or use a
+temporary Nix shell containing the pinned wasm-pack, then run the relevant
+`cargo check` commands for `pmoke-analysis-core` and `pmoke-web-wasm` against
+`wasm32-unknown-unknown`.
 
 ### Website
 
@@ -170,12 +239,30 @@ checks relevant to the change; `pnpm check` is the normal source gate and
 includes lint, Japanese editorial checks, content/readme verification, type
 checking, search, signal, AI-resource, and export checks.
 
+For iterative UI work, start the development server and review the rendered
+route together before treating the change as complete:
+
+```bash
+pnpm run build:dev
+# inspect http://localhost:3000/pmoke/en/ and /pmoke/ja/
+```
+
+Check a changed route at wide, narrow, and phone widths, plus keyboard focus,
+light/dark mode, loading/error states, and the browser console. `build:dev`
+rebuilds the browser WASM package before starting Next.js; `pnpm dev` is an
+equivalent alias. Use `pnpm start` after an export to verify the production
+`/pmoke/` path.
+
 ```bash
 pnpm check
 pnpm test:licenses
 pnpm build
-pnpm exec playwright install --with-deps chromium
-pnpm test:e2e
+browser_bin="$(command -v google-chrome || command -v chromium || true)"
+test -n "$browser_bin" || {
+  echo "A Nix-provided Chrome/Chromium executable is required" >&2
+  exit 1
+}
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$browser_bin" pnpm test:e2e
 ```
 
 The CI release gate additionally runs cross-browser release tests and

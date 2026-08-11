@@ -71,6 +71,18 @@ private URLs, or machine-specific paths. Use dummy transports and temporary
 directories for tests. Do not run trigger/fetch/screenshot/auto commands or
 `doctor --probe-fetch` against live equipment without explicit authorization.
 
+### Nix-managed environment
+
+The local development workstation is Nix-managed. Inspect a repository
+`flake.nix`, `flake.lock`, `devenv.nix`, or `.envrc` first and use `nix develop`
+when available. Otherwise use a temporary `nix shell`/`nix run` from a pinned
+flake input for missing tools. If only a registry package is available, record
+its evaluated version and do not claim repository-level reproducibility. Do not
+use `cargo install`, `rustup target add`, global npm/pnpm, `pip install`,
+Homebrew, or system package managers for local setup unless the user explicitly
+authorizes an exception. Do not update Nix inputs merely to obtain a tool;
+report an unavailable package as an environment block.
+
 ## Validation lanes
 
 Select the smallest complete set of lanes, then run the broad CI-equivalent
@@ -125,7 +137,7 @@ git diff --exit-code -- \
 
 For shared browser behavior, add `wasm32-unknown-unknown` checks for
 `pmoke-analysis-core` and `pmoke-web-wasm`, then build the site WASM with the
-pinned wasm-pack version from `website/README.md`.
+pinned Nix-provided wasm-pack version from `website/README.md`.
 
 ### Website lane
 
@@ -136,8 +148,12 @@ pnpm install --frozen-lockfile
 pnpm check
 pnpm test:licenses
 pnpm build
-pnpm exec playwright install --with-deps chromium
-pnpm test:e2e
+browser_bin="$(command -v google-chrome || command -v chromium || true)"
+test -n "$browser_bin" || {
+  echo "A Nix-provided Chrome/Chromium executable is required" >&2
+  exit 1
+}
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$browser_bin" pnpm test:e2e
 ```
 
 Use `pnpm start` to inspect the exported `/pmoke/` tree. For release-sensitive

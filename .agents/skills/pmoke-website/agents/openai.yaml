@@ -1,0 +1,4 @@
+interface:
+  display_name: "pmoke Website UI"
+  short_description: "Build and review pmoke website UI with visual checks"
+  default_prompt: "Use $pmoke-website to build and review the pmoke website UI."
