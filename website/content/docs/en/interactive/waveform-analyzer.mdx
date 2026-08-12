@@ -1,6 +1,6 @@
 ---
 title: Waveform Analyzer
-description: Browser-local lock-in, phase rotation, and harmonics Kerr analysis with native numerical parity.
+description: Browser-local lock-in, phase rotation, and Kerr-angle analysis from harmonic components, with results matching the native implementation.
 ---
 
 The analyzer runs the same Rust kernels used by native pmoke inside a dedicated Web
@@ -9,18 +9,19 @@ decimated independently; every exported value comes from the complete analysis i
 
 <WaveformAnalyzer locale="en" />
 
-## Visible analysis
+## Analysis visualization
 
-The four synchronized plots expose the input waveform, lock-in X/Y components,
+The four synchronized plots show the input waveform, lock-in X/Y components,
 magnitude and phase, Kerr angle, and filter response. Controls cover sample rate,
 reference frequency, noise, boxcar half-window, stride, phase rotation, harmonic,
 and Kerr factor. Local CSV analysis and metadata-rich CSV export remain browser-local.
 
 ## Parity boundary
 
-`boxcar_legacy`, phase rotation, and harmonics Kerr calculation are native-equivalent.
-Historical FIR/IIR filters are migration-only and are not active runtime paths. Phase
-fitting and standard Kerr are also outside browser parity. Use the native pmoke CLI
+`boxcar_legacy`, phase rotation, and Kerr-angle calculation from harmonic components are
+numerically equivalent to the native implementation. Historical FIR/IIR filters are
+migration-only and are not active runtime paths. Phase fitting and the standard
+Kerr-angle calculation are also outside browser parity. Use the native pmoke CLI
 for the supported production workflow.
 
 CSV input accepts `time,signal` or one signal column. A time column must be finite,

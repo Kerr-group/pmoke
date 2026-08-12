@@ -37,7 +37,7 @@ for (const locale of ['en', 'ja'] as const) {
     const analyzer = page.locator('.waveform-analyzer');
     await expect(analyzer).toHaveAttribute('data-state', 'complete', { timeout: 20_000 });
     await expect(analyzer.locator('canvas')).toHaveCount(4);
-    await expect(analyzer.getByText(locale === 'ja' ? 'ネイティブと完全一致' : 'Native exact')).toBeVisible();
+    await expect(analyzer.getByText(locale === 'ja' ? 'ネイティブ版と数値一致' : 'Native-equivalent')).toBeVisible();
     await expect(analyzer.getByText(/pmoke-web-wasm\/0\.1\.0/u)).toBeVisible();
     const nonBlank = await analyzer.locator('canvas').evaluateAll((canvases) =>
       canvases.map((canvas) => {
@@ -80,7 +80,7 @@ test('maximum demo remains responsive and reports bounded output', async ({ page
   const runtime = Number((await analyzer.getByText('Runtime', { exact: true }).locator('..').locator('dd').textContent())?.replace(' ms', ''));
   expect(runtime).toBeLessThan(5_000);
   await expect(analyzer.getByText('100,000', { exact: true })).toBeVisible();
-  const kerr = Number((await analyzer.getByText('Kerr median', { exact: true }).locator('..').locator('dd').textContent())?.replace(' rad', ''));
+  const kerr = Number((await analyzer.getByText('Median Kerr angle', { exact: true }).locator('..').locator('dd').textContent())?.replace(' rad', ''));
   expect(Math.abs(kerr - 0.01)).toBeLessThanOrEqual(1.0e-10 + 1.0e-8 * 0.01);
 
   const downloadPromise = page.waitForEvent('download');
