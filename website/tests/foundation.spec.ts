@@ -255,6 +255,13 @@ test('signal hero exposes localized sequence semantics and a user pause', async 
     await expect(page.locator('#signal-description')).toContainText(description);
     await expect(stage.locator('.signal-sequence li')).toHaveText(labels);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    const layout = await page.evaluate(() => {
+      const bottom = (selector: string) => document.querySelector(selector)?.getBoundingClientRect().bottom ?? 0;
+      const panelTop = document.querySelector('.hero-copy-panel')?.getBoundingClientRect().top ?? 0;
+      return { panelTop, sequenceBottom: bottom('.signal-sequence'), controlsBottom: bottom('.signal-controls') };
+    });
+    expect(layout.panelTop).toBeGreaterThan(layout.sequenceBottom);
+    expect(layout.panelTop).toBeGreaterThan(layout.controlsBottom);
 
     if (locale === 'en') {
       const control = stage.locator('.signal-control');
