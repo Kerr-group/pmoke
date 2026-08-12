@@ -5,25 +5,28 @@ import { basePath } from '@/lib/shared';
 
 const TAU = Math.PI * 2;
 const LOOP_DURATION_MS = 24_000;
+const LOOP_HOLD_START = 0.9;
+const LOOP_RETURN_START = 0.96;
 const PREVIEW_SAMPLES = 720;
 const INITIAL_PHASE = 0.17;
 const MIN_RENDER_POINTS = 256;
 
-type SignalStatus = 'loading' | 'ready' | 'fallback';
-type MotionState = 'running' | 'paused' | 'reduced';
-type SequenceStage = 'acquisition' | 'field-pulse' | 'waveforms' | 'lock-in' | 'kerr-angle';
+export type SignalSequenceStage = 'field-pulse' | 'waveforms' | 'lock-in' | 'rotate-phase' | 'kerr-angle';
 
 export type SignalHeroLabels = {
   label: string;
   description: string;
   sequence: string;
   fieldPulse: string;
-  acquisitionWindow: string;
-  reference: string;
-  kerrResponse: string;
-  lockInX: string;
-  lockInY: string;
+  triggeredWindow: string;
+  referenceResponse: string;
+  lockIn: string;
+  rotatePhase: string;
   kerrAngle: string;
+  timeDomain: string;
+  phaseSpace: string;
+  harmonicExtraction: string;
+  perHarmonic: string;
   pause: string;
   resume: string;
   reducedMotion: string;
@@ -33,6 +36,35 @@ export type SignalHeroLabels = {
   wasmFallback: string;
 };
 
+type SignalStatus = 'loading' | 'ready' | 'fallback';
+type MotionState = 'running' | 'paused' | 'reduced';
+type Palette = typeof DARK_COLORS;
+
+type Rect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+type SignalLayout = {
+  plot: Rect;
+  phase: Rect;
+  output: Rect;
+  stacked: boolean;
+};
+
+export type HarmonicKerrCue = {
+  a2: number;
+  a3: number;
+  a4: number;
+  a6: number;
+  modulationDepth: number;
+  angleRad: number;
+};
+
 const DARK_COLORS = {
   reference: '#e7edf0',
   cyan: '#16d9d1',
@@ -40,6 +72,9 @@ const DARK_COLORS = {
   green: '#74e1a4',
   amber: '#f4bd6b',
   grid: 'rgba(145, 164, 174, 0.34)',
+  panel: 'rgba(16, 21, 23, 0.72)',
+  panelEdge: 'rgba(145, 164, 174, 0.42)',
+  muted: '#8fa09f',
 };
 
 const LIGHT_COLORS = {
@@ -49,6 +84,19 @@ const LIGHT_COLORS = {
   green: '#137946',
   amber: '#a05d00',
   grid: 'rgba(40, 67, 68, 0.36)',
+  panel: 'rgba(238, 243, 241, 0.78)',
+  panelEdge: 'rgba(68, 87, 90, 0.48)',
+  muted: '#637575',
+};
+
+// A normalized public illustration. It follows the same dependency graph as
+// calculate_harmonics_kerr without embedding a private measurement scale.
+const HARMONIC_CUE_INPUT = {
+  a2: 0.74,
+  a3: 0.22,
+  a4: 0.27,
+  a6: 0.08,
+  factor: 1,
 };
 
 export function sampleChannels(t: number, phase: number): [number, number, number] {
@@ -73,11 +121,70 @@ export function fallbackSignal(samples: number, phase = INITIAL_PHASE): Float64A
   return output;
 }
 
-const FALLBACK_SIGNAL = fallbackSignal(PREVIEW_SAMPLES);
-
 export function previewPointCount(width: number, samples: number): number {
   const periodicSamples = Math.max(2, samples - 1);
   return Math.min(periodicSamples, Math.max(MIN_RENDER_POINTS, Math.ceil(width) + 1));
+}
+
+/** Apply the same coordinate transform as pmoke-analysis-core::rotate_phase. */
+export function rotatePhasePoint(x: number, y: number, deltaRad: number): [number, number] {
+  const cosDelta = Math.cos(deltaRad);
+  const sinDelta = Math.sin(deltaRad);
+  return [x * cosDelta + y * sinDelta, -x * sinDelta + y * cosDelta];
+}
+
+/** Keep the homepage's harmonic cue tied to the shared Kerr dependency graph. */
+export function calculateHarmonicKerrCue(
+  a2: number,
+  a3: number,
+  a4: number,
+  a6: number,
+  factor = 1,
+): HarmonicKerrCue {
+  const modulationDenominator = 15 * a2 + 24 * a4 + 9 * a6;
+  const radicand = (20 * a4) / modulationDenominator;
+  const modulationDepth = 6 * Math.sqrt(radicand);
+  const angleDenominator = ((a2 + a4) * modulationDepth) / 6;
+  const angleRad = 0.5 * Math.atan(a3 / angleDenominator) * factor;
+  if (![modulationDepth, angleRad].every(Number.isFinite)) {
+    return { a2, a3, a4, a6, modulationDepth: 0, angleRad: 0 };
+  }
+  return { a2, a3, a4, a6, modulationDepth, angleRad };
+}
+
+export function finitePulseEnvelope(localTime: number): number {
+  // The public illustration uses a normalized unipolar field pulse: a fast
+  // positive excursion, an asymmetric return to baseline, and no negative
+  // undershoot. No private capture or instrument scale is embedded here.
+  const onset = smoothStep(localTime / 0.1);
+  const settle = 1 - smoothStep((localTime - 0.78) / 0.22);
+  const unipolarLobe = Math.exp(-0.5 * ((localTime - 0.28) / 0.16) ** 2);
+  return onset * settle * unipolarLobe;
+}
+
+const FALLBACK_SIGNAL = fallbackSignal(PREVIEW_SAMPLES);
+const HARMONIC_KERR_CUE = calculateHarmonicKerrCue(
+  HARMONIC_CUE_INPUT.a2,
+  HARMONIC_CUE_INPUT.a3,
+  HARMONIC_CUE_INPUT.a4,
+  HARMONIC_CUE_INPUT.a6,
+  HARMONIC_CUE_INPUT.factor,
+);
+
+export function sequenceStageForProgress(progress: number): SignalSequenceStage {
+  if (progress < 0.18) return 'field-pulse';
+  if (progress < 0.4) return 'waveforms';
+  if (progress < 0.6) return 'lock-in';
+  if (progress < 0.8) return 'rotate-phase';
+  return 'kerr-angle';
+}
+
+/** Complete the result, then sweep the same composition back to its opening state. */
+export function sequenceProgressForElapsed(elapsedMs: number): number {
+  const loopProgress = normalize(elapsedMs / LOOP_DURATION_MS);
+  if (loopProgress < LOOP_HOLD_START) return loopProgress / LOOP_HOLD_START;
+  if (loopProgress < LOOP_RETURN_START) return 1;
+  return 1 - smoothStep((loopProgress - LOOP_RETURN_START) / (1 - LOOP_RETURN_START));
 }
 
 export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
@@ -179,6 +286,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
         cachedHeight,
         sequenceProgress,
         isDark,
+        labels,
       );
       if (canvas.dataset.renderPoints !== String(renderedPoints)) {
         canvas.dataset.renderPoints = String(renderedPoints);
@@ -192,8 +300,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       }
       lastTimestamp = timestamp;
 
-      const sweepOffset = (accumulatedTime % LOOP_DURATION_MS) / LOOP_DURATION_MS;
-      drawFrame(sweepOffset);
+      drawFrame(sequenceProgressForElapsed(accumulatedTime));
 
       if (canAnimate()) {
         animationFrameId = requestAnimationFrame(renderLoop);
@@ -205,8 +312,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
 
     const drawLatest = () => {
       const complete = isReducedMotion || statusRef.current === 'fallback';
-      const sweepOffset = (accumulatedTime % LOOP_DURATION_MS) / LOOP_DURATION_MS;
-      drawFrame(sweepOffset, complete);
+      drawFrame(sequenceProgressForElapsed(accumulatedTime), complete);
     };
     drawLatestRef.current = drawLatest;
     canvas.dataset.renderGeneration = String(Number(canvas.dataset.renderGeneration ?? '0') + 1);
@@ -314,7 +420,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       if (drawLatestRef.current === drawLatest) drawLatestRef.current = () => undefined;
       if (syncLifecycleRef.current === syncLifecycle) syncLifecycleRef.current = () => undefined;
     };
-  }, []);
+  }, [labels]);
 
   const statusLabel =
     status === 'ready' ? labels.wasmReady : status === 'fallback' ? labels.wasmFallback : labels.wasmLoading;
@@ -341,7 +447,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       data-wasm={status}
       data-motion={motionState}
       data-user-paused={userPaused ? 'true' : 'false'}
-      data-sequence-stage="acquisition"
+      data-sequence-stage="field-pulse"
     >
       <canvas
         ref={canvasRef}
@@ -351,11 +457,9 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       />
       <ol className="signal-sequence" aria-label={labels.sequence}>
         <li data-step="field-pulse">{labels.fieldPulse}</li>
-        <li data-step="acquisition-window">{labels.acquisitionWindow}</li>
-        <li data-step="reference">{labels.reference}</li>
-        <li data-step="kerr-response">{labels.kerrResponse}</li>
-        <li data-step="lock-in-x">{labels.lockInX}</li>
-        <li data-step="lock-in-y">{labels.lockInY}</li>
+        <li data-step="waveforms">{labels.referenceResponse}</li>
+        <li data-step="lock-in">{labels.lockIn}</li>
+        <li data-step="rotate-phase">{labels.rotatePhase}</li>
         <li data-step="kerr-angle">{labels.kerrAngle}</li>
       </ol>
       <p id="signal-description" className="signal-description">{labels.description}</p>
@@ -399,23 +503,40 @@ function reveal(progress: number, start: number, end: number): number {
   return smoothStep((progress - start) / (end - start));
 }
 
-function sequenceStageForProgress(progress: number): SequenceStage {
-  if (progress < 0.22) return 'acquisition';
-  if (progress < 0.44) return 'field-pulse';
-  if (progress < 0.68) return 'waveforms';
-  if (progress < 0.84) return 'lock-in';
-  return 'kerr-angle';
+function lerp(from: number, to: number, amount: number): number {
+  return from + (to - from) * amount;
 }
 
-function finitePulseEnvelope(localTime: number): number {
-  // The public illustration uses a normalized unipolar field pulse: a fast
-  // positive excursion, an asymmetric return to baseline, and no negative
-  // undershoot. No private capture or instrument scale is embedded in the
-  // public hero graphic.
-  const onset = smoothStep(localTime / 0.1);
-  const settle = 1 - smoothStep((localTime - 0.78) / 0.22);
-  const unipolarLobe = Math.exp(-0.5 * ((localTime - 0.28) / 0.16) ** 2);
-  return onset * settle * unipolarLobe;
+function makeRect(left: number, top: number, right: number, bottom: number): Rect {
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function getSignalLayout(width: number, height: number): SignalLayout {
+  const stacked = width < 920;
+  if (stacked) {
+    return {
+      plot: makeRect(width * 0.07, height * 0.18, width * 0.93, height * 0.3),
+      phase: makeRect(width * 0.07, height * 0.31, width * 0.47, height * 0.39),
+      output: makeRect(width * 0.54, height * 0.31, width * 0.93, height * 0.39),
+      stacked: true,
+    };
+  }
+
+  const workspaceLeft = width * 0.52;
+  const workspaceRight = width * 0.95;
+  const workspaceWidth = workspaceRight - workspaceLeft;
+  const gap = Math.max(10, workspaceWidth * 0.035);
+  const plotWidth = workspaceWidth * 0.48;
+  const phaseWidth = workspaceWidth * 0.23;
+  const plotRight = workspaceLeft + plotWidth;
+  const phaseLeft = plotRight + gap;
+  const phaseRight = phaseLeft + phaseWidth;
+  return {
+    plot: makeRect(workspaceLeft, height * 0.3, plotRight, height * 0.7),
+    phase: makeRect(phaseLeft, height * 0.35, phaseRight, height * 0.73),
+    output: makeRect(phaseRight + gap, height * 0.35, workspaceRight, height * 0.73),
+    stacked: false,
+  };
 }
 
 function periodicSample(values: Float64Array, channel: number, position: number): number {
@@ -434,111 +555,227 @@ function drawSignals(
   height: number,
   sequenceProgress: number,
   dark: boolean,
+  labels: SignalHeroLabels,
 ): number {
   const count = values.length / 4;
   if (count <= 2) return 0;
 
   const palette = dark ? DARK_COLORS : LIGHT_COLORS;
   const pointsCount = previewPointCount(width, count);
-  const compactLayout = width < 860;
-  const plotLeft = compactLayout ? width * 0.08 : width * 0.56;
-  const plotRight = compactLayout ? width * 0.92 : width * 0.95;
-  const plotWidth = plotRight - plotLeft;
-  const acquisitionStart = plotLeft;
-  const acquisitionEnd = plotRight;
-  const traceStart = acquisitionStart + plotWidth * 0.08;
-  const traceEnd = acquisitionEnd - plotWidth * 0.06;
-  const acquisitionReveal = reveal(sequenceProgress, 0, 0.18);
-  const pulseReveal = reveal(sequenceProgress, 0, 0.36);
-  const waveformReveal = reveal(sequenceProgress, 0.22, 0.62);
-  const lockInReveal = reveal(sequenceProgress, 0.48, 0.82);
-  const angleReveal = reveal(sequenceProgress, 0.68, 0.94);
+  const layout = getSignalLayout(width, height);
+  const pulseReveal = reveal(sequenceProgress, 0, 0.3);
+  const windowReveal = reveal(sequenceProgress, 0.04, 0.3);
+  const waveformReveal = reveal(sequenceProgress, 0.14, 0.52);
+  const lockInReveal = reveal(sequenceProgress, 0.34, 0.68);
+  const rotateReveal = reveal(sequenceProgress, 0.5, 0.82);
+  const kerrReveal = reveal(sequenceProgress, 0.68, 0.96);
 
-  drawAcquisitionWindow(context, width, height, acquisitionStart, acquisitionEnd, acquisitionReveal, palette);
-  drawFieldPulse(context, height, traceStart, traceEnd, pulseReveal, compactLayout, palette);
+  if (layout.stacked) {
+    drawFlowConnector(
+      context,
+      layout.plot.right * 0.5 + layout.plot.left * 0.5,
+      layout.plot.bottom,
+      layout.phase.left + layout.phase.width * 0.5,
+      layout.phase.top,
+      palette,
+    );
+    drawFlowConnector(
+      context,
+      layout.phase.right,
+      layout.phase.top + layout.phase.height * 0.5,
+      layout.output.left,
+      layout.output.top + layout.output.height * 0.5,
+      palette,
+    );
+  } else {
+    drawFlowConnector(
+      context,
+      layout.plot.right,
+      layout.plot.top + layout.plot.height * 0.5,
+      layout.phase.left,
+      layout.phase.top + layout.phase.height * 0.5,
+      palette,
+    );
+    drawFlowConnector(
+      context,
+      layout.phase.right,
+      layout.phase.top + layout.phase.height * 0.5,
+      layout.output.left,
+      layout.output.top + layout.output.height * 0.5,
+      palette,
+    );
+  }
+
+  drawTimeDomain(
+    context,
+    layout.plot,
+    values,
+    pointsCount,
+    pulseReveal,
+    windowReveal,
+    waveformReveal,
+    labels,
+    palette,
+  );
+  drawPhasePlane(context, layout.phase, rotateReveal, lockInReveal, labels, palette);
+  drawHarmonicExtraction(context, layout.output, kerrReveal, labels, palette);
+  drawPipelineCursor(context, layout, sequenceProgress, palette);
+
+  return pointsCount;
+}
+
+function drawTimeDomain(
+  context: CanvasRenderingContext2D,
+  rect: Rect,
+  values: Float64Array,
+  points: number,
+  pulseActive: number,
+  windowActive: number,
+  waveformActive: number,
+  labels: SignalHeroLabels,
+  palette: Palette,
+): void {
+  drawPanel(context, rect, palette, 1);
+  drawFittedText(context, labels.timeDomain, rect.left + 10, rect.top + 17, rect.width * 0.42, 10, palette.muted);
+  drawFittedText(
+    context,
+    labels.triggeredWindow,
+    rect.right - 10,
+    rect.top + 17,
+    rect.width * 0.5,
+    9,
+    palette.cyan,
+    'right',
+  );
+
+  const chartLeft = rect.left + rect.width * 0.06;
+  const chartRight = rect.right - rect.width * 0.04;
+  const pulseBaseline = rect.top + rect.height * 0.3;
+  const chartTop = rect.top + rect.height * 0.39;
+  const chartBottom = rect.bottom - rect.height * 0.1;
+  drawChartGrid(context, chartLeft, chartRight, chartTop, chartBottom, palette);
+
+  const windowStart = chartLeft + (chartRight - chartLeft) * 0.2;
+  const windowEnd = chartLeft + (chartRight - chartLeft) * 0.46;
+  drawTriggeredWindow(context, windowStart, windowEnd, chartTop, chartBottom, windowActive, palette);
+  drawFieldPulse(context, chartLeft, chartRight, pulseBaseline, rect.height * 0.16, pulseActive, palette);
 
   drawTrace(
     context,
     values,
     2,
-    traceStart,
-    traceEnd,
-    height * (compactLayout ? 0.32 : 0.49),
-    height * (compactLayout ? 0.04 : 0.075),
-    pointsCount,
-    sequenceProgress * 0.12,
-    waveformReveal,
+    chartLeft,
+    chartRight,
+    chartTop + (chartBottom - chartTop) * 0.28,
+    (chartBottom - chartTop) * 0.17,
+    points,
+    0.01,
+    waveformActive,
     palette.reference,
   );
   drawTrace(
     context,
     values,
     3,
-    traceStart,
-    traceEnd,
-    height * (compactLayout ? 0.365 : 0.65),
-    height * (compactLayout ? 0.035 : 0.062),
-    pointsCount,
-    sequenceProgress * 0.12 + 0.08,
-    waveformReveal,
+    chartLeft,
+    chartRight,
+    chartTop + (chartBottom - chartTop) * 0.73,
+    (chartBottom - chartTop) * 0.15,
+    points,
+    0.09,
+    waveformActive,
     palette.magenta,
   );
-  drawLockInCue(context, width, height, lockInReveal, palette);
-  drawKerrAngleCue(context, width, height, angleReveal, palette);
 
-  return pointsCount;
+  drawLegendMark(context, chartLeft, chartBottom + 12, palette.reference, 'R', palette);
+  drawLegendMark(context, chartLeft + 26, chartBottom + 12, palette.magenta, 'K', palette);
 }
 
-function drawAcquisitionWindow(
+function drawPanel(context: CanvasRenderingContext2D, rect: Rect, palette: Palette, alpha: number): void {
+  context.save();
+  roundedRect(context, rect.left, rect.top, rect.width, rect.height, 8);
+  context.fillStyle = palette.panel;
+  context.globalAlpha = alpha;
+  context.fill();
+  context.strokeStyle = palette.panelEdge;
+  context.lineWidth = 1;
+  context.globalAlpha = alpha * 0.9;
+  context.stroke();
+  context.restore();
+}
+
+function drawChartGrid(
   context: CanvasRenderingContext2D,
-  width: number,
-  height: number,
+  left: number,
+  right: number,
+  top: number,
+  bottom: number,
+  palette: Palette,
+): void {
+  context.save();
+  context.strokeStyle = palette.grid;
+  context.lineWidth = 1;
+  context.globalAlpha = 0.36;
+  context.beginPath();
+  for (let index = 0; index <= 4; index += 1) {
+    const y = top + (bottom - top) * index / 4;
+    context.moveTo(left, y);
+    context.lineTo(right, y);
+  }
+  for (let index = 0; index <= 6; index += 1) {
+    const x = left + (right - left) * index / 6;
+    context.moveTo(x, top);
+    context.lineTo(x, bottom);
+  }
+  context.stroke();
+  context.restore();
+}
+
+function drawTriggeredWindow(
+  context: CanvasRenderingContext2D,
   startX: number,
   endX: number,
+  top: number,
+  bottom: number,
   active: number,
-  palette: typeof DARK_COLORS,
+  palette: Palette,
 ): void {
-  const compactLayout = width < 860;
-  const top = height * (compactLayout ? 0.3 : 0.36);
-  const bottom = height * (compactLayout ? 0.4 : 0.72);
   context.save();
-  context.lineWidth = 1;
-  context.strokeStyle = palette.grid;
-  context.globalAlpha = 0.18 + active * 0.72;
-  context.setLineDash([7, 7]);
-  context.strokeRect(startX, top, endX - startX, bottom - top);
-  context.setLineDash([]);
-  context.globalAlpha = 0.04 + active * 0.1;
   context.fillStyle = palette.cyan;
-  context.fillRect(startX, top, (endX - startX) * active, bottom - top);
-  context.globalAlpha = 0.35 + active * 0.65;
-  context.beginPath();
-  context.moveTo(startX, top - height * 0.04);
-  context.lineTo(startX, bottom + height * 0.04);
-  context.moveTo(endX, top - height * 0.04);
-  context.lineTo(endX, bottom + height * 0.04);
-  const gateX = startX + (endX - startX) * active;
+  context.globalAlpha = 0.025 + active * 0.07;
+  context.fillRect(startX, top, endX - startX, bottom - top);
   context.strokeStyle = palette.cyan;
-  context.globalAlpha = 0.18 + active * 0.72;
-  context.moveTo(gateX, top);
-  context.lineTo(gateX, bottom);
+  context.lineWidth = 1;
+  context.globalAlpha = 0.2 + active * 0.48;
+  context.setLineDash([3, 5]);
+  context.beginPath();
+  context.moveTo(startX, top - 5);
+  context.lineTo(startX, top + 7);
+  context.moveTo(startX, top - 5);
+  context.lineTo(endX, top - 5);
+  context.moveTo(endX, top - 5);
+  context.lineTo(endX, top + 7);
+  context.stroke();
+  context.setLineDash([]);
+  const gateX = startX + (endX - startX) * clamp(active, 0, 1);
+  context.globalAlpha = 0.25 + active * 0.7;
+  context.beginPath();
+  context.moveTo(gateX, top - 2);
+  context.lineTo(gateX, bottom + 4);
   context.stroke();
   context.restore();
 }
 
 function drawFieldPulse(
   context: CanvasRenderingContext2D,
-  height: number,
   startX: number,
   endX: number,
+  baseline: number,
+  amplitude: number,
   active: number,
-  compactLayout: boolean,
-  palette: typeof DARK_COLORS,
+  palette: Palette,
 ): void {
-  const baseline = height * 0.24;
-  const amplitude = height * (compactLayout ? 0.065 : 0.14);
   const points = 144;
-
   const drawPulse = (revealTo: number, alpha: number, fill: boolean) => {
     context.save();
     context.strokeStyle = palette.cyan;
@@ -548,17 +785,17 @@ function drawFieldPulse(
     context.globalAlpha = alpha;
     context.beginPath();
     let lastX = startX;
-    for (let i = 0; i < points; i += 1) {
-      const local = i / (points - 1);
+    for (let index = 0; index < points; index += 1) {
+      const local = index / (points - 1);
       if (local > revealTo) break;
       const x = startX + (endX - startX) * local;
       const y = baseline - finitePulseEnvelope(local) * amplitude;
-      if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
+      if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
       lastX = x;
     }
     context.stroke();
     if (fill && revealTo > 0) {
-      context.globalAlpha = alpha * 0.32;
+      context.globalAlpha = alpha * 0.28;
       context.lineTo(lastX, baseline);
       context.lineTo(startX, baseline);
       context.closePath();
@@ -568,7 +805,8 @@ function drawFieldPulse(
       const markerProgress = clamp(revealTo, 0, 1);
       const markerX = startX + (endX - startX) * markerProgress;
       const markerY = baseline - finitePulseEnvelope(markerProgress) * amplitude;
-      context.globalAlpha = Math.min(1, alpha + 0.14);
+      const cursorFade = 1 - smoothStep((revealTo - 0.82) / 0.18);
+      context.globalAlpha = Math.max(0.16, Math.min(1, (alpha + 0.14) * cursorFade));
       context.fillStyle = palette.cyan;
       context.beginPath();
       context.arc(markerX, markerY, 3.5, 0, TAU);
@@ -577,8 +815,8 @@ function drawFieldPulse(
     context.restore();
   };
 
-  drawPulse(1, 0.22, false);
-  drawPulse(Math.max(active, 0.01), 0.8, true);
+  drawPulse(1, 0.2, false);
+  drawPulse(Math.max(active, 0.01), 0.86, true);
 }
 
 function drawTrace(
@@ -603,84 +841,279 @@ function drawTrace(
     context.globalAlpha = alpha;
     context.beginPath();
     const visiblePoints = Math.max(2, Math.ceil((points - 1) * revealTo) + 1);
-    for (let i = 0; i < visiblePoints; i += 1) {
-      const ratio = i / (points - 1);
+    for (let index = 0; index < visiblePoints; index += 1) {
+      const ratio = index / (points - 1);
       const x = startX + ratio * (endX - startX);
       const value = periodicSample(values, channel, ratio + offset);
       const y = baseline - value * amplitude;
-      if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
+      if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
     }
     context.stroke();
     context.restore();
   };
 
-  drawPath(1, 0.18, 1);
-  if (active > 0) drawPath(active, 0.88, 1.5);
+  drawPath(1, 0.16, 1);
+  if (active > 0) drawPath(active, 0.92, 1.5);
 }
 
-function drawLockInCue(
+function drawLegendMark(
   context: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  active: number,
-  palette: typeof DARK_COLORS,
+  x: number,
+  y: number,
+  color: string,
+  label: string,
+  palette: Palette,
 ): void {
-  const originX = width * 0.86;
-  const originY = height * 0.58;
-  const axisWidth = Math.min(width * 0.08, 76);
-  const axisHeight = Math.min(height * 0.12, 72);
-  const vectorX = originX + axisWidth * 0.76;
-  const vectorY = originY - axisHeight * 0.72;
-
   context.save();
-  context.lineWidth = 1;
-  context.strokeStyle = palette.grid;
-  context.globalAlpha = 0.2 + active * 0.6;
-  context.beginPath();
-  context.moveTo(originX - axisWidth * 0.14, originY);
-  context.lineTo(originX + axisWidth, originY);
-  context.moveTo(originX, originY + axisHeight * 0.18);
-  context.lineTo(originX, originY - axisHeight);
-  context.stroke();
-
-  context.strokeStyle = palette.cyan;
+  context.strokeStyle = color;
   context.lineWidth = 2;
-  context.globalAlpha = 0.2 + active * 0.78;
+  context.globalAlpha = 0.9;
   context.beginPath();
-  context.moveTo(originX, originY);
-  context.lineTo(vectorX, originY);
+  context.moveTo(x, y - 3);
+  context.lineTo(x + 12, y - 3);
   context.stroke();
-
-  context.strokeStyle = palette.magenta;
-  context.beginPath();
-  context.moveTo(originX, originY);
-  context.lineTo(vectorX, vectorY);
-  context.stroke();
-
-  context.fillStyle = palette.magenta;
-  context.beginPath();
-  context.arc(vectorX, vectorY, 3.5, 0, TAU);
-  context.fill();
+  drawFittedText(context, label, x + 16, y, 16, 8, palette.muted);
   context.restore();
 }
 
-function drawKerrAngleCue(
+function drawPhasePlane(
   context: CanvasRenderingContext2D,
-  width: number,
-  height: number,
+  rect: Rect,
   active: number,
-  palette: typeof DARK_COLORS,
+  lockInActive: number,
+  labels: SignalHeroLabels,
+  palette: Palette,
 ): void {
-  const originX = width * 0.86;
-  const originY = height * 0.58;
-  const radius = Math.min(width * 0.055, 50);
+  drawPanel(context, rect, palette, 1);
+  drawFittedText(context, labels.phaseSpace, rect.left + 10, rect.top + 17, rect.width * 0.56, 10, palette.muted);
+  drawFittedText(context, labels.perHarmonic, rect.right - 8, rect.bottom - 8, rect.width * 0.8, 7, palette.cyan, 'right');
+
+  const originX = rect.left + rect.width * 0.5;
+  const originY = rect.top + rect.height * 0.58;
+  const radius = Math.min(rect.width * 0.31, rect.height * 0.29);
+  const pre: [number, number] = [0.72, 0.42];
+  const delta = 0.72;
+  const post = rotatePhasePoint(pre[0], pre[1], delta);
+  const current: [number, number] = [lerp(pre[0], post[0], active), lerp(pre[1], post[1], active)];
+  const scale = radius / Math.max(Math.hypot(...pre), Math.hypot(...post));
 
   context.save();
+  context.strokeStyle = palette.grid;
+  context.lineWidth = 1;
+  context.globalAlpha = 0.38;
+  context.beginPath();
+  context.arc(originX, originY, radius, 0, TAU);
+  context.moveTo(originX - radius, originY);
+  context.lineTo(originX + radius, originY);
+  context.moveTo(originX, originY - radius);
+  context.lineTo(originX, originY + radius);
+  context.stroke();
+
+  drawPhaseVector(context, originX, originY, pre, scale, palette.reference, 0.26, [4, 4]);
+  drawPhaseVector(context, originX, originY, post, scale, palette.magenta, 0.2, [3, 5]);
+  drawPhaseVector(context, originX, originY, current, scale, palette.magenta, 0.3 + active * 0.7, []);
+
+  const preAngle = Math.atan2(pre[1], pre[0]);
+  const currentAngle = Math.atan2(current[1], current[0]);
   context.strokeStyle = palette.green;
   context.lineWidth = 2;
   context.globalAlpha = 0.2 + active * 0.78;
   context.beginPath();
-  context.arc(originX, originY, radius, -Math.PI * 0.78, -Math.PI * 0.28);
+  context.arc(originX, originY, radius * 0.56, -preAngle, -currentAngle, false);
   context.stroke();
+
+  drawFittedText(context, 'X', originX + radius + 4, originY + 4, 16, 8, palette.muted);
+  drawFittedText(context, 'Y', originX + 4, originY - radius - 4, 16, 8, palette.muted);
+  drawFittedText(context, 'Δφₙ', originX + radius * 0.18, originY - radius * 0.36, rect.width * 0.35, 9, palette.green);
+  context.restore();
+
+  if (lockInActive > 0) {
+    drawSignalDot(
+      context,
+      originX + current[0] * scale,
+      originY - current[1] * scale,
+      palette.magenta,
+      0.45 + lockInActive * 0.55,
+    );
+  }
+}
+
+function drawPhaseVector(
+  context: CanvasRenderingContext2D,
+  originX: number,
+  originY: number,
+  point: [number, number],
+  scale: number,
+  color: string,
+  alpha: number,
+  dash: number[],
+): void {
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = 2;
+  context.globalAlpha = alpha;
+  context.setLineDash(dash);
+  context.beginPath();
+  context.moveTo(originX, originY);
+  context.lineTo(originX + point[0] * scale, originY - point[1] * scale);
+  context.stroke();
+  context.setLineDash([]);
+  context.restore();
+}
+
+function drawHarmonicExtraction(
+  context: CanvasRenderingContext2D,
+  rect: Rect,
+  active: number,
+  labels: SignalHeroLabels,
+  palette: Palette,
+): void {
+  drawPanel(context, rect, palette, 1);
+  drawFittedText(context, labels.harmonicExtraction, rect.left + 8, rect.top + 17, rect.width - 16, 9, palette.muted);
+
+  const rows = [
+    ['A₂', HARMONIC_KERR_CUE.a2, palette.cyan],
+    ['A₃', HARMONIC_KERR_CUE.a3, palette.magenta],
+    ['A₄', HARMONIC_KERR_CUE.a4, palette.green],
+    ['A₆', HARMONIC_KERR_CUE.a6, palette.amber],
+  ] as const;
+  const barMax = Math.max(...rows.map(([, value]) => value));
+  const rowTop = rect.top + rect.height * 0.23;
+  const rowHeight = rect.height * 0.11;
+  const barLeft = rect.left + 22;
+  const barRight = rect.right - 8;
+
+  rows.forEach(([name, value, color], index) => {
+    const y = rowTop + index * rowHeight;
+    drawFittedText(context, name, rect.left + 8, y + 7, 14, 8, palette.muted);
+    context.save();
+    context.fillStyle = color;
+    context.globalAlpha = 0.13;
+    context.fillRect(barLeft, y, barRight - barLeft, 5);
+    context.globalAlpha = 0.22 + active * 0.72;
+    context.fillRect(barLeft, y, (barRight - barLeft) * (value / barMax) * active, 5);
+    context.restore();
+  });
+
+  const outputTop = rect.top + rect.height * 0.72;
+  const outputCenterX = rect.left + rect.width * 0.5;
+  const outputCenterY = rect.bottom - rect.height * 0.1;
+  const compact = rect.height < 150;
+  const modulationLabel = compact ? 'A₂ A₄ A₆ → MOD DEPTH' : 'A₂ + A₄ + A₆ → MODULATION DEPTH';
+  const kerrLabel = compact ? 'A₂ A₃ A₄ + MOD → θK' : 'A₂ + A₃ + A₄ + MOD DEPTH → θK';
+  drawFittedText(context, modulationLabel, rect.left + 8, outputTop - 5, rect.width - 16, 7, palette.cyan);
+  drawFittedText(context, kerrLabel, rect.left + 8, outputTop + 8, rect.width - 16, 7, palette.green);
+  context.save();
+  context.strokeStyle = palette.green;
+  context.lineWidth = 2;
+  context.globalAlpha = 0.25 + active * 0.75;
+  context.beginPath();
+  context.arc(outputCenterX, outputCenterY, Math.min(rect.width, rect.height) * 0.12, -Math.PI * 0.85, -Math.PI * 0.85 + HARMONIC_KERR_CUE.angleRad * active, false);
+  context.stroke();
+  drawFittedText(context, 'θK', outputCenterX + 7, outputCenterY + 4, rect.width * 0.32, 11, palette.green);
+  context.restore();
+
+  context.save();
+  context.strokeStyle = palette.grid;
+  context.lineWidth = 1;
+  context.globalAlpha = 0.35 + active * 0.35;
+  context.setLineDash([2, 4]);
+  context.beginPath();
+  context.moveTo(barRight, rowTop + rowHeight * 1.5);
+  context.lineTo(outputCenterX, outputTop);
+  context.stroke();
+  context.setLineDash([]);
+  context.restore();
+}
+
+function drawFlowConnector(
+  context: CanvasRenderingContext2D,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  palette: Palette,
+): void {
+  context.save();
+  context.strokeStyle = palette.cyan;
+  context.lineWidth = 1;
+  context.globalAlpha = 0.28;
+  context.setLineDash([3, 5]);
+  context.beginPath();
+  context.moveTo(fromX, fromY);
+  context.lineTo(toX, toY);
+  context.stroke();
+  context.setLineDash([]);
+  context.restore();
+}
+
+function drawPipelineCursor(
+  context: CanvasRenderingContext2D,
+  layout: SignalLayout,
+  progress: number,
+  palette: Palette,
+): void {
+  if (progress < 0.4 || progress >= 0.96) return;
+
+  let fromX: number;
+  let fromY: number;
+  let toX: number;
+  let toY: number;
+  let active: number;
+  if (progress < 0.68) {
+    fromX = layout.stacked ? (layout.plot.left + layout.plot.right) * 0.5 : layout.plot.right;
+    fromY = layout.stacked ? layout.plot.bottom : layout.plot.top + layout.plot.height * 0.5;
+    toX = layout.phase.left;
+    toY = layout.stacked ? layout.phase.top : layout.phase.top + layout.phase.height * 0.5;
+    active = (progress - 0.4) / 0.28;
+  } else {
+    fromX = layout.phase.right;
+    fromY = layout.phase.top + layout.phase.height * 0.5;
+    toX = layout.output.left;
+    toY = layout.output.top + layout.output.height * 0.5;
+    active = (progress - 0.68) / 0.28;
+  }
+  const position = smoothStep(clamp(active, 0, 1));
+  drawSignalDot(context, lerp(fromX, toX, position), lerp(fromY, toY, position), palette.cyan, 0.4 + clamp(active, 0, 1) * 0.6);
+}
+
+function drawSignalDot(context: CanvasRenderingContext2D, x: number, y: number, color: string, alpha: number): void {
+  context.save();
+  context.fillStyle = color;
+  context.globalAlpha = alpha;
+  context.beginPath();
+  context.arc(x, y, 3, 0, TAU);
+  context.fill();
+  context.restore();
+}
+
+function roundedRect(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.arcTo(x + width, y, x + width, y + height, r);
+  context.arcTo(x + width, y + height, x, y + height, r);
+  context.arcTo(x, y + height, x, y, r);
+  context.arcTo(x, y, x + width, y, r);
+  context.closePath();
+}
+
+function drawFittedText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  size: number,
+  color: string,
+  align: CanvasTextAlign = 'left',
+): void {
+  context.save();
+  context.fillStyle = color;
+  context.globalAlpha = 0.9;
+  context.textAlign = align;
+  context.textBaseline = 'alphabetic';
+  context.font = `650 ${size}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  context.fillText(text, x, y, Math.max(12, maxWidth));
   context.restore();
 }

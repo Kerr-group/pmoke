@@ -42,6 +42,46 @@ function periodicSample(signal, channel, position) {
   return signal[index0 * 4 + channel] * (1 - fraction) + signal[index1 * 4 + channel] * fraction;
 }
 
+function rotatePhasePoint(x, y, delta) {
+  const cosDelta = Math.cos(delta);
+  const sinDelta = Math.sin(delta);
+  return [x * cosDelta + y * sinDelta, -x * sinDelta + y * cosDelta];
+}
+
+function calculateHarmonicKerrCue(a2, a3, a4, a6, factor = 1) {
+  const modulationDenominator = 15 * a2 + 24 * a4 + 9 * a6;
+  const modulationDepth = 6 * Math.sqrt((20 * a4) / modulationDenominator);
+  const angleDenominator = ((a2 + a4) * modulationDepth) / 6;
+  return {
+    modulationDepth,
+    angleRad: 0.5 * Math.atan(a3 / angleDenominator) * factor,
+  };
+}
+
+function finitePulseEnvelope(localTime) {
+  const normalized = (value) => Math.min(1, Math.max(0, value));
+  const smoothStep = (value) => {
+    const clamped = normalized(value);
+    return clamped * clamped * (3 - 2 * clamped);
+  };
+  const onset = smoothStep(localTime / 0.1);
+  const settle = 1 - smoothStep((localTime - 0.78) / 0.22);
+  const unipolarLobe = Math.exp(-0.5 * ((localTime - 0.28) / 0.16) ** 2);
+  return onset * settle * unipolarLobe;
+}
+
+function smoothStep(value) {
+  const clamped = Math.min(1, Math.max(0, value));
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
+function sequenceProgressForElapsed(elapsedMs) {
+  const loopProgress = ((elapsedMs / 24_000) % 1 + 1) % 1;
+  if (loopProgress < 0.9) return loopProgress / 0.9;
+  if (loopProgress < 0.96) return 1;
+  return 1 - smoothStep((loopProgress - 0.96) / 0.04);
+}
+
 // 1. C1 Boundary Closure Verification
 for (const samples of [64, 720, 4096]) {
   const signal = fallbackSignal(samples, 0.17);
@@ -71,4 +111,24 @@ for (const width of [320, 360, 768, 1440]) {
   }
 }
 
-console.log('Signal verification script passed: C1 closure, circular interpolation, and render density validated.');
+// 3. Phase-rotation and harmonic Kerr visual contracts
+const [rotatedX, rotatedY] = rotatePhasePoint(0.72, 0.42, 0.72);
+assert.ok(Math.abs(Math.hypot(rotatedX, rotatedY) - Math.hypot(0.72, 0.42)) <= 1e-12);
+assert.ok(Math.abs(rotatedX - (0.72 * Math.cos(0.72) + 0.42 * Math.sin(0.72))) <= 1e-12);
+assert.ok(Math.abs(rotatedY - (-0.72 * Math.sin(0.72) + 0.42 * Math.cos(0.72))) <= 1e-12);
+
+const harmonicCue = calculateHarmonicKerrCue(0.74, 0.22, 0.27, 0.08);
+assert.ok(Number.isFinite(harmonicCue.modulationDepth) && harmonicCue.modulationDepth > 0);
+assert.ok(Number.isFinite(harmonicCue.angleRad));
+
+for (let index = 0; index <= 100; index += 1) {
+  assert.ok(finitePulseEnvelope(index / 100) >= 0, 'field pulse must remain unipolar');
+}
+
+assert.equal(sequenceProgressForElapsed(0), 0);
+assert.ok(Math.abs(sequenceProgressForElapsed(21_600) - 1) <= 1e-12);
+assert.ok(Math.abs(sequenceProgressForElapsed(23_040) - 1) <= 1e-12);
+assert.ok(sequenceProgressForElapsed(23_999) < 0.1, 'loop should sweep back before its boundary');
+assert.equal(sequenceProgressForElapsed(24_000), 0);
+
+console.log('Signal verification script passed: closure, render density, phase rotation, harmonic Kerr cue, and unipolar pulse validated.');

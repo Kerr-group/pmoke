@@ -41,7 +41,7 @@ export function GET() {
         pmoke
       </div>
       <div style={{ position: 'absolute', left: 72, top: 300, display: 'flex', fontSize: 31, color: '#aebbb8' }}>
-        Capture the field pulse · resolve the phase · extract the Kerr angle
+        Capture the field pulse · rotate the phase · extract the Kerr angle
       </div>
       {traces.flatMap((trace, traceIndex) =>
         trace.turns.map((turn, index) => (
