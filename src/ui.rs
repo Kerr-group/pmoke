@@ -1,7 +1,4 @@
-use comfy_table::{
-    Attribute, Cell, Color, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS,
-    presets::UTF8_FULL,
-};
+use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use console::{Term, style};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
@@ -443,9 +440,9 @@ pub fn table(headers: &[&str], rows: Vec<Vec<String>>) -> Table {
 fn table_with_width(headers: &[&str], rows: Vec<Vec<String>>, width: u16) -> Table {
     let mut table = Table::new();
     table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
+        .load_style(UTF8_FULL.with_rounded_corners())
         .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_truncation_indicator("...")
         .set_width(width.max(24));
     table.set_header(
         headers
@@ -577,5 +574,31 @@ mod tests {
             rendered.lines().all(|line| measure_text_width(line) <= 60),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn table_with_width_preserves_rounded_utf8_borders() {
+        let mut table = table_with_width(
+            &["Setting", "Value"],
+            vec![vec!["mode".to_string(), "first\nsecond".to_string()]],
+            40,
+        );
+        table.row_mut(0).unwrap().max_height(1);
+        let rendered = table.to_string();
+
+        assert!(
+            rendered
+                .lines()
+                .next()
+                .is_some_and(|line| line.starts_with('╭'))
+        );
+        assert!(
+            rendered
+                .lines()
+                .last()
+                .is_some_and(|line| line.starts_with('╰'))
+        );
+        assert!(rendered.contains("..."));
+        assert!(!rendered.contains('…'));
     }
 }
