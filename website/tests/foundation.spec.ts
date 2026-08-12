@@ -343,7 +343,11 @@ test('signal hero reports an informative static fallback when Wasm is unavailabl
 });
 
 test('signal process rail stays compact and non-interactive below desktop width', async ({ page }, testInfo) => {
-  test.skip(!['tablet-chromium', 'mobile-chromium'].includes(testInfo.project.name), 'compact process rail gate');
+  test.skip(!['desktop-chromium', 'tablet-chromium', 'mobile-chromium'].includes(testInfo.project.name), 'compact process rail gate');
+
+  if (testInfo.project.name === 'desktop-chromium') {
+    await page.setViewportSize({ width: 959, height: 900 });
+  }
 
   for (const locale of ['en', 'ja'] as const) {
     await page.goto(`/pmoke/${locale}/`);
