@@ -101,7 +101,7 @@ impl MonitorAction {
             Self::Sensor => "Integrate sensor pulse channels.",
             Self::Li => "Run numerical lock-in and write analysis/lockin/chN_xy.csv.",
             Self::Phase => "Rotate lock-in phase and write analysis/lockin/chN_rotated.csv.",
-            Self::Kerr => "Calculate Kerr angle from rotated lock-in data.",
+            Self::Kerr => "Calculate the Kerr angle from rotated lock-in data.",
             Self::Analyze => "Run reference, sensor, lock-in, phase, and Kerr.",
             Self::Doctor => "Check config, storage, Python, and available instruments.",
             Self::RawVerify => "Verify the RAW manifest, sizes, and channel checksums.",

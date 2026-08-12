@@ -1298,7 +1298,7 @@
       {
         "name": "reference",
         "path": "pmoke reference",
-        "summary": "Analyze the reference signal",
+        "summary": "Fit the recorded EOM-drive sine wave",
         "required_feature": null,
         "arguments": [
           {

@@ -24,7 +24,7 @@ const SEARCH_HINTS: Record<string, string> = {
   '/ja/docs/installation/feature-flags': '解析専用 build feature Cargo 機能フラグ',
   '/ja/docs/installation': 'source からの build Python 解析環境の準備',
   '/ja/docs/installation/transports': 'TCP 測定装置 timeout 設定 ネットワーク 接続',
-  '/ja/docs/interactive/waveform-analyzer': 'ブラウザ Kerr 角 計算 lock-in simulator',
+  '/ja/docs/interactive/waveform-analyzer': 'ブラウザ Kerr 角度 Kerr 角 計算 lock-in simulator',
 };
 
 const SEARCH_SECTION_HINTS: Record<string, string> = {

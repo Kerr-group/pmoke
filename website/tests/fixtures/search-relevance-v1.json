@@ -20,6 +20,7 @@
     { "locale": "en", "query": "shell completions subcommand", "expected": "/en/docs/cli/reference" },
     { "locale": "en", "query": "create a schema v5 configuration", "expected": "/en/docs/configuration" },
     { "locale": "en", "query": "assign sensor reference and signal roles", "expected": "/en/docs/configuration" },
+    { "locale": "en", "query": "EOM drive sine reference channel", "expected": "/en/docs/configuration" },
     { "locale": "en", "query": "configure output artifact directories", "expected": "/en/docs/configuration" },
     { "locale": "en", "query": "background integration windows in toml", "expected": "/en/docs/configuration" },
     { "locale": "en", "query": "lockin.filter.iir_order migration", "expected": "/en/docs/configuration/validation" },
@@ -57,6 +58,7 @@
     { "locale": "en", "query": "doctor checks for failed hardware", "expected": "/en/docs/troubleshooting" },
     { "locale": "en", "query": "how to cite pmoke software", "expected": "/en/docs/citation" },
     { "locale": "en", "query": "pulsed MOKE method paper DOI", "expected": "/en/docs/citation" },
+    { "locale": "en", "query": "zero-area Sagnac EOM reference", "expected": "/en/docs/citation" },
 
     { "locale": "ja", "query": "pmoke とは何か", "expected": "/ja/docs" },
     { "locale": "ja", "query": "再現可能な測定と解析の概要", "expected": "/ja/docs" },
@@ -76,6 +78,7 @@
     { "locale": "ja", "query": "shell completion command", "expected": "/ja/docs/cli/reference" },
     { "locale": "ja", "query": "schema v5 設定の作成", "expected": "/ja/docs/configuration" },
     { "locale": "ja", "query": "sensor reference signal role の割当", "expected": "/ja/docs/configuration" },
+    { "locale": "ja", "query": "EOM 駆動正弦波 reference channel", "expected": "/ja/docs/configuration" },
     { "locale": "ja", "query": "出力 artifact directory の設定", "expected": "/ja/docs/configuration" },
     { "locale": "ja", "query": "background 積分 window の toml", "expected": "/ja/docs/configuration" },
     { "locale": "ja", "query": "lockin.filter.iir_order migration", "expected": "/ja/docs/configuration/validation" },
@@ -112,6 +115,7 @@
     { "locale": "ja", "query": "raw waveform file error", "expected": "/ja/docs/troubleshooting" },
     { "locale": "ja", "query": "失敗した hardware の doctor 確認", "expected": "/ja/docs/troubleshooting" },
     { "locale": "ja", "query": "pmoke software の引用方法", "expected": "/ja/docs/citation" },
-    { "locale": "ja", "query": "パルス MOKE 手法論文 DOI", "expected": "/ja/docs/citation" }
+    { "locale": "ja", "query": "パルス MOKE 手法論文 DOI", "expected": "/ja/docs/citation" },
+    { "locale": "ja", "query": "zero-area Sagnac EOM reference", "expected": "/ja/docs/citation" }
   ]
 }

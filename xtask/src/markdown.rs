@@ -341,11 +341,11 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Perform auto measurement (set single mode, trigger, fetch)" => {
             "single mode・trigger・fetchの自動測定"
         }
-        "Analyze the reference signal" => "参照信号解析",
+        "Fit the recorded EOM-drive sine wave" => "記録したEOM駆動正弦波をフィッティング",
         "Analyze the sensor signal" => "センサー信号解析",
         "Run numerical lock-in analysis" => "数値lock-in解析",
         "Rotate the reference phase for lock-in analysis" => "lock-in解析の参照位相回転",
-        "Calculate the Kerr angle" => "Kerr角計算",
+        "Calculate the Kerr angle" => "Kerr角度を計算",
         "Run all analysis steps: reference, sensor, lock-in, phase, Kerr" => {
             "reference・sensor・lock-in・phase・Kerrの全解析"
         }

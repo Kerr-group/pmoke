@@ -28,8 +28,11 @@ connection = "prologix-tcp://192.0.2.20:1234?addr=11"
 
 ## Channel roles
 
-Each sensor has exactly one scale form. The reference channel drives frequency
-and phase estimation. Lock-in signal channels contain the optical response.
+Each sensor has exactly one scale form. The `reference` channel records the
+function-generator sine wave sent to the EOM in the zero-area Sagnac
+interferometer. Fitting this electrical signal determines the frequency and
+phase used by numerical lock-in analysis. Lock-in signal channels contain the
+photodetector response.
 
 ```toml
 [[sensors]]

@@ -27,7 +27,10 @@ connection = "prologix-tcp://192.0.2.20:1234?addr=11"
 
 ## channel role
 
-各sensorにはscale形式を一つだけ指定。周波数・位相推定の基準となるreference channelと、光学応答を含むlock-in signal channelを設定。
+各sensorにはscale形式を一つだけ指定。`reference`チャンネルには、zero-area Sagnac干渉計の
+EOMへ入力したファンクションジェネレータ正弦波のオシロスコープ記録を割り当てる。
+この電気信号をフィッティングし、数値lock-in解析で使用する周波数と位相を求める。
+lock-in signalチャンネルにはphotodetector応答を設定。
 
 ```toml
 [[sensors]]

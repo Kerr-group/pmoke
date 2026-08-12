@@ -16,9 +16,18 @@ description: pmokeの引用方法と、再現可能なパルス磁場MOKEの取�
 | 寄与 | 推奨citation |
 | --- | --- |
 | `pmoke`による取得、設定検証、artifact管理、数値解析 | 使用versionとsource commitを固定した上記software citation |
-| compact sample-fiber fixture・all-fiber loopless Sagnac装置・phase-resolved numerical lock-in | Ikeda *et al.* (2026) |
+| compact sample-fiber fixture・all-fiber loopless（zero-area）Sagnac装置・phase-resolved numerical lock-in | Ikeda *et al.* (2026) |
 | bipolar pulsed magnetic field下の測定 | Yamane *et al.* (2026) |
+| zero-area Sagnac干渉計の基礎構成・EOM位相変調 | Xia *et al.* (2006) |
 | 手法の変更を伴う利用 | 最も近い手法論文と変更内容の併記 |
+
+## pmokeにおける`reference`
+
+`pmoke`の`reference`は、zero-area Sagnac干渉計のEOM（電気光学変調器）へ入力した
+ファンクションジェネレータ正弦波のオシロスコープ記録を指す。
+`pmoke reference`はFFTを初期値とする正弦波フィッティングにより、
+実際の変調周波数・振幅・位相を推定。得られた周波数と位相を数値lock-in解析の基準に使用。
+この手順は[Ikeda *et al.* Appendix C.4](https://arxiv.org/html/2509.07383)に対応。
 
 ## 手法参考文献
 
@@ -30,6 +39,10 @@ description: pmokeの引用方法と、再現可能なパルス磁場MOKEの取�
    “Magneto-optical Kerr effect measurements under bipolar pulsed magnetic
    fields,” *JJAP Conference Proceedings* **12**, 011011 (2026).
    [doi:10.56646/jjapcp.12.0_011011](https://doi.org/10.56646/jjapcp.12.0_011011)
+3. J. Xia, P. T. Beyersdorf, M. M. Fejer, and A. Kapitulnik,
+   “Modified Sagnac interferometer for high-sensitivity magneto-optic
+   measurements at cryogenic temperatures,” *Applied Physics Letters* **89**,
+   062508 (2006). [doi:10.1063/1.2336620](https://doi.org/10.1063/1.2336620)
 
 ## 再現性記録
 
