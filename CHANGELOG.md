@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.4.0 — 2026-08-12
+
 ### Breaking changes
 
 - The default pmoke build now enables direct TCP/IP, direct GPIB/VISA, and
