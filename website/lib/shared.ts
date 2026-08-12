@@ -2,9 +2,9 @@ export const appName = 'pmoke';
 export const docsRoute = '/docs';
 export const docsContentRoute = '/llm';
 export const siteDescription =
-  'A reproducible Rust workflow for pulsed-field MOKE—from instrument trigger and waveform capture to phase-aware lock-in analysis and Kerr-angle extraction.';
+  'A reproducible Rust workflow for pulsed-field MOKE—from instrument trigger and waveform capture through lock-in X/Y extraction, per-harmonic phase rotation, and Kerr-angle extraction.';
 export const siteDescriptionJa =
-  '装置トリガーと波形の取得から、位相回転を含むロックイン解析、Kerr角の算出までを一貫して扱う、再現可能なRustワークフロー。';
+  '装置トリガーと波形の取得から、ロックインX/Y抽出、高調波ごとの位相回転、Kerr角の算出までを一貫して扱う、再現可能なRustワークフロー。';
 const configuredBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '/pmoke';
 export const basePath = configuredBasePath === '/' ? '' : configuredBasePath.replace(/\/$/, '');
 export const siteOrigin = (process.env.NEXT_PUBLIC_SITE_ORIGIN ?? 'https://kerr-group.github.io').replace(

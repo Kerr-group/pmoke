@@ -419,34 +419,50 @@ button:focus-visible {
   right: max(24px, calc((100vw - 1440px) / 2));
   z-index: 2;
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 0.4rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.55rem;
   margin: 0;
   padding: 0;
   list-style: none;
+  counter-reset: signal-stage;
   pointer-events: none;
 }
 
 .signal-sequence li {
+  position: relative;
   min-width: 0;
-  padding: 0.42rem 0.5rem;
+  min-height: 39px;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.55rem;
   overflow-wrap: anywhere;
-  border: 1px solid rgba(147, 161, 165, 0.38);
-  background: rgba(16, 21, 23, 0.66);
+  border: 1px solid transparent;
+  border-top-color: rgba(147, 161, 165, 0.46);
+  background: linear-gradient(90deg, rgba(16, 21, 23, 0.64), rgba(16, 21, 23, 0.25));
   color: #aebcba;
   font: 650 0.58rem/1.25 var(--font-mono), monospace;
   letter-spacing: 0.025em;
 }
 
-.signal-stage[data-sequence-stage='acquisition'] .signal-sequence [data-step='acquisition-window'],
+.signal-sequence li::before {
+  counter-increment: signal-stage;
+  content: counter(signal-stage, decimal-leading-zero);
+  flex: none;
+  color: #647677;
+  font-size: 0.52rem;
+  letter-spacing: 0;
+}
+
 .signal-stage[data-sequence-stage='field-pulse'] .signal-sequence [data-step='field-pulse'],
-.signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='reference'],
-.signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='kerr-response'],
-.signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in-x'],
-.signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in-y'],
+.signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='waveforms'],
+.signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in'],
+.signal-stage[data-sequence-stage='rotate-phase'] .signal-sequence [data-step='rotate-phase'],
 .signal-stage[data-sequence-stage='kerr-angle'] .signal-sequence [data-step='kerr-angle'] {
-  border-color: var(--cyan);
+  border-top-color: var(--cyan);
   color: #effffd;
+  background: linear-gradient(90deg, rgba(22, 217, 209, 0.16), rgba(22, 217, 209, 0.03));
+  box-shadow: 0 -1px 0 rgba(22, 217, 209, 0.24), 0 8px 24px rgba(22, 217, 209, 0.05);
 }
 
 .signal-description {
@@ -667,14 +683,18 @@ html:not(.dark) .signal-stage {
 }
 html:not(.dark) .signal-stage::after { background: rgba(242, 245, 243, 0.24); }
 html:not(.dark) .signal-hud { color: #536563; }
-html:not(.dark) .signal-sequence li { border-color: rgba(68, 87, 90, 0.42); background: rgba(238, 243, 241, 0.78); color: #44575a; }
-html:not(.dark) .signal-stage[data-sequence-stage='acquisition'] .signal-sequence [data-step='acquisition-window'],
+html:not(.dark) .signal-sequence li { border-color: transparent; border-top-color: rgba(68, 87, 90, 0.48); background: linear-gradient(90deg, rgba(238, 243, 241, 0.88), rgba(238, 243, 241, 0.45)); color: #44575a; }
+html:not(.dark) .signal-sequence li::before { color: #71817f; }
 html:not(.dark) .signal-stage[data-sequence-stage='field-pulse'] .signal-sequence [data-step='field-pulse'],
-html:not(.dark) .signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='reference'],
-html:not(.dark) .signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='kerr-response'],
-html:not(.dark) .signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in-x'],
-html:not(.dark) .signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in-y'],
+html:not(.dark) .signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='waveforms'],
+html:not(.dark) .signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in'],
+html:not(.dark) .signal-stage[data-sequence-stage='rotate-phase'] .signal-sequence [data-step='rotate-phase'],
 html:not(.dark) .signal-stage[data-sequence-stage='kerr-angle'] .signal-sequence [data-step='kerr-angle'] { color: #164b4a; }
+html:not(.dark) .signal-stage[data-sequence-stage='field-pulse'] .signal-sequence [data-step='field-pulse'],
+html:not(.dark) .signal-stage[data-sequence-stage='waveforms'] .signal-sequence [data-step='waveforms'],
+html:not(.dark) .signal-stage[data-sequence-stage='lock-in'] .signal-sequence [data-step='lock-in'],
+html:not(.dark) .signal-stage[data-sequence-stage='rotate-phase'] .signal-sequence [data-step='rotate-phase'],
+html:not(.dark) .signal-stage[data-sequence-stage='kerr-angle'] .signal-sequence [data-step='kerr-angle'] { border-top-color: #087b7b; background: linear-gradient(90deg, rgba(8, 123, 123, 0.14), rgba(8, 123, 123, 0.03)); }
 html:not(.dark) .signal-control { border-color: #82908e; background: rgba(238, 243, 241, 0.86); color: #172023; }
 html:not(.dark) .signal-control:hover,
 html:not(.dark) .signal-control:focus-visible { color: #164b4a; }
@@ -1353,6 +1373,12 @@ html:not(.dark) .capability-grid p { color: #52615f; }
 @keyframes analyzer-pulse { 50% { opacity: 0.35; box-shadow: 0 0 0 7px color-mix(in srgb, var(--amber) 5%, transparent); } }
 
 @media (max-width: 900px) {
+  .hero-band { min-height: 820px; height: max(820px, calc(100svh - 96px)); max-height: 940px; }
+  .hero-copy { inset: 20rem 24px 0; justify-content: flex-end; padding-bottom: 1.75rem; }
+  .hero-copy-panel { width: 100%; padding-right: 1.1rem; }
+  .hero-copy h1 { font-size: 7rem; }
+  .hero-lead { width: min(680px, 100%); font-size: 2.15rem; }
+  .hero-description { width: min(680px, 100%); }
   .analyzer-commandbar { grid-template-columns: 1fr auto; }
   .analyzer-status { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
   .analyzer-lower { grid-template-columns: 1fr; }
@@ -1365,9 +1391,9 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   .site-header { width: min(100% - 28px, 1440px); height: 60px; }
   .site-header nav a:first-child { display: none; }
   .site-header nav { gap: 0.7rem; }
-  .hero-band { min-height: 730px; height: max(730px, calc(100svh - 96px)); max-height: 840px; }
+  .hero-band { min-height: 730px; height: max(730px, calc(100svh - 96px)); max-height: 860px; }
   .hero-copy {
-    inset: 19rem 14px 0;
+    inset: 22rem 14px 0;
     padding-bottom: 2rem;
     justify-content: flex-end;
   }
@@ -1379,12 +1405,13 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   }
   .hero-copy h1 { font-size: 5rem; }
   .hero-copy .eyebrow { margin-bottom: 0.85rem; }
-  .hero-lead { margin-top: 1.25rem; font-size: 1.55rem; }
-  .hero-description { margin-top: 0.8rem; font-size: 0.9rem; line-height: 1.55; }
-  .hero-actions { margin-top: 1.25rem; }
-  .signal-sequence { top: 0.9rem; left: 14px; right: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem; }
-  .signal-sequence li { padding: 0.35rem 0.4rem; font-size: 0.54rem; }
-  .signal-controls { top: 8.75rem; right: 14px; }
+  .hero-lead { margin-top: 1.1rem; font-size: 1.55rem; }
+  .hero-description { margin-top: 0.7rem; font-size: 0.9rem; line-height: 1.48; }
+  .hero-actions { margin-top: 1.1rem; }
+  .signal-sequence { top: 0.9rem; left: 14px; right: 14px; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.22rem; }
+  .signal-sequence li { min-height: 43px; gap: 0.2rem; padding: 0.32rem 0.25rem; font-size: 0.47rem; line-height: 1.2; }
+  .signal-sequence li::before { display: none; }
+  .signal-controls { top: 5.7rem; right: 14px; }
   .signal-hud { left: 14px; right: auto; bottom: 18px; }
   .signal-hud span:not(.signal-status) { display: none; }
   .capability-grid { width: 100%; grid-template-columns: 1fr; }

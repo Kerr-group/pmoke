@@ -67,17 +67,20 @@ if (!Japanese.includes('<html lang="ja"')) throw new Error('Japanese lang metada
 if (!English.includes('Content-Security-Policy')) throw new Error('Static content security policy is missing');
 if (!English.includes('strict-origin-when-cross-origin')) throw new Error('Referrer policy is missing');
 if (!English.includes('/pmoke/_next/')) throw new Error('GitHub Pages basePath is missing');
-if (!English.includes('Capture the field pulse. Resolve the phase. Extract the Kerr angle.')) {
+if (!English.includes('Capture the field pulse. Rotate the phase. Extract the Kerr angle.')) {
   throw new Error('English pulsed-field MOKE hero content is missing');
 }
-if (!Japanese.includes('磁場パルスを捉え、位相を解析し、Kerr角を抽出する。')) {
+if (!Japanese.includes('磁場パルスを捉え、位相回転を経て、Kerr角を導出する。')) {
   throw new Error('Japanese pulsed-field MOKE hero content is missing');
 }
-for (const label of ['FIELD PULSE', 'ACQUISITION WINDOW', 'REFERENCE', 'KERR RESPONSE', 'LOCK-IN X', 'LOCK-IN Y', 'KERR ANGLE']) {
+for (const label of ['FIELD PULSE', 'REFERENCE + RESPONSE', 'LOCK-IN X / Y', 'ROTATE PHASE', 'KERR ANGLE']) {
   if (!English.includes(label)) throw new Error(`English signal label is missing: ${label}`);
 }
-for (const label of ['磁場パルス', '取得窓', '参照信号', 'Kerr応答', 'ロックイン X', 'ロックイン Y', 'Kerr角']) {
+for (const label of ['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角']) {
   if (!Japanese.includes(label)) throw new Error(`Japanese signal label is missing: ${label}`);
+}
+if (English.includes('ACQUISITION WINDOW') || Japanese.includes('取得窓')) {
+  throw new Error('Legacy acquisition stage remains in the homepage process rail');
 }
 if (!English.includes('aria-describedby="signal-description"')) throw new Error('English signal description is missing');
 if (!Japanese.includes('aria-describedby="signal-description"')) throw new Error('Japanese signal description is missing');

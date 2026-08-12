@@ -148,7 +148,7 @@ test('documentation remains readable without JavaScript', async ({ browser }, te
   await page.goto('http://127.0.0.1:4173/pmoke/ja/');
   await expect(page.getByRole('heading', { level: 1, name: 'pmoke' })).toBeVisible();
   await expect(page.locator('.signal-sequence')).toContainText('磁場パルス');
-  await expect(page.locator('#signal-description')).toContainText('パルス磁場MOKEの流れを示す説明図');
+  await expect(page.locator('#signal-description')).toContainText('パルス磁場MOKEの概念図');
   await page.goto('http://127.0.0.1:4173/pmoke/ja/docs/quickstart/');
   await expect(page.getByRole('heading', { level: 1, name: 'クイックスタート' })).toBeVisible();
   await expect(page.locator('code').filter({ hasText: 'pmoke config init' })).toBeVisible();
@@ -233,13 +233,13 @@ test('signal hero exposes localized sequence semantics and a user pause', async 
   for (const [locale, labels, description] of [
     [
       'en',
-      ['FIELD PULSE', 'ACQUISITION WINDOW', 'REFERENCE', 'KERR RESPONSE', 'LOCK-IN X', 'LOCK-IN Y', 'KERR ANGLE'],
-      'Illustrative pulsed-field MOKE sequence',
+      ['FIELD PULSE', 'REFERENCE + RESPONSE', 'LOCK-IN X / Y', 'ROTATE PHASE', 'KERR ANGLE'],
+      'Illustrative pulsed-field MOKE pipeline',
     ],
     [
       'ja',
-      ['磁場パルス', '取得窓', '参照信号', 'Kerr応答', 'ロックイン X', 'ロックイン Y', 'Kerr角'],
-      'パルス磁場MOKEの流れを示す説明図',
+      ['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角'],
+      'パルス磁場MOKEの概念図',
     ],
   ] as const) {
     await page.goto(`/pmoke/${locale}/`);
@@ -254,6 +254,15 @@ test('signal hero exposes localized sequence semantics and a user pause', async 
     await expect(canvas).toHaveAttribute('aria-describedby', 'signal-description');
     await expect(page.locator('#signal-description')).toContainText(description);
     await expect(stage.locator('.signal-sequence li')).toHaveText(labels);
+    expect(await stage.locator('.signal-sequence li').evaluateAll((items) => items.map((item) => item.dataset.step))).toEqual([
+      'field-pulse',
+      'waveforms',
+      'lock-in',
+      'rotate-phase',
+      'kerr-angle',
+    ]);
+    await expect(page.getByText(locale === 'en' ? 'ACQUISITION WINDOW' : '取得窓', { exact: true })).toHaveCount(0);
+    await expect(page.locator('#signal-description')).toContainText(locale === 'en' ? 'triggered measurement window' : 'トリガー窓');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
     const layout = await page.evaluate(() => {
       const bottom = (selector: string) => document.querySelector(selector)?.getBoundingClientRect().bottom ?? 0;
@@ -298,7 +307,7 @@ test('signal hero reports an informative static fallback when Wasm is unavailabl
   await expect(stage.locator('.signal-status')).toHaveText('静的フォールバック');
   await expect(page.getByRole('button', { name: '静的フォールバック（WASM利用不可）' })).toBeDisabled();
   await expect(page.getByText('WASM ONLINE', { exact: true })).toHaveCount(0);
-  await expect(stage.locator('.signal-sequence li')).toHaveText(['磁場パルス', '取得窓', '参照信号', 'Kerr応答', 'ロックイン X', 'ロックイン Y', 'Kerr角']);
+  await expect(stage.locator('.signal-sequence li')).toHaveText(['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角']);
 });
 
 test('signal renderer survives reload and Wasm readiness without restarting', async ({ page }, testInfo) => {
