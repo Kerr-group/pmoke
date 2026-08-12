@@ -408,15 +408,14 @@ function sequenceStageForProgress(progress: number): SequenceStage {
 }
 
 function finitePulseEnvelope(localTime: number): number {
-  // The site illustration follows the measured pulse morphology: a fast
-  // positive lobe, a smaller negative undershoot, and a return to baseline.
-  // It is deliberately normalized; no private capture or instrument scale is
-  // embedded in the public hero graphic.
+  // The public illustration uses a normalized unipolar field pulse: a fast
+  // positive excursion, an asymmetric return to baseline, and no negative
+  // undershoot. No private capture or instrument scale is embedded in the
+  // public hero graphic.
   const onset = smoothStep(localTime / 0.1);
   const settle = 1 - smoothStep((localTime - 0.78) / 0.22);
-  const positiveLobe = Math.exp(-0.5 * ((localTime - 0.28) / 0.16) ** 2);
-  const negativeUndershoot = 0.24 * Math.exp(-0.5 * ((localTime - 0.62) / 0.12) ** 2);
-  return onset * settle * (positiveLobe - negativeUndershoot);
+  const unipolarLobe = Math.exp(-0.5 * ((localTime - 0.28) / 0.16) ** 2);
+  return onset * settle * unipolarLobe;
 }
 
 function periodicSample(values: Float64Array, channel: number, position: number): number {
