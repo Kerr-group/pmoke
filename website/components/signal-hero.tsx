@@ -28,10 +28,6 @@ export type SignalHeroLabels = {
   phaseSpace: string;
   harmonicExtraction: string;
   perHarmonic: string;
-  pause: string;
-  resume: string;
-  reducedMotion: string;
-  staticFallback: string;
   wasmLoading: string;
   wasmReady: string;
   wasmFallback: string;
@@ -41,7 +37,7 @@ type SignalStatus = 'loading' | 'ready' | 'fallback';
 type MotionState = 'running' | 'paused' | 'reduced';
 type Palette = typeof DARK_COLORS;
 
-type SignalRect = {
+export type SignalRect = {
   left: number;
   top: number;
   right: number;
@@ -50,9 +46,9 @@ type SignalRect = {
   height: number;
 };
 
-type SignalLayoutMode = 'phone' | 'compact' | 'wide';
+export type SignalLayoutMode = 'phone' | 'compact' | 'wide';
 
-type SignalLayout = {
+export type SignalLayout = {
   safe: SignalRect;
   plot: SignalRect;
   phase: SignalRect;
@@ -60,6 +56,21 @@ type SignalLayout = {
   mode: SignalLayoutMode;
   stacked: boolean;
 };
+
+export type SignalPoint = { x: number; y: number };
+
+export type SignalConnector = {
+  from: SignalPoint;
+  to: SignalPoint;
+  axis: 'horizontal' | 'vertical' | 'none';
+  gap: number;
+  available: boolean;
+};
+
+const SIGNAL_LAYOUT_GAP = 20;
+const SIGNAL_CONNECTOR_CLEARANCE = 4;
+const SIGNAL_CONNECTOR_MIN_LENGTH = 12;
+const SIGNAL_CURSOR_RADIUS = 3;
 
 type Rect = SignalRect;
 
@@ -200,12 +211,9 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
   const visualizationRef = useRef<HTMLDivElement>(null);
   const dataRef = useRef<Float64Array>(FALLBACK_SIGNAL);
   const statusRef = useRef<SignalStatus>('loading');
-  const userPausedRef = useRef(false);
   const drawLatestRef = useRef<() => void>(() => undefined);
   const syncLifecycleRef = useRef<() => void>(() => undefined);
   const [status, setStatus] = useState<SignalStatus>('loading');
-  const [userPaused, setUserPaused] = useState(false);
-  const [reducedMotion, setReducedMotion] = useState(false);
   const [motionState, setMotionState] = useState<MotionState>('paused');
 
   useEffect(() => {
@@ -301,6 +309,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
         phase: layout.phase,
         output: layout.output,
       });
+      canvas.dataset.signalConnectorSegments = JSON.stringify(getSignalConnectors(layout));
     };
 
     const updateCanvasBackingStore = () => {
@@ -316,7 +325,6 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       isIntersecting &&
       isDocumentVisible &&
       !isReducedMotion &&
-      !userPausedRef.current &&
       statusRef.current === 'ready';
 
     const drawFrame = (sweepOffset: number, complete = false) => {
@@ -449,10 +457,8 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
     const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     const handleReducedMotionChange = (event: MediaQueryListEvent) => {
       isReducedMotion = event.matches;
-      setReducedMotion(isReducedMotion);
       syncLifecycle();
     };
-    setReducedMotion(isReducedMotion);
     reducedMotionQuery.addEventListener('change', handleReducedMotionChange);
 
     const handleWindowResize = () => {
@@ -481,23 +487,6 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
 
   const statusLabel =
     status === 'ready' ? labels.wasmReady : status === 'fallback' ? labels.wasmFallback : labels.wasmLoading;
-  const controlLabel = status === 'loading'
-    ? labels.wasmLoading
-    : reducedMotion
-      ? labels.reducedMotion
-      : status === 'fallback'
-        ? labels.staticFallback
-        : userPaused
-          ? labels.resume
-          : labels.pause;
-  const controlDisabled = status !== 'ready' || reducedMotion;
-
-  const toggleUserPause = () => {
-    const nextPaused = !userPausedRef.current;
-    userPausedRef.current = nextPaused;
-    setUserPaused(nextPaused);
-    syncLifecycleRef.current();
-  };
 
   return (
     <div
@@ -505,7 +494,6 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       className="signal-stage"
       data-wasm={status}
       data-motion={motionState}
-      data-user-paused={userPaused ? 'true' : 'false'}
       data-sequence-stage="field-pulse"
     >
       <div className="signal-stage-content">
@@ -535,19 +523,6 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
           </ol>
         </div>
         <p className="signal-current-stage" data-signal-region="current-stage" aria-hidden="true">{labels.fieldPulse}</p>
-        <div className="signal-controls" data-signal-region="control">
-          <button
-            type="button"
-            className="signal-control"
-            aria-label={controlLabel}
-            aria-pressed={userPaused}
-            disabled={controlDisabled}
-            onClick={toggleUserPause}
-          >
-            <span aria-hidden="true">{reducedMotion ? '▣' : userPaused ? '▶' : 'Ⅱ'}</span>
-            {controlLabel}
-          </button>
-        </div>
         <div className="signal-visualization" data-signal-region="visualization" ref={visualizationRef}>
           <canvas
             ref={canvasRef}
@@ -594,7 +569,7 @@ function makeRect(left: number, top: number, right: number, bottom: number): Rec
 }
 
 function getSignalLayout(width: number, height: number, viewportWidth = width): SignalLayout {
-  const gap = 16;
+  const gap = SIGNAL_LAYOUT_GAP;
   const phone = viewportWidth <= 720;
   const wide = viewportWidth >= 960 && width >= 680;
 
@@ -673,6 +648,111 @@ function getSignalLayout(width: number, height: number, viewportWidth = width): 
   };
 }
 
+/**
+ * Build axis-aligned tracks only where the two panels share a usable gap.
+ * Both the static track and its moving cursor consume this same geometry, so
+ * card paint order cannot make the connector appear inside a panel.
+ */
+export function getSignalConnectors(
+  layout: SignalLayout,
+  clearance = SIGNAL_CONNECTOR_CLEARANCE,
+): SignalConnector[] {
+  return [
+    makeSignalConnector(layout.plot, layout.phase, clearance),
+    makeSignalConnector(layout.phase, layout.output, clearance),
+  ];
+}
+
+function makeSignalConnector(from: SignalRect, to: SignalRect, clearance: number): SignalConnector {
+  const overlapLeft = Math.max(from.left, to.left);
+  const overlapRight = Math.min(from.right, to.right);
+  const overlapTop = Math.max(from.top, to.top);
+  const overlapBottom = Math.min(from.bottom, to.bottom);
+  const overlapWidth = overlapRight - overlapLeft;
+  const overlapHeight = overlapBottom - overlapTop;
+
+  if (from.right <= to.left && overlapHeight > 0) {
+    return horizontalConnector(
+      from.right,
+      to.left,
+      (overlapTop + overlapBottom) * 0.5,
+      clearance,
+    );
+  }
+  if (from.left >= to.right && overlapHeight > 0) {
+    return horizontalConnector(
+      from.left,
+      to.right,
+      (overlapTop + overlapBottom) * 0.5,
+      clearance,
+    );
+  }
+  if (from.bottom <= to.top && overlapWidth > 0) {
+    return verticalConnector(
+      (overlapLeft + overlapRight) * 0.5,
+      from.bottom,
+      to.top,
+      clearance,
+    );
+  }
+  if (from.top >= to.bottom && overlapWidth > 0) {
+    return verticalConnector(
+      (overlapLeft + overlapRight) * 0.5,
+      from.top,
+      to.bottom,
+      clearance,
+    );
+  }
+
+  return {
+    from: centerOfRect(from),
+    to: centerOfRect(to),
+    axis: 'none',
+    gap: 0,
+    available: false,
+  };
+}
+
+function horizontalConnector(
+  fromBoundary: number,
+  toBoundary: number,
+  y: number,
+  clearance: number,
+): SignalConnector {
+  const direction = Math.sign(toBoundary - fromBoundary);
+  const gap = Math.abs(toBoundary - fromBoundary);
+  const safeLength = gap - clearance * 2;
+  return {
+    from: { x: fromBoundary + direction * clearance, y },
+    to: { x: toBoundary - direction * clearance, y },
+    axis: 'horizontal',
+    gap,
+    available: gap >= SIGNAL_CONNECTOR_MIN_LENGTH && safeLength >= SIGNAL_CONNECTOR_MIN_LENGTH,
+  };
+}
+
+function verticalConnector(
+  x: number,
+  fromBoundary: number,
+  toBoundary: number,
+  clearance: number,
+): SignalConnector {
+  const direction = Math.sign(toBoundary - fromBoundary);
+  const gap = Math.abs(toBoundary - fromBoundary);
+  const safeLength = gap - clearance * 2;
+  return {
+    from: { x, y: fromBoundary + direction * clearance },
+    to: { x, y: toBoundary - direction * clearance },
+    axis: 'vertical',
+    gap,
+    available: gap >= SIGNAL_CONNECTOR_MIN_LENGTH && safeLength >= SIGNAL_CONNECTOR_MIN_LENGTH,
+  };
+}
+
+function centerOfRect(rect: SignalRect): SignalPoint {
+  return { x: (rect.left + rect.right) * 0.5, y: (rect.top + rect.bottom) * 0.5 };
+}
+
 function periodicSample(values: Float64Array, channel: number, position: number): number {
   const periodicSamples = values.length / 4 - 1;
   const exactIndex = normalize(position) * periodicSamples;
@@ -704,42 +784,8 @@ function drawSignals(
   const lockInReveal = reveal(sequenceProgress, 0.34, 0.68);
   const rotateReveal = reveal(sequenceProgress, 0.5, 0.82);
   const kerrReveal = reveal(sequenceProgress, 0.68, 0.96);
-
-  if (layout.stacked) {
-    drawFlowConnector(
-      context,
-      layout.plot.right * 0.5 + layout.plot.left * 0.5,
-      layout.plot.bottom,
-      layout.phase.left + layout.phase.width * 0.5,
-      layout.phase.top,
-      palette,
-    );
-    drawFlowConnector(
-      context,
-      layout.phase.right,
-      layout.phase.top + layout.phase.height * 0.5,
-      layout.output.left,
-      layout.output.top + layout.output.height * 0.5,
-      palette,
-    );
-  } else {
-    drawFlowConnector(
-      context,
-      layout.plot.right,
-      layout.plot.top + layout.plot.height * 0.5,
-      layout.phase.left,
-      layout.phase.top + layout.phase.height * 0.5,
-      palette,
-    );
-    drawFlowConnector(
-      context,
-      layout.phase.right,
-      layout.phase.top + layout.phase.height * 0.5,
-      layout.output.left,
-      layout.output.top + layout.output.height * 0.5,
-      palette,
-    );
-  }
+  const connectors = getSignalConnectors(layout);
+  for (const connector of connectors) drawFlowConnector(context, connector, palette);
 
   drawTimeDomain(
     context,
@@ -754,7 +800,7 @@ function drawSignals(
   );
   drawPhasePlane(context, layout.phase, rotateReveal, lockInReveal, labels, palette);
   drawHarmonicExtraction(context, layout.output, kerrReveal, labels, palette);
-  drawPipelineCursor(context, layout, sequenceProgress, palette);
+  drawPipelineCursor(context, connectors, sequenceProgress, palette);
 
   return pointsCount;
 }
@@ -1163,20 +1209,18 @@ function drawHarmonicExtraction(
 
 function drawFlowConnector(
   context: CanvasRenderingContext2D,
-  fromX: number,
-  fromY: number,
-  toX: number,
-  toY: number,
+  connector: SignalConnector,
   palette: Palette,
 ): void {
+  if (!connector.available) return;
   context.save();
   context.strokeStyle = palette.cyan;
   context.lineWidth = 1;
   context.globalAlpha = 0.28;
   context.setLineDash([3, 5]);
   context.beginPath();
-  context.moveTo(fromX, fromY);
-  context.lineTo(toX, toY);
+  context.moveTo(connector.from.x, connector.from.y);
+  context.lineTo(connector.to.x, connector.to.y);
   context.stroke();
   context.setLineDash([]);
   context.restore();
@@ -1184,32 +1228,24 @@ function drawFlowConnector(
 
 function drawPipelineCursor(
   context: CanvasRenderingContext2D,
-  layout: SignalLayout,
+  connectors: SignalConnector[],
   progress: number,
   palette: Palette,
 ): void {
   if (progress < 0.4 || progress >= 0.96) return;
 
-  let fromX: number;
-  let fromY: number;
-  let toX: number;
-  let toY: number;
-  let active: number;
-  if (progress < 0.68) {
-    fromX = layout.stacked ? (layout.plot.left + layout.plot.right) * 0.5 : layout.plot.right;
-    fromY = layout.stacked ? layout.plot.bottom : layout.plot.top + layout.plot.height * 0.5;
-    toX = layout.phase.left;
-    toY = layout.stacked ? layout.phase.top : layout.phase.top + layout.phase.height * 0.5;
-    active = (progress - 0.4) / 0.28;
-  } else {
-    fromX = layout.phase.right;
-    fromY = layout.phase.top + layout.phase.height * 0.5;
-    toX = layout.output.left;
-    toY = layout.output.top + layout.output.height * 0.5;
-    active = (progress - 0.68) / 0.28;
-  }
+  const connectorIndex = progress < 0.68 ? 0 : 1;
+  const connector = connectors[connectorIndex];
+  if (!connector?.available) return;
+  const active = progress < 0.68 ? (progress - 0.4) / 0.28 : (progress - 0.68) / 0.28;
   const position = smoothStep(clamp(active, 0, 1));
-  drawSignalDot(context, lerp(fromX, toX, position), lerp(fromY, toY, position), palette.cyan, 0.4 + clamp(active, 0, 1) * 0.6);
+  drawSignalDot(
+    context,
+    lerp(connector.from.x, connector.to.x, position),
+    lerp(connector.from.y, connector.to.y, position),
+    palette.cyan,
+    0.4 + clamp(active, 0, 1) * 0.6,
+  );
 }
 
 function drawSignalDot(context: CanvasRenderingContext2D, x: number, y: number, color: string, alpha: number): void {
@@ -1217,7 +1253,7 @@ function drawSignalDot(context: CanvasRenderingContext2D, x: number, y: number, 
   context.fillStyle = color;
   context.globalAlpha = alpha;
   context.beginPath();
-  context.arc(x, y, 3, 0, TAU);
+  context.arc(x, y, SIGNAL_CURSOR_RADIUS, 0, TAU);
   context.fill();
   context.restore();
 }
