@@ -1,19 +1,14 @@
 import { expect, test } from '@playwright/test';
 
 for (const locale of ['en', 'ja'] as const) {
-  test(`${locale} home renders a nonblank Wasm canvas`, async ({ page }, testInfo) => {
+  test(`${locale} home renders the signal workflow`, async ({ page }, testInfo) => {
     await page.goto(`/pmoke/${locale}/`);
     await expect(page.locator('h1')).toHaveText('pmoke');
     await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
-    const pixels = await page.locator('canvas').evaluate((canvas: HTMLCanvasElement) => {
-      const context = canvas.getContext('2d');
-      if (!context) return 0;
-      const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      let nonTransparent = 0;
-      for (let index = 3; index < data.length; index += 64) if (data[index] > 0) nonTransparent += 1;
-      return nonTransparent;
-    });
-    expect(pixels).toBeGreaterThan(100);
+    const activePanel = page.locator('.signal-panel[data-active="true"]');
+    await expect(activePanel).toHaveCount(1);
+    await expect(activePanel.locator('svg')).toBeVisible();
+    await expect(activePanel.locator('path, line, circle')).not.toHaveCount(0);
     const heroCopy = page.locator('.hero-copy');
     await expect(heroCopy).toBeVisible();
     await heroCopy.scrollIntoViewIfNeeded();

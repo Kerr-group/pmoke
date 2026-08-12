@@ -409,127 +409,384 @@ button:focus-visible {
 .signal-stage-content {
   position: relative;
   z-index: 1;
-  width: 100%;
+  width: min(100% - 48px, 1440px);
   height: 100%;
+  margin: 0 auto;
 }
 
-.signal-visualization {
+.signal-process-card {
   position: absolute;
-  top: 9.5rem;
-  right: max(24px, calc((100vw - 1440px) / 2));
-  bottom: 4.2rem;
-  left: 50%;
-  z-index: 1;
+  top: 2.6rem;
+  right: 0;
+  bottom: 2.6rem;
+  left: calc(50% + 1.75rem);
   min-width: 0;
-}
-
-.signal-visualization canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.signal-sequence-shell {
-  position: absolute;
-  top: 1.25rem;
-  left: max(24px, calc((100vw - 1440px) / 2));
-  right: max(24px, calc((100vw - 1440px) / 2));
-  z-index: 2;
-}
-
-.signal-sequence-title {
-  margin: 0 0 0.7rem;
-  color: #829391;
-  font: 700 0.57rem/1 var(--font-mono), monospace;
-  letter-spacing: 0.12em;
-}
-
-.signal-sequence {
-  position: relative;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.55rem;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(145, 164, 174, 0.35);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 88% 12%, rgba(22, 217, 209, 0.085), transparent 28%),
+    radial-gradient(circle at 12% 88%, rgba(237, 79, 154, 0.045), transparent 32%),
+    rgba(12, 18, 20, 0.92);
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.32), inset 0 1px rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(22px) saturate(1.12);
+}
+
+.signal-process-header {
+  padding: 0.85rem 1.2rem 1.05rem;
+  border-bottom: 1px solid rgba(145, 164, 174, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.026), transparent);
+}
+
+.signal-process-topline {
+  min-height: 1.65rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.signal-process-kicker {
+  margin: 0;
+  color: #829391;
+  font: 720 0.62rem/1 var(--font-mono), monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.signal-process-flow { position: relative; margin-top: 0.72rem; }
+.signal-process-track {
+  position: absolute;
+  top: 0.72rem;
+  right: 12.5%;
+  left: 12.5%;
+  height: 1px;
+  overflow: hidden;
+  background: rgba(147, 161, 165, 0.23);
+}
+
+.signal-process-track span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan) 0%, #64f0bb 42%, #effffd 50%, #64f0bb 58%, var(--cyan) 100%);
+  background-size: 220% 100%;
+  box-shadow: 0 0 12px rgba(22, 217, 209, 0.55);
+  will-change: width;
+}
+
+.signal-stage[data-motion='running'] .signal-process-track span {
+  animation: signal-pipeline-flow 1.8s linear infinite;
+}
+
+@keyframes signal-pipeline-flow {
+  to { background-position: -120% 0; }
+}
+
+.signal-process-rail {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
   margin: 0;
   padding: 0;
   list-style: none;
-  pointer-events: none;
 }
 
-.signal-sequence::before {
-  content: '';
-  position: absolute;
-  top: 0.82rem;
-  right: 10%;
-  left: 10%;
-  z-index: 0;
-  height: 1px;
-  background: rgba(147, 161, 165, 0.42);
+.signal-process-rail li {
+  min-width: 0;
 }
 
-.signal-sequence li {
-  position: relative;
-  z-index: 1;
+.signal-process-rail button {
+  width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.38rem;
   padding: 0;
-  color: #aebcba;
-  text-align: center;
+  border: 0;
+  background: transparent;
+  color: #70807e;
+  font: 650 0.61rem/1.2 var(--font-mono), monospace;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
 }
 
-.signal-step-marker {
+.signal-step-index {
+  position: relative;
+  width: 1.45rem;
+  height: 1.45rem;
   display: grid;
-  width: 1.65rem;
-  height: 1.65rem;
   place-items: center;
-  border: 1px solid rgba(147, 161, 165, 0.58);
+  border: 1px solid rgba(147, 161, 165, 0.34);
   border-radius: 50%;
-  background: rgba(16, 21, 23, 0.94);
+  background: #11191b;
   color: #71817f;
-  font: 650 0.54rem/1 var(--font-mono), monospace;
-  letter-spacing: 0;
+  font-size: 0.5rem;
+  transition: border-color 220ms ease, background 220ms ease, color 220ms ease, box-shadow 220ms ease, transform 220ms ease;
 }
 
-.signal-step-label {
-  max-width: 16ch;
-  color: #81908e;
-  font: 650 0.55rem/1.25 var(--font-mono), monospace;
-  letter-spacing: 0.025em;
-  text-align: center;
-  text-wrap: balance;
+.signal-process-rail li[data-current='true'] .signal-step-index::after {
+  content: '';
+  position: absolute;
+  inset: -0.32rem;
+  border: 1px solid rgba(22, 217, 209, 0.42);
+  border-radius: inherit;
+  opacity: 0;
 }
 
-.signal-sequence li[data-current='true'] .signal-step-marker {
+.signal-stage[data-motion='running'] .signal-process-rail li[data-current='true'] .signal-step-index::after {
+  animation: signal-step-breathe 1.8s ease-out infinite;
+}
+
+@keyframes signal-step-breathe {
+  0% { opacity: 0.55; transform: scale(0.76); }
+  75%, 100% { opacity: 0; transform: scale(1.16); }
+}
+
+.signal-step-name { max-width: 14ch; color: inherit; text-align: center; text-wrap: balance; }
+.signal-process-rail button:hover { color: #dce8e5; }
+.signal-process-rail button:hover .signal-step-index { border-color: rgba(22, 217, 209, 0.65); transform: translateY(-1px); }
+.signal-process-rail button:focus-visible { outline-offset: 5px; }
+.signal-process-rail li[data-complete='true'] .signal-step-index { border-color: rgba(22, 217, 209, 0.45); color: var(--cyan); }
+.signal-process-rail li[data-current='true'] button { color: #effffd; }
+.signal-process-rail li[data-current='true'] .signal-step-index {
   border-color: var(--cyan);
   background: var(--cyan);
-  color: var(--ink);
-  box-shadow: 0 0 0 5px rgba(22, 217, 209, 0.1), 0 0 20px rgba(22, 217, 209, 0.2);
-  animation: signal-node-pulse 2.2s ease-in-out infinite;
+  color: #071315;
+  box-shadow: 0 0 0 4px rgba(22, 217, 209, 0.08), 0 0 18px rgba(22, 217, 209, 0.22);
 }
 
-.signal-sequence li[data-current='true'] .signal-step-label {
-  color: #effffd;
+.signal-process-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1.1rem 1.3rem 1.15rem;
 }
 
-.signal-current-stage {
-  display: none;
+.signal-stage-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
-@keyframes signal-node-pulse {
-  50% {
-    box-shadow: 0 0 0 8px rgba(22, 217, 209, 0.04), 0 0 24px rgba(22, 217, 209, 0.28);
-  }
+.signal-stage-heading > div { min-width: 0; display: flex; align-items: baseline; gap: 0.65rem; }
+.signal-stage-heading span,
+.signal-stage-summary {
+  font-family: var(--font-mono), monospace;
 }
 
-.signal-stage[data-motion='paused'] .signal-sequence li[data-current='true'] .signal-step-marker,
-.signal-stage[data-motion='reduced'] .signal-sequence li[data-current='true'] .signal-step-marker,
-.signal-stage[data-wasm='fallback'] .signal-sequence li[data-current='true'] .signal-step-marker {
-  animation: none;
+.signal-stage-heading span {
+  color: var(--cyan);
+  font-size: 0.67rem;
+  font-weight: 720;
+  letter-spacing: 0.05em;
 }
+
+.signal-stage-heading h2 {
+  margin: 0;
+  color: #f2f5f3;
+  font-size: clamp(1.12rem, 1.5vw, 1.48rem);
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.signal-stage-summary {
+  min-height: 2.3em;
+  margin: 0.5rem 0 0.7rem;
+  color: #9badab;
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+.signal-visualization {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.signal-panel {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 240ms ease,
+    visibility 240ms linear;
+}
+
+.signal-panel[data-active='true'] {
+  opacity: 1;
+  visibility: visible;
+}
+
+.signal-time-chart {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.signal-y-axis {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.35rem;
+  padding-bottom: 1.55rem;
+  color: #829391;
+  font: 630 0.68rem/1 var(--font-mono), monospace;
+}
+
+.signal-y-axis strong {
+  position: relative;
+  width: 0.9rem;
+  align-self: center;
+  color: #bdcac8;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.signal-y-axis strong > span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  white-space: nowrap;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  transform-origin: center;
+}
+
+.signal-y-axis sub,
+.signal-panel-readout sub { font-size: 0.72em; }
+
+.signal-y-axis > div { display: flex; flex-direction: column; justify-content: space-between; padding: 0.15rem 0; text-align: right; }
+.signal-plot-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.signal-plot-area { min-height: 0; overflow: hidden; border-left: 1px solid rgba(145, 164, 174, 0.3); border-bottom: 1px solid rgba(145, 164, 174, 0.3); }
+.signal-plot-area svg { width: 100%; height: 100%; display: block; overflow: visible; }
+
+.signal-grid-line {
+  stroke: rgba(145, 164, 174, 0.16);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.signal-trace {
+  fill: none;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.signal-trace-area { stroke: none; }
+
+.signal-trace-field { stroke: var(--cyan); }
+.signal-trace-x { stroke: #f0f4f2; }
+.signal-trace-y { stroke: var(--magenta); }
+.signal-trace-kerr { stroke: var(--green); }
+.signal-trace-context { stroke: var(--cyan); stroke-width: 1.25; stroke-dasharray: 4 5; opacity: 0.25; }
+
+.signal-time-axis { padding-top: 0.48rem; color: #81918f; font: 630 0.67rem/1 var(--font-mono), monospace; }
+.signal-time-axis > div { display: flex; justify-content: space-between; }
+.signal-time-axis strong { display: block; margin-top: 0.35rem; color: #adbcba; font-size: 0.72rem; text-align: right; }
+
+.signal-chart-legend,
+.signal-vector-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.85rem;
+  margin: 0 0 0.45rem;
+  color: #829391;
+  font: 680 0.62rem/1 var(--font-mono), monospace;
+}
+
+.signal-chart-legend span,
+.signal-vector-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.signal-chart-legend span::before,
+.signal-vector-legend span::before { content: ''; width: 0.9rem; height: 2px; background: currentColor; }
+.signal-chart-legend .is-field { color: var(--cyan); }
+.signal-chart-legend .is-x { color: #f0f4f2; }
+.signal-chart-legend .is-y { color: var(--magenta); }
+
+.signal-panel-readout {
+  min-height: 2.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.6rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid rgba(22, 217, 209, 0.13);
+  border-radius: 9px;
+  background: linear-gradient(90deg, rgba(22, 217, 209, 0.075), rgba(22, 217, 209, 0.025));
+  color: #829391;
+  font: 640 0.63rem/1.3 var(--font-mono), monospace;
+}
+
+.signal-panel-readout strong { color: #eef5f3; font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+.signal-panel-readout sub { font-size: 0.7em; }
+.signal-panel-readout-split { justify-content: flex-end; gap: 1rem; border-color: rgba(237, 79, 154, 0.16); background: linear-gradient(90deg, rgba(237, 79, 154, 0.055), rgba(22, 217, 209, 0.025)); }
+.signal-panel-readout-split > span { margin-right: auto; }
+.signal-panel-readout .is-x { color: #f0f4f2; }
+.signal-panel-readout .is-y { color: var(--magenta); }
+
+.signal-panel-phase { justify-content: space-between; }
+.signal-phase-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(220px, 1.18fr) minmax(170px, 0.82fr); gap: 1.2rem; align-items: center; }
+.signal-phase-graphic { position: relative; min-height: 0; height: 100%; display: grid; place-items: center; }
+.signal-phase-graphic svg { width: min(100%, 310px); max-height: 100%; overflow: visible; filter: drop-shadow(0 14px 28px rgba(0, 0, 0, 0.16)); }
+.signal-phase-field,
+.signal-phase-ring,
+.signal-phase-axis,
+.signal-phase-rotation-arc,
+.signal-phase-raw,
+.signal-phase-corrected { vector-effect: non-scaling-stroke; }
+.signal-phase-field { fill: rgba(22, 217, 209, 0.015); stroke: rgba(22, 217, 209, 0.07); stroke-width: 0.65; }
+.signal-phase-ring { fill: rgba(22, 217, 209, 0.012); stroke: rgba(145, 164, 174, 0.24); stroke-width: 0.75; stroke-dasharray: 3 5; }
+.signal-phase-axis { stroke: rgba(145, 164, 174, 0.23); stroke-width: 0.7; }
+.signal-phase-rotation-arc { fill: none; stroke: rgba(22, 217, 209, 0.52); stroke-width: 0.8; stroke-dasharray: 3 4; }
+.signal-phase-raw { stroke: var(--magenta); stroke-width: 0.85; stroke-dasharray: 4 3; }
+.signal-phase-corrected { stroke: var(--cyan); stroke-width: 1.05; }
+.signal-phase-raw-halo { fill: rgba(237, 79, 154, 0.09); }
+.signal-phase-raw-point { fill: var(--magenta); }
+.signal-phase-corrected-halo { fill: rgba(22, 217, 209, 0.1); }
+.signal-phase-corrected-point { fill: var(--cyan); }
+.signal-phase-origin { fill: #f2f5f3; }
+
+.signal-stage[data-motion='running'][data-sequence-stage='phase-correction'] .signal-phase-rotation-arc {
+  animation: signal-phase-flow 1.5s linear infinite;
+}
+
+@keyframes signal-phase-flow {
+  to { stroke-dashoffset: -14; }
+}
+.signal-phase-svg-label {
+  fill: #91a19f;
+  font-family: var(--font-mono), monospace;
+  font-size: 3.5px;
+  font-weight: 680;
+  letter-spacing: 0.04em;
+}
+.signal-phase-operator { position: absolute; top: 16%; right: 8%; padding: 0.26rem 0.42rem; border: 1px solid rgba(22, 217, 209, 0.17); border-radius: 999px; background: rgba(22, 217, 209, 0.055); color: var(--cyan); font: 680 0.59rem/1 var(--font-mono), monospace; }
+
+.signal-phase-metrics { margin: 0; border-top: 1px solid rgba(145, 164, 174, 0.22); }
+.signal-phase-metrics > div { padding: 0.65rem 0; border-bottom: 1px solid rgba(145, 164, 174, 0.22); }
+.signal-phase-metrics dt { color: #829391; font: 660 0.65rem/1.2 var(--font-mono), monospace; text-transform: uppercase; }
+.signal-phase-metrics dd { margin: 0.3rem 0 0; color: #edf4f2; font: 680 0.75rem/1.3 var(--font-mono), monospace; font-variant-numeric: tabular-nums; }
+.signal-phase-metrics .is-accent dd { color: var(--cyan); }
+.signal-vector-legend { justify-content: center; margin: 0.6rem 0 0; }
+.signal-vector-legend .is-raw { color: var(--magenta); }
+.signal-vector-legend .is-raw::before { height: 1px; background: repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 5px); }
+.signal-vector-legend .is-corrected { color: var(--cyan); }
 
 .signal-description {
   position: absolute;
@@ -542,22 +799,6 @@ button:focus-visible {
   white-space: nowrap;
   border: 0;
 }
-
-.signal-hud {
-  position: absolute;
-  right: max(24px, calc((100vw - 1440px) / 2));
-  bottom: 22px;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  color: #93a1a5;
-  font: 600 0.66rem/1 var(--font-mono);
-}
-
-.signal-hud span { display: inline-flex; align-items: center; gap: 0.35rem; }
-.signal-status { color: #aebcba; }
-.signal-stage[data-wasm='fallback'] .signal-status { color: var(--amber); }
 
 .search-status {
   display: grid;
@@ -722,15 +963,42 @@ html:not(.dark) .signal-stage {
     linear-gradient(to bottom, rgba(40, 67, 68, 0.14) 1px, transparent 1px);
 }
 html:not(.dark) .signal-stage::after { background: rgba(242, 245, 243, 0.24); }
-html:not(.dark) .signal-hud { color: #536563; }
-html:not(.dark) .signal-sequence-title { color: #637575; }
-html:not(.dark) .signal-sequence::before { background: rgba(68, 87, 90, 0.42); }
-html:not(.dark) .signal-step-marker { border-color: rgba(68, 87, 90, 0.58); background: rgba(238, 243, 241, 0.94); color: #71817f; }
-html:not(.dark) .signal-step-label { color: #637575; }
-html:not(.dark) .signal-current-stage { color: #164b4a; }
-html:not(.dark) .signal-sequence li[data-current='true'] .signal-step-marker { border-color: #087b7b; background: #087b7b; color: #f5ffff; box-shadow: 0 0 0 5px rgba(8, 123, 123, 0.1), 0 0 20px rgba(8, 123, 123, 0.18); }
-html:not(.dark) .signal-sequence li[data-current='true'] .signal-step-label { color: #164b4a; }
-html:not(.dark) .signal-stage[data-wasm='fallback'] .signal-status { color: #a05d00; }
+html:not(.dark) .signal-process-card {
+  border-color: rgba(40, 67, 68, 0.3);
+  background:
+    radial-gradient(circle at 88% 12%, rgba(8, 123, 123, 0.08), transparent 28%),
+    radial-gradient(circle at 12% 88%, rgba(189, 40, 111, 0.035), transparent 32%),
+    rgba(239, 244, 242, 0.93);
+  box-shadow: 0 28px 80px rgba(31, 55, 55, 0.14), inset 0 1px rgba(255, 255, 255, 0.55);
+}
+html:not(.dark) .signal-process-header { border-color: rgba(40, 67, 68, 0.2); background: rgba(255, 255, 255, 0.28); }
+html:not(.dark) .signal-process-kicker,
+html:not(.dark) .signal-stage-summary,
+html:not(.dark) .signal-y-axis,
+html:not(.dark) .signal-time-axis,
+html:not(.dark) .signal-chart-legend,
+html:not(.dark) .signal-vector-legend,
+html:not(.dark) .signal-phase-metrics dt { color: #5d716f; }
+html:not(.dark) .signal-process-track { background: rgba(40, 67, 68, 0.2); }
+html:not(.dark) .signal-process-rail button { color: #637775; }
+html:not(.dark) .signal-step-index { border-color: rgba(40, 67, 68, 0.28); background: #eef4f1; color: #637775; }
+html:not(.dark) .signal-process-rail li[data-current='true'] button { color: #164b4a; }
+html:not(.dark) .signal-process-rail li[data-current='true'] .signal-step-index { border-color: #087b7b; background: #087b7b; color: #f4ffff; }
+html:not(.dark) .signal-stage-heading h2,
+html:not(.dark) .signal-y-axis strong,
+html:not(.dark) .signal-panel-readout strong,
+html:not(.dark) .signal-phase-metrics dd { color: #172321; }
+html:not(.dark) .signal-time-axis strong { color: #405754; }
+html:not(.dark) .signal-grid-line { stroke: rgba(40, 67, 68, 0.16); }
+html:not(.dark) .signal-plot-area { border-color: rgba(40, 67, 68, 0.3); }
+html:not(.dark) .signal-trace-x { stroke: #263432; }
+html:not(.dark) .signal-panel-readout { background: rgba(8, 123, 123, 0.055); }
+html:not(.dark) .signal-panel-readout .is-x { color: #263432; }
+html:not(.dark) .signal-phase-origin { fill: #172321; }
+html:not(.dark) .signal-phase-svg-label { fill: #607371; }
+html:not(.dark) .signal-phase-operator { border-color: rgba(8, 123, 123, 0.18); background: rgba(8, 123, 123, 0.06); color: #087b7b; }
+html:not(.dark) .signal-phase-metrics,
+html:not(.dark) .signal-phase-metrics > div { border-color: rgba(40, 67, 68, 0.2); }
 html:not(.dark) .hero-copy h1,
 html:not(.dark) .hero-lead { color: #101517; }
 html:not(.dark) .hero-copy-panel {
@@ -1407,53 +1675,19 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   .hero-band { height: auto; min-height: 0; max-height: none; }
   .signal-stage { position: relative; inset: auto; min-height: 0; margin-top: 1rem; }
   .signal-stage-content {
+    width: 100%;
     height: auto;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.9rem;
     padding: 1rem 24px 1.2rem;
   }
-  .signal-sequence-shell { position: relative; top: auto; left: auto; right: auto; }
-  .signal-sequence { gap: 0.35rem; }
-  .signal-step-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-  .signal-current-stage {
-    display: block;
-    margin: 0.7rem 0 0;
+  .signal-process-card {
     position: relative;
-    color: #effffd;
-    font: 650 0.62rem/1.3 var(--font-mono), monospace;
-    letter-spacing: 0.04em;
-    text-align: center;
-    text-transform: uppercase;
+    inset: auto;
+    width: min(760px, 100%);
+    min-height: 480px;
+    margin: 0 auto;
   }
-  .signal-visualization {
-    position: relative;
-    top: auto;
-    right: auto;
-    bottom: auto;
-    left: auto;
-    width: 100%;
-    height: clamp(420px, 58vw, 560px);
-    min-height: 420px;
-    flex: none;
-  }
-  .signal-hud {
-    position: relative;
-    right: auto;
-    bottom: auto;
-    align-self: flex-end;
-  }
+  .signal-visualization { min-height: 290px; }
   .hero-copy {
     position: relative;
     inset: auto;
@@ -1486,7 +1720,47 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   .site-header { width: min(100% - 28px, 1440px); height: 60px; }
   .site-header nav a:first-child { display: none; }
   .site-header nav { gap: 0.7rem; }
-  .signal-stage-content { gap: 0.8rem; padding: 1rem 14px 1.1rem; }
+  .signal-stage-content { padding: 0.8rem 14px 1rem; }
+  .signal-process-card { min-height: 500px; border-radius: 14px; }
+  .signal-process-header { padding: 0.72rem 0.85rem 0.78rem; }
+  .signal-process-kicker { font-size: 0.56rem; }
+  .signal-process-flow { margin-top: 0.62rem; }
+  .signal-process-track { top: 0.69rem; }
+  .signal-process-rail { gap: 0.3rem; }
+  .signal-process-rail button { gap: 0.25rem; }
+  .signal-step-index { width: 1.38rem; height: 1.38rem; font-size: 0.48rem; }
+  .signal-step-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .signal-process-body { padding: 0.9rem 0.85rem 0.82rem; }
+  .signal-stage-heading { gap: 0.6rem; }
+  .signal-stage-heading h2 { font-size: 1.08rem; }
+  .signal-stage-summary { min-height: 2.6em; margin: 0.42rem 0 0.58rem; font-size: 0.64rem; }
+  .signal-visualization { min-height: 312px; }
+  .signal-time-chart { grid-template-columns: 3rem minmax(0, 1fr); gap: 0.35rem; }
+  .signal-y-axis { padding-bottom: 1.55rem; font-size: 0.6rem; }
+  .signal-y-axis strong { font-size: 0.65rem; }
+  .signal-time-axis { font-size: 0.59rem; }
+  .signal-time-axis .is-optional { display: none; }
+  .signal-chart-legend { gap: 0.55rem; font-size: 0.56rem; }
+  .signal-panel-readout { gap: 0.4rem; padding-inline: 0.5rem; font-size: 0.56rem; }
+  .signal-panel-readout strong { font-size: 0.61rem; }
+  .signal-panel-readout-split { gap: 0.6rem; }
+  .signal-phase-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }
+  .signal-phase-graphic svg { width: 100%; }
+  .signal-phase-operator { top: 12%; right: 2%; font-size: 0.5rem; }
+  .signal-phase-metrics > div { padding: 0.5rem 0; }
+  .signal-phase-metrics dt { font-size: 0.53rem; }
+  .signal-phase-metrics dd { font-size: 0.6rem; }
+  .signal-vector-legend { gap: 0.55rem; font-size: 0.54rem; }
   .hero-copy-panel {
     width: 100%;
     padding: 0.8rem 0 0;
@@ -1499,14 +1773,6 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   .hero-lead { margin-top: 1.1rem; font-size: 1.55rem; }
   .hero-description { margin-top: 0.7rem; font-size: 0.9rem; line-height: 1.48; }
   .hero-actions { margin-top: 1.1rem; }
-  .signal-sequence-title { margin-bottom: 0.6rem; font-size: 0.52rem; }
-  .signal-sequence { gap: 0.22rem; }
-  .signal-step-marker { width: 1.45rem; height: 1.45rem; font-size: 0.5rem; }
-  .signal-sequence::before { top: 0.72rem; }
-  .signal-current-stage { margin-top: 0.6rem; font-size: 0.57rem; }
-  .signal-visualization { height: clamp(544px, 140vw, 720px); min-height: 544px; }
-  .signal-hud { align-self: stretch; padding-top: 0.1rem; }
-  .signal-hud span:not(.signal-status) { display: none; }
   .capability-grid { width: 100%; grid-template-columns: 1fr; }
   .capability-grid article { min-height: 170px; padding: 1.5rem; border-right: 0; border-bottom: 1px solid #354044; }
   .capability-grid article:last-child { border-bottom: 0; }
@@ -1533,6 +1799,28 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   .unsupported-contract strong { margin-left: 0; text-align: left; }
 }
 
+@media (max-width: 480px) {
+  .signal-stage[data-sequence-stage='phase-correction'] .signal-process-card { min-height: 660px; }
+  .signal-stage[data-sequence-stage='phase-correction'] .signal-visualization { min-height: 470px; }
+  .signal-phase-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(235px, 1fr) auto;
+    gap: 0.65rem;
+  }
+  .signal-phase-graphic { min-height: 235px; }
+  .signal-phase-graphic svg { width: min(100%, 245px); }
+  .signal-phase-operator { top: 8%; right: 8%; font-size: 0.54rem; }
+  .signal-phase-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .signal-phase-metrics > div { min-width: 0; padding: 0.55rem 0.35rem; }
+  .signal-phase-metrics > div:nth-child(2) { border-left: 1px solid rgba(145, 164, 174, 0.22); }
+  .signal-phase-metrics > div:last-child { grid-column: 1 / -1; }
+  .signal-phase-metrics dt { font-size: 0.57rem; }
+  .signal-phase-metrics dd { font-size: 0.65rem; overflow-wrap: anywhere; }
+}
+
 @media (max-width: 720px) {
   html:not(.dark) .hero-copy-panel {
     border-top-color: rgba(40, 67, 68, 0.3);
@@ -1542,5 +1830,5 @@ html:not(.dark) .capability-grid p { color: #52615f; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
-  .signal-sequence li[data-current='true'] .signal-step-marker { animation: none; }
+  .signal-panel { transition: none; }
 }

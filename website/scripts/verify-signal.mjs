@@ -1,45 +1,39 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 
-// Verify C1 periodic envelope closure and TS / Wasm preview equivalence
-const TAU = Math.PI * 2;
+const STAGE_DURATION_MS = 4_600;
+const STAGES = ['field-pulse', 'lock-in', 'phase-correction', 'kerr-angle'];
+const TIME_START_MS = -10;
+const TIME_END_MS = 60;
+const PULSE_PEAK_MS = 15.8;
+const PULSE_END_MS = 42;
+const FIELD_PEAK_T = 0.82;
+const LI_X_PEAK_MV = -3.2;
+const LI_Y_PEAK_MV = 5.4;
+const KERR_PEAK_MRAD = -9.8;
 
-function sampleChannels(t, phase) {
-  const carrier = TAU * (7.0 * t + phase);
-  const envelope = Math.cos(Math.PI * (t - 0.5)) ** 2;
-  const pulse = (Math.sin(carrier) + 0.18 * Math.sin(3.0 * carrier + 0.4)) * envelope;
-  const inPhase = Math.sin(TAU * 2.0 * t) * 0.72 + 0.12 * pulse;
-  const quadrature = Math.sin(TAU * 2.0 * t + 1.12) * 0.48;
-  return [pulse, inPhase, quadrature];
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
-function fallbackSignal(samples, phase = 0.17) {
-  const output = new Float64Array(samples * 4);
-  for (let i = 0; i < samples; i += 1) {
-    const t = i / (samples - 1);
-    const [pulse, inPhase, quadrature] = sampleChannels(t, phase);
-    output[i * 4] = t;
-    output[i * 4 + 1] = pulse;
-    output[i * 4 + 2] = inPhase;
-    output[i * 4 + 3] = quadrature;
+function fieldPulseAtMs(timeMs) {
+  if (!Number.isFinite(timeMs) || timeMs <= 0 || timeMs >= PULSE_END_MS) return 0;
+  if (timeMs <= PULSE_PEAK_MS) {
+    const rise = Math.sin((Math.PI * timeMs) / (2 * PULSE_PEAK_MS));
+    return FIELD_PEAK_T * rise ** 1.12;
   }
-  return output;
+  const decayProgress = (timeMs - PULSE_PEAK_MS) / (PULSE_END_MS - PULSE_PEAK_MS);
+  const decay = Math.cos((Math.PI * decayProgress) / 2);
+  return FIELD_PEAK_T * Math.max(0, decay) ** 1.48;
 }
 
-function previewPointCount(width, samples) {
-  const periodicSamples = Math.max(2, samples - 1);
-  return Math.min(periodicSamples, Math.max(256, Math.ceil(width) + 1));
+function lockInAtMs(timeMs) {
+  const envelope = fieldPulseAtMs(timeMs) / FIELD_PEAK_T;
+  return [LI_X_PEAK_MV * envelope, LI_Y_PEAK_MV * envelope];
 }
 
-function periodicSample(signal, channel, position) {
-  const periodicSamples = signal.length / 4 - 1;
-  const normalized = ((position % 1) + 1) % 1;
-  const exactIndex = normalized * periodicSamples;
-  const index0 = Math.floor(exactIndex) % periodicSamples;
-  const index1 = (index0 + 1) % periodicSamples;
-  const fraction = exactIndex - index0;
-  return signal[index0 * 4 + channel] * (1 - fraction) + signal[index1 * 4 + channel] * fraction;
+function kerrAngleAtMs(timeMs) {
+  const envelope = fieldPulseAtMs(timeMs) / FIELD_PEAK_T;
+  return KERR_PEAK_MRAD * envelope;
 }
 
 function rotatePhasePoint(x, y, delta) {
@@ -48,87 +42,54 @@ function rotatePhasePoint(x, y, delta) {
   return [x * cosDelta + y * sinDelta, -x * sinDelta + y * cosDelta];
 }
 
-function calculateHarmonicKerrCue(a2, a3, a4, a6, factor = 1) {
-  const modulationDenominator = 15 * a2 + 24 * a4 + 9 * a6;
-  const modulationDepth = 6 * Math.sqrt((20 * a4) / modulationDenominator);
-  const angleDenominator = ((a2 + a4) * modulationDepth) / 6;
-  return {
-    modulationDepth,
-    angleRad: 0.5 * Math.atan(a3 / angleDenominator) * factor,
-  };
+function sequenceStageForElapsed(elapsedMs) {
+  const totalDuration = STAGES.length * STAGE_DURATION_MS;
+  const elapsed = clamp(elapsedMs, 0, totalDuration - 1);
+  return STAGES[Math.floor(elapsed / STAGE_DURATION_MS)];
 }
 
-function finitePulseEnvelope(localTime) {
-  const normalized = (value) => Math.min(1, Math.max(0, value));
-  const smoothStep = (value) => {
-    const clamped = normalized(value);
-    return clamped * clamped * (3 - 2 * clamped);
-  };
-  const onset = smoothStep(localTime / 0.1);
-  const settle = 1 - smoothStep((localTime - 0.78) / 0.22);
-  const unipolarLobe = Math.exp(-0.5 * ((localTime - 0.28) / 0.16) ** 2);
-  return onset * settle * unipolarLobe;
-}
-
-function smoothStep(value) {
-  const clamped = Math.min(1, Math.max(0, value));
-  return clamped * clamped * (3 - 2 * clamped);
-}
-
-function sequenceProgressForElapsed(elapsedMs) {
-  const loopProgress = ((elapsedMs / 24_000) % 1 + 1) % 1;
-  if (loopProgress < 0.9) return loopProgress / 0.9;
-  if (loopProgress < 0.96) return 1;
-  return 1 - smoothStep((loopProgress - 0.96) / 0.04);
-}
-
-// 1. C1 Boundary Closure Verification
-for (const samples of [64, 720, 4096]) {
-  const signal = fallbackSignal(samples, 0.17);
-  for (let ch = 1; ch <= 3; ch += 1) {
-    const first = signal[ch];
-    const last = signal[(samples - 1) * 4 + ch];
-    assert.ok(
-      Math.abs(first - last) <= 1e-9,
-      `C0 boundary failed for channel ${ch} with ${samples} samples: first=${first}, last=${last}`
-    );
-  }
-}
-
-// 2. Mobile-density circular interpolation and exact viewport closure
-const preview = fallbackSignal(720, 0.17);
-for (const width of [320, 360, 768, 1440]) {
-  const points = previewPointCount(width, preview.length / 4);
-  assert.ok(points >= Math.min(256, preview.length / 4 - 1));
-  if (width <= 718) assert.ok(points >= Math.ceil(width));
-
-  for (const offset of [0, 0.003, 0.17, 0.499, 0.998]) {
-    for (let channel = 1; channel <= 3; channel += 1) {
-      const left = periodicSample(preview, channel, offset);
-      const right = periodicSample(preview, channel, 1 + offset);
-      assert.ok(Math.abs(left - right) <= 1e-12, `viewport closure failed at ${width}px`);
+// The public pulse starts at the 0 ms trigger, remains unipolar, peaks once,
+// and returns to baseline before the displayed 60 ms time axis ends.
+assert.equal(fieldPulseAtMs(-10), 0);
+assert.equal(fieldPulseAtMs(0), 0);
+assert.ok(fieldPulseAtMs(PULSE_PEAK_MS) > 0);
+assert.equal(fieldPulseAtMs(PULSE_END_MS), 0);
+assert.equal(fieldPulseAtMs(TIME_END_MS), 0);
+let decayPrevious = null;
+for (let index = 0; index <= 700; index += 1) {
+  const timeMs = TIME_START_MS + ((TIME_END_MS - TIME_START_MS) * index) / 700;
+  const value = fieldPulseAtMs(timeMs);
+  assert.ok(Number.isFinite(value) && value >= 0, `field pulse must remain unipolar at ${timeMs} ms`);
+  if (timeMs >= PULSE_PEAK_MS && timeMs <= PULSE_END_MS) {
+    if (decayPrevious !== null) {
+      assert.ok(value <= decayPrevious + 1e-9, `field pulse must decay after its peak at ${timeMs} ms`);
     }
+    decayPrevious = value;
   }
 }
 
-// 3. Phase-rotation and harmonic Kerr visual contracts
-const [rotatedX, rotatedY] = rotatePhasePoint(0.72, 0.42, 0.72);
-assert.ok(Math.abs(Math.hypot(rotatedX, rotatedY) - Math.hypot(0.72, 0.42)) <= 1e-12);
-assert.ok(Math.abs(rotatedX - (0.72 * Math.cos(0.72) + 0.42 * Math.sin(0.72))) <= 1e-12);
-assert.ok(Math.abs(rotatedY - (-0.72 * Math.sin(0.72) + 0.42 * Math.cos(0.72))) <= 1e-12);
+// Lock-in and Kerr traces share the field-pulse time support and expose units.
+assert.ok(lockInAtMs(0).every((value) => Math.abs(value) <= 1e-12));
+assert.ok(Math.abs(kerrAngleAtMs(0)) <= 1e-12);
+assert.ok(Math.abs(lockInAtMs(PULSE_PEAK_MS)[0] - LI_X_PEAK_MV) <= 1e-12);
+assert.ok(Math.abs(lockInAtMs(PULSE_PEAK_MS)[1] - LI_Y_PEAK_MV) <= 1e-12);
+assert.ok(Math.abs(kerrAngleAtMs(PULSE_PEAK_MS) - KERR_PEAK_MRAD) <= 1e-12);
 
-const harmonicCue = calculateHarmonicKerrCue(0.74, 0.22, 0.27, 0.08);
-assert.ok(Number.isFinite(harmonicCue.modulationDepth) && harmonicCue.modulationDepth > 0);
-assert.ok(Number.isFinite(harmonicCue.angleRad));
+// Phase correction preserves vector magnitude and removes the quadrature term.
+const rawX = LI_X_PEAK_MV;
+const rawY = LI_Y_PEAK_MV;
+const phase = Math.atan2(rawY, rawX);
+const [correctedX, correctedY] = rotatePhasePoint(rawX, rawY, phase);
+assert.ok(Math.abs(Math.hypot(correctedX, correctedY) - Math.hypot(rawX, rawY)) <= 1e-12);
+assert.ok(Math.abs(correctedY) <= 1e-12);
+assert.ok(correctedX > 0);
 
-for (let index = 0; index <= 100; index += 1) {
-  assert.ok(finitePulseEnvelope(index / 100) >= 0, 'field pulse must remain unipolar');
-}
+// The four visible stages advance automatically, while stage replay can
+// select any one of them without reintroducing acquisition or harmonic steps.
+assert.equal(sequenceStageForElapsed(0), 'field-pulse');
+assert.equal(sequenceStageForElapsed(STAGE_DURATION_MS), 'lock-in');
+assert.equal(sequenceStageForElapsed(STAGE_DURATION_MS * 2), 'phase-correction');
+assert.equal(sequenceStageForElapsed(STAGE_DURATION_MS * 3), 'kerr-angle');
+assert.equal(sequenceStageForElapsed(STAGE_DURATION_MS * 4), 'kerr-angle');
 
-assert.equal(sequenceProgressForElapsed(0), 0);
-assert.ok(Math.abs(sequenceProgressForElapsed(21_600) - 1) <= 1e-12);
-assert.ok(Math.abs(sequenceProgressForElapsed(23_040) - 1) <= 1e-12);
-assert.ok(sequenceProgressForElapsed(23_999) < 0.1, 'loop should sweep back before its boundary');
-assert.equal(sequenceProgressForElapsed(24_000), 0);
-
-console.log('Signal verification script passed: closure, render density, phase rotation, harmonic Kerr cue, and unipolar pulse validated.');
+console.log('Signal verification passed: 0 ms unipolar pulse, shared time support, phase correction, and four-stage workflow validated.');
