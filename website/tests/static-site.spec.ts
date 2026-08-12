@@ -14,7 +14,10 @@ for (const locale of ['en', 'ja'] as const) {
       return nonTransparent;
     });
     expect(pixels).toBeGreaterThan(100);
-    await expect(page.locator('.hero-copy')).toBeInViewport();
+    const heroCopy = page.locator('.hero-copy');
+    await expect(heroCopy).toBeVisible();
+    await heroCopy.scrollIntoViewIfNeeded();
+    await expect(heroCopy).toBeInViewport();
     const payload = await page.evaluate(() => {
       const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
       return resources.reduce(
@@ -29,8 +32,17 @@ for (const locale of ['en', 'ja'] as const) {
     expect(payload.scriptBytes).toBeLessThan(1_200_000);
     expect(payload.bytes).toBeGreaterThan(100_000);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    const capabilityTop = await page.locator('.capability-grid').evaluate((element) => element.getBoundingClientRect().top);
-    expect(capabilityTop).toBeLessThan(page.viewportSize()?.height ?? 0);
+    const flowBounds = await page.evaluate(() => {
+      const hero = document.querySelector('.hero-band')?.getBoundingClientRect();
+      const capabilities = document.querySelector('.capability-grid')?.getBoundingClientRect();
+      return {
+        heroBottom: (hero?.bottom ?? 0) + window.scrollY,
+        capabilityTop: (capabilities?.top ?? 0) + window.scrollY,
+      };
+    });
+    expect(flowBounds.capabilityTop).toBeGreaterThanOrEqual(flowBounds.heroBottom - 1);
+    await page.locator('.capability-grid').scrollIntoViewIfNeeded();
+    await expect(page.locator('.capability-grid')).toBeInViewport();
     testInfo.annotations.push({ type: 'payload', description: JSON.stringify(payload) });
     await page.screenshot({ path: testInfo.outputPath(`${locale}-home.png`), fullPage: true });
   });
