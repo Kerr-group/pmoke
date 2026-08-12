@@ -212,9 +212,9 @@ test('signal canvas sweeps continuously when active and pauses on reduced motion
   await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
   await expect(page.locator('.signal-stage')).toHaveAttribute('data-motion', 'running');
 
-  const firstFrame = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  const firstFrame = await page.locator('.signal-stage canvas').getAttribute('data-render-frame');
   await page.waitForTimeout(300);
-  const secondFrame = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  const secondFrame = await page.locator('.signal-stage canvas').getAttribute('data-render-frame');
   expect(secondFrame).not.toBe(firstFrame);
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -366,6 +366,142 @@ test('signal process rail stays compact and non-interactive below desktop width'
   }
 });
 
+test('signal hero reserves non-overlapping responsive regions and panel geometry', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser responsive geometry gate');
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const viewports = [
+    [1440, 900],
+    [1920, 1080],
+    [768, 1024],
+    [720, 800],
+    [721, 800],
+    [959, 900],
+    [960, 900],
+    [428, 926],
+    [390, 844],
+    [360, 800],
+    [320, 800],
+    [320, 568],
+  ] as const;
+  const regionNames = ['process-rail', 'current-stage', 'control', 'visualization', 'status', 'copy'] as const;
+
+  for (const [width, height] of viewports) {
+    await page.setViewportSize({ width, height });
+    for (const locale of ['en', 'ja'] as const) {
+      await page.goto(`/pmoke/${locale}/`);
+      const stage = page.locator('.signal-stage');
+      await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+      const state = await page.evaluate((names) => {
+        const rect = (element: Element | null) => {
+          const box = element?.getBoundingClientRect();
+          return box
+            ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }
+            : null;
+        };
+        const regions = Object.fromEntries(
+          names.map((name) => [name, rect(document.querySelector(`[data-signal-region="${name}"]`))]),
+        );
+        const canvas = document.querySelector<HTMLCanvasElement>('.signal-stage canvas');
+        return {
+          regions,
+          order: [...document.querySelectorAll<HTMLElement>('[data-signal-region]')]
+            .map((element) => element.dataset.signalRegion),
+          layoutMode: canvas?.dataset.signalLayoutMode,
+          layoutStacked: canvas?.dataset.signalLayoutStacked === 'true',
+          layout: canvas?.dataset.signalLayoutRects ? JSON.parse(canvas.dataset.signalLayoutRects) : null,
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          controlSize: rect(document.querySelector('.signal-control')),
+        };
+      }, regionNames);
+
+      expect(state.order).toEqual(['process-rail', 'current-stage', 'control', 'visualization', 'status', 'copy']);
+      expect(state.scrollWidth).toBeLessThanOrEqual(state.innerWidth);
+      expect(state.layout).toBeTruthy();
+      expect(state.controlSize?.width).toBeGreaterThanOrEqual(44);
+      expect(state.controlSize?.height).toBeGreaterThanOrEqual(44);
+
+      if (width <= 720) {
+        const status = state.regions.status;
+        const copy = state.regions.copy;
+        expect(status).toBeTruthy();
+        expect(copy).toBeTruthy();
+        expect(copy!.top - status!.bottom).toBeGreaterThanOrEqual(15.5);
+        expect(copy!.top - status!.bottom).toBeLessThanOrEqual(32.5);
+      }
+
+      const stepLabelStyle = await stage.locator('.signal-step-label').first().evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { position: style.position, width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height };
+      });
+      if (width >= 960) {
+        expect(stepLabelStyle.position).not.toBe('absolute');
+        expect(stepLabelStyle.width).toBeGreaterThan(1);
+        expect(stepLabelStyle.height).toBeGreaterThan(1);
+      } else {
+        expect(stepLabelStyle.position).toBe('absolute');
+        expect(stepLabelStyle.width).toBe(1);
+        expect(stepLabelStyle.height).toBe(1);
+      }
+
+      const control = page.locator('.signal-control');
+      await control.focus();
+      await expect(control).toBeFocused();
+      expect(await control.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { outlineStyle: style.outlineStyle, outlineWidth: Number.parseFloat(style.outlineWidth) };
+      })).toMatchObject({ outlineStyle: 'solid', outlineWidth: 2 });
+
+      const boxes = Object.values(state.regions).filter((box): box is NonNullable<typeof box> => Boolean(box));
+      for (let index = 0; index < boxes.length; index += 1) {
+        for (let next = index + 1; next < boxes.length; next += 1) {
+          const first = boxes[index];
+          const second = boxes[next];
+          const overlapX = Math.min(first.right, second.right) - Math.max(first.left, second.left);
+          const overlapY = Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top);
+          expect(overlapX <= 0.5 || overlapY <= 0.5).toBeTruthy();
+        }
+      }
+
+      const { safe, plot, phase, output } = state.layout;
+      const panelBoxes = [plot, phase, output];
+      for (const panel of panelBoxes) {
+        expect(panel.left).toBeGreaterThanOrEqual(safe.left - 0.5);
+        expect(panel.top).toBeGreaterThanOrEqual(safe.top - 0.5);
+        expect(panel.right).toBeLessThanOrEqual(safe.right + 0.5);
+        expect(panel.bottom).toBeLessThanOrEqual(safe.bottom + 0.5);
+      }
+      for (let index = 0; index < panelBoxes.length; index += 1) {
+        for (let next = index + 1; next < panelBoxes.length; next += 1) {
+          const first = panelBoxes[index];
+          const second = panelBoxes[next];
+          const overlapX = Math.min(first.right, second.right) - Math.max(first.left, second.left);
+          const overlapY = Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top);
+          expect(overlapX <= 0.5 || overlapY <= 0.5).toBeTruthy();
+        }
+      }
+
+      if (width <= 720) {
+        expect(state.layoutMode).toBe('phone');
+        expect(state.layoutStacked).toBe(true);
+        expect(plot.height).toBeGreaterThanOrEqual(168);
+        expect(phase.height).toBeGreaterThanOrEqual(144);
+        expect(output.height).toBeGreaterThanOrEqual(160);
+        for (const panel of panelBoxes) {
+          expect(Math.abs(panel.left - safe.left)).toBeLessThanOrEqual(0.5);
+          expect(Math.abs(panel.right - safe.right)).toBeLessThanOrEqual(0.5);
+        }
+      } else if (width <= 959 && !state.layoutStacked) {
+        expect(phase.width).toBeGreaterThanOrEqual(240);
+        expect(output.width).toBeGreaterThanOrEqual(240);
+        expect(phase.height).toBeGreaterThanOrEqual(128);
+        expect(output.height).toBeGreaterThanOrEqual(128);
+      }
+    }
+  }
+});
+
 test('signal renderer survives reload and Wasm readiness without restarting', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser renderer lifecycle gate');
 
@@ -381,7 +517,9 @@ test('signal renderer survives reload and Wasm readiness without restarting', as
   const stage = page.locator('.signal-stage');
   const canvas = stage.locator('canvas');
   await expect(stage).toHaveAttribute('data-wasm', 'loading');
-  await expect(stage).toHaveAttribute('data-motion', 'running');
+  await expect(stage).toHaveAttribute('data-motion', 'paused');
+  await expect(stage).toHaveAttribute('data-user-paused', 'false');
+  await expect(page.getByRole('button', { name: 'WASM LOADING' })).toBeDisabled();
   await expect(canvas).toHaveAttribute('data-render-generation', '1');
   expect(await canvas.evaluate((element: HTMLCanvasElement) => {
     const context = element.getContext('2d');

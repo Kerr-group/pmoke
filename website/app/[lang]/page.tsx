@@ -117,7 +117,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
       <section className="hero-band">
         <SignalHero labels={text.signal} />
         <div className="hero-copy">
-          <div className="hero-copy-panel">
+          <div className="hero-copy-panel" data-signal-region="copy">
             <p className="eyebrow"><Cpu aria-hidden="true" />{text.kicker}</p>
             <h1>pmoke</h1>
             <p className="hero-lead">{text.lead}</p>

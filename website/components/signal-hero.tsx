@@ -41,7 +41,7 @@ type SignalStatus = 'loading' | 'ready' | 'fallback';
 type MotionState = 'running' | 'paused' | 'reduced';
 type Palette = typeof DARK_COLORS;
 
-type Rect = {
+type SignalRect = {
   left: number;
   top: number;
   right: number;
@@ -50,12 +50,18 @@ type Rect = {
   height: number;
 };
 
+type SignalLayoutMode = 'phone' | 'compact' | 'wide';
+
 type SignalLayout = {
-  plot: Rect;
-  phase: Rect;
-  output: Rect;
+  safe: SignalRect;
+  plot: SignalRect;
+  phase: SignalRect;
+  output: SignalRect;
+  mode: SignalLayoutMode;
   stacked: boolean;
 };
+
+type Rect = SignalRect;
 
 export type HarmonicKerrCue = {
   a2: number;
@@ -191,6 +197,7 @@ export function sequenceProgressForElapsed(elapsedMs: number): number {
 export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const visualizationRef = useRef<HTMLDivElement>(null);
   const dataRef = useRef<Float64Array>(FALLBACK_SIGNAL);
   const statusRef = useRef<SignalStatus>('loading');
   const userPausedRef = useRef(false);
@@ -231,9 +238,10 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
   }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
     const container = containerRef.current;
-    if (!canvas || !container) return;
+    const visualization = visualizationRef.current;
+    const canvas = canvasRef.current;
+    if (!canvas || !container || !visualization) return;
     const context = canvas.getContext('2d');
     if (!context) return;
 
@@ -246,6 +254,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
     let animationFrameId = 0;
     let accumulatedTime = 0;
     let lastTimestamp: number | null = null;
+    let renderedFrame = 0;
 
     const stageLabels: Record<SignalSequenceStage, string> = {
       'field-pulse': labels.fieldPulse,
@@ -277,6 +286,22 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
 
     const getTargetDpr = () => Math.min(window.devicePixelRatio || 1, 2);
     let currentDpr = getTargetDpr();
+    let layoutMetadataKey = '';
+
+    const updateLayoutMetadata = () => {
+      const nextKey = `${cachedWidth}:${cachedHeight}:${window.innerWidth}`;
+      if (nextKey === layoutMetadataKey) return;
+      layoutMetadataKey = nextKey;
+      const layout = getSignalLayout(cachedWidth, cachedHeight, window.innerWidth);
+      canvas.dataset.signalLayoutMode = layout.mode;
+      canvas.dataset.signalLayoutStacked = String(layout.stacked);
+      canvas.dataset.signalLayoutRects = JSON.stringify({
+        safe: layout.safe,
+        plot: layout.plot,
+        phase: layout.phase,
+        output: layout.output,
+      });
+    };
 
     const updateCanvasBackingStore = () => {
       const targetWidth = Math.max(1, Math.round(cachedWidth * currentDpr));
@@ -292,14 +317,16 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       isDocumentVisible &&
       !isReducedMotion &&
       !userPausedRef.current &&
-      statusRef.current !== 'fallback';
+      statusRef.current === 'ready';
 
     const drawFrame = (sweepOffset: number, complete = false) => {
       if (cachedWidth === 0 || cachedHeight === 0) return;
       updateCanvasBackingStore();
+      updateLayoutMetadata();
 
       context.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
       context.clearRect(0, 0, cachedWidth, cachedHeight);
+      canvas.dataset.renderFrame = String(++renderedFrame);
 
       const isDark = document.documentElement.classList.contains('dark');
       const sequenceProgress = complete ? 1 : normalize(sweepOffset);
@@ -316,6 +343,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
         sequenceProgress,
         isDark,
         labels,
+        window.innerWidth,
       );
       if (canvas.dataset.renderPoints !== String(renderedPoints)) {
         canvas.dataset.renderPoints = String(renderedPoints);
@@ -378,7 +406,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        if (entry.target === container) {
+        if (entry.target === visualization) {
           const nextWidth = entry.contentRect.width;
           const nextHeight = entry.contentRect.height;
           if (nextWidth !== cachedWidth || nextHeight !== cachedHeight) {
@@ -389,9 +417,9 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
         }
       }
     });
-    resizeObserver.observe(container);
+    resizeObserver.observe(visualization);
 
-    const initialRect = container.getBoundingClientRect();
+    const initialRect = visualization.getBoundingClientRect();
     cachedWidth = initialRect.width;
     cachedHeight = initialRect.height;
     isIntersecting =
@@ -453,14 +481,16 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
 
   const statusLabel =
     status === 'ready' ? labels.wasmReady : status === 'fallback' ? labels.wasmFallback : labels.wasmLoading;
-  const controlLabel = reducedMotion
-    ? labels.reducedMotion
-    : status === 'fallback'
-      ? labels.staticFallback
-      : userPaused
-        ? labels.resume
-        : labels.pause;
-  const controlDisabled = reducedMotion || status === 'fallback';
+  const controlLabel = status === 'loading'
+    ? labels.wasmLoading
+    : reducedMotion
+      ? labels.reducedMotion
+      : status === 'fallback'
+        ? labels.staticFallback
+        : userPaused
+          ? labels.resume
+          : labels.pause;
+  const controlDisabled = status !== 'ready' || reducedMotion;
 
   const toggleUserPause = () => {
     const nextPaused = !userPausedRef.current;
@@ -478,57 +508,61 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       data-user-paused={userPaused ? 'true' : 'false'}
       data-sequence-stage="field-pulse"
     >
-      <canvas
-        ref={canvasRef}
-        aria-label={labels.label}
-        aria-describedby="signal-description"
-        role="img"
-      />
-      <div className="signal-sequence-shell">
-        <p className="signal-sequence-title">{labels.pipeline}</p>
-        <ol className="signal-sequence" aria-label={labels.sequence}>
-          <li data-step="field-pulse" data-current="true" aria-current="step">
-            <span className="signal-step-marker" aria-hidden="true">01</span>
-            <span className="signal-step-label">{labels.fieldPulse}</span>
-          </li>
-          <li data-step="waveforms" data-current="false">
-            <span className="signal-step-marker" aria-hidden="true">02</span>
-            <span className="signal-step-label">{labels.referenceResponse}</span>
-          </li>
-          <li data-step="lock-in" data-current="false">
-            <span className="signal-step-marker" aria-hidden="true">03</span>
-            <span className="signal-step-label">{labels.lockIn}</span>
-          </li>
-          <li data-step="rotate-phase" data-current="false">
-            <span className="signal-step-marker" aria-hidden="true">04</span>
-            <span className="signal-step-label">{labels.rotatePhase}</span>
-          </li>
-          <li data-step="kerr-angle" data-current="false">
-            <span className="signal-step-marker" aria-hidden="true">05</span>
-            <span className="signal-step-label">{labels.kerrAngle}</span>
-          </li>
-        </ol>
-        <p className="signal-current-stage" aria-hidden="true">{labels.fieldPulse}</p>
-      </div>
-      <p id="signal-description" className="signal-description">{labels.description}</p>
-      <div className="signal-hud">
-        <span className="signal-status" role="status" aria-live="polite">
-          <i className={`dot ${status === 'fallback' ? 'dot-amber' : 'dot-cyan'}`} aria-hidden="true" />
-          {statusLabel}
-        </span>
-      </div>
-      <div className="signal-controls">
-        <button
-          type="button"
-          className="signal-control"
-          aria-label={controlLabel}
-          aria-pressed={userPaused}
-          disabled={controlDisabled}
-          onClick={toggleUserPause}
-        >
-          <span aria-hidden="true">{reducedMotion ? '▣' : userPaused ? '▶' : 'Ⅱ'}</span>
-          {controlLabel}
-        </button>
+      <div className="signal-stage-content">
+        <div className="signal-sequence-shell" data-signal-region="process-rail">
+          <p className="signal-sequence-title">{labels.pipeline}</p>
+          <ol className="signal-sequence" aria-label={labels.sequence}>
+            <li data-step="field-pulse" data-current="true" aria-current="step">
+              <span className="signal-step-marker" aria-hidden="true">01</span>
+              <span className="signal-step-label">{labels.fieldPulse}</span>
+            </li>
+            <li data-step="waveforms" data-current="false">
+              <span className="signal-step-marker" aria-hidden="true">02</span>
+              <span className="signal-step-label">{labels.referenceResponse}</span>
+            </li>
+            <li data-step="lock-in" data-current="false">
+              <span className="signal-step-marker" aria-hidden="true">03</span>
+              <span className="signal-step-label">{labels.lockIn}</span>
+            </li>
+            <li data-step="rotate-phase" data-current="false">
+              <span className="signal-step-marker" aria-hidden="true">04</span>
+              <span className="signal-step-label">{labels.rotatePhase}</span>
+            </li>
+            <li data-step="kerr-angle" data-current="false">
+              <span className="signal-step-marker" aria-hidden="true">05</span>
+              <span className="signal-step-label">{labels.kerrAngle}</span>
+            </li>
+          </ol>
+        </div>
+        <p className="signal-current-stage" data-signal-region="current-stage" aria-hidden="true">{labels.fieldPulse}</p>
+        <div className="signal-controls" data-signal-region="control">
+          <button
+            type="button"
+            className="signal-control"
+            aria-label={controlLabel}
+            aria-pressed={userPaused}
+            disabled={controlDisabled}
+            onClick={toggleUserPause}
+          >
+            <span aria-hidden="true">{reducedMotion ? '▣' : userPaused ? '▶' : 'Ⅱ'}</span>
+            {controlLabel}
+          </button>
+        </div>
+        <div className="signal-visualization" data-signal-region="visualization" ref={visualizationRef}>
+          <canvas
+            ref={canvasRef}
+            aria-label={labels.label}
+            aria-describedby="signal-description"
+            role="img"
+          />
+          <p id="signal-description" className="signal-description">{labels.description}</p>
+        </div>
+        <div className="signal-hud" data-signal-region="status">
+          <span className="signal-status" role="status" aria-live="polite">
+            <i className={`dot ${status === 'fallback' ? 'dot-amber' : 'dot-cyan'}`} aria-hidden="true" />
+            {statusLabel}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -559,30 +593,82 @@ function makeRect(left: number, top: number, right: number, bottom: number): Rec
   return { left, top, right, bottom, width: right - left, height: bottom - top };
 }
 
-function getSignalLayout(width: number, height: number): SignalLayout {
-  const stacked = width < 920;
-  if (stacked) {
+function getSignalLayout(width: number, height: number, viewportWidth = width): SignalLayout {
+  const gap = 16;
+  const phone = viewportWidth <= 720;
+  const wide = viewportWidth >= 960 && width >= 680;
+
+  if (phone) {
+    const side = clamp(width * 0.055, 14, 24);
+    const top = 16;
+    const bottom = 16;
+    const minimumHeight = 168 + 144 + 160 + gap * 2;
+    const extra = Math.max(0, height - top - bottom - minimumHeight);
+    const plotHeight = 168 + extra * 0.36;
+    const phaseHeight = 144 + extra * 0.28;
+    const plotTop = top;
+    const phaseTop = plotTop + plotHeight + gap;
+    const outputTop = phaseTop + phaseHeight + gap;
     return {
-      plot: makeRect(width * 0.07, height * 0.18, width * 0.93, height * 0.3),
-      phase: makeRect(width * 0.07, height * 0.31, width * 0.47, height * 0.39),
-      output: makeRect(width * 0.54, height * 0.31, width * 0.93, height * 0.39),
+      safe: makeRect(side, top, width - side, height - bottom),
+      plot: makeRect(side, plotTop, width - side, plotTop + plotHeight),
+      phase: makeRect(side, phaseTop, width - side, phaseTop + phaseHeight),
+      output: makeRect(side, outputTop, width - side, height - bottom),
+      mode: 'phone',
       stacked: true,
     };
   }
 
-  const workspaceLeft = width * 0.52;
-  const workspaceRight = width * 0.95;
-  const workspaceWidth = workspaceRight - workspaceLeft;
-  const gap = Math.max(10, workspaceWidth * 0.035);
-  const plotWidth = workspaceWidth * 0.48;
-  const phaseWidth = workspaceWidth * 0.23;
-  const plotRight = workspaceLeft + plotWidth;
+  if (!wide) {
+    const side = clamp(width * 0.045, 20, 32);
+    const lowerTop = clamp(height * 0.5, 205, Math.max(205, height - 200));
+    const bottom = Math.max(lowerTop + 150, height - side);
+    const availableWidth = width - side * 2;
+    const sideBySide = width >= 560 && height >= 400;
+
+    if (sideBySide) {
+      const panelWidth = (availableWidth - gap) / 2;
+      return {
+        safe: makeRect(side, side, width - side, bottom),
+        plot: makeRect(side, side, width - side, lowerTop - gap),
+        phase: makeRect(side, lowerTop, side + panelWidth, bottom),
+        output: makeRect(side + panelWidth + gap, lowerTop, width - side, bottom),
+        mode: 'compact',
+        stacked: false,
+      };
+    }
+
+    const panelGap = gap;
+    const usableHeight = Math.max(180, height - side * 2 - panelGap * 2);
+    const plotHeight = Math.max(150, usableHeight * 0.42);
+    const phaseHeight = Math.max(128, usableHeight * 0.27);
+    const plotTop = side;
+    const phaseTop = plotTop + plotHeight + panelGap;
+    const outputTop = phaseTop + phaseHeight + panelGap;
+    return {
+      safe: makeRect(side, side, width - side, height - side),
+      plot: makeRect(side, plotTop, width - side, plotTop + plotHeight),
+      phase: makeRect(side, phaseTop, width - side, phaseTop + phaseHeight),
+      output: makeRect(side, outputTop, width - side, height - side),
+      mode: 'compact',
+      stacked: true,
+    };
+  }
+
+  const side = clamp(width * 0.035, 24, 36);
+  const top = Math.max(24, height * 0.08);
+  const bottom = height - Math.max(24, height * 0.08);
+  const availableWidth = width - side * 2;
+  const plotWidth = availableWidth * 0.54;
+  const panelWidth = (availableWidth - plotWidth - gap * 2) / 2;
+  const plotRight = side + plotWidth;
   const phaseLeft = plotRight + gap;
-  const phaseRight = phaseLeft + phaseWidth;
   return {
-    plot: makeRect(workspaceLeft, height * 0.3, plotRight, height * 0.7),
-    phase: makeRect(phaseLeft, height * 0.35, phaseRight, height * 0.73),
-    output: makeRect(phaseRight + gap, height * 0.35, workspaceRight, height * 0.73),
+    safe: makeRect(side, top, width - side, bottom),
+    plot: makeRect(side, top, plotRight, bottom),
+    phase: makeRect(phaseLeft, top + height * 0.03, phaseLeft + panelWidth, bottom),
+    output: makeRect(phaseLeft + panelWidth + gap, top + height * 0.03, width - side, bottom),
+    mode: 'wide',
     stacked: false,
   };
 }
@@ -604,13 +690,14 @@ function drawSignals(
   sequenceProgress: number,
   dark: boolean,
   labels: SignalHeroLabels,
+  viewportWidth: number,
 ): number {
   const count = values.length / 4;
   if (count <= 2) return 0;
 
   const palette = dark ? DARK_COLORS : LIGHT_COLORS;
   const pointsCount = previewPointCount(width, count);
-  const layout = getSignalLayout(width, height);
+  const layout = getSignalLayout(width, height, viewportWidth);
   const pulseReveal = reveal(sequenceProgress, 0, 0.3);
   const windowReveal = reveal(sequenceProgress, 0.04, 0.3);
   const waveformReveal = reveal(sequenceProgress, 0.14, 0.52);
@@ -920,7 +1007,7 @@ function drawLegendMark(
   context.moveTo(x, y - 3);
   context.lineTo(x + 12, y - 3);
   context.stroke();
-  drawFittedText(context, label, x + 16, y, 16, 8, palette.muted);
+  drawFittedText(context, label, x + 16, y, 16, 9, palette.muted);
   context.restore();
 }
 
@@ -934,7 +1021,7 @@ function drawPhasePlane(
 ): void {
   drawPanel(context, rect, palette, 1);
   drawFittedText(context, labels.phaseSpace, rect.left + 10, rect.top + 17, rect.width * 0.56, 10, palette.muted);
-  drawFittedText(context, labels.perHarmonic, rect.right - 8, rect.bottom - 8, rect.width * 0.8, 7, palette.cyan, 'right');
+  drawFittedText(context, labels.perHarmonic, rect.right - 8, rect.bottom - 8, rect.width * 0.8, 9, palette.cyan, 'right');
 
   const originX = rect.left + rect.width * 0.5;
   const originY = rect.top + rect.height * 0.58;
@@ -970,8 +1057,8 @@ function drawPhasePlane(
   context.arc(originX, originY, radius * 0.56, -preAngle, -currentAngle, false);
   context.stroke();
 
-  drawFittedText(context, 'X', originX + radius + 4, originY + 4, 16, 8, palette.muted);
-  drawFittedText(context, 'Y', originX + 4, originY - radius - 4, 16, 8, palette.muted);
+  drawFittedText(context, 'X', originX + radius + 4, originY + 4, 16, 9, palette.muted);
+  drawFittedText(context, 'Y', originX + 4, originY - radius - 4, 16, 9, palette.muted);
   drawFittedText(context, 'Δφₙ', originX + radius * 0.18, originY - radius * 0.36, rect.width * 0.35, 9, palette.green);
   context.restore();
 
@@ -1033,7 +1120,7 @@ function drawHarmonicExtraction(
 
   rows.forEach(([name, value, color], index) => {
     const y = rowTop + index * rowHeight;
-    drawFittedText(context, name, rect.left + 8, y + 7, 14, 8, palette.muted);
+    drawFittedText(context, name, rect.left + 8, y + 8, 14, 9, palette.muted);
     context.save();
     context.fillStyle = color;
     context.globalAlpha = 0.13;
@@ -1049,8 +1136,8 @@ function drawHarmonicExtraction(
   const compact = rect.height < 150;
   const modulationLabel = compact ? 'A₂ A₄ A₆ → MOD DEPTH' : 'A₂ + A₄ + A₆ → MODULATION DEPTH';
   const kerrLabel = compact ? 'A₂ A₃ A₄ + MOD → θK' : 'A₂ + A₃ + A₄ + MOD DEPTH → θK';
-  drawFittedText(context, modulationLabel, rect.left + 8, outputTop - 5, rect.width - 16, 7, palette.cyan);
-  drawFittedText(context, kerrLabel, rect.left + 8, outputTop + 8, rect.width - 16, 7, palette.green);
+  drawFittedText(context, modulationLabel, rect.left + 8, outputTop - 5, rect.width - 16, 9, palette.cyan);
+  drawFittedText(context, kerrLabel, rect.left + 8, outputTop + 10, rect.width - 16, 9, palette.green);
   context.save();
   context.strokeStyle = palette.green;
   context.lineWidth = 2;
