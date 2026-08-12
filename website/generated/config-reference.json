@@ -410,10 +410,10 @@
       "valid_values": [],
       "units": null,
       "since": 4,
-      "summary_en": "Optical reference analysis settings.",
-      "details_en": "Controls the reference channel, FFT region, and fit decimation.",
-      "summary_ja": "光学参照信号の解析設定",
-      "details_ja": "reference channel、FFT区間、fit間引きの指定。",
+      "summary_en": "Recorded EOM-drive signal analysis settings.",
+      "details_en": "Controls the channel that records the function-generator sine wave sent to the EOM, the FFT region, and fit decimation.",
+      "summary_ja": "EOM駆動用正弦波の解析設定",
+      "details_ja": "EOMへ入力するファンクションジェネレータ正弦波の記録チャンネル、FFT区間、fit間引きを指定。",
       "constraints": []
     },
     {
@@ -425,10 +425,10 @@
       "valid_values": [],
       "units": null,
       "since": 4,
-      "summary_en": "Reference oscilloscope channel.",
-      "details_en": "The current DHO5108 mapping accepts channels 1 through 8.",
-      "summary_ja": "参照信号チャンネル",
-      "details_ja": "DHO5108向け1以上8以下の番号。",
+      "summary_en": "Recorded EOM-drive signal channel.",
+      "details_en": "The current DHO5108 mapping accepts channels 1 through 8; assign the function-generator sine wave sent to the EOM.",
+      "summary_ja": "EOM駆動信号の記録チャンネル",
+      "details_ja": "EOMへ入力するファンクションジェネレータ正弦波を記録するDHO5108の1以上8以下のチャンネル。",
       "constraints": [
         "1 <= value <= 8",
         "must be unique across all channel roles"
@@ -443,10 +443,10 @@
       "valid_values": [],
       "units": "s",
       "since": 4,
-      "summary_en": "Time range used by the reference FFT.",
-      "details_en": "Choose a stable reference segment with finite start and end values.",
-      "summary_ja": "参照FFTの時間区間",
-      "details_ja": "安定した参照信号区間を表す有限なstartとend。",
+      "summary_en": "Time range used by the EOM-drive FFT.",
+      "details_en": "Choose a stable segment of the recorded sine wave with finite start and end values.",
+      "summary_ja": "EOM駆動信号FFTの時間区間",
+      "details_ja": "記録した正弦波の安定区間を表す有限なstartとend。",
       "constraints": [
         "start < end"
       ]
@@ -460,9 +460,9 @@
       "valid_values": [],
       "units": "samples",
       "since": 4,
-      "summary_en": "Reference-fit decimation stride.",
+      "summary_en": "EOM-drive sine-fit decimation stride.",
       "details_en": "Larger values reduce fitting cost at the expense of temporal detail.",
-      "summary_ja": "参照fitの間引き幅",
+      "summary_ja": "EOM駆動正弦波fitの間引き幅",
       "details_ja": "計算量と時間分解能の調整値。",
       "constraints": [
         "must be positive"
@@ -477,9 +477,9 @@
       "valid_values": [],
       "units": "samples",
       "since": 4,
-      "summary_en": "Local reference-fitting window size.",
-      "details_en": "Used around the FFT estimate by reference analysis.",
-      "summary_ja": "局所参照fitの窓幅",
+      "summary_en": "Local EOM-drive sine-fitting window size.",
+      "details_en": "Used around the FFT estimate by EOM-drive signal analysis.",
+      "summary_ja": "局所EOM駆動正弦波fitの窓幅",
       "details_ja": "FFT推定値周辺で使用するsample数。",
       "constraints": [
         "must be positive"
@@ -751,9 +751,9 @@
       "units": null,
       "since": 4,
       "summary_en": "Kerr-angle conversion settings.",
-      "details_en": "Selects calibration sensor, calculation method, and final factor.",
-      "summary_ja": "Kerr角変換設定",
-      "details_ja": "校正sensor、計算法、最終係数の指定。",
+      "details_en": "Specifies the calibration sensor, calculation method, and final factor.",
+      "summary_ja": "Kerr角度の変換設定",
+      "details_ja": "校正用センサー、計算方法、最終係数を指定。",
       "constraints": []
     },
     {
@@ -765,10 +765,10 @@
       "valid_values": [],
       "units": null,
       "since": 4,
-      "summary_en": "Sensor channel used for Kerr calibration.",
+      "summary_en": "Sensor channel used for Kerr-angle calibration.",
       "details_en": "The channel must also exist in the sensors array.",
-      "summary_ja": "Kerr 校正用センサーチャンネル",
-      "details_ja": "sensors配列に存在するchannel。",
+      "summary_ja": "Kerr角度の校正に使用するセンサーチャンネル",
+      "details_ja": "sensors配列に存在するチャンネルを指定。",
       "constraints": [
         "must reference sensors[].channel"
       ]
@@ -785,10 +785,10 @@
       ],
       "units": null,
       "since": 4,
-      "summary_en": "Kerr calculation method.",
-      "details_en": "Selects the standard or harmonic analysis implementation.",
-      "summary_ja": "Kerr 計算法",
-      "details_ja": "standardまたはharmonics実装の選択。",
+      "summary_en": "Kerr-angle calculation method.",
+      "details_en": "Selects the standard or harmonics-based analysis implementation.",
+      "summary_ja": "Kerr角度の計算方法",
+      "details_ja": "standardまたはharmonics実装を選択。",
       "constraints": []
     },
     {
@@ -800,10 +800,10 @@
       "valid_values": [],
       "units": null,
       "since": 4,
-      "summary_en": "Final Kerr conversion factor.",
-      "details_en": "Applied after the selected Kerr calculation.",
-      "summary_ja": "最終Kerr変換係数",
-      "details_ja": "選択したKerr計算後の乗算値。",
+      "summary_en": "Final Kerr-angle conversion factor.",
+      "details_en": "Applied after the selected Kerr-angle calculation.",
+      "summary_ja": "Kerr角度の最終変換係数",
+      "details_ja": "選択したKerr角度計算後に乗算する値。",
       "constraints": [
         "must be finite"
       ]

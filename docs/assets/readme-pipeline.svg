@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 625" role="img" aria-labelledby="title description">
   <title id="title">pmoke analysis data flow</title>
-  <desc id="description">Raw waveforms split into reference and sensor branches. Reference fitting feeds lock-in demodulation and phase rotation. The rotated signal and integrated sensor data combine into the Kerr angle.</desc>
+  <desc id="description">Raw waveforms split into EOM-drive reference and sensor branches. A sine fit of the recorded function-generator signal feeds lock-in demodulation and phase rotation. The rotated photodetector signal and integrated sensor data combine into the Kerr angle.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
@@ -46,7 +46,7 @@
   </g>
   <g>
     <rect class="node reference" x="35" y="155" width="220" height="70" rx="8"/>
-    <text class="label" x="145" y="187">🎯 Reference fit</text>
+    <text class="label" x="145" y="187">🎯 EOM drive fit</text>
     <text class="detail reference-detail" x="145" y="209">FREQUENCY · AMPLITUDE · PHASE</text>
   </g>
   <g>

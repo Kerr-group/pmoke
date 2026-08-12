@@ -67,16 +67,16 @@ if (!Japanese.includes('<html lang="ja"')) throw new Error('Japanese lang metada
 if (!English.includes('Content-Security-Policy')) throw new Error('Static content security policy is missing');
 if (!English.includes('strict-origin-when-cross-origin')) throw new Error('Referrer policy is missing');
 if (!English.includes('/pmoke/_next/')) throw new Error('GitHub Pages basePath is missing');
-if (!English.includes('Capture the field pulse. Rotate the phase. Extract the Kerr angle.')) {
+if (!English.includes('Reproducible pulsed-field MOKE measurements')) {
   throw new Error('English pulsed-field MOKE hero content is missing');
 }
-if (!Japanese.includes('磁場パルスを捉え、位相回転を経て、Kerr角を導出する。')) {
+if (!Japanese.includes('パルス磁場下での再現可能なMOKE測定')) {
   throw new Error('Japanese pulsed-field MOKE hero content is missing');
 }
-for (const label of ['FIELD PULSE', 'REFERENCE + RESPONSE', 'LOCK-IN X / Y', 'ROTATE PHASE', 'KERR ANGLE']) {
+for (const label of ['FIELD PULSE', 'LOCK-IN X / Y', 'PHASE CORRECTION', 'KERR ANGLE']) {
   if (!English.includes(label)) throw new Error(`English signal label is missing: ${label}`);
 }
-for (const label of ['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角']) {
+for (const label of ['磁場パルス', 'ロックインX/Y', '位相補正', 'Kerr角度']) {
   if (!Japanese.includes(label)) throw new Error(`Japanese signal label is missing: ${label}`);
 }
 if (English.includes('ACQUISITION WINDOW') || Japanese.includes('取得窓')) {
@@ -84,8 +84,8 @@ if (English.includes('ACQUISITION WINDOW') || Japanese.includes('取得窓')) {
 }
 if (!English.includes('aria-describedby="signal-description"')) throw new Error('English signal description is missing');
 if (!Japanese.includes('aria-describedby="signal-description"')) throw new Error('Japanese signal description is missing');
-if (!English.includes('aria-label="Illustrative pulsed-field MOKE signal"')) throw new Error('English signal name is missing');
-if (!Japanese.includes('aria-label="パルス磁場MOKEの説明図"')) throw new Error('Japanese signal name is missing');
+if (!English.includes('aria-label="Pulsed-field MOKE measurement workflow"')) throw new Error('English signal name is missing');
+if (!Japanese.includes('aria-label="パルス磁場下でのMOKE測定ワークフロー"')) throw new Error('Japanese signal name is missing');
 if (!EnglishAnalyzer.includes('waveform-analyzer')) throw new Error('English waveform tool is missing');
 if (!JapaneseAnalyzer.includes('波形アナライザー')) throw new Error('Japanese waveform tool is missing');
 if (!EnglishCitation.includes('Reproducible attribution')) throw new Error('English citation panel is missing');

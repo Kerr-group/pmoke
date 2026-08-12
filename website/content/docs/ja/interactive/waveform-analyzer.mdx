@@ -1,21 +1,21 @@
 ---
 title: 波形アナライザー
-description: ネイティブと数値が一致する、ブラウザ内のlock-in・位相回転・高調波Kerr解析。
+description: ネイティブ実装と数値が一致する、ブラウザ内のlock-in・位相回転・高調波成分からのKerr角度計算。
 ---
 
-ネイティブpmokeと同じRustカーネルを専用Web Workerで実行するアナライザー。合成信号とローカルCSVはブラウザ内に保持。解析に使う全入力と表示用に間引いたデータを分けて扱い、出力値は全入力から計算。
-ブラウザ内Kerr角計算とnative parityの確認に対応。
+ネイティブ版のpmokeと同じRustカーネルを専用Web Workerで実行するアナライザー。合成信号とローカルCSVはブラウザ内に保持。解析用の全入力と表示用に間引いたデータを分けて扱い、出力値は全入力から計算。
+ブラウザ内でKerr角度を計算し、ネイティブ実装との数値一致を確認可能。
 
 <WaveformAnalyzer locale="ja" />
 
-## 可視解析
+## 解析結果の可視化
 
-入力波形、lock-in X/Y、振幅・位相、Kerr角、filter responseを四つのplotで同期表示。
-sample rate、reference frequency、noise、boxcar half-window、stride、位相回転、
-高調波、Kerr factorをcontrolとして指定可能。local CSVの解析からmetadata付きCSV exportまでbrowser内で完結。
+入力波形、lock-in X/Y、振幅・位相、Kerr角度とフィルター応答を4つのプロットに同期表示。
+サンプルレート、参照周波数、ノイズ、Boxcarの半窓周期、ストライド、位相回転、
+高調波、Kerr係数を設定可能。ローカルCSVの解析からメタデータ付きCSVの出力までブラウザ内で完結。
 
 ## 一致範囲
 
-ネイティブと数値が一致する対象は`boxcar_legacy`、位相回転、高調波Kerr計算。過去のFIR/IIR filterは移行専用で、現在のruntime pathではない。位相フィッティングと標準Kerrもブラウザの一致対象外。本番workflowにはnative pmoke CLIを使用。
+ネイティブ実装との数値一致を確認している範囲は`boxcar_legacy`、位相回転、高調波成分からのKerr角度計算。過去のFIR/IIRフィルターは移行専用で、現在の実行経路ではない。位相フィッティングと標準Kerr角度計算もブラウザ版の数値一致対象外。本番ワークフローではネイティブ版pmoke CLIを使用。
 
 `time,signal`または信号単列のCSVを入力可能。時間列を含む場合は有限・単調増加・等間隔が必須。信号単列ではsample rateを指定。ファイルサイズ16 MiB、入力1,000,000点、高調波出力合計1,500,000点の固定上限。

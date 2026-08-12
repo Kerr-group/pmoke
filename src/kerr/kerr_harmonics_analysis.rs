@@ -40,7 +40,7 @@ impl KerrHarmonicsAnalyser {
             harmonic(10, "sixth")?,
             input.factor,
         )
-        .context("failed to calculate harmonics Kerr angle")?
+        .context("failed to calculate the Kerr angle from harmonic components")?
         .values_rad;
         if output.is_none() && !(input.plot.enabled && input.plot.interactive) {
             return Ok(kerr);
@@ -83,7 +83,12 @@ impl KerrHarmonicsAnalyser {
                 )
                 .context("python KerrHarmonicsAnalyser.plot(...) failed")?
                 .extract()?;
-            crate::plot::finish_embedded_plot(input.plot, output, plot_error, "Kerr harmonics")?;
+            crate::plot::finish_embedded_plot(
+                input.plot,
+                output,
+                plot_error,
+                "Kerr angle from harmonic components",
+            )?;
 
             Ok(kerr)
         })

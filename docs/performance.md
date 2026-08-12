@@ -46,7 +46,7 @@ workloads. `--channels` controls the RAW-to-CSV workload; weekly CI runs both
 two- and four-channel cases. The JSON report also records the bytes and
 cumulative time copied across the Python boundary.
 The weekly workflow additionally runs the in-memory analysis pipeline from
-reference fitting through Kerr with plotting disabled. It intentionally
+recorded EOM-drive sine fitting through Kerr with plotting disabled. It intentionally
 excludes CLI startup, config parsing, RAW file I/O, and WORD decoding; those
 boundaries are measured separately. This case requires NumPy, SciPy, lmfit,
 and gsplot.

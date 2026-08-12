@@ -27,11 +27,11 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 | [`pmoke fetch`](#pmoke-fetch) | オシロスコープデータの取得・保存 | hw-core |
 | [`pmoke screenshot`](#pmoke-screenshot) | オシロスコープ画面のPC直接取得 | hw-core |
 | [`pmoke automeasure`](#pmoke-automeasure) | single mode・trigger・fetchの自動測定 | hw-core |
-| [`pmoke reference`](#pmoke-reference) | 参照信号解析 | core |
+| [`pmoke reference`](#pmoke-reference) | 記録したEOM駆動正弦波をフィッティング | core |
 | [`pmoke sensor`](#pmoke-sensor) | センサー信号解析 | core |
 | [`pmoke li`](#pmoke-li) | 数値lock-in解析 | core |
 | [`pmoke phase`](#pmoke-phase) | lock-in解析の参照位相回転 | core |
-| [`pmoke kerr`](#pmoke-kerr) | Kerr角計算 | core |
+| [`pmoke kerr`](#pmoke-kerr) | Kerr角度を計算 | core |
 | [`pmoke analyze`](#pmoke-analyze) | reference・sensor・lock-in・phase・Kerrの全解析 | core |
 | [`pmoke process`](#pmoke-process) | 手動pulse trigger後のfetch・lock-in・phase・Kerr自動解析 | hw-core |
 | [`pmoke auto`](#pmoke-auto) | 完全自動測定・解析 | hw-core |
@@ -437,7 +437,7 @@ pmoke automeasure [-h, --help]
 
 ## `pmoke reference`
 
-参照信号解析
+記録したEOM駆動正弦波をフィッティング
 
 ```text
 pmoke reference [-h, --help]
@@ -489,7 +489,7 @@ pmoke phase [-h, --help]
 
 ## `pmoke kerr`
 
-Kerr角計算
+Kerr角度を計算
 
 ```text
 pmoke kerr [-h, --help]

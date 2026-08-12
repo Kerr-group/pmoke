@@ -65,11 +65,11 @@ description: Generated field reference for pmoke config schema version 5.
 
 | Path | Type | Required | Default / values | Description and constraints |
 | --- | --- | :---: | --- | --- |
-| `reference` | `table` | required | - | Optical reference analysis settings. Controls the reference channel, FFT region, and fit decimation. |
-| `reference.channel` | `integer` | required | - | Reference oscilloscope channel. The current DHO5108 mapping accepts channels 1 through 8. **Constraints:** 1 &lt;= value &lt;= 8; must be unique across all channel roles |
-| `reference.fft_window` | `inline time window` · `s` | required | - | Time range used by the reference FFT. Choose a stable reference segment with finite start and end values. **Constraints:** start &lt; end |
-| `reference.stride_samples` | `integer` · `samples` | required | - | Reference-fit decimation stride. Larger values reduce fitting cost at the expense of temporal detail. **Constraints:** must be positive |
-| `reference.window_samples` | `integer` · `samples` | required | - | Local reference-fitting window size. Used around the FFT estimate by reference analysis. **Constraints:** must be positive |
+| `reference` | `table` | required | - | Recorded EOM-drive signal analysis settings. Controls the channel that records the function-generator sine wave sent to the EOM, the FFT region, and fit decimation. |
+| `reference.channel` | `integer` | required | - | Recorded EOM-drive signal channel. The current DHO5108 mapping accepts channels 1 through 8; assign the function-generator sine wave sent to the EOM. **Constraints:** 1 &lt;= value &lt;= 8; must be unique across all channel roles |
+| `reference.fft_window` | `inline time window` · `s` | required | - | Time range used by the EOM-drive FFT. Choose a stable segment of the recorded sine wave with finite start and end values. **Constraints:** start &lt; end |
+| `reference.stride_samples` | `integer` · `samples` | required | - | EOM-drive sine-fit decimation stride. Larger values reduce fitting cost at the expense of temporal detail. **Constraints:** must be positive |
+| `reference.window_samples` | `integer` · `samples` | required | - | Local EOM-drive sine-fitting window size. Used around the FFT estimate by EOM-drive signal analysis. **Constraints:** must be positive |
 ## `lockin`
 
 | Path | Type | Required | Default / values | Description and constraints |
@@ -97,10 +97,10 @@ description: Generated field reference for pmoke config schema version 5.
 
 | Path | Type | Required | Default / values | Description and constraints |
 | --- | --- | :---: | --- | --- |
-| `kerr` | `table` | required | - | Kerr-angle conversion settings. Selects calibration sensor, calculation method, and final factor. |
-| `kerr.sensor` | `integer` | required | - | Sensor channel used for Kerr calibration. The channel must also exist in the sensors array. **Constraints:** must reference sensors[].channel |
-| `kerr.method` | `string enum` | required | `standard`, `harmonics` | Kerr calculation method. Selects the standard or harmonic analysis implementation. |
-| `kerr.factor` | `float` | required | - | Final Kerr conversion factor. Applied after the selected Kerr calculation. **Constraints:** must be finite |
+| `kerr` | `table` | required | - | Kerr-angle conversion settings. Specifies the calibration sensor, calculation method, and final factor. |
+| `kerr.sensor` | `integer` | required | - | Sensor channel used for Kerr-angle calibration. The channel must also exist in the sensors array. **Constraints:** must reference sensors[].channel |
+| `kerr.method` | `string enum` | required | `standard`, `harmonics` | Kerr-angle calculation method. Selects the standard or harmonics-based analysis implementation. |
+| `kerr.factor` | `float` | required | - | Final Kerr-angle conversion factor. Applied after the selected Kerr-angle calculation. **Constraints:** must be finite |
 ## `plot`
 
 | Path | Type | Required | Default / values | Description and constraints |

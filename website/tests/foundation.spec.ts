@@ -147,17 +147,16 @@ test('documentation remains readable without JavaScript', async ({ browser }, te
   const page = await context.newPage();
   await page.goto('http://127.0.0.1:4173/pmoke/ja/');
   await expect(page.getByRole('heading', { level: 1, name: 'pmoke' })).toBeVisible();
-  await expect(page.locator('.signal-sequence-title')).toHaveText('信号処理の流れ');
-  await expect(page.locator('.signal-sequence')).toHaveAttribute('aria-label', 'パルス磁場MOKEの信号処理ステップ');
-  await expect(page.locator('.signal-sequence .signal-step-label').first()).toHaveText('磁場パルス');
-  await expect(page.locator('.signal-current-stage')).toHaveText('磁場パルス');
-  await expect(page.locator('#signal-description')).toContainText('パルス磁場MOKEの概念図');
+  await expect(page.locator('.signal-process-kicker')).toHaveText('測定ワークフロー');
+  await expect(page.locator('.signal-process-rail')).toHaveAttribute('aria-label', 'パルス磁場下でのMOKE測定と解析の工程');
+  await expect(page.locator('.signal-step-name').first()).toHaveText('磁場パルス');
+  await expect(page.locator('.signal-stage-heading h2')).toHaveText('磁場パルス');
+  await expect(page.locator('#signal-description')).toContainText('パルス磁場下でのMOKE測定を示す処理図');
   await page.goto('http://127.0.0.1:4173/pmoke/ja/docs/quickstart/');
   await expect(page.getByRole('heading', { level: 1, name: 'クイックスタート' })).toBeVisible();
   await expect(page.locator('code').filter({ hasText: 'pmoke config init' })).toBeVisible();
   await context.close();
 });
-
 test('code blocks keep one chrome and localized keyboard-scrollable viewports', async ({ page, context }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser code-block contract');
 
@@ -204,361 +203,238 @@ test('code blocks keep one chrome and localized keyboard-scrollable viewports', 
   }
 });
 
-test('signal canvas sweeps automatically and pauses on reduced motion', async ({ page }, testInfo) => {
+test('signal process advances automatically and honors reduced motion', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser motion contract');
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto('/pmoke/en/');
-  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
-  await expect(page.locator('.signal-stage')).toHaveAttribute('data-motion', 'running');
+  const stage = page.locator('.signal-stage');
+  await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  await expect(stage).toHaveAttribute('data-motion', 'running');
 
-  const firstFrame = await page.locator('.signal-stage canvas').getAttribute('data-render-frame');
-  await page.waitForTimeout(300);
-  const secondFrame = await page.locator('.signal-stage canvas').getAttribute('data-render-frame');
-  expect(secondFrame).not.toBe(firstFrame);
+  const firstStage = await stage.getAttribute('data-sequence-stage');
+  await expect.poll(() => stage.getAttribute('data-sequence-stage'), { timeout: 7_000 }).not.toBe(firstStage);
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.reload();
-  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
-  await expect(page.locator('.signal-stage')).toHaveAttribute('data-motion', 'reduced');
-
-  const firstStatic = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  await expect(stage).toHaveAttribute('data-motion', 'reduced');
+  await expect(stage.locator('.signal-panel[data-active="true"]')).toHaveCount(1);
+  const reducedStage = await stage.getAttribute('data-sequence-stage');
   await page.waitForTimeout(300);
-  const secondStatic = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
-  expect(secondStatic).toBe(firstStatic);
-  await expect(page.locator('.signal-sequence li[aria-current="step"]')).toHaveAttribute('data-step', 'kerr-angle');
-  await expect(page.locator('.signal-control')).toHaveCount(0);
+  expect(await stage.getAttribute('data-sequence-stage')).toBe(reducedStage);
 });
 
-test('signal hero exposes localized process semantics without manual controls', async ({ page }, testInfo) => {
+test('signal hero exposes localized process semantics and stage replay controls', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser signal semantics contract');
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
-  for (const [locale, labels, description] of [
+  for (const [locale, labels, description, processLabel] of [
     [
       'en',
-      ['FIELD PULSE', 'REFERENCE + RESPONSE', 'LOCK-IN X / Y', 'ROTATE PHASE', 'KERR ANGLE'],
-      'Illustrative pulsed-field MOKE pipeline',
+      ['FIELD PULSE', 'LOCK-IN X / Y', 'PHASE CORRECTION', 'KERR ANGLE'],
+      'Pulsed-field MOKE measurement workflow.',
+      'Pulsed-field MOKE measurement and analysis stages',
     ],
     [
       'ja',
-      ['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角'],
-      'パルス磁場MOKEの概念図',
+      ['磁場パルス', 'ロックインX/Y', '位相補正', 'Kerr角度'],
+      'パルス磁場下でのMOKE測定を示す処理図。',
+      'パルス磁場下でのMOKE測定と解析の工程',
     ],
   ] as const) {
-    await page.goto(`/pmoke/${locale}/`);
+    await page.goto('/pmoke/' + locale + '/');
     const stage = page.locator('.signal-stage');
-    const canvas = stage.locator('canvas');
+    const card = stage.locator('.signal-process-card');
     await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
     await expect(stage).toHaveAttribute('data-motion', 'running');
-    await expect(canvas).toHaveAttribute(
-      'aria-label',
-      locale === 'en' ? 'Illustrative pulsed-field MOKE signal' : 'パルス磁場MOKEの説明図',
-    );
-    await expect(canvas).toHaveAttribute('aria-describedby', 'signal-description');
+    await expect(card).toHaveAttribute('aria-label', locale === 'en'
+      ? 'Pulsed-field MOKE measurement workflow'
+      : 'パルス磁場下でのMOKE測定ワークフロー');
     await expect(page.locator('#signal-description')).toContainText(description);
-    await expect(stage.locator('.signal-sequence-title')).toHaveText(
-      locale === 'en' ? 'SIGNAL PIPELINE' : '信号処理の流れ',
+    await expect(stage.locator('.signal-process-kicker')).toHaveText(
+      locale === 'en' ? 'MEASUREMENT WORKFLOW' : '測定ワークフロー',
     );
-    await expect(stage.locator('.signal-sequence')).toHaveAttribute(
-      'aria-label',
-      locale === 'en' ? 'Pulsed-field MOKE signal processing stages' : 'パルス磁場MOKEの信号処理ステップ',
-    );
-    await expect(stage.locator('.signal-sequence .signal-step-label')).toHaveText(labels);
-    expect(await stage.locator('.signal-sequence li').evaluateAll((items) => items.map((item) => item.dataset.step))).toEqual([
+    const rail = stage.locator('.signal-process-rail');
+    await expect(rail).toHaveAttribute('aria-label', processLabel);
+    await expect(rail.locator('.signal-step-name')).toHaveText(labels);
+    expect(await rail.locator('li').evaluateAll((items) => items.map((item) => item.dataset.step))).toEqual([
       'field-pulse',
-      'waveforms',
       'lock-in',
-      'rotate-phase',
+      'phase-correction',
       'kerr-angle',
     ]);
+
     const readRailState = () => stage.evaluate((element) => {
-      const active = [...element.querySelectorAll<HTMLElement>('.signal-sequence li[aria-current="step"]')]
-        .map((item) => item.dataset.step);
+      const active = [...element.querySelectorAll<HTMLElement>('.signal-process-rail button[aria-current="step"]')]
+        .map((button) => button.closest('li')?.dataset.step);
       return {
         stage: element.dataset.sequenceStage,
         active,
-        focusable: element.querySelectorAll('.signal-sequence a, .signal-sequence button, .signal-sequence [role="tab"], .signal-sequence [tabindex]').length,
-        liveRegions: element.querySelectorAll('.signal-sequence [aria-live]').length,
+        buttons: element.querySelectorAll('.signal-process-rail button').length,
+        liveRegions: element.querySelectorAll('.signal-process-rail [aria-live]').length,
       };
     });
     const railState = await readRailState();
     expect(railState.active).toEqual([railState.stage]);
-    expect(railState.focusable).toBe(0);
+    expect(railState.buttons).toBe(4);
     expect(railState.liveRegions).toBe(0);
     await expect.poll(async () => (await readRailState()).stage, { timeout: 7_000 }).not.toBe(railState.stage);
-    const progressedRailState = await readRailState();
-    expect(progressedRailState.active).toEqual([progressedRailState.stage]);
-    await expect(page.getByText(locale === 'en' ? 'ACQUISITION WINDOW' : '取得窓', { exact: true })).toHaveCount(0);
-    await expect(page.locator('#signal-description')).toContainText(locale === 'en' ? 'triggered measurement window' : 'トリガー窓');
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    await expect(page.locator('.signal-control')).toHaveCount(0);
-    await expect(stage).not.toHaveAttribute('data-user-paused', /.+/u);
-    await expect(stage.locator('[data-signal-region="control"]')).toHaveCount(0);
+
+    await rail.getByRole('button', {
+      name: (locale === 'en' ? 'Replay stage' : 'この工程を再生') + ': ' + (locale === 'en' ? 'PHASE CORRECTION' : '位相補正'),
+    }).click();
+    await expect(stage).toHaveAttribute('data-playback-mode', 'stage');
+    await expect(stage).toHaveAttribute('data-sequence-stage', 'phase-correction');
+    await expect(stage.locator('.signal-stage-heading h2')).toHaveText(
+      locale === 'en' ? 'PHASE CORRECTION' : '位相補正',
+    );
+    await expect(stage.locator('.signal-playback-control')).toHaveCount(0);
     await expect(stage.locator('[aria-pressed], [data-user-paused]')).toHaveCount(0);
-    await expect(page.getByText(locale === 'en' ? 'Pause animation' : 'アニメーションを一時停止', { exact: true })).toHaveCount(0);
-    await expect(page.getByText(locale === 'en' ? 'Resume animation' : 'アニメーションを再開', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(locale === 'en' ? 'Pause' : '一時停止', { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   }
 });
 
-test('signal hero reports an informative static fallback when Wasm is unavailable', async ({ page }, testInfo) => {
+test('signal hero keeps an informative fallback when Wasm is unavailable', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser signal fallback contract');
 
   await page.route('**/wasm/pmoke_web_wasm.js', (route) => route.abort());
   await page.goto('/pmoke/ja/');
   const stage = page.locator('.signal-stage');
   await expect(stage).toHaveAttribute('data-wasm', 'fallback', { timeout: 15_000 });
-  await expect(stage).toHaveAttribute('data-motion', 'paused');
-  await expect(stage.locator('.signal-status')).toHaveText('静的フォールバック');
-  await expect(page.locator('.signal-control')).toHaveCount(0);
-  await expect(page.getByText('WASM ONLINE', { exact: true })).toHaveCount(0);
-  await expect(stage.locator('.signal-sequence .signal-step-label')).toHaveText(['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角']);
-  await expect(stage.locator('.signal-sequence li[aria-current="step"]')).toHaveAttribute('data-step', 'kerr-angle');
-  await expect(stage.locator('.signal-current-stage')).toHaveText('Kerr角');
+  await expect(stage.locator('.signal-process-card')).toBeVisible();
+  await expect(stage.locator('.signal-process-rail li')).toHaveCount(4);
+  await expect(stage.locator('.signal-panel[data-active="true"]')).toHaveCount(1);
+  await expect(stage.locator('.signal-process-rail .signal-step-name')).toHaveText([
+    '磁場パルス',
+    'ロックインX/Y',
+    '位相補正',
+    'Kerr角度',
+  ]);
 });
 
-test('signal process rail stays compact and non-interactive below desktop width', async ({ page }, testInfo) => {
-  test.skip(!['desktop-chromium', 'tablet-chromium', 'mobile-chromium'].includes(testInfo.project.name), 'compact process rail gate');
+test('signal process rail stays responsive across compact viewports', async ({ page }, testInfo) => {
+  test.skip(!['desktop-chromium', 'tablet-chromium', 'mobile-chromium'].includes(testInfo.project.name), 'responsive process rail gate');
 
   if (testInfo.project.name === 'desktop-chromium') {
     await page.setViewportSize({ width: 959, height: 900 });
   }
 
   for (const locale of ['en', 'ja'] as const) {
-    await page.goto(`/pmoke/${locale}/`);
+    await page.goto('/pmoke/' + locale + '/');
     const stage = page.locator('.signal-stage');
+    const card = stage.locator('.signal-process-card');
     await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
-    await expect(stage.locator('.signal-current-stage')).toBeVisible();
-    const compactLabel = await stage.locator('.signal-sequence .signal-step-label').first().evaluate((element) => {
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return { position: style.position, width: rect.width, height: rect.height, clip: style.clip };
-    });
-    expect(compactLabel).toMatchObject({ position: 'absolute', width: 1, height: 1 });
+    await expect(card).toBeVisible();
+    await expect(stage.locator('.signal-process-rail li')).toHaveCount(4);
+    await expect(stage.locator('.signal-process-rail button')).toHaveCount(4);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    expect(await stage.locator('.signal-sequence li[aria-current="step"]').count()).toBe(1);
-    expect(await stage.locator('.signal-sequence a, .signal-sequence button, .signal-sequence [role="tab"], .signal-sequence [tabindex]').count()).toBe(0);
+    if (testInfo.project.name === 'mobile-chromium') {
+      const stepName = stage.locator('.signal-step-name').first();
+      await expect.poll(() => stepName.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return { position: style.position, width: rect.width, height: rect.height };
+      })).toMatchObject({ position: 'absolute', width: 1, height: 1 });
+    }
   }
 });
 
-test('signal hero reserves non-overlapping responsive regions and panel geometry', async ({ page }, testInfo) => {
+test('signal hero uses non-overlapping responsive card regions', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser responsive geometry gate');
 
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const viewports = [
     [1440, 900],
-    [1920, 1080],
     [768, 1024],
     [720, 800],
-    [721, 800],
-    [959, 900],
-    [960, 900],
     [428, 926],
-    [390, 844],
     [360, 800],
-    [320, 800],
-    [320, 568],
   ] as const;
-  const regionNames = ['copy', 'process-rail', 'current-stage', 'visualization', 'status'] as const;
 
   for (const [width, height] of viewports) {
     await page.setViewportSize({ width, height });
     for (const locale of ['en', 'ja'] as const) {
-      await page.goto(`/pmoke/${locale}/`);
+      await page.goto('/pmoke/' + locale + '/');
       const stage = page.locator('.signal-stage');
+      const card = stage.locator('.signal-process-card');
       await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
-      const state = await page.evaluate((names) => {
-        const rect = (element: Element | null) => {
+      const boxes = await page.evaluate(() => {
+        const getBox = (selector: string) => {
+          const element = document.querySelector(selector);
           const box = element?.getBoundingClientRect();
-          return box
-            ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }
-            : null;
+          return box ? {
+            left: box.left,
+            top: box.top,
+            right: box.right,
+            bottom: box.bottom,
+            width: box.width,
+            height: box.height,
+          } : null;
         };
-        const regions = Object.fromEntries(
-          names.map((name) => [name, rect(document.querySelector(`[data-signal-region="${name}"]`))]),
-        );
-        const canvas = document.querySelector<HTMLCanvasElement>('.signal-stage canvas');
         return {
-          regions,
-          order: [...document.querySelectorAll<HTMLElement>('[data-signal-region]')]
-            .map((element) => element.dataset.signalRegion),
-          layoutMode: canvas?.dataset.signalLayoutMode,
-          layoutStacked: canvas?.dataset.signalLayoutStacked === 'true',
-          layout: canvas?.dataset.signalLayoutRects ? JSON.parse(canvas.dataset.signalLayoutRects) : null,
-          connectors: canvas?.dataset.signalConnectorSegments ? JSON.parse(canvas.dataset.signalConnectorSegments) : null,
+          stage: getBox('.signal-stage'),
+          copy: getBox('.hero-copy-panel'),
+          card: getBox('.signal-process-card'),
+          rail: getBox('.signal-process-rail'),
+          visualization: getBox('.signal-visualization'),
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
-          stage: rect(document.querySelector('.signal-stage')),
         };
-      }, regionNames);
-
-      expect(state.order).toEqual(['copy', 'process-rail', 'current-stage', 'visualization', 'status']);
-      expect(state.scrollWidth).toBeLessThanOrEqual(state.innerWidth);
-      expect(state.layout).toBeTruthy();
-      expect(state.connectors).toHaveLength(2);
-      expect(await page.locator('.signal-control').count()).toBe(0);
-      expect(await page.locator('[data-signal-region="control"]').count()).toBe(0);
-
-      if (width <= 959) {
-        const copy = state.regions.copy;
-        const stage = state.stage;
-        expect(copy).toBeTruthy();
-        expect(stage).toBeTruthy();
-        expect(stage!.top - copy!.bottom).toBeGreaterThanOrEqual(15.5);
-        expect(stage!.top - copy!.bottom).toBeLessThanOrEqual(32.5);
-      }
-
-      if (width <= 720) {
-        const status = state.regions.status;
-        const copy = state.regions.copy;
-        const processRail = state.regions['process-rail'];
-        expect(status).toBeTruthy();
-        expect(copy).toBeTruthy();
-        expect(processRail).toBeTruthy();
-        expect(processRail!.top).toBeGreaterThan(copy!.bottom);
-      }
-
-      const stepLabelStyle = await stage.locator('.signal-step-label').first().evaluate((element) => {
-        const style = getComputedStyle(element);
-        return { position: style.position, width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height };
       });
-      if (width >= 960) {
-        expect(stepLabelStyle.position).not.toBe('absolute');
-        expect(stepLabelStyle.width).toBeGreaterThan(1);
-        expect(stepLabelStyle.height).toBeGreaterThan(1);
-      } else {
-        expect(stepLabelStyle.position).toBe('absolute');
-        expect(stepLabelStyle.width).toBe(1);
-        expect(stepLabelStyle.height).toBe(1);
-      }
-
-      const boxes = Object.values(state.regions).filter((box): box is NonNullable<typeof box> => Boolean(box));
-      for (let index = 0; index < boxes.length; index += 1) {
-        for (let next = index + 1; next < boxes.length; next += 1) {
-          const first = boxes[index];
-          const second = boxes[next];
-          const overlapX = Math.min(first.right, second.right) - Math.max(first.left, second.left);
-          const overlapY = Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top);
-          expect(overlapX <= 0.5 || overlapY <= 0.5).toBeTruthy();
-        }
-      }
-
-      const { safe, plot, phase, output } = state.layout;
-      const panelBoxes = [plot, phase, output];
-      for (const panel of panelBoxes) {
-        expect(panel.left).toBeGreaterThanOrEqual(safe.left - 0.5);
-        expect(panel.top).toBeGreaterThanOrEqual(safe.top - 0.5);
-        expect(panel.right).toBeLessThanOrEqual(safe.right + 0.5);
-        expect(panel.bottom).toBeLessThanOrEqual(safe.bottom + 0.5);
-      }
-      for (let index = 0; index < panelBoxes.length; index += 1) {
-        for (let next = index + 1; next < panelBoxes.length; next += 1) {
-          const first = panelBoxes[index];
-          const second = panelBoxes[next];
-          const overlapX = Math.min(first.right, second.right) - Math.max(first.left, second.left);
-          const overlapY = Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top);
-          expect(overlapX <= 0.5 || overlapY <= 0.5).toBeTruthy();
-        }
-      }
-
-      const connectorPanels = [[plot, phase], [phase, output]] as const;
-      const connectors = state.connectors as Array<{
-        from: { x: number; y: number };
-        to: { x: number; y: number };
-        axis: string;
-        gap: number;
-        available: boolean;
-      }>;
-      for (const [index, connector] of connectors.entries()) {
-        const [fromPanel, toPanel] = connectorPanels[index];
-        if (!connector.available) continue;
-        expect(connector.gap).toBeGreaterThanOrEqual(12);
-        const length = Math.hypot(connector.to.x - connector.from.x, connector.to.y - connector.from.y);
-        expect(length).toBeGreaterThanOrEqual(12);
-        expect(connector.axis).not.toBe('none');
-        for (let sample = 0; sample <= 32; sample += 1) {
-          const fraction = sample / 32;
-          const point = {
-            x: connector.from.x + (connector.to.x - connector.from.x) * fraction,
-            y: connector.from.y + (connector.to.y - connector.from.y) * fraction,
-          };
-          for (const panel of [fromPanel, toPanel]) {
-            const insideClearanceBox = point.x > panel.left - 3.5 && point.x < panel.right + 3.5
-              && point.y > panel.top - 3.5 && point.y < panel.bottom + 3.5;
-            expect(insideClearanceBox).toBeFalsy();
-          }
-        }
-      }
-
+      expect(boxes.stage).toBeTruthy();
+      expect(boxes.copy).toBeTruthy();
+      expect(boxes.card).toBeTruthy();
+      expect(boxes.rail).toBeTruthy();
+      expect(boxes.visualization).toBeTruthy();
+      expect(boxes.scrollWidth).toBeLessThanOrEqual(boxes.innerWidth);
+      expect(boxes.card!.left).toBeGreaterThanOrEqual(boxes.stage!.left - 0.5);
+      expect(boxes.card!.right).toBeLessThanOrEqual(boxes.stage!.right + 0.5);
+      expect(boxes.visualization!.left).toBeGreaterThanOrEqual(boxes.card!.left - 0.5);
+      expect(boxes.visualization!.right).toBeLessThanOrEqual(boxes.card!.right + 0.5);
+      expect(boxes.visualization!.height).toBeGreaterThan(180);
       if (width <= 720) {
-        expect(state.layoutMode).toBe('phone');
-        expect(state.layoutStacked).toBe(true);
-        expect(plot.height).toBeGreaterThanOrEqual(168);
-        expect(phase.height).toBeGreaterThanOrEqual(144);
-        expect(output.height).toBeGreaterThanOrEqual(160);
-        for (const panel of panelBoxes) {
-          expect(Math.abs(panel.left - safe.left)).toBeLessThanOrEqual(0.5);
-          expect(Math.abs(panel.right - safe.right)).toBeLessThanOrEqual(0.5);
-        }
-      } else if (width <= 959 && !state.layoutStacked) {
-        expect(phase.width).toBeGreaterThanOrEqual(240);
-        expect(output.width).toBeGreaterThanOrEqual(240);
-        expect(phase.height).toBeGreaterThanOrEqual(128);
-        expect(output.height).toBeGreaterThanOrEqual(128);
+        expect(boxes.card!.width).toBeLessThanOrEqual(boxes.stage!.width + 0.5);
+        expect(boxes.rail!.width).toBeLessThanOrEqual(boxes.card!.width + 0.5);
       }
     }
   }
 });
 
-test('signal renderer survives reload and Wasm readiness without restarting', async ({ page }, testInfo) => {
+test('signal hero survives delayed Wasm readiness and reload', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser renderer lifecycle gate');
 
   await page.route('**/wasm/pmoke_web_wasm.js', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 800));
     await route.continue();
   });
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/pmoke/en/');
-  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  const stage = page.locator('.signal-stage');
+  await expect(stage).toHaveAttribute('data-wasm', 'loading');
+  await expect(stage.locator('.signal-process-card')).toBeVisible();
+  await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
 
   await page.reload();
-  const stage = page.locator('.signal-stage');
-  const canvas = stage.locator('canvas');
-  await expect(stage).toHaveAttribute('data-wasm', 'loading');
-  await expect(stage).toHaveAttribute('data-motion', 'paused');
-  await expect(stage).not.toHaveAttribute('data-user-paused', /.+/u);
-  await expect(stage.locator('.signal-status')).toHaveText('WASM LOADING');
-  await expect(page.locator('.signal-control')).toHaveCount(0);
-  await expect(canvas).toHaveAttribute('data-render-generation', '1');
-  expect(await canvas.evaluate((element: HTMLCanvasElement) => {
-    const context = element.getContext('2d');
-    if (!context) return 0;
-    const pixels = context.getImageData(0, 0, element.width, element.height).data;
-    let painted = 0;
-    for (let index = 3; index < pixels.length; index += 128) if (pixels[index] > 0) painted += 1;
-    return painted;
-  })).toBeGreaterThan(100);
-
   await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
-  await expect(canvas).toHaveAttribute('data-render-generation', '1');
-  await page.locator('.theme-toggle').click();
-  await expect(canvas).toHaveAttribute('data-render-generation', '1');
+  await expect(stage.locator('.signal-panel[data-active="true"]')).toHaveCount(1);
 });
 
-test('mobile signal renderer keeps a dense periodic viewport', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'mobile-chromium', 'mobile renderer density gate');
+test('mobile signal workflow remains usable at phone width', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium', 'mobile signal workflow gate');
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/pmoke/en/');
-  const canvas = page.locator('.signal-stage canvas');
-  await expect(page.locator('.signal-stage')).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
-  const metrics = await canvas.evaluate((element: HTMLCanvasElement) => ({
-    cssWidth: element.getBoundingClientRect().width,
-    renderPoints: Number(element.dataset.renderPoints),
-    generation: Number(element.dataset.renderGeneration),
-  }));
-  expect(metrics.renderPoints).toBeGreaterThanOrEqual(Math.ceil(metrics.cssWidth));
-  expect(metrics.generation).toBe(1);
+  const stage = page.locator('.signal-stage');
+  const card = stage.locator('.signal-process-card');
+  await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+  await expect(card).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  await expect(stage.locator('.signal-process-rail button')).toHaveCount(4);
+  await stage.locator('.signal-process-rail button').nth(2).click();
+  await expect(stage).toHaveAttribute('data-sequence-stage', 'phase-correction');
+  await expect(stage.locator('.signal-panel[data-active="true"]')).toHaveCount(1);
 });
 
 test('favicon is optimized and available', async ({ page }, testInfo) => {

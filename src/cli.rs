@@ -93,7 +93,7 @@ pub enum Command {
     /// Perform auto measurement (set single mode, trigger, fetch)
     #[cfg(feature = "hw-core")]
     Automeasure,
-    /// Analyze the reference signal
+    /// Fit the recorded EOM-drive sine wave
     Reference,
     /// Analyze the sensor signal
     Sensor,

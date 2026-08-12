@@ -65,11 +65,11 @@ description: pmoke config schema version 5の自動生成fieldリファレンス
 
 | path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |
 | --- | --- | :---: | --- | --- |
-| `reference` | `table` | 必須 | - | 光学参照信号の解析設定 reference channel、FFT区間、fit間引きの指定。 |
-| `reference.channel` | `integer` | 必須 | - | 参照信号チャンネル DHO5108向け1以上8以下の番号。 **制約:** 1 &lt;= value &lt;= 8; must be unique across all channel roles |
-| `reference.fft_window` | `inline time window` · `s` | 必須 | - | 参照FFTの時間区間 安定した参照信号区間を表す有限なstartとend。 **制約:** start &lt; end |
-| `reference.stride_samples` | `integer` · `samples` | 必須 | - | 参照fitの間引き幅 計算量と時間分解能の調整値。 **制約:** must be positive |
-| `reference.window_samples` | `integer` · `samples` | 必須 | - | 局所参照fitの窓幅 FFT推定値周辺で使用するsample数。 **制約:** must be positive |
+| `reference` | `table` | 必須 | - | EOM駆動用正弦波の解析設定 EOMへ入力するファンクションジェネレータ正弦波の記録チャンネル、FFT区間、fit間引きを指定。 |
+| `reference.channel` | `integer` | 必須 | - | EOM駆動信号の記録チャンネル EOMへ入力するファンクションジェネレータ正弦波を記録するDHO5108の1以上8以下のチャンネル。 **制約:** 1 &lt;= value &lt;= 8; must be unique across all channel roles |
+| `reference.fft_window` | `inline time window` · `s` | 必須 | - | EOM駆動信号FFTの時間区間 記録した正弦波の安定区間を表す有限なstartとend。 **制約:** start &lt; end |
+| `reference.stride_samples` | `integer` · `samples` | 必須 | - | EOM駆動正弦波fitの間引き幅 計算量と時間分解能の調整値。 **制約:** must be positive |
+| `reference.window_samples` | `integer` · `samples` | 必須 | - | 局所EOM駆動正弦波fitの窓幅 FFT推定値周辺で使用するsample数。 **制約:** must be positive |
 ## `lockin`
 
 | path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |
@@ -97,10 +97,10 @@ description: pmoke config schema version 5の自動生成fieldリファレンス
 
 | path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |
 | --- | --- | :---: | --- | --- |
-| `kerr` | `table` | 必須 | - | Kerr角変換設定 校正sensor、計算法、最終係数の指定。 |
-| `kerr.sensor` | `integer` | 必須 | - | Kerr 校正用センサーチャンネル sensors配列に存在するchannel。 **制約:** must reference sensors[].channel |
-| `kerr.method` | `string enum` | 必須 | `standard`, `harmonics` | Kerr 計算法 standardまたはharmonics実装の選択。 |
-| `kerr.factor` | `float` | 必須 | - | 最終Kerr変換係数 選択したKerr計算後の乗算値。 **制約:** must be finite |
+| `kerr` | `table` | 必須 | - | Kerr角度の変換設定 校正用センサー、計算方法、最終係数を指定。 |
+| `kerr.sensor` | `integer` | 必須 | - | Kerr角度の校正に使用するセンサーチャンネル sensors配列に存在するチャンネルを指定。 **制約:** must reference sensors[].channel |
+| `kerr.method` | `string enum` | 必須 | `standard`, `harmonics` | Kerr角度の計算方法 standardまたはharmonics実装を選択。 |
+| `kerr.factor` | `float` | 必須 | - | Kerr角度の最終変換係数 選択したKerr角度計算後に乗算する値。 **制約:** must be finite |
 ## `plot`
 
 | path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |

@@ -17,9 +17,19 @@ paper or papers that describe the experimental design actually used as well.
 | Contribution | Recommended citation |
 | --- | --- |
 | Acquisition, configuration validation, artifact management, or numerical analysis with `pmoke` | The software citation above, pinned to the version and source commit used |
-| Phase-resolved numerical lock-in with the compact sample-fiber fixture and all-fiber loopless Sagnac apparatus | Ikeda *et al.* (2026) |
+| Phase-resolved numerical lock-in with the compact sample-fiber fixture and all-fiber loopless (zero-area) Sagnac apparatus | Ikeda *et al.* (2026) |
 | Measurement under bipolar pulsed magnetic fields | Yamane *et al.* (2026) |
+| Foundational zero-area Sagnac architecture and EOM phase modulation | Xia *et al.* (2006) |
 | A modified method | The closest method paper, together with a description of the modification |
+
+## What `reference` means in pmoke
+
+In `pmoke`, `reference` is the oscilloscope recording of the function-generator
+sine wave sent to the electro-optic modulator (EOM) in the zero-area Sagnac
+interferometer. `pmoke reference` uses an FFT-initialized sine fit to estimate
+the actual modulation frequency, amplitude, and phase; the fitted frequency and
+phase anchor the numerical lock-in analysis. This follows the procedure described in
+[Appendix C.4 of Ikeda *et al.*](https://arxiv.org/html/2509.07383).
 
 ## Method references
 
@@ -31,6 +41,10 @@ paper or papers that describe the experimental design actually used as well.
    “Magneto-optical Kerr effect measurements under bipolar pulsed magnetic
    fields,” *JJAP Conference Proceedings* **12**, 011011 (2026).
    [doi:10.56646/jjapcp.12.0_011011](https://doi.org/10.56646/jjapcp.12.0_011011)
+3. J. Xia, P. T. Beyersdorf, M. M. Fejer, and A. Kapitulnik,
+   “Modified Sagnac interferometer for high-sensitivity magneto-optic
+   measurements at cryogenic temperatures,” *Applied Physics Letters* **89**,
+   062508 (2006). [doi:10.1063/1.2336620](https://doi.org/10.1063/1.2336620)
 
 ## Reproducibility record
 

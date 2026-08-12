@@ -14,8 +14,6 @@ test('English home visual contract', async ({ page }, testInfo) => {
   await expect(page).toHaveScreenshot(`home-${testInfo.project.name}.png`, {
     animations: 'disabled',
     fullPage: true,
-    mask: [page.locator('canvas')],
-    maskColor: '#0d1213',
     maxDiffPixelRatio: 0.015,
   });
 });
