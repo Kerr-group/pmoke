@@ -38,6 +38,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Configure PyO3 environment
+        run: python scripts/configure_pyo3_ci.py
+
       - name: Install Python dependencies
         if: matrix.channels == 2
         run: python -m pip install numpy scipy lmfit gsplot
