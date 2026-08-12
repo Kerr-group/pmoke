@@ -16,6 +16,7 @@ export type SignalSequenceStage = 'field-pulse' | 'waveforms' | 'lock-in' | 'rot
 export type SignalHeroLabels = {
   label: string;
   description: string;
+  pipeline: string;
   sequence: string;
   fieldPulse: string;
   triggeredWindow: string;
@@ -246,6 +247,34 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
     let accumulatedTime = 0;
     let lastTimestamp: number | null = null;
 
+    const stageLabels: Record<SignalSequenceStage, string> = {
+      'field-pulse': labels.fieldPulse,
+      waveforms: labels.referenceResponse,
+      'lock-in': labels.lockIn,
+      'rotate-phase': labels.rotatePhase,
+      'kerr-angle': labels.kerrAngle,
+    };
+    const sequenceItems = Array.from(
+      container.querySelectorAll<HTMLElement>('.signal-sequence [data-step]'),
+    );
+    const currentStageLabel = container.querySelector<HTMLElement>('.signal-current-stage');
+
+    const syncSequenceStage = (nextStage: SignalSequenceStage) => {
+      container.dataset.sequenceStage = nextStage;
+      for (const item of sequenceItems) {
+        const isCurrent = item.dataset.step === nextStage;
+        item.dataset.current = isCurrent ? 'true' : 'false';
+        if (isCurrent) {
+          item.setAttribute('aria-current', 'step');
+        } else {
+          item.removeAttribute('aria-current');
+        }
+      }
+      if (currentStageLabel && currentStageLabel.textContent !== stageLabels[nextStage]) {
+        currentStageLabel.textContent = stageLabels[nextStage];
+      }
+    };
+
     const getTargetDpr = () => Math.min(window.devicePixelRatio || 1, 2);
     let currentDpr = getTargetDpr();
 
@@ -276,7 +305,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       const sequenceProgress = complete ? 1 : normalize(sweepOffset);
       const sequenceStage = sequenceStageForProgress(sequenceProgress);
       if (container.dataset.sequenceStage !== sequenceStage) {
-        container.dataset.sequenceStage = sequenceStage;
+        syncSequenceStage(sequenceStage);
       }
 
       const renderedPoints = drawSignals(
@@ -455,13 +484,32 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
         aria-describedby="signal-description"
         role="img"
       />
-      <ol className="signal-sequence" aria-label={labels.sequence}>
-        <li data-step="field-pulse">{labels.fieldPulse}</li>
-        <li data-step="waveforms">{labels.referenceResponse}</li>
-        <li data-step="lock-in">{labels.lockIn}</li>
-        <li data-step="rotate-phase">{labels.rotatePhase}</li>
-        <li data-step="kerr-angle">{labels.kerrAngle}</li>
-      </ol>
+      <div className="signal-sequence-shell">
+        <p className="signal-sequence-title">{labels.pipeline}</p>
+        <ol className="signal-sequence" aria-label={labels.sequence}>
+          <li data-step="field-pulse" data-current="true" aria-current="step">
+            <span className="signal-step-marker" aria-hidden="true">01</span>
+            <span className="signal-step-label">{labels.fieldPulse}</span>
+          </li>
+          <li data-step="waveforms" data-current="false">
+            <span className="signal-step-marker" aria-hidden="true">02</span>
+            <span className="signal-step-label">{labels.referenceResponse}</span>
+          </li>
+          <li data-step="lock-in" data-current="false">
+            <span className="signal-step-marker" aria-hidden="true">03</span>
+            <span className="signal-step-label">{labels.lockIn}</span>
+          </li>
+          <li data-step="rotate-phase" data-current="false">
+            <span className="signal-step-marker" aria-hidden="true">04</span>
+            <span className="signal-step-label">{labels.rotatePhase}</span>
+          </li>
+          <li data-step="kerr-angle" data-current="false">
+            <span className="signal-step-marker" aria-hidden="true">05</span>
+            <span className="signal-step-label">{labels.kerrAngle}</span>
+          </li>
+        </ol>
+        <p className="signal-current-stage" aria-hidden="true">{labels.fieldPulse}</p>
+      </div>
       <p id="signal-description" className="signal-description">{labels.description}</p>
       <div className="signal-hud">
         <span className="signal-status" role="status" aria-live="polite">

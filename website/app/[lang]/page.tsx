@@ -19,7 +19,8 @@ const copy = {
       label: 'Illustrative pulsed-field MOKE signal',
       description:
         'Illustrative pulsed-field MOKE pipeline: a unipolar field pulse defines a triggered measurement window; reference and Kerr-response signals are resolved into lock-in X/Y components, phase-rotated for each harmonic, and combined for Kerr-angle extraction.',
-      sequence: 'Pulsed-field MOKE signal sequence',
+      pipeline: 'SIGNAL PIPELINE',
+      sequence: 'Pulsed-field MOKE signal processing stages',
       fieldPulse: 'FIELD PULSE',
       triggeredWindow: 'TRIGGERED WINDOW',
       referenceResponse: 'REFERENCE + RESPONSE',
@@ -58,7 +59,8 @@ const copy = {
       label: 'パルス磁場MOKEの説明図',
       description:
         'パルス磁場MOKEの概念図。単極性の磁場パルスがトリガー窓を定め、参照信号とKerr応答をロックインX/Y成分へ変換する。高調波ごとの位相回転を経て、Kerr角を導出する。',
-      sequence: 'パルス磁場MOKEの信号シーケンス',
+      pipeline: '信号処理の流れ',
+      sequence: 'パルス磁場MOKEの信号処理ステップ',
       fieldPulse: '磁場パルス',
       triggeredWindow: 'トリガー窓',
       referenceResponse: '参照信号 + Kerr応答',
