@@ -147,7 +147,10 @@ test('documentation remains readable without JavaScript', async ({ browser }, te
   const page = await context.newPage();
   await page.goto('http://127.0.0.1:4173/pmoke/ja/');
   await expect(page.getByRole('heading', { level: 1, name: 'pmoke' })).toBeVisible();
-  await expect(page.locator('.signal-sequence')).toContainText('磁場パルス');
+  await expect(page.locator('.signal-sequence-title')).toHaveText('信号処理の流れ');
+  await expect(page.locator('.signal-sequence')).toHaveAttribute('aria-label', 'パルス磁場MOKEの信号処理ステップ');
+  await expect(page.locator('.signal-sequence .signal-step-label').first()).toHaveText('磁場パルス');
+  await expect(page.locator('.signal-current-stage')).toHaveText('磁場パルス');
   await expect(page.locator('#signal-description')).toContainText('パルス磁場MOKEの概念図');
   await page.goto('http://127.0.0.1:4173/pmoke/ja/docs/quickstart/');
   await expect(page.getByRole('heading', { level: 1, name: 'クイックスタート' })).toBeVisible();
@@ -223,10 +226,11 @@ test('signal canvas sweeps continuously when active and pauses on reduced motion
   await page.waitForTimeout(300);
   const secondStatic = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   expect(secondStatic).toBe(firstStatic);
+  await expect(page.locator('.signal-sequence li[aria-current="step"]')).toHaveAttribute('data-step', 'kerr-angle');
   await expect(page.getByRole('button', { name: 'Static view (reduced motion)' })).toBeDisabled();
 });
 
-test('signal hero exposes localized sequence semantics and a user pause', async ({ page }, testInfo) => {
+test('signal hero exposes localized process semantics and a user pause', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser signal semantics contract');
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
@@ -253,7 +257,14 @@ test('signal hero exposes localized sequence semantics and a user pause', async 
     );
     await expect(canvas).toHaveAttribute('aria-describedby', 'signal-description');
     await expect(page.locator('#signal-description')).toContainText(description);
-    await expect(stage.locator('.signal-sequence li')).toHaveText(labels);
+    await expect(stage.locator('.signal-sequence-title')).toHaveText(
+      locale === 'en' ? 'SIGNAL PIPELINE' : '信号処理の流れ',
+    );
+    await expect(stage.locator('.signal-sequence')).toHaveAttribute(
+      'aria-label',
+      locale === 'en' ? 'Pulsed-field MOKE signal processing stages' : 'パルス磁場MOKEの信号処理ステップ',
+    );
+    await expect(stage.locator('.signal-sequence .signal-step-label')).toHaveText(labels);
     expect(await stage.locator('.signal-sequence li').evaluateAll((items) => items.map((item) => item.dataset.step))).toEqual([
       'field-pulse',
       'waveforms',
@@ -261,6 +272,23 @@ test('signal hero exposes localized sequence semantics and a user pause', async 
       'rotate-phase',
       'kerr-angle',
     ]);
+    const readRailState = () => stage.evaluate((element) => {
+      const active = [...element.querySelectorAll<HTMLElement>('.signal-sequence li[aria-current="step"]')]
+        .map((item) => item.dataset.step);
+      return {
+        stage: element.dataset.sequenceStage,
+        active,
+        focusable: element.querySelectorAll('.signal-sequence a, .signal-sequence button, .signal-sequence [role="tab"], .signal-sequence [tabindex]').length,
+        liveRegions: element.querySelectorAll('.signal-sequence [aria-live]').length,
+      };
+    });
+    const railState = await readRailState();
+    expect(railState.active).toEqual([railState.stage]);
+    expect(railState.focusable).toBe(0);
+    expect(railState.liveRegions).toBe(0);
+    await expect.poll(async () => (await readRailState()).stage, { timeout: 7_000 }).not.toBe(railState.stage);
+    const progressedRailState = await readRailState();
+    expect(progressedRailState.active).toEqual([progressedRailState.stage]);
     await expect(page.getByText(locale === 'en' ? 'ACQUISITION WINDOW' : '取得窓', { exact: true })).toHaveCount(0);
     await expect(page.locator('#signal-description')).toContainText(locale === 'en' ? 'triggered measurement window' : 'トリガー窓');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
@@ -279,10 +307,12 @@ test('signal hero exposes localized sequence semantics and a user pause', async 
       await control.click();
       await expect(stage).toHaveAttribute('data-motion', 'paused');
       await expect(stage).toHaveAttribute('data-user-paused', 'true');
+      const pausedRailState = await readRailState();
       const firstPaused = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
       await page.waitForTimeout(300);
       const secondPaused = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
       expect(secondPaused).toBe(firstPaused);
+      expect(await readRailState()).toEqual(pausedRailState);
 
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
       await expect(control).toHaveAttribute('aria-pressed', 'true');
@@ -307,7 +337,29 @@ test('signal hero reports an informative static fallback when Wasm is unavailabl
   await expect(stage.locator('.signal-status')).toHaveText('静的フォールバック');
   await expect(page.getByRole('button', { name: '静的フォールバック（WASM利用不可）' })).toBeDisabled();
   await expect(page.getByText('WASM ONLINE', { exact: true })).toHaveCount(0);
-  await expect(stage.locator('.signal-sequence li')).toHaveText(['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角']);
+  await expect(stage.locator('.signal-sequence .signal-step-label')).toHaveText(['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角']);
+  await expect(stage.locator('.signal-sequence li[aria-current="step"]')).toHaveAttribute('data-step', 'kerr-angle');
+  await expect(stage.locator('.signal-current-stage')).toHaveText('Kerr角');
+});
+
+test('signal process rail stays compact and non-interactive below desktop width', async ({ page }, testInfo) => {
+  test.skip(!['tablet-chromium', 'mobile-chromium'].includes(testInfo.project.name), 'compact process rail gate');
+
+  for (const locale of ['en', 'ja'] as const) {
+    await page.goto(`/pmoke/${locale}/`);
+    const stage = page.locator('.signal-stage');
+    await expect(stage).toHaveAttribute('data-wasm', 'ready', { timeout: 15_000 });
+    await expect(stage.locator('.signal-current-stage')).toBeVisible();
+    const compactLabel = await stage.locator('.signal-sequence .signal-step-label').first().evaluate((element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return { position: style.position, width: rect.width, height: rect.height, clip: style.clip };
+    });
+    expect(compactLabel).toMatchObject({ position: 'absolute', width: 1, height: 1 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    expect(await stage.locator('.signal-sequence li[aria-current="step"]').count()).toBe(1);
+    expect(await stage.locator('.signal-sequence a, .signal-sequence button, .signal-sequence [role="tab"], .signal-sequence [tabindex]').count()).toBe(0);
+  }
 });
 
 test('signal renderer survives reload and Wasm readiness without restarting', async ({ page }, testInfo) => {
