@@ -31,10 +31,6 @@ const copy = {
       phaseSpace: 'PHASE SPACE',
       harmonicExtraction: 'HARMONIC EXTRACTION',
       perHarmonic: 'PER HARMONIC · n = 1…6',
-      pause: 'Pause animation',
-      resume: 'Resume animation',
-      reducedMotion: 'Static view (reduced motion)',
-      staticFallback: 'Static fallback (WASM unavailable)',
       wasmLoading: 'WASM LOADING',
       wasmReady: 'WASM ONLINE',
       wasmFallback: 'STATIC FALLBACK',
@@ -71,10 +67,6 @@ const copy = {
       phaseSpace: '位相空間',
       harmonicExtraction: '高調波抽出',
       perHarmonic: '高調波ごと · n = 1…6',
-      pause: 'アニメーションを一時停止',
-      resume: 'アニメーションを再開',
-      reducedMotion: '静止表示（視覚効果を低減）',
-      staticFallback: '静的フォールバック（WASM利用不可）',
       wasmLoading: 'WASMを読み込み中',
       wasmReady: 'WASM ONLINE',
       wasmFallback: '静的フォールバック',
@@ -115,7 +107,6 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
       </header>
 
       <section className="hero-band">
-        <SignalHero labels={text.signal} />
         <div className="hero-copy">
           <div className="hero-copy-panel" data-signal-region="copy">
             <p className="eyebrow"><Cpu aria-hidden="true" />{text.kicker}</p>
@@ -128,6 +119,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
             </div>
           </div>
         </div>
+        <SignalHero labels={text.signal} />
       </section>
 
       <section className="capability-grid" aria-label={lang === 'ja' ? '主要機能' : 'Core capabilities'}>
