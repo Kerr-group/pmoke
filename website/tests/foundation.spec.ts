@@ -204,7 +204,7 @@ test('code blocks keep one chrome and localized keyboard-scrollable viewports', 
   }
 });
 
-test('signal canvas sweeps continuously when active and pauses on reduced motion', async ({ page }, testInfo) => {
+test('signal canvas sweeps automatically and pauses on reduced motion', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser motion contract');
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
@@ -227,10 +227,10 @@ test('signal canvas sweeps continuously when active and pauses on reduced motion
   const secondStatic = await page.locator('.signal-stage canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   expect(secondStatic).toBe(firstStatic);
   await expect(page.locator('.signal-sequence li[aria-current="step"]')).toHaveAttribute('data-step', 'kerr-angle');
-  await expect(page.getByRole('button', { name: 'Static view (reduced motion)' })).toBeDisabled();
+  await expect(page.locator('.signal-control')).toHaveCount(0);
 });
 
-test('signal hero exposes localized process semantics and a user pause', async ({ page }, testInfo) => {
+test('signal hero exposes localized process semantics without manual controls', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser signal semantics contract');
 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
@@ -292,37 +292,12 @@ test('signal hero exposes localized process semantics and a user pause', async (
     await expect(page.getByText(locale === 'en' ? 'ACQUISITION WINDOW' : '取得窓', { exact: true })).toHaveCount(0);
     await expect(page.locator('#signal-description')).toContainText(locale === 'en' ? 'triggered measurement window' : 'トリガー窓');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    const layout = await page.evaluate(() => {
-      const bottom = (selector: string) => document.querySelector(selector)?.getBoundingClientRect().bottom ?? 0;
-      const panelTop = document.querySelector('.hero-copy-panel')?.getBoundingClientRect().top ?? 0;
-      return { panelTop, sequenceBottom: bottom('.signal-sequence'), controlsBottom: bottom('.signal-controls') };
-    });
-    expect(layout.panelTop).toBeGreaterThan(layout.sequenceBottom);
-    expect(layout.panelTop).toBeGreaterThan(layout.controlsBottom);
-
-    if (locale === 'en') {
-      const control = stage.locator('.signal-control');
-      await expect(control).toHaveAttribute('aria-label', 'Pause animation');
-      await expect(control).toHaveAttribute('aria-pressed', 'false');
-      await control.click();
-      await expect(stage).toHaveAttribute('data-motion', 'paused');
-      await expect(stage).toHaveAttribute('data-user-paused', 'true');
-      const pausedRailState = await readRailState();
-      const firstPaused = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
-      await page.waitForTimeout(300);
-      const secondPaused = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
-      expect(secondPaused).toBe(firstPaused);
-      expect(await readRailState()).toEqual(pausedRailState);
-
-      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-      await expect(control).toHaveAttribute('aria-pressed', 'true');
-      await expect(stage).toHaveAttribute('data-motion', 'paused');
-
-      await expect(control).toHaveAttribute('aria-label', 'Resume animation');
-      await control.click();
-      await expect(stage).toHaveAttribute('data-motion', 'running');
-      await expect(stage).toHaveAttribute('data-user-paused', 'false');
-    }
+    await expect(page.locator('.signal-control')).toHaveCount(0);
+    await expect(stage).not.toHaveAttribute('data-user-paused', /.+/u);
+    await expect(stage.locator('[data-signal-region="control"]')).toHaveCount(0);
+    await expect(stage.locator('[aria-pressed], [data-user-paused]')).toHaveCount(0);
+    await expect(page.getByText(locale === 'en' ? 'Pause animation' : 'アニメーションを一時停止', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(locale === 'en' ? 'Resume animation' : 'アニメーションを再開', { exact: true })).toHaveCount(0);
   }
 });
 
@@ -335,7 +310,7 @@ test('signal hero reports an informative static fallback when Wasm is unavailabl
   await expect(stage).toHaveAttribute('data-wasm', 'fallback', { timeout: 15_000 });
   await expect(stage).toHaveAttribute('data-motion', 'paused');
   await expect(stage.locator('.signal-status')).toHaveText('静的フォールバック');
-  await expect(page.getByRole('button', { name: '静的フォールバック（WASM利用不可）' })).toBeDisabled();
+  await expect(page.locator('.signal-control')).toHaveCount(0);
   await expect(page.getByText('WASM ONLINE', { exact: true })).toHaveCount(0);
   await expect(stage.locator('.signal-sequence .signal-step-label')).toHaveText(['磁場パルス', '参照信号 + Kerr応答', 'ロックイン X / Y', '位相回転', 'Kerr角']);
   await expect(stage.locator('.signal-sequence li[aria-current="step"]')).toHaveAttribute('data-step', 'kerr-angle');
@@ -384,7 +359,7 @@ test('signal hero reserves non-overlapping responsive regions and panel geometry
     [320, 800],
     [320, 568],
   ] as const;
-  const regionNames = ['process-rail', 'current-stage', 'control', 'visualization', 'status', 'copy'] as const;
+  const regionNames = ['copy', 'process-rail', 'current-stage', 'visualization', 'status'] as const;
 
   for (const [width, height] of viewports) {
     await page.setViewportSize({ width, height });
@@ -410,25 +385,37 @@ test('signal hero reserves non-overlapping responsive regions and panel geometry
           layoutMode: canvas?.dataset.signalLayoutMode,
           layoutStacked: canvas?.dataset.signalLayoutStacked === 'true',
           layout: canvas?.dataset.signalLayoutRects ? JSON.parse(canvas.dataset.signalLayoutRects) : null,
+          connectors: canvas?.dataset.signalConnectorSegments ? JSON.parse(canvas.dataset.signalConnectorSegments) : null,
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
-          controlSize: rect(document.querySelector('.signal-control')),
+          stage: rect(document.querySelector('.signal-stage')),
         };
       }, regionNames);
 
-      expect(state.order).toEqual(['process-rail', 'current-stage', 'control', 'visualization', 'status', 'copy']);
+      expect(state.order).toEqual(['copy', 'process-rail', 'current-stage', 'visualization', 'status']);
       expect(state.scrollWidth).toBeLessThanOrEqual(state.innerWidth);
       expect(state.layout).toBeTruthy();
-      expect(state.controlSize?.width).toBeGreaterThanOrEqual(44);
-      expect(state.controlSize?.height).toBeGreaterThanOrEqual(44);
+      expect(state.connectors).toHaveLength(2);
+      expect(await page.locator('.signal-control').count()).toBe(0);
+      expect(await page.locator('[data-signal-region="control"]').count()).toBe(0);
+
+      if (width <= 959) {
+        const copy = state.regions.copy;
+        const stage = state.stage;
+        expect(copy).toBeTruthy();
+        expect(stage).toBeTruthy();
+        expect(stage!.top - copy!.bottom).toBeGreaterThanOrEqual(15.5);
+        expect(stage!.top - copy!.bottom).toBeLessThanOrEqual(32.5);
+      }
 
       if (width <= 720) {
         const status = state.regions.status;
         const copy = state.regions.copy;
+        const processRail = state.regions['process-rail'];
         expect(status).toBeTruthy();
         expect(copy).toBeTruthy();
-        expect(copy!.top - status!.bottom).toBeGreaterThanOrEqual(15.5);
-        expect(copy!.top - status!.bottom).toBeLessThanOrEqual(32.5);
+        expect(processRail).toBeTruthy();
+        expect(processRail!.top).toBeGreaterThan(copy!.bottom);
       }
 
       const stepLabelStyle = await stage.locator('.signal-step-label').first().evaluate((element) => {
@@ -444,14 +431,6 @@ test('signal hero reserves non-overlapping responsive regions and panel geometry
         expect(stepLabelStyle.width).toBe(1);
         expect(stepLabelStyle.height).toBe(1);
       }
-
-      const control = page.locator('.signal-control');
-      await control.focus();
-      await expect(control).toBeFocused();
-      expect(await control.evaluate((element) => {
-        const style = getComputedStyle(element);
-        return { outlineStyle: style.outlineStyle, outlineWidth: Number.parseFloat(style.outlineWidth) };
-      })).toMatchObject({ outlineStyle: 'solid', outlineWidth: 2 });
 
       const boxes = Object.values(state.regions).filter((box): box is NonNullable<typeof box> => Boolean(box));
       for (let index = 0; index < boxes.length; index += 1) {
@@ -479,6 +458,35 @@ test('signal hero reserves non-overlapping responsive regions and panel geometry
           const overlapX = Math.min(first.right, second.right) - Math.max(first.left, second.left);
           const overlapY = Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top);
           expect(overlapX <= 0.5 || overlapY <= 0.5).toBeTruthy();
+        }
+      }
+
+      const connectorPanels = [[plot, phase], [phase, output]] as const;
+      const connectors = state.connectors as Array<{
+        from: { x: number; y: number };
+        to: { x: number; y: number };
+        axis: string;
+        gap: number;
+        available: boolean;
+      }>;
+      for (const [index, connector] of connectors.entries()) {
+        const [fromPanel, toPanel] = connectorPanels[index];
+        if (!connector.available) continue;
+        expect(connector.gap).toBeGreaterThanOrEqual(12);
+        const length = Math.hypot(connector.to.x - connector.from.x, connector.to.y - connector.from.y);
+        expect(length).toBeGreaterThanOrEqual(12);
+        expect(connector.axis).not.toBe('none');
+        for (let sample = 0; sample <= 32; sample += 1) {
+          const fraction = sample / 32;
+          const point = {
+            x: connector.from.x + (connector.to.x - connector.from.x) * fraction,
+            y: connector.from.y + (connector.to.y - connector.from.y) * fraction,
+          };
+          for (const panel of [fromPanel, toPanel]) {
+            const insideClearanceBox = point.x > panel.left - 3.5 && point.x < panel.right + 3.5
+              && point.y > panel.top - 3.5 && point.y < panel.bottom + 3.5;
+            expect(insideClearanceBox).toBeFalsy();
+          }
         }
       }
 
@@ -518,8 +526,9 @@ test('signal renderer survives reload and Wasm readiness without restarting', as
   const canvas = stage.locator('canvas');
   await expect(stage).toHaveAttribute('data-wasm', 'loading');
   await expect(stage).toHaveAttribute('data-motion', 'paused');
-  await expect(stage).toHaveAttribute('data-user-paused', 'false');
-  await expect(page.getByRole('button', { name: 'WASM LOADING' })).toBeDisabled();
+  await expect(stage).not.toHaveAttribute('data-user-paused', /.+/u);
+  await expect(stage.locator('.signal-status')).toHaveText('WASM LOADING');
+  await expect(page.locator('.signal-control')).toHaveCount(0);
   await expect(canvas).toHaveAttribute('data-render-generation', '1');
   expect(await canvas.evaluate((element: HTMLCanvasElement) => {
     const context = element.getContext('2d');
