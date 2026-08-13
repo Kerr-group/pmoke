@@ -23,6 +23,37 @@ USB/IP integration. Do not enable or mutate those capabilities just to run a
 site build; use an already provisioned Nix browser for visual checks and report
 its absence instead of downloading one through a package manager.
 
+## Playwright MCP UI checkpoint
+
+When Playwright MCP is available in the agent session, prefer it for the
+interactive visual and accessibility checkpoint. Start the application with
+`pnpm run build:dev` from the Nix shell and keep the owned development server
+running. Then use the MCP browser tools to:
+
+1. Navigate to `http://localhost:3000/pmoke/en/` and
+   `http://localhost:3000/pmoke/ja/` with `browser_navigate`.
+2. Use `browser_snapshot` to inspect landmarks, headings, accessible names,
+   focusable controls, and the no-JavaScript-readable structure before using
+   element actions.
+3. Use `browser_resize` for a wide desktop, narrow/tablet, and phone viewport;
+   use `browser_take_screenshot` only when visual evidence is useful.
+4. Exercise keyboard focus with `browser_press_key`, check light/dark and
+   reduced-motion states, and inspect `browser_console_messages` at error and
+   warning levels. Check loading, worker/WASM fallback, and interaction states
+   relevant to the changed route.
+
+For exported-site validation, run `pnpm start` and repeat the route/deep-link
+check below `/pmoke/`. Record only concise, redacted evidence with route,
+locale, viewport, theme, and whether it came from `next dev` or the export.
+Do not commit MCP screenshots, recordings, console dumps, personal paths, or
+raw data unless a reviewed visual snapshot is an explicit project contract.
+Prefer snapshots and narrowly scoped read-only evaluation; do not use
+`browser_run_code_unsafe` for routine checks. Playwright MCP complements, but
+does not replace, `pnpm check`, `pnpm test:e2e`, the Nix-provided browser, or
+the CI browser/accessibility/visual and Lighthouse gates. If MCP is unavailable,
+use the Nix-provided browser and the repository's Playwright CLI checks, and
+report the limitation.
+
 ## Product map
 
 - `website/app/`, `components/`, and `styles/`: Next.js routes and UI.
@@ -101,12 +132,13 @@ and Review 2 explicitly rather than fabricating a second approval.
    - `http://localhost:3000/pmoke/en/`
    - `http://localhost:3000/pmoke/ja/`
 
-   Use an attached browser or Playwright when available. Check at least a wide
-   desktop viewport, a tablet or narrow desktop viewport, and a phone viewport;
-   check light/dark mode, keyboard focus, reduced-motion behavior, loading and
-   error states, and the browser console for relevant errors. If no browser is
-   available, report the live URL and the limitation instead of claiming a
-   visual pass.
+   Use the Playwright MCP UI checkpoint above when it is available. Otherwise,
+   use an attached browser or the Nix-provided Playwright browser. Check at
+   least a wide desktop viewport, a tablet or narrow desktop viewport, and a
+   phone viewport; check light/dark mode, keyboard focus, reduced-motion
+   behavior, loading and error states, and the browser console for relevant
+   errors. If no browser is available, report the live URL and limitation
+   instead of claiming a visual pass.
 
 4. Stop at a visual checkpoint when layout, typography, interaction, or visual
    hierarchy is a matter of product choice. Show the route/viewport evidence

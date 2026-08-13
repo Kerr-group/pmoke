@@ -208,6 +208,15 @@ GUI/systemd/USB-IP integration merely to run `build`, `check`, or `test`; use a
 Nix-provided browser when visual or browser validation is required and report
 its absence as an environment limitation.
 
+When Playwright MCP is available in the agent session, use it for the
+interactive website checkpoint described by `$pmoke-website`: start the local
+site from `nix develop`, inspect both locale roots, resize through the required
+viewports, use accessibility snapshots and keyboard actions, and inspect
+console errors. MCP is an existing browser-control channel, not a package
+installer or a substitute for `pnpm check`, `pnpm test:e2e`, CI, or Lighthouse.
+Keep screenshots and console captures out of the repository unless a reviewed,
+redacted visual artifact is part of the project contract.
+
 Keep machine-test results private until redacted. A public handoff should
 include only the target role, commit, feature profile, toolchain source,
 commands, pass/fail result, and environment limitation; omit endpoints,
@@ -291,6 +300,11 @@ changes, run the cross-browser release project and Lighthouse gate as well.
 Preserve no-JavaScript readability, keyboard/accessibility behavior, search
 fallbacks, worker failure recovery, bounded input limits, AI-resource
 contracts, and English/Japanese parity.
+
+For interactive UI work, follow the Playwright MCP checkpoint in
+`$pmoke-website` when MCP is available. Treat its route/viewport/theme evidence
+as Review 1 input, then run the reproducible command and CI-equivalent gates
+before handoff.
 
 ### Security and benchmark lane
 

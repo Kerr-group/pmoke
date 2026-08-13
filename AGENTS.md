@@ -107,6 +107,12 @@ For agent-run local work, use Nix as the installation authority:
   missing package and keep the validation blocked rather than bypassing Nix.
 - Use Nix-provided browsers and native libraries for local validation. Record
   the package source/version and any environment limitation in the handoff.
+- When Playwright MCP is available in the agent session, use it for the
+  interactive website UI checkpoint after starting the site from the Nix
+  shell. Playwright MCP is a browser-control channel, not an installation
+  source; it does not replace the pinned Nix browser, project checks, or CI
+  browser gates. Keep MCP screenshots, console output, and recordings
+  untracked unless versioned visual evidence is explicitly required.
 - The repository shell provides Python 3.12 with the Nix-packaged NumPy, SciPy,
   lmfit, matplotlib, and pinned PyPI `gsplot` runtimes for the Rust/PyO3 and
   analysis tests; it sets `PYO3_PYTHON` to that interpreter and exposes its
@@ -439,6 +445,16 @@ route together before treating the change as complete:
 pnpm run build:dev
 # inspect http://localhost:3000/pmoke/en/ and /pmoke/ja/
 ```
+
+When Playwright MCP is available, use it for this checkpoint: navigate to both
+locale roots, capture an accessibility snapshot, resize through wide, narrow,
+and phone viewports, exercise keyboard focus and reduced-motion behavior, and
+inspect console errors. Use MCP screenshots only as concise, redacted evidence
+with route, locale, viewport, theme, and dev/export context. Prefer the
+Playwright MCP accessibility snapshot for locating controls; do not use an
+unsafe arbitrary-code browser runner for routine checks. If MCP is unavailable,
+use the Nix-provided browser with the repository's Playwright tests and report
+the environment limitation rather than claiming a visual pass.
 
 Check a changed route at wide, narrow, and phone widths, plus keyboard focus,
 light/dark mode, loading/error states, and the browser console. `build:dev`
