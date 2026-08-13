@@ -83,7 +83,13 @@ jobs:
       - name: Enforce npm advisory and license policy
         working-directory: website
         run: |
-          pnpm audit
+          audit_exit=0
+          pnpm audit --json > "${RUNNER_TEMP}/pnpm-audit.json" || audit_exit=$?
+          node scripts/verify-audit.mjs "${RUNNER_TEMP}/pnpm-audit.json"
+          if [ "${audit_exit}" -gt 1 ]; then
+            exit "${audit_exit}"
+          fi
+          pnpm test:audit
           pnpm test:licenses
 
   build:
