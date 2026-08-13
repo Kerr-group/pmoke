@@ -41,7 +41,7 @@ export function GET() {
         pmoke
       </div>
       <div style={{ position: 'absolute', left: 72, top: 300, display: 'flex', fontSize: 31, color: '#aebbb8' }}>
-        Reproducible pulsed-field MOKE measurements
+        A Rust workflow for pulsed-field MOKE measurements
       </div>
       {traces.flatMap((trace, traceIndex) =>
         trace.turns.map((turn, index) => (

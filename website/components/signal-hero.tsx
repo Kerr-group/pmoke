@@ -10,7 +10,7 @@ const TIME_START_MS = -10;
 const TIME_END_MS = 60;
 const PULSE_PEAK_MS = 15.8;
 const PULSE_END_MS = 42;
-const FIELD_PEAK_T = 0.82;
+const FIELD_PEAK_T = 100;
 const LI_X_PEAK_MV = -3.2;
 const LI_Y_PEAK_MV = 5.4;
 const KERR_PEAK_MRAD = -9.8;
@@ -24,7 +24,8 @@ export type SignalHeroLabels = {
   sequence: string;
   fieldPulse: string;
   lockIn: string;
-  phaseCorrection: string;
+  lockInHeading: string;
+  phaseAlignment: string;
   kerrAngle: string;
   fieldSummary: string;
   lockInSummary: string;
@@ -51,12 +52,14 @@ type SignalStatus = 'loading' | 'ready' | 'fallback';
 
 type StageCopy = {
   title: string;
+  heading: string;
   summary: string;
 };
 
 type RenderState = {
   stageIndex: number;
   elapsedMs: number;
+  progressByStage: readonly number[];
   motion: MotionState;
   mode: PlaybackMode;
 };
@@ -117,6 +120,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
   const [renderState, setRenderState] = useState<RenderState>({
     stageIndex: 0,
     elapsedMs: 0,
+    progressByStage: STAGES.map(() => 0),
     motion: 'paused',
     mode: 'sequence',
   });
@@ -148,6 +152,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
     const playback = {
       stageIndex: 0,
       elapsedMs: 0,
+      progressByStage: STAGES.map(() => 0),
       mode: 'sequence' as PlaybackMode,
       complete: false,
     };
@@ -160,9 +165,13 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
     let reduced = reducedMotion.matches;
 
     const publish = (motion: MotionState) => {
+      const elapsedMs = reduced ? STAGE_MOTION_MS : playback.elapsedMs;
+      const rawProgress = clamp(elapsedMs / STAGE_MOTION_MS, 0, 1);
+      playback.progressByStage[playback.stageIndex] = easeInOut(rawProgress);
       setRenderState({
         stageIndex: playback.stageIndex,
-        elapsedMs: reduced ? STAGE_MOTION_MS : playback.elapsedMs,
+        elapsedMs,
+        progressByStage: [...playback.progressByStage],
         motion,
         mode: playback.mode,
       });
@@ -176,9 +185,11 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
       !playback.complete;
 
     const finishStage = () => {
+      playback.progressByStage[playback.stageIndex] = 1;
       if (playback.mode === 'sequence' && playback.stageIndex < STAGES.length - 1) {
         playback.stageIndex += 1;
         playback.elapsedMs = 0;
+        playback.progressByStage[playback.stageIndex] = 0;
         return;
       }
       playback.elapsedMs = STAGE_DURATION_MS;
@@ -225,8 +236,10 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
 
     controlsRef.current = {
       replayStage: (index: number) => {
-        playback.stageIndex = clamp(Math.round(index), 0, STAGES.length - 1);
+        const targetIndex = clamp(Math.round(index), 0, STAGES.length - 1);
+        playback.stageIndex = targetIndex;
         playback.elapsedMs = reduced ? STAGE_MOTION_MS : 0;
+        playback.progressByStage[targetIndex] = reduced ? 1 : 0;
         playback.mode = 'stage';
         playback.complete = reduced;
         userInitiated = true;
@@ -274,17 +287,19 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
 
   const stage = STAGES[renderState.stageIndex];
   const rawProgress = clamp(renderState.elapsedMs / STAGE_MOTION_MS, 0, 1);
-  const stageProgress = easeInOut(rawProgress);
-  const pipelineProgress = clamp(
-    ((renderState.stageIndex + rawProgress) / (STAGES.length - 1)) * 100,
-    0,
-    100,
-  );
+  const handoffProgress = renderState.mode === 'sequence' && renderState.stageIndex < STAGES.length - 1
+    ? easeInOut(clamp(
+      (renderState.elapsedMs - STAGE_MOTION_MS) / (STAGE_DURATION_MS - STAGE_MOTION_MS),
+      0,
+      1,
+    ))
+    : 0;
+  const pipelineProgress = ((renderState.stageIndex + handoffProgress) / (STAGES.length - 1)) * 100;
   const stageCopy: Record<SignalSequenceStage, StageCopy> = {
-    'field-pulse': { title: labels.fieldPulse, summary: labels.fieldSummary },
-    'lock-in': { title: labels.lockIn, summary: labels.lockInSummary },
-    'phase-correction': { title: labels.phaseCorrection, summary: labels.phaseSummary },
-    'kerr-angle': { title: labels.kerrAngle, summary: labels.kerrSummary },
+    'field-pulse': { title: labels.fieldPulse, heading: labels.fieldPulse, summary: labels.fieldSummary },
+    'lock-in': { title: labels.lockIn, heading: labels.lockInHeading, summary: labels.lockInSummary },
+    'phase-correction': { title: labels.phaseAlignment, heading: labels.phaseAlignment, summary: labels.phaseSummary },
+    'kerr-angle': { title: labels.kerrAngle, heading: labels.kerrAngle, summary: labels.kerrSummary },
   };
   return (
     <div
@@ -329,19 +344,30 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
           </header>
 
           <div className="signal-process-body">
-            <div className="signal-stage-heading">
-              <div>
-                <span>{String(renderState.stageIndex + 1).padStart(2, '0')} / 04</span>
-                <h2>{stageCopy[stage].title}</h2>
-              </div>
+            <div className="signal-stage-copy">
+              {STAGES.map((step, index) => (
+                <div
+                  key={step}
+                  className="signal-stage-copy-panel"
+                  data-active={String(step === stage)}
+                  aria-hidden={step !== stage}
+                >
+                  <div className="signal-stage-heading">
+                    <div>
+                      <span>{String(index + 1).padStart(2, '0')} / 04</span>
+                      <h2>{stageCopy[step].heading}</h2>
+                    </div>
+                  </div>
+                  <p className="signal-stage-summary">{stageCopy[step].summary}</p>
+                </div>
+              ))}
             </div>
-            <p className="signal-stage-summary">{stageCopy[stage].summary}</p>
 
             <div className="signal-visualization" data-signal-region="visualization">
-              <FieldPanel labels={labels} active={stage === 'field-pulse'} progress={stageProgress} />
-              <LockInPanel labels={labels} active={stage === 'lock-in'} progress={stageProgress} />
-              <PhasePanel labels={labels} active={stage === 'phase-correction'} progress={stageProgress} />
-              <KerrPanel labels={labels} active={stage === 'kerr-angle'} progress={stageProgress} />
+              <FieldPanel labels={labels} active={stage === 'field-pulse'} progress={renderState.progressByStage[0]} />
+              <LockInPanel labels={labels} active={stage === 'lock-in'} progress={renderState.progressByStage[1]} />
+              <PhasePanel labels={labels} active={stage === 'phase-correction'} progress={renderState.progressByStage[2]} />
+              <KerrPanel labels={labels} active={stage === 'kerr-angle'} progress={renderState.progressByStage[3]} />
             </div>
           </div>
 
@@ -353,7 +379,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
 }
 
 function FieldPanel({ labels, active, progress }: PanelProps) {
-  const path = useMemo(() => makeTimePath(fieldPulseAtMs, 0, 0.9), []);
+  const path = useMemo(() => makeTimePath(fieldPulseAtMs, 0, FIELD_PEAK_T), []);
   const area = useMemo(() => `${path}L100 90L0 90Z`, [path]);
   const currentTime = lerp(0, TIME_END_MS, progress);
   const revealWidth = timeRevealPercent(progress);
@@ -363,7 +389,7 @@ function FieldPanel({ labels, active, progress }: PanelProps) {
         title={labels.fieldAxis}
         accessibleTitle={labels.fieldAxis}
         labels={labels}
-        yTicks={['0.8', '0.4', '0']}
+        yTicks={['100', '50', '0']}
       >
         <defs>
           <linearGradient id="signal-field-fill" x1="0" y1="0" x2="0" y2="1">
@@ -377,14 +403,14 @@ function FieldPanel({ labels, active, progress }: PanelProps) {
       </TimeChart>
       <div className="signal-panel-readout">
         <span>{labels.currentTime} · {currentTime.toFixed(1)} ms</span>
-        <strong>μ₀H<sub>peak</sub> ≈ {FIELD_PEAK_T.toFixed(2)} T</strong>
+        <strong>μ₀H<sub>peak</sub> ≈ {FIELD_PEAK_T.toFixed(0)} T</strong>
       </div>
     </section>
   );
 }
 
 function LockInPanel({ labels, active, progress }: PanelProps) {
-  const fieldPath = useMemo(() => makeTimePath(fieldPulseAtMs, 0, 0.9), []);
+  const fieldPath = useMemo(() => makeTimePath(fieldPulseAtMs, 0, FIELD_PEAK_T), []);
   const xPath = useMemo(() => makeTimePath((time) => lockInAtMs(time)[0], -6, 6), []);
   const yPath = useMemo(() => makeTimePath((time) => lockInAtMs(time)[1], -6, 6), []);
   const currentTime = lerp(0, TIME_END_MS, progress);
@@ -526,7 +552,13 @@ function TimeChart({ title, accessibleTitle, labels, yTicks, children }: TimeCha
         <div className="signal-time-axis" aria-hidden="true">
           <div>
             {[-10, 0, 10, 20, 30, 40, 50, 60].map((tick) => (
-              <span key={tick} className={[10, 30, 50].includes(tick) ? 'is-optional' : ''}>{tick}</span>
+              <span
+                key={tick}
+                className={[10, 30, 50].includes(tick) ? 'is-optional' : ''}
+                style={{ left: `${timePositionPercent(tick)}%` }}
+              >
+                {tick}
+              </span>
             ))}
           </div>
           <strong>{labels.timeAxis}</strong>
@@ -582,6 +614,10 @@ function phaseArcPath(startAngle: number, endAngle: number, radius: number): str
 
 function timeRevealPercent(progress: number): number {
   const timeMs = lerp(0, TIME_END_MS, clamp(progress, 0, 1));
+  return timePositionPercent(timeMs);
+}
+
+function timePositionPercent(timeMs: number): number {
   return ((timeMs - TIME_START_MS) / (TIME_END_MS - TIME_START_MS)) * 100;
 }
 
