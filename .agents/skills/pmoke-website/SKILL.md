@@ -54,6 +54,32 @@ the CI browser/accessibility/visual and Lighthouse gates. If MCP is unavailable,
 use the Nix-provided browser and the repository's Playwright CLI checks, and
 report the limitation.
 
+## Visual sign-off gate
+
+For a UI slice whose layout, typography, animation, copy, or interaction is
+still a product choice, keep the implementation on a private local topic
+branch until the user approves the rendered direction. This is a temporary
+pre-publication checkpoint, not a Draft PR:
+
+1. Define the durable goal and acceptance criteria in the Issue, then restore
+   dependencies and start `pnpm run build:dev` from the Nix shell.
+2. Review the changed route with the Playwright MCP checkpoint: inspect both
+   locales, relevant wide/narrow/phone viewports, keyboard focus, reduced
+   motion, and console errors. Keep captures and logs local unless a reviewed
+   redacted artifact is explicitly required.
+3. Present concise route, locale, viewport, theme, and dev/export evidence and
+   request explicit user visual sign-off. A successful build, browser snapshot,
+   or account login is not the sign-off.
+4. If the direction is rejected, iterate locally without committing or
+   pushing the unapproved UI. After approval, perform Review 1 and Review 2,
+   create the cohesive commit, push, and open the normal linked PR. Run the
+   required checks and CI against that exact head.
+
+This gate is limited to visual/product decisions. Security fixes, CI or
+release blockers, non-visual correctness fixes, generated contract changes,
+and changes where delaying public review would create material risk follow the
+ordinary Issue and normal PR workflow.
+
 ## Product map
 
 - `website/app/`, `components/`, and `styles/`: Next.js routes and UI.
@@ -68,12 +94,13 @@ Preserve the `/pmoke/` base path, static export behavior, English/Japanese
 parity, no-JavaScript readability, and bounded worker/WASM failure recovery.
 Treat generated references and release metadata as owned by their generators.
 For a durable website goal, use the repository's public Issue → normal PR
-workflow. Open the PR when implementation starts and keep it available for
-review; do not use a Draft PR phase. Keep the Issue's acceptance,
-compatibility, and security decisions separate from the PR's current
-validation state. Put UI evidence in the Issue or PR with route, locale,
-viewport, theme, and dev/export context; do not add an unredacted screenshot,
-recording, log, endpoint, or personal path to the repository.
+workflow. A UI/product-choice slice follows the visual sign-off gate above
+before its first commit or push; after sign-off, open the normal PR promptly
+and keep it available for review. Do not use a Draft PR phase. Keep the
+Issue's acceptance, compatibility, and security decisions separate from the
+PR's current validation state. Put UI evidence in the Issue or PR with route,
+locale, viewport, theme, and dev/export context; do not add an unredacted
+screenshot, recording, log, endpoint, or personal path to the repository.
 
 ## Long website changes
 
@@ -94,13 +121,15 @@ on behavior and rendered output, stage and perform Review 2 on the complete
 diff, then commit. If a fix changes the reviewed surface, repeat both reviews
 and the affected checks.
 
-For UI slices, use `pnpm run build:dev` as the iterative visual checkpoint and
-record the route, locale, viewport, theme, and dev/export context. Push and
-open the normal PR only when external handoff is authorized; merge only after
-the exact head has passing required and relevant CI (including browser,
-accessibility, visual, and Lighthouse gates when applicable), resolved
-conversations, and no blocking review. A single maintainer records Review 1
-and Review 2 explicitly rather than fabricating a second approval.
+For UI slices, use `pnpm run build:dev` and the visual sign-off gate before the
+first commit or push when the product direction is still under discussion.
+Record the route, locale, viewport, theme, and dev/export context. After
+explicit sign-off, perform Review 1 and Review 2, then push and open the
+normal PR; merge only after the exact head has passing required and relevant CI
+(including browser, accessibility, visual, and Lighthouse gates when
+applicable), resolved conversations, and no blocking review. A single
+maintainer records Review 1 and Review 2 explicitly rather than fabricating a
+second approval.
 
 ## UI-first workflow
 
@@ -140,10 +169,12 @@ and Review 2 explicitly rather than fabricating a second approval.
    errors. If no browser is available, report the live URL and limitation
    instead of claiming a visual pass.
 
-4. Stop at a visual checkpoint when layout, typography, interaction, or visual
-   hierarchy is a matter of product choice. Show the route/viewport evidence
-   and obtain the user's direction before making a broad design change. Do not
-   silently turn a typecheck or static build into a visual approval.
+4. Stop at a visual checkpoint when layout, typography, animation, copy,
+   interaction, or visual hierarchy is a matter of product choice. Show the
+   route/viewport evidence and obtain explicit user visual sign-off before
+   committing or pushing the slice. If the direction is not approved, iterate
+   locally. Do not silently turn a typecheck, static build, browser snapshot,
+   or account login into visual approval.
 
 5. Before handoff, run the smallest relevant production and contract checks:
 
@@ -183,9 +214,11 @@ and Review 2 explicitly rather than fabricating a second approval.
 
 ## Public progress and handoff
 
-Use a GitHub Issue for the durable user-facing goal, a normal PR opened at the
-start of active work, and the PR description for a concise checklist of scope,
-visible outcome, validation, screenshots, and blockers. Keep private
+Use a GitHub Issue for the durable user-facing goal, then open a normal PR when
+public implementation starts. For UI/product-choice slices, public
+implementation starts after the visual sign-off gate; the local visual review
+is not a Draft PR phase. Keep the PR description as a concise checklist of
+scope, visible outcome, validation, screenshots, and blockers. Keep private
 deliberation and temporary notes out of tracked files. Use README/docs for
 stable instructions and a changelog for released user-visible changes; do not
 add a chronological public work diary unless the project explicitly wants one.

@@ -254,9 +254,17 @@ split:
   vulnerability-reporting instructions. A GitHub Project may provide an
   optional dashboard, but it is not a requirements or status source of truth.
 - Track one durable, user-facing goal in a GitHub Issue; open a normal linked
-  PR when implementation starts and keep its description as a short
+  PR when public implementation starts and keep its description as a short
   scope/outcome/validation/blocker checklist. Do not use a Draft PR phase.
-- When implementation starts, link the PR to the Issue with `Refs #N` and keep
+- Website UI slices that still require a product or visual decision use the
+  pre-publication visual sign-off gate below. Keep that slice on a private
+  local topic branch, start the Nix-managed local server, and review it with
+  the Playwright MCP checkpoint before the first commit or push. Obtain an
+  explicit user visual sign-off, then perform Review 1 and Review 2, create
+  the cohesive commit, push, and open the normal linked PR. This is a
+  temporary pre-publication checkpoint, not a Draft PR. The sign-off is a
+  product/visual decision, not browser or account authentication.
+- When public implementation starts, link the PR to the Issue with `Refs #N` and keep
   it open for review from the beginning. Record Review 1 on the Issue or design
   discussion and Review 2 on the complete staged PR diff, tests, and generated
   artifacts. Merge only after the acceptance criteria and validation evidence
@@ -277,9 +285,40 @@ split:
   PR with route, locale, viewport, theme, and dev/export context. Keep large or
   sensitive captures out of the repository unless versioned snapshots are an
   explicit project contract.
+- Do not wait for visual sign-off for security fixes, CI or release blockers,
+  non-visual correctness fixes, generated contract changes, or work where
+  delaying a public review would create a material risk. Use the ordinary
+  Issue and normal PR workflow for those changes. If a UI slice is not
+  approved, iterate locally and do not publish the unapproved design.
 - Report progress at meaningful milestones: scope, user-visible result,
   validation status, known environment limitation, and next decision. Keep
   public wording factual and safe to quote.
+
+### Website UI visual sign-off gate
+
+Use this gate for website changes whose layout, typography, animation, copy, or
+interaction is still a product choice:
+
+1. Make the durable goal and acceptance criteria explicit in the Issue, while
+   keeping the implementation on a private local topic branch.
+2. Enter the Nix development shell, run `pnpm run build:dev` from `website/`,
+   and review the changed route in the Playwright MCP browser checkpoint when
+   available. Otherwise use the Nix-provided browser/Playwright checks and
+   report the limitation. Check both locales and the relevant desktop, narrow,
+   and phone viewports, plus keyboard focus and console errors.
+3. Present concise route/viewport/theme evidence and ask for explicit user
+   visual sign-off. Do not treat a successful build or a browser login as
+   approval.
+4. If the direction is rejected, continue iterating locally. Once it is
+   approved, perform Review 1 and Review 2, commit the cohesive slice, push it,
+   and open the normal linked PR. Run the required checks and CI on that exact
+   head before merging.
+
+This gate is a temporary pre-publication checkpoint, not a Draft PR. It does
+not apply to security fixes, CI or release blockers, non-visual correctness
+fixes, generated contract changes, or work where delaying public review would
+create material risk; those changes follow the ordinary Issue and normal PR
+workflow.
 
 ## Long-running implementation and branch policy
 
