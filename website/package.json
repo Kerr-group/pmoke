@@ -19,14 +19,15 @@
     "lint:ja": "node scripts/lint-ja.mjs",
     "lint:content": "node scripts/verify-content.mjs",
     "lint:readme": "node scripts/verify-readme.mjs",
-    "test:export": "node scripts/verify-export.mjs",
+    "test:export": "node --test scripts/verify-export-urls.test.mjs && node scripts/verify-export.mjs",
     "test:e2e": "playwright test",
     "test:lighthouse": "lhci collect --config=lighthouserc.cjs && node scripts/verify-lighthouse.mjs",
+    "test:audit": "node --test scripts/verify-audit.test.mjs",
     "test:licenses": "node --test scripts/release-metadata.test.mjs && node scripts/verify-licenses.mjs",
     "test:ai": "node scripts/verify-ai-resources.mjs",
     "test:search": "node scripts/evaluate-search.mjs",
     "test:signal": "node scripts/verify-signal.mjs",
-    "check": "npm run lint && npm run lint:ja && npm run lint:content && npm run lint:readme && npm run types:check && npm run test:search && npm run test:signal && npm run test:ai && npm run test:export"
+    "check": "npm run lint && npm run lint:ja && npm run lint:content && npm run lint:readme && npm run types:check && npm run test:search && npm run test:signal && npm run test:ai && npm run test:audit && npm run test:export"
   },
   "dependencies": {
     "@orama/orama": "3.1.18",
