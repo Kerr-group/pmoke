@@ -7,12 +7,12 @@ private endpoints, raw captures, or exploit details in a public report.
 ## Supported versions
 
 Security fixes are developed on `main` and are backported at the maintainers'
-discretion. The latest non-draft release line is currently `v0.3.x`.
+discretion. The latest non-draft release line is currently `v0.4.x`.
 
 | Version | Security support |
 | --- | --- |
 | `main` | Supported; fixes land here first |
-| Latest non-draft release (`v0.3.x`) | Best-effort fixes when practical |
+| Latest non-draft release (`v0.4.x`) | Best-effort fixes when practical |
 | Older releases | No routine security backports |
 
 Update this table when a new non-draft release line becomes the supported

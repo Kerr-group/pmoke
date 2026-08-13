@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 
+import { hasExactUrl } from './verify-export-urls.mjs';
+
 const output = path.resolve('out');
 // Keep the raw budget tolerant of host-specific Rust/wasm-opt output while
 // retaining the compressed budget as the stricter transfer-size guard.
@@ -62,6 +64,7 @@ const EnglishCitation = await readFile(path.join(output, 'en/docs/citation/index
 const JapaneseCitation = await readFile(path.join(output, 'ja/docs/citation/index.html'), 'utf8');
 const sitemap = await readFile(path.join(output, 'sitemap.xml'), 'utf8');
 const robots = await readFile(path.join(output, 'robots.txt'), 'utf8');
+
 if (!English.includes('<html lang="en"')) throw new Error('English lang metadata is missing');
 if (!Japanese.includes('<html lang="ja"')) throw new Error('Japanese lang metadata is missing');
 if (!English.includes('Content-Security-Policy')) throw new Error('Static content security policy is missing');
@@ -91,14 +94,14 @@ if (!JapaneseAnalyzer.includes('波形アナライザー')) throw new Error('Jap
 if (!EnglishCitation.includes('Reproducible attribution')) throw new Error('English citation panel is missing');
 if (!JapaneseCitation.includes('再現可能な帰属情報')) throw new Error('Japanese citation panel is missing');
 if (!EnglishCitation.includes('10.1103/vy7j-ylb4')) throw new Error('Method DOI is missing from citation page');
-if (!JapaneseQuickstart.includes('https://kerr-group.github.io/pmoke/ja/docs/quickstart/')) {
+if (!hasExactUrl(JapaneseQuickstart, 'https://kerr-group.github.io/pmoke/ja/docs/quickstart/')) {
   throw new Error('Canonical project URL is missing');
 }
 if (!JapaneseQuickstart.includes('hrefLang="x-default"')) throw new Error('x-default metadata is missing');
-if (!JapaneseQuickstart.includes('https://kerr-group.github.io/pmoke/og.png')) {
+if (!hasExactUrl(JapaneseQuickstart, 'https://kerr-group.github.io/pmoke/og.png')) {
   throw new Error('Open Graph image is missing');
 }
-if (!sitemap.includes('https://kerr-group.github.io/pmoke/en/docs/quickstart/')) {
+if (!hasExactUrl(sitemap, 'https://kerr-group.github.io/pmoke/en/docs/quickstart/')) {
   throw new Error('Localized sitemap entry is missing');
 }
 if (!robots.includes('Sitemap: https://kerr-group.github.io/pmoke/sitemap.xml\n')) {

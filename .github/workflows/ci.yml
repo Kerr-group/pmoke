@@ -58,8 +58,10 @@ jobs:
 
       - name: Install linux-gpib userspace library
         run: |
+          archive_sha256="1b37b8c6bbe4844827f89e4986bc9c7b38e9dae8650f5bfa697d161afe09d898"
           curl -fL --retry 3 -o /tmp/linux-gpib.tar.gz \
             "https://sourceforge.net/projects/linux-gpib/files/linux-gpib%20for%203.x.x%20and%202.6.x%20kernels/4.3.6/linux-gpib-4.3.6.tar.gz/download"
+          echo "${archive_sha256}  /tmp/linux-gpib.tar.gz" | sha256sum --check
           tar -xzf /tmp/linux-gpib.tar.gz -C /tmp
           tar -xzf /tmp/linux-gpib-4.3.6/linux-gpib-user-4.3.6.tar.gz -C /tmp
           cd /tmp/linux-gpib-user-4.3.6
@@ -171,8 +173,10 @@ jobs:
 
       - name: Install linux-gpib userspace library
         run: |
+          archive_sha256="1b37b8c6bbe4844827f89e4986bc9c7b38e9dae8650f5bfa697d161afe09d898"
           curl -fL --retry 3 -o /tmp/linux-gpib.tar.gz \
             "https://sourceforge.net/projects/linux-gpib/files/linux-gpib%20for%203.x.x%20and%202.6.x%20kernels/4.3.6/linux-gpib-4.3.6.tar.gz/download"
+          echo "${archive_sha256}  /tmp/linux-gpib.tar.gz" | sha256sum --check
           tar -xzf /tmp/linux-gpib.tar.gz -C /tmp
           tar -xzf /tmp/linux-gpib-4.3.6/linux-gpib-user-4.3.6.tar.gz -C /tmp
           cd /tmp/linux-gpib-user-4.3.6
