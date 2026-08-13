@@ -6,7 +6,7 @@ const TIME_START_MS = -10;
 const TIME_END_MS = 60;
 const PULSE_PEAK_MS = 15.8;
 const PULSE_END_MS = 42;
-const FIELD_PEAK_T = 0.82;
+const FIELD_PEAK_T = 100;
 const LI_X_PEAK_MV = -3.2;
 const LI_Y_PEAK_MV = 5.4;
 const KERR_PEAK_MRAD = -9.8;
@@ -48,18 +48,19 @@ function sequenceStageForElapsed(elapsedMs) {
   return STAGES[Math.floor(elapsed / STAGE_DURATION_MS)];
 }
 
-// The public pulse starts at the 0 ms trigger, remains unipolar, peaks once,
-// and returns to baseline before the displayed 60 ms time axis ends.
+// The public pulse starts at the 0 ms trigger, peaks once, and returns to
+// baseline before the displayed 60 ms time axis ends.
 assert.equal(fieldPulseAtMs(-10), 0);
 assert.equal(fieldPulseAtMs(0), 0);
-assert.ok(fieldPulseAtMs(PULSE_PEAK_MS) > 0);
+assert.ok(fieldPulseAtMs(0.25) > 0);
+assert.equal(fieldPulseAtMs(PULSE_PEAK_MS), FIELD_PEAK_T);
 assert.equal(fieldPulseAtMs(PULSE_END_MS), 0);
 assert.equal(fieldPulseAtMs(TIME_END_MS), 0);
 let decayPrevious = null;
 for (let index = 0; index <= 700; index += 1) {
   const timeMs = TIME_START_MS + ((TIME_END_MS - TIME_START_MS) * index) / 700;
   const value = fieldPulseAtMs(timeMs);
-  assert.ok(Number.isFinite(value) && value >= 0, `field pulse must remain unipolar at ${timeMs} ms`);
+  assert.ok(Number.isFinite(value) && value >= 0, `field pulse must remain above baseline at ${timeMs} ms`);
   if (timeMs >= PULSE_PEAK_MS && timeMs <= PULSE_END_MS) {
     if (decayPrevious !== null) {
       assert.ok(value <= decayPrevious + 1e-9, `field pulse must decay after its peak at ${timeMs} ms`);
@@ -71,11 +72,13 @@ for (let index = 0; index <= 700; index += 1) {
 // Lock-in and Kerr traces share the field-pulse time support and expose units.
 assert.ok(lockInAtMs(0).every((value) => Math.abs(value) <= 1e-12));
 assert.ok(Math.abs(kerrAngleAtMs(0)) <= 1e-12);
+assert.ok(lockInAtMs(0.25).every((value) => Math.abs(value) > 0));
+assert.ok(Math.abs(kerrAngleAtMs(0.25)) > 0);
 assert.ok(Math.abs(lockInAtMs(PULSE_PEAK_MS)[0] - LI_X_PEAK_MV) <= 1e-12);
 assert.ok(Math.abs(lockInAtMs(PULSE_PEAK_MS)[1] - LI_Y_PEAK_MV) <= 1e-12);
 assert.ok(Math.abs(kerrAngleAtMs(PULSE_PEAK_MS) - KERR_PEAK_MRAD) <= 1e-12);
 
-// Phase correction preserves vector magnitude and removes the quadrature term.
+// Phase alignment preserves vector magnitude and removes the quadrature term.
 const rawX = LI_X_PEAK_MV;
 const rawY = LI_Y_PEAK_MV;
 const phase = Math.atan2(rawY, rawX);
@@ -92,4 +95,4 @@ assert.equal(sequenceStageForElapsed(STAGE_DURATION_MS * 2), 'phase-correction')
 assert.equal(sequenceStageForElapsed(STAGE_DURATION_MS * 3), 'kerr-angle');
 assert.equal(sequenceStageForElapsed(STAGE_DURATION_MS * 4), 'kerr-angle');
 
-console.log('Signal verification passed: 0 ms unipolar pulse, shared time support, phase correction, and four-stage workflow validated.');
+console.log('Signal verification passed: 0 ms field pulse, shared time support, phase alignment, and four-stage workflow validated.');

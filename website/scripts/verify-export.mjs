@@ -70,18 +70,23 @@ if (!Japanese.includes('<html lang="ja"')) throw new Error('Japanese lang metada
 if (!English.includes('Content-Security-Policy')) throw new Error('Static content security policy is missing');
 if (!English.includes('strict-origin-when-cross-origin')) throw new Error('Referrer policy is missing');
 if (!English.includes('/pmoke/_next/')) throw new Error('GitHub Pages basePath is missing');
-if (!English.includes('Reproducible pulsed-field MOKE measurements')) {
+if (!English.includes('A Rust workflow for pulsed-field MOKE measurements')) {
   throw new Error('English pulsed-field MOKE hero content is missing');
 }
-if (!Japanese.includes('パルス磁場下での再現可能なMOKE測定')) {
+if (!Japanese.includes('パルス磁場下MOKE測定のためのRustワークフロー')) {
   throw new Error('Japanese pulsed-field MOKE hero content is missing');
 }
-for (const label of ['FIELD PULSE', 'LOCK-IN X / Y', 'PHASE CORRECTION', 'KERR ANGLE']) {
+for (const label of ['FIELD PULSE', 'NUMERICAL LI ANALYSIS', 'PHASE ALIGNMENT', 'KERR ANGLE']) {
   if (!English.includes(label)) throw new Error(`English signal label is missing: ${label}`);
 }
-for (const label of ['磁場パルス', 'ロックインX/Y', '位相補正', 'Kerr角度']) {
+for (const label of ['パルス磁場', '数値LI検波', '位相整合', 'Kerr角度']) {
   if (!Japanese.includes(label)) throw new Error(`Japanese signal label is missing: ${label}`);
 }
+// The exported page initially renders the field-pulse stage; the lock-in
+// heading is rendered after the user selects that stage. Check the serialized
+// localized label here and cover the rendered heading in the browser test.
+if (!English.includes('NUMERICAL LOCK-IN ANALYSIS')) throw new Error('English lock-in heading is missing');
+if (!Japanese.includes('数値Lock-in検波')) throw new Error('Japanese lock-in heading is missing');
 if (English.includes('ACQUISITION WINDOW') || Japanese.includes('取得窓')) {
   throw new Error('Legacy acquisition stage remains in the homepage process rail');
 }

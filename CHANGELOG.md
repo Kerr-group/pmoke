@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changes
+
+- The bilingual homepage now uses a compact, responsive four-stage pulsed-field
+  MOKE workflow with stable transitions, aligned signal axes, and clearer
+  numerical lock-in, phase-alignment, and Kerr-angle terminology.
+
 ## v0.4.0 — 2026-08-12
 
 ### Breaking changes

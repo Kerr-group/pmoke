@@ -568,6 +568,23 @@ button:focus-visible {
   padding: 1.1rem 1.3rem 1.15rem;
 }
 
+.signal-stage-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.signal-stage-copy-panel {
+  grid-area: 1 / 1;
+  min-width: 0;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.signal-stage-copy-panel[data-active='true'] {
+  opacity: 1;
+  visibility: visible;
+}
+
 .signal-stage-heading {
   display: flex;
   align-items: flex-start;
@@ -619,9 +636,6 @@ button:focus-visible {
   flex-direction: column;
   opacity: 0;
   visibility: hidden;
-  transition:
-    opacity 240ms ease,
-    visibility 240ms linear;
 }
 
 .signal-panel[data-active='true'] {
@@ -634,15 +648,17 @@ button:focus-visible {
   flex: 1;
   display: grid;
   grid-template-columns: 3.2rem minmax(0, 1fr);
-  gap: 0.55rem;
+  grid-template-rows: minmax(0, 1fr) auto;
+  column-gap: 0.55rem;
 }
 
 .signal-y-axis {
+  grid-column: 1;
+  grid-row: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.35rem;
-  padding-bottom: 1.55rem;
   color: #829391;
   font: 630 0.68rem/1 var(--font-mono), monospace;
 }
@@ -669,9 +685,20 @@ button:focus-visible {
 .signal-y-axis sub,
 .signal-panel-readout sub { font-size: 0.72em; }
 
-.signal-y-axis > div { display: flex; flex-direction: column; justify-content: space-between; padding: 0.15rem 0; text-align: right; }
-.signal-plot-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
-.signal-plot-area { min-height: 0; overflow: hidden; border-left: 1px solid rgba(145, 164, 174, 0.3); border-bottom: 1px solid rgba(145, 164, 174, 0.3); }
+.signal-y-axis > div { position: relative; min-height: 0; text-align: right; }
+.signal-y-axis > div span { position: absolute; right: 0; transform: translateY(-50%); }
+.signal-y-axis > div span:nth-child(1) { top: 10%; }
+.signal-y-axis > div span:nth-child(2) { top: 50%; }
+.signal-y-axis > div span:nth-child(3) { top: 90%; }
+.signal-plot-column { display: contents; }
+.signal-plot-area {
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid rgba(145, 164, 174, 0.3);
+  border-bottom: 1px solid rgba(145, 164, 174, 0.3);
+}
 .signal-plot-area svg { width: 100%; height: 100%; display: block; overflow: visible; }
 
 .signal-grid-line {
@@ -696,8 +723,22 @@ button:focus-visible {
 .signal-trace-kerr { stroke: var(--green); }
 .signal-trace-context { stroke: var(--cyan); stroke-width: 1.25; stroke-dasharray: 4 5; opacity: 0.25; }
 
-.signal-time-axis { padding-top: 0.48rem; color: #81918f; font: 630 0.67rem/1 var(--font-mono), monospace; }
-.signal-time-axis > div { display: flex; justify-content: space-between; }
+.signal-time-axis {
+  grid-column: 2;
+  grid-row: 2;
+  padding-top: 0.48rem;
+  color: #81918f;
+  font: 630 0.67rem/1 var(--font-mono), monospace;
+}
+.signal-time-axis > div { position: relative; min-height: 1em; }
+.signal-time-axis > div span {
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.signal-time-axis > div span:first-child { transform: none; }
+.signal-time-axis > div span:last-child { transform: translateX(-100%); }
 .signal-time-axis strong { display: block; margin-top: 0.35rem; color: #adbcba; font-size: 0.72rem; text-align: right; }
 
 .signal-chart-legend,
@@ -873,7 +914,6 @@ button:focus-visible {
 .hero-copy-panel {
   width: min(620px, 44vw);
   padding: 1.35rem 2.5rem 1.35rem 0;
-  border-top: 1px solid rgba(145, 164, 174, 0.24);
   background: linear-gradient(90deg, rgba(16, 21, 23, 0.96) 0%, rgba(16, 21, 23, 0.9) 68%, rgba(16, 21, 23, 0) 100%);
 }
 
@@ -890,7 +930,7 @@ button:focus-visible {
 .hero-copy h1 {
   margin: 0;
   color: #f2f5f3;
-  font-size: 10rem;
+  font-size: clamp(7rem, 12vw, 10rem);
   font-weight: 760;
   line-height: 0.82;
   letter-spacing: 0;
@@ -1002,7 +1042,6 @@ html:not(.dark) .signal-phase-metrics > div { border-color: rgba(40, 67, 68, 0.2
 html:not(.dark) .hero-copy h1,
 html:not(.dark) .hero-lead { color: #101517; }
 html:not(.dark) .hero-copy-panel {
-  border-top-color: rgba(40, 67, 68, 0.28);
   background: linear-gradient(90deg, rgba(228, 235, 232, 0.97) 0%, rgba(228, 235, 232, 0.91) 68%, rgba(228, 235, 232, 0) 100%);
 }
 html:not(.dark) .hero-description { color: #52615f; }
@@ -1745,8 +1784,8 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   .signal-stage-heading h2 { font-size: 1.08rem; }
   .signal-stage-summary { min-height: 2.6em; margin: 0.42rem 0 0.58rem; font-size: 0.64rem; }
   .signal-visualization { min-height: 312px; }
-  .signal-time-chart { grid-template-columns: 3rem minmax(0, 1fr); gap: 0.35rem; }
-  .signal-y-axis { padding-bottom: 1.55rem; font-size: 0.6rem; }
+  .signal-time-chart { grid-template-columns: 3rem minmax(0, 1fr); column-gap: 0.35rem; }
+  .signal-y-axis { font-size: 0.6rem; }
   .signal-y-axis strong { font-size: 0.65rem; }
   .signal-time-axis { font-size: 0.59rem; }
   .signal-time-axis .is-optional { display: none; }
@@ -1764,7 +1803,6 @@ html:not(.dark) .capability-grid p { color: #52615f; }
   .hero-copy-panel {
     width: 100%;
     padding: 0.8rem 0 0;
-    border-top-color: rgba(145, 164, 174, 0.34);
     background: linear-gradient(180deg, rgba(16, 21, 23, 0.97) 0%, rgba(16, 21, 23, 0.98) 34%, rgba(16, 21, 23, 0.99) 100%);
   }
   .hero-copy { padding-top: 0.875rem; padding-bottom: 0; }
@@ -1800,35 +1838,35 @@ html:not(.dark) .capability-grid p { color: #52615f; }
 }
 
 @media (max-width: 480px) {
-  .signal-stage[data-sequence-stage='phase-correction'] .signal-process-card { min-height: 660px; }
-  .signal-stage[data-sequence-stage='phase-correction'] .signal-visualization { min-height: 470px; }
+  .signal-process-card { min-height: 500px; }
+  .signal-visualization { min-height: 280px; }
   .signal-phase-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(235px, 1fr) auto;
-    gap: 0.65rem;
+    grid-template-rows: minmax(180px, 1fr) auto;
+    gap: 0.4rem;
   }
-  .signal-phase-graphic { min-height: 235px; }
-  .signal-phase-graphic svg { width: min(100%, 245px); }
+  .signal-phase-graphic { min-height: 180px; }
+  .signal-phase-graphic svg { width: min(100%, 200px); }
   .signal-phase-operator { top: 8%; right: 8%; font-size: 0.54rem; }
   .signal-phase-metrics {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .signal-phase-metrics > div { min-width: 0; padding: 0.55rem 0.35rem; }
+  .signal-phase-metrics > div { min-width: 0; padding: 0.38rem 0.24rem; }
   .signal-phase-metrics > div:nth-child(2) { border-left: 1px solid rgba(145, 164, 174, 0.22); }
-  .signal-phase-metrics > div:last-child { grid-column: 1 / -1; }
-  .signal-phase-metrics dt { font-size: 0.57rem; }
-  .signal-phase-metrics dd { font-size: 0.65rem; overflow-wrap: anywhere; }
+  .signal-phase-metrics > div:nth-child(3) { border-left: 1px solid rgba(145, 164, 174, 0.22); }
+  .signal-phase-metrics > div:last-child { grid-column: auto; }
+  .signal-phase-metrics dt { font-size: 0.5rem; }
+  .signal-phase-metrics dd { font-size: 0.58rem; overflow-wrap: anywhere; }
+  .signal-vector-legend { margin-top: 0.35rem; }
 }
 
 @media (max-width: 720px) {
   html:not(.dark) .hero-copy-panel {
-    border-top-color: rgba(40, 67, 68, 0.3);
     background: linear-gradient(180deg, rgba(228, 235, 232, 0.97) 0%, rgba(228, 235, 232, 0.985) 34%, rgba(228, 235, 232, 0.995) 100%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
-  .signal-panel { transition: none; }
 }

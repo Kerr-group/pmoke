@@ -11,7 +11,7 @@ const checks = [
     headers: { 'strict-transport-security': 'max-age=' },
   },
   { path: 'en/', contains: 'FIELD PULSE' },
-  { path: 'ja/', contains: 'パルス磁場下での再現可能なMOKE測定' },
+  { path: 'ja/', contains: 'パルス磁場下MOKE測定のためのRustワークフロー' },
   { path: 'en/docs/quickstart/', contains: 'Quickstart' },
   { path: 'ja/docs/quickstart/', contains: 'クイックスタート' },
   { path: 'en/docs/interactive/waveform-analyzer/', contains: 'Waveform Analyzer' },
