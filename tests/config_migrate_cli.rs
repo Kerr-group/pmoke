@@ -179,3 +179,29 @@ fn v2_csv_with_recorded_time_can_advance_to_v5() {
     assert!(migrated.contains("version = 5"));
     assert!(!migrated.contains("[timebase]"));
 }
+
+#[test]
+fn in_place_migration_with_bare_relative_config_path_succeeds() {
+    let dir = TempDir::new();
+    let source = dir.0.join("config.toml");
+    let original = v3_config();
+    fs::write(&source, &original).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pmoke"))
+        .current_dir(&dir.0)
+        .arg("--config")
+        .arg("config.toml")
+        .args(["config", "migrate", "--in-place", "--accept-lossy"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let migrated = fs::read_to_string(&source).unwrap();
+    assert!(migrated.contains("version = 5"));
+    assert!(dir.0.join("config.toml.v3.bak").exists());
+}

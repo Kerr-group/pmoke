@@ -578,7 +578,10 @@ fn backup_path(source: &Path, version: u32) -> PathBuf {
 }
 
 fn create_temporary(source: &Path) -> Result<(PathBuf, File)> {
-    let parent = source.parent().unwrap_or_else(|| Path::new("."));
+    let parent = source
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let filename = source
         .file_name()
         .unwrap_or_else(|| OsStr::new("config.toml"));
@@ -609,7 +612,10 @@ fn write_and_sync(file: &mut File, contents: &[u8]) -> Result<()> {
 
 #[cfg(unix)]
 fn sync_parent_directory(path: &Path) -> Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     File::open(parent)
         .and_then(|directory| directory.sync_all())
         .with_context(|| format!("failed to sync config directory: {}", parent.display()))
@@ -885,5 +891,23 @@ mod tests {
         assert!(error.to_string().contains("symlink"));
         assert_eq!(fs::read(&real).unwrap(), before);
         assert!(!backup_path(&source, 3).exists());
+    }
+
+    #[test]
+    fn sync_parent_directory_handles_bare_file_paths() {
+        assert!(sync_parent_directory(Path::new("config.toml")).is_ok());
+        assert!(sync_parent_directory(Path::new("./config.toml")).is_ok());
+    }
+
+    #[test]
+    fn create_temporary_handles_bare_file_paths() {
+        let (temp_path, temp_file) = create_temporary(Path::new("config.toml")).unwrap();
+        drop(temp_file);
+        assert_eq!(
+            temp_path.parent().unwrap_or_else(|| Path::new(".")),
+            Path::new(".")
+        );
+        assert!(temp_path.exists());
+        let _ = fs::remove_file(&temp_path);
     }
 }
