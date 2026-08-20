@@ -98,7 +98,7 @@ impl ReferenceFitter {
 
 #[cfg(test)]
 mod tests {
-    use super::ReferenceFFT;
+    use super::{RefFitParams, ReferenceFFT};
     use std::f64::consts::PI;
 
     #[test]
@@ -126,5 +126,54 @@ mod tests {
             "expected zero phase, got {}",
             result.omega_tref
         );
+    }
+
+    fn reference_with_offset(offset: f64) -> (f64, RefFitParams) {
+        let sample_rate = 100.0e6;
+        let sample_count = 4_096usize;
+        let frequency = 50.0 * sample_rate / sample_count as f64;
+        let amplitude = 0.5;
+        let dt = 1.0 / sample_rate;
+        let t: Vec<f64> = (0..sample_count).map(|index| index as f64 * dt).collect();
+        let y: Vec<f64> = t
+            .iter()
+            .map(|&time| offset + amplitude * (2.0 * PI * frequency * time).sin())
+            .collect();
+
+        (frequency, ReferenceFFT {}.fft(dt, &y).unwrap())
+    }
+
+    #[test]
+    fn reference_fft_ignores_positive_dc_offset() {
+        let (frequency, result) = reference_with_offset(0.30);
+
+        assert!((result.f_ref - frequency).abs() < 1.0e-6);
+        assert!((result.a_ref - 0.5).abs() < 1.0e-7);
+    }
+
+    #[test]
+    fn reference_fft_ignores_negative_dc_offset() {
+        let (frequency, result) = reference_with_offset(-0.30);
+
+        assert!((result.f_ref - frequency).abs() < 1.0e-6);
+        assert!((result.a_ref - 0.5).abs() < 1.0e-7);
+    }
+
+    #[test]
+    fn reference_fft_rejects_constant_input() {
+        let error = ReferenceFFT {}
+            .fft(1.0 / 100.0e6, &vec![0.30; 4_096])
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("no non-DC component"));
+    }
+
+    #[test]
+    fn reference_fft_rejects_nonfinite_input() {
+        let mut input = vec![0.0; 4_096];
+        input[0] = f64::NAN;
+        let error = ReferenceFFT {}.fft(1.0 / 100.0e6, &input).unwrap_err();
+
+        assert!(format!("{error:#}").contains("requires finite samples"));
     }
 }

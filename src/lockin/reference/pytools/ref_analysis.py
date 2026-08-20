@@ -116,12 +116,43 @@ class ReferenceFFT:
         pass
 
     def fft(self, dt: float, y: NDArray, pad_factor: int = 3):
+        y = np.asarray(y, dtype=float)
+        if y.ndim != 1 or y.size < 2:
+            raise ValueError(
+                "reference FFT requires a one-dimensional signal with at least two samples"
+            )
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError(f"reference FFT dt must be positive and finite (got {dt})")
+        if not np.all(np.isfinite(y)):
+            raise ValueError("reference FFT requires finite samples")
+
         fft = PreciseFFT(dt, y, pad_factor=pad_factor)
-        omega, fft_data = fft.get_data()
+        centered = y - np.mean(y)
+        signal_scale = float(np.max(np.abs(y)))
+        signal_range = float(np.ptp(y))
+        if not np.isfinite(signal_range) or signal_range <= np.finfo(float).eps * max(
+            signal_scale, np.finfo(float).tiny
+        ):
+            raise ValueError("reference signal has no non-DC component")
+        centered_scale = float(np.max(np.abs(centered)))
+        if not np.isfinite(centered_scale) or centered_scale == 0.0:
+            raise ValueError("reference signal has no non-DC component")
+
+        carrier_fft = PreciseFFT(dt, centered, pad_factor=pad_factor)
+        omega, fft_data = carrier_fft.get_data()
         freq = omega / (2 * np.pi)
 
-        idx = np.argmax(fft_data)
-        f_ref = float(abs(freq[idx]))
+        if len(fft_data) < 2:
+            raise ValueError("reference FFT has no non-DC frequency bins")
+        idx = 1 + int(np.argmax(fft_data[1:]))
+        peak_amplitude = float(fft_data[idx])
+        if not np.isfinite(peak_amplitude) or peak_amplitude <= (
+            np.finfo(float).eps * centered_scale
+        ):
+            raise ValueError("reference FFT has no resolvable non-DC carrier")
+        f_ref = float(freq[idx])
+        if not np.isfinite(f_ref) or f_ref <= 0.0:
+            raise ValueError(f"reference FFT estimated an invalid carrier frequency: {f_ref}")
 
         A_ref, theta_ref = fft.get_target_freq_component(2 * np.pi * f_ref)
         A_ref = float(A_ref)
