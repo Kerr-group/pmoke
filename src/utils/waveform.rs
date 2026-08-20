@@ -26,7 +26,7 @@ struct CsvColumns {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(from = "RawWaveformMetadataRaw")]
+#[serde(try_from = "RawWaveformMetadataRaw")]
 struct RawWaveformMetadata {
     version: u32,
     status: Option<String>,
@@ -65,33 +65,71 @@ enum ChannelsFormat {
 }
 
 impl ChannelsFormat {
-    fn into_map(self) -> BTreeMap<String, RawChannelMetadata> {
+    fn into_map(self) -> Result<BTreeMap<String, RawChannelMetadata>, String> {
         match self {
-            ChannelsFormat::Map(map) => map,
+            ChannelsFormat::Map(map) => Ok(map),
             ChannelsFormat::List(list) => {
                 let mut map = BTreeMap::new();
                 for item in list {
-                    let ch = item.index.unwrap_or_else(|| {
-                        if let Some(pos) = item.file.find("ch") {
-                            let s = &item.file[pos + 2..];
-                            let digits: String =
-                                s.chars().take_while(|c| c.is_ascii_digit()).collect();
-                            digits.parse::<u8>().unwrap_or(1)
-                        } else {
-                            1
-                        }
-                    });
-                    map.insert(format!("ch{ch}"), item);
+                    let ch = match item.index {
+                        Some(ch) => ch,
+                        None => infer_legacy_channel(&item.file)?,
+                    };
+                    if ch == 0 {
+                        return Err(format!(
+                            "legacy RAW metadata channel index must be positive: {}",
+                            item.file
+                        ));
+                    }
+                    let key = format!("ch{ch}");
+                    if map.insert(key.clone(), item).is_some() {
+                        return Err(format!(
+                            "legacy RAW metadata contains duplicate channel mapping: {key}"
+                        ));
+                    }
                 }
-                map
+                Ok(map)
             }
         }
     }
 }
 
-impl From<RawWaveformMetadataRaw> for RawWaveformMetadata {
-    fn from(raw: RawWaveformMetadataRaw) -> Self {
-        Self {
+fn infer_legacy_channel(file: &str) -> Result<u8, String> {
+    let name = file
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| {
+            format!("legacy RAW metadata cannot infer a channel from filename: {file}")
+        })?;
+    let digits = name
+        .strip_prefix("ch")
+        .map(|value| {
+            value
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect::<String>()
+        })
+        .filter(|digits| !digits.is_empty())
+        .ok_or_else(|| {
+            format!("legacy RAW metadata cannot infer a channel from filename: {file}")
+        })?;
+    let channel = digits
+        .parse::<u8>()
+        .map_err(|_| format!("legacy RAW metadata channel in filename is invalid: {file}"))?;
+    if channel == 0 {
+        return Err(format!(
+            "legacy RAW metadata channel in filename must be positive: {file}"
+        ));
+    }
+    Ok(channel)
+}
+
+impl TryFrom<RawWaveformMetadataRaw> for RawWaveformMetadata {
+    type Error = String;
+
+    fn try_from(raw: RawWaveformMetadataRaw) -> Result<Self, Self::Error> {
+        Ok(Self {
             version: raw.version,
             status: raw.status,
             pmoke_version: raw.pmoke_version,
@@ -101,8 +139,8 @@ impl From<RawWaveformMetadataRaw> for RawWaveformMetadata {
             resolved_config_file: raw.resolved_config_file,
             resolved_config_sha256: raw.resolved_config_sha256,
             oscilloscope: raw.oscilloscope,
-            channels: raw.channels.into_map(),
-        }
+            channels: raw.channels.into_map()?,
+        })
     }
 }
 

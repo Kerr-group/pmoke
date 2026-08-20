@@ -2,6 +2,57 @@ use super::*;
 use crate::utils::checksum::sha256_hex;
 use std::path::PathBuf;
 
+fn legacy_channel_entry(file: &str, index: Option<u8>) -> String {
+    let index = index.map_or_else(String::new, |index| format!("index = {index}, "));
+    format!(
+        "{{ {index}file = \"{file}\", sample_count = 1, x_increment = 0.5, x_origin = 0.0, x_reference = 0.0, y_increment = 1.0, y_origin = 0.0, y_reference = 0.0 }}"
+    )
+}
+
+fn parse_legacy_metadata(entries: &[String]) -> Result<RawWaveformMetadata, toml::de::Error> {
+    let channels = entries.join(", ");
+    toml::from_str(&format!(
+        "version = 1\nchannels = [{channels}]\n\n[oscilloscope]\nwaveform_format = \"WORD\"\nbyte_order = \"little-endian\"\n"
+    ))
+}
+
+#[test]
+fn legacy_metadata_preserves_explicit_and_inferred_channel_order() {
+    let metadata = parse_legacy_metadata(&[
+        legacy_channel_entry("legacy.bin", Some(4)),
+        legacy_channel_entry("waveforms/ch2.u16le", None),
+    ])
+    .unwrap();
+
+    assert_eq!(
+        metadata
+            .channels
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["ch2", "ch4"]
+    );
+}
+
+#[test]
+fn legacy_metadata_rejects_unparseable_channel_filename() {
+    let error = parse_legacy_metadata(&[legacy_channel_entry("waveforms/unknown.u16le", None)])
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot infer a channel"));
+}
+
+#[test]
+fn legacy_metadata_rejects_duplicate_channel_mapping() {
+    let error = parse_legacy_metadata(&[
+        legacy_channel_entry("ch1.u16le", None),
+        legacy_channel_entry("ch1-backup.u16le", None),
+    ])
+    .unwrap_err();
+
+    assert!(error.to_string().contains("duplicate channel mapping: ch1"));
+}
+
 #[test]
 fn raw_word_conversion_matches_dho_formula() {
     let bytes = [0x00, 0x00, 0x01, 0x00, 0x10, 0x00];
