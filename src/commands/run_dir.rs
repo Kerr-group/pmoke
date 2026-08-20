@@ -930,7 +930,10 @@ fn replacement_backup_path(destination: &Path) -> PathBuf {
 }
 
 pub(crate) fn sync_parent(path: &Path) -> Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     sync_directory(parent)
 }
 
@@ -1607,5 +1610,11 @@ config_resolved_sha256 = "{resolved_hash}"
         assert!(error.to_string().contains("checksum mismatch"));
         verify_analysis_diagnostic_snapshots(&cfg, Some("sensor")).unwrap();
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn sync_parent_handles_bare_file_paths() {
+        assert!(sync_parent(Path::new("output.csv")).is_ok());
+        assert!(sync_parent(Path::new("./output.csv")).is_ok());
     }
 }

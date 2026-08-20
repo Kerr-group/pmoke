@@ -228,6 +228,17 @@ fn clean_path(p: &std::path::Path) -> std::path::PathBuf {
     stack.iter().collect()
 }
 
+fn ensure_output_parent(output: &std::path::Path) -> Result<()> {
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create CSV output parent: {}", parent.display()))?;
+    }
+    Ok(())
+}
+
 pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Result<()> {
     if output.exists() && !force {
         anyhow::bail!(
@@ -235,9 +246,7 @@ pub fn csv(input: &std::path::Path, output: &std::path::Path, force: bool) -> Re
             output.display()
         );
     }
-    if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    ensure_output_parent(output)?;
     let temporary = crate::commands::run_dir::unique_temporary_path(output)?;
     let report = match export_raw_waveform_csv(input, &temporary) {
         Ok(rep) => rep,
@@ -294,7 +303,7 @@ fn validate_replaceable_file(path: &std::path::Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{csv_with_canonical_lock, paths_equivalent};
+    use super::{csv_with_canonical_lock, ensure_output_parent, paths_equivalent};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -324,6 +333,29 @@ mod tests {
             paths_equivalent(&dir.join("subdir/../nonexistent.txt"), &file_nonexistent).unwrap()
         );
 
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn output_parent_accepts_bare_nested_and_absolute_paths() {
+        let bare = Path::new("out.csv");
+        ensure_output_parent(bare).unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "pmoke-export-parent-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let nested = dir.join("nested").join("out.csv");
+        let absolute = dir.join("absolute.csv");
+
+        ensure_output_parent(&nested).unwrap();
+        ensure_output_parent(&absolute).unwrap();
+
+        assert!(dir.join("nested").is_dir());
+        assert!(dir.is_dir());
         fs::remove_dir_all(dir).unwrap();
     }
 
