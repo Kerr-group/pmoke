@@ -125,6 +125,11 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     Ok(())
 }
 
+/// Relative tolerance for explicit CSV time-step differences.
+const TIME_AXIS_RELATIVE_TOLERANCE: f64 = 1.0e-6;
+/// Additional scale-aware allowance for timestamp serialization roundoff.
+const TIME_AXIS_ROUNDOFF_FACTOR: f64 = 16.0;
+
 pub(crate) fn validate_waveform_data(data: &WaveformData) -> Result<()> {
     let sample_count = data.t.len();
     if sample_count < 2 {
@@ -166,8 +171,10 @@ pub(crate) fn validate_waveform_data(data: &WaveformData) -> Result<()> {
         }
         if index > 1 {
             let step = value - time.value_at(index - 1);
-            let roundoff = value.abs().max(time.value_at(index - 1).abs()) * f64::EPSILON * 16.0;
-            let tolerance = (dt.abs() * 1.0e-6).max(roundoff);
+            let roundoff = value.abs().max(time.value_at(index - 1).abs())
+                * f64::EPSILON
+                * TIME_AXIS_ROUNDOFF_FACTOR;
+            let tolerance = (dt.abs() * TIME_AXIS_RELATIVE_TOLERANCE).max(roundoff);
             if !step.is_finite() || (step - dt).abs() > tolerance {
                 bail!(
                     "waveform time step changes at sample {index}: {step}, expected {dt} ± {tolerance}"
@@ -284,6 +291,49 @@ mod tests {
                 .to_string()
                 .contains("time step changes")
         );
+    }
+
+    fn waveform_with_explicit_time(time: Vec<f64>) -> WaveformData {
+        let sample_count = time.len();
+        WaveformData {
+            t: time.into(),
+            channels: vec![(0..sample_count).map(|index| index as f64).collect()],
+        }
+    }
+
+    #[test]
+    fn waveform_preflight_rejects_non_finite_explicit_time() {
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let error =
+                validate_waveform_data(&waveform_with_explicit_time(vec![0.0, 1.0, invalid]))
+                    .unwrap_err();
+            assert!(
+                error.to_string().contains("waveform time is non-finite"),
+                "unexpected error for {invalid}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn waveform_preflight_rejects_repeated_or_decreasing_explicit_time() {
+        for time in [
+            vec![0.0, 0.0, 1.0],
+            vec![0.0, 1.0, 1.0, 2.0],
+            vec![0.0, 1.0, 0.5],
+        ] {
+            let error = validate_waveform_data(&waveform_with_explicit_time(time)).unwrap_err();
+            assert!(
+                error.to_string().contains("time step"),
+                "unexpected time-axis error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn waveform_preflight_accepts_explicit_time_serialization_roundoff() {
+        let data = waveform_with_explicit_time(vec![0.0, 0.1, 0.20000001, 0.3]);
+
+        validate_waveform_data(&data).unwrap();
     }
 
     #[test]
