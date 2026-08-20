@@ -67,14 +67,13 @@ where
     C: AsRef<[f64]>,
 {
     let path_ref = path.as_ref();
-    if let Some(parent) = path_ref.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent).context("failed to create directory for csv output")?;
-    }
-
     let ncols = columns.len();
-    if ncols == 0 {
-        File::create(path_ref)?;
-        return Ok(());
+    if !headers.is_empty() && headers.len() != ncols {
+        anyhow::bail!(
+            "header len ({}) and column len ({}) mismatch",
+            headers.len(),
+            ncols
+        );
     }
 
     let column_refs: Vec<&[f64]> = columns.iter().map(|col| col.as_ref()).collect();
@@ -85,28 +84,31 @@ where
         }
     }
 
+    let mut encoded_header = Vec::new();
+    if !headers.is_empty() {
+        let mut writer = csv::WriterBuilder::new()
+            .has_headers(false)
+            .terminator(csv::Terminator::Any(b'\n'))
+            .from_writer(&mut encoded_header);
+        writer.write_record(headers.iter().copied())?;
+        writer.flush()?;
+    }
+
+    if let Some(parent) = path_ref.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).context("failed to create directory for csv output")?;
+    }
+
+    if ncols == 0 {
+        File::create(path_ref)?;
+        return Ok(());
+    }
+
     let file = File::create(path.as_ref()).context("failed to create csv file")?;
     // Large waveform CSVs contain hundreds of millions of rows. Keep the
     // formatting unchanged while avoiding frequent small writes to the OS.
     let mut w = BufWriter::with_capacity(CSV_WRITE_BUFFER_BYTES, file);
 
-    if !headers.is_empty() {
-        if headers.len() != ncols {
-            anyhow::bail!(
-                "header len ({}) and column len ({}) mismatch",
-                headers.len(),
-                ncols
-            );
-        }
-        for (i, h) in headers.iter().enumerate() {
-            if i + 1 == ncols {
-                write!(w, "{h}")?;
-            } else {
-                write!(w, "{h},")?;
-            }
-        }
-        writeln!(w)?;
-    }
+    w.write_all(&encoded_header)?;
 
     for row in 0..nrows {
         for (col_idx, col) in column_refs.iter().enumerate() {
@@ -169,4 +171,55 @@ where
     writer.flush()?;
     writer.get_ref().sync_all()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_csv;
+    use csv::ReaderBuilder;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_test_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "pmoke-csv-{label}-{}-{nonce}.csv",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn write_csv_escapes_special_headers() {
+        let path = unique_test_path("special-headers");
+        let headers = ["comma,header", "quote\"header", "line\nbreak"];
+
+        write_csv(&path, &headers, &[&[1.0], &[2.0], &[3.0]]).unwrap();
+
+        let mut reader = ReaderBuilder::new().from_path(&path).unwrap();
+        let actual = reader
+            .headers()
+            .unwrap()
+            .iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, headers);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn write_csv_header_mismatch_preserves_existing_file() {
+        let path = unique_test_path("header-mismatch");
+        let original = b"existing contents\n";
+        fs::write(&path, original).unwrap();
+
+        let error = write_csv(&path, &["one", "two"], &[&[1.0]]).unwrap_err();
+
+        assert!(error.to_string().contains("header len"));
+        assert_eq!(fs::read(&path).unwrap(), original);
+        fs::remove_file(path).unwrap();
+    }
 }
