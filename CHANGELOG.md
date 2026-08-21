@@ -2,11 +2,33 @@
 
 ## Unreleased
 
+## v0.4.1 — 2026-08-21
+
 ### Changes
 
 - The bilingual homepage now uses a compact, responsive four-stage pulsed-field
   MOKE workflow with stable transitions, aligned signal axes, and clearer
   numerical lock-in, phase-alignment, and Kerr-angle terminology.
+
+### Fixes
+
+- macOS builds now discover the active SDK library path automatically for the
+  linker.
+- Durable writes to bare relative destinations such as `config.toml` and
+  `out.csv` now synchronize the current directory correctly.
+- Reference-frequency initialization ignores DC offsets and rejects constant or
+  otherwise invalid reference inputs instead of producing a fabricated carrier.
+- Explicit CSV time axes are validated for finite, positive, and uniform
+  sampling before analysis uses a global interval.
+- CSV headers now use standards-compliant escaping, and preflight validation no
+  longer truncates an existing destination on failure.
+- Ambiguous legacy RAW channel metadata now fails closed instead of silently
+  falling back to or overwriting `ch1`.
+
+### Security and CI
+
+- Static export URL checks, CI downloads, and dependency-audit handling were
+  hardened without changing the user-facing analysis contract.
 
 ## v0.4.0 — 2026-08-12
 
