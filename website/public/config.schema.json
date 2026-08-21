@@ -2,7 +2,7 @@
   "$id": "https://kerr-group.github.io/pmoke/config.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "pmoke 0.4.0 configuration schema v5",
+  "description": "pmoke 0.4.1 configuration schema v5",
   "properties": {
     "data": {
       "additionalProperties": false,
@@ -1626,7 +1626,7 @@
       }
     ],
     "format_version": 1,
-    "pmoke_version": "0.4.0",
+    "pmoke_version": "0.4.1",
     "schema_version": 5,
     "semantic_constraints": [
       "channel assignments must be unique across sensors, reference, and lock-in signals",
