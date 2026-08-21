@@ -160,8 +160,8 @@ fn decode_utf16(bytes: &[u8], little_endian: bool) -> Result<String> {
     if !bytes.len().is_multiple_of(2) {
         bail!("UTF-16 profile has an incomplete code unit");
     }
-    let units = bytes.chunks_exact(2).map(|chunk| {
-        let pair = [chunk[0], chunk[1]];
+    let units = bytes.as_chunks::<2>().0.iter().map(|&[low, high]| {
+        let pair = [low, high];
         if little_endian {
             u16::from_le_bytes(pair)
         } else {
