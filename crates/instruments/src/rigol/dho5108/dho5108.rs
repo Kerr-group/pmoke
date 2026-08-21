@@ -393,8 +393,8 @@ impl DHO5108 {
         let y_ref = raw.preamble.y_reference;
 
         let mut result = Vec::with_capacity(raw.data.len() / 2);
-        for chunk in raw.data.chunks_exact(2) {
-            let v = u16::from_le_bytes([chunk[0], chunk[1]]) as f64;
+        for &[low, high] in raw.data.as_chunks::<2>().0 {
+            let v = u16::from_le_bytes([low, high]) as f64;
             let y = (v - y_ori - y_ref) * y_inc;
             result.push(y);
         }

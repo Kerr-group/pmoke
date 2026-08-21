@@ -1328,9 +1328,11 @@ fn convert_raw_word_to_voltages(raw: &DhoRawWaveform) -> Vec<f64> {
     };
 
     raw.data
-        .chunks_exact(2)
-        .map(|chunk| {
-            let word = u16::from_le_bytes([chunk[0], chunk[1]]);
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[low, high]| {
+            let word = u16::from_le_bytes([low, high]);
             scale.value_at(word)
         })
         .collect()
