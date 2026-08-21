@@ -659,8 +659,10 @@ mod tests {
         assert!(header.contains("'shape': (2, 2)"));
         let payload = &bytes[10 + header_len..];
         let values = payload
-            .chunks_exact(8)
-            .map(|chunk| f64::from_le_bytes(chunk.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|&chunk| f64::from_le_bytes(chunk))
             .collect::<Vec<_>>();
         assert_eq!(values, vec![1.0, 3.0, 2.0, 4.0]);
         fs::remove_file(path).unwrap();

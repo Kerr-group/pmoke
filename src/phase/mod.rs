@@ -165,7 +165,7 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
         bail!("non_finite_phase: phase analysis columns must contain only finite values");
     }
 
-    let pairs: Vec<_> = li_result.chunks_exact(2).collect();
+    let pairs = li_result.as_chunks::<2>().0;
 
     let [
         [li1x, li1y],
@@ -175,7 +175,7 @@ pub fn phase_analysis(cfg: &Config, li_result: &[Vec<f64>]) -> Result<PhaseAnaly
         [li5x, li5y],
         [li6x, li6y],
         ..,
-    ] = pairs.as_slice()
+    ] = pairs
     else {
         unreachable!("lock-in column count was validated above");
     };
