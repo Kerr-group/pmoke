@@ -6,7 +6,6 @@ pub mod provenance;
 pub mod reference;
 pub mod resolve;
 pub mod save;
-pub mod sensor;
 pub mod stride;
 
 use crate::config::Config;
@@ -15,7 +14,7 @@ use crate::lockin::provenance::LockinProvenance;
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
-use crate::lockin::sensor::{SensorOutput, run_sensor};
+use crate::sensor::{SensorOutput, run_sensor};
 use crate::utils::time_axis::TimeAxisRef;
 use crate::utils::waveform::read_all_fetched_waveforms;
 use crate::{plot, ui};

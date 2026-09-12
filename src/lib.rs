@@ -13,6 +13,7 @@ mod phase;
 pub mod plot;
 pub mod python;
 mod signal;
+pub mod sensor;
 #[cfg(test)]
 mod test_support;
 mod ui;

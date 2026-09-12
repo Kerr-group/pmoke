@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::config::ValidationTarget;
-use crate::lockin::sensor::run;
+use crate::sensor::run;
 use anyhow::Result;
 
 pub fn sensor(cfg: &Config) -> Result<()> {
