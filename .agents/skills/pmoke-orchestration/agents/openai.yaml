@@ -1,0 +1,4 @@
+interface:
+  display_name: "pmoke Orchestration"
+  short_description: "Run the 4-role board orchestration for pmoke under repository policy"
+  default_prompt: "Use $pmoke-orchestration to triage, implement, review, merge, or reap pmoke Kanban work."
