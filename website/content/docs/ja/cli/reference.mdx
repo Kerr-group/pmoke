@@ -30,9 +30,10 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 | [`pmoke reference`](#pmoke-reference) | 記録したEOM駆動正弦波をフィッティング | core |
 | [`pmoke sensor`](#pmoke-sensor) | センサー信号解析 | core |
 | [`pmoke li`](#pmoke-li) | 数値lock-in解析 | core |
+| [`pmoke signal`](#pmoke-signal) | lock-in窓での生信号channel平均 | core |
 | [`pmoke phase`](#pmoke-phase) | lock-in解析の参照位相回転 | core |
 | [`pmoke moke`](#pmoke-moke) | Kerr角度を計算 | core |
-| [`pmoke analyze`](#pmoke-analyze) | reference・sensor・lock-in・phase・mokeの全解析 | core |
+| [`pmoke analyze`](#pmoke-analyze) | reference・sensor・lock-in・signal・phase・mokeの全解析 | core |
 | [`pmoke process`](#pmoke-process) | 手動pulse trigger後のfetch・lock-in・phase・moke自動解析 | hw-core |
 | [`pmoke auto`](#pmoke-auto) | 完全自動測定・解析 | hw-core |
 | [`pmoke completions`](#pmoke-completions) | shell completion scriptの生成 | core |
@@ -474,6 +475,19 @@ pmoke li [-h, --help]
 | `-h, --help` | - | - | help表示 | - |
 
 
+## `pmoke signal`
+
+lock-in窓での生信号channel平均
+
+```text
+pmoke signal [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | help表示 | - |
+
+
 ## `pmoke phase`
 
 lock-in解析の参照位相回転
@@ -502,7 +516,7 @@ pmoke moke [-h, --help]
 
 ## `pmoke analyze`
 
-reference・sensor・lock-in・phase・mokeの全解析
+reference・sensor・lock-in・signal・phase・mokeの全解析
 
 ```text
 pmoke analyze [-h, --help]

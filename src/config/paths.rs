@@ -132,6 +132,18 @@ impl ArtifactPaths {
         self.analysis_dir().join("moke").join("moke.npy")
     }
 
+    pub fn signal_dir(&self) -> PathBuf {
+        self.analysis_dir().join("signal")
+    }
+
+    pub fn signal_csv(&self) -> PathBuf {
+        self.signal_dir().join("signal.csv")
+    }
+
+    pub fn signal_npy(&self) -> PathBuf {
+        self.signal_dir().join("signal.npy")
+    }
+
     pub fn plot_dir(&self) -> PathBuf {
         self.analysis_dir().join("plots")
     }

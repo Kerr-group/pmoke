@@ -344,10 +344,11 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Fit the recorded EOM-drive sine wave" => "記録したEOM駆動正弦波をフィッティング",
         "Analyze the sensor signal" => "センサー信号解析",
         "Run numerical lock-in analysis" => "数値lock-in解析",
+        "Average raw signal channels over the lock-in window" => "lock-in窓での生信号channel平均",
         "Rotate the reference phase for lock-in analysis" => "lock-in解析の参照位相回転",
         "Calculate the Kerr angle" => "Kerr角度を計算",
-        "Run all analysis steps: reference, sensor, lock-in, phase, moke" => {
-            "reference・sensor・lock-in・phase・mokeの全解析"
+        "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke" => {
+            "reference・sensor・lock-in・signal・phase・mokeの全解析"
         }
         "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)" => {
             "手動pulse trigger後のfetch・lock-in・phase・moke自動解析"

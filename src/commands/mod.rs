@@ -26,6 +26,7 @@ pub mod run_dir;
 pub mod screenshot;
 pub mod sensor;
 pub mod show;
+pub mod signal;
 #[cfg(feature = "hw-core")]
 pub mod single;
 #[cfg(feature = "hw-core")]

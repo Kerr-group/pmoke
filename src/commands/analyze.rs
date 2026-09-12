@@ -81,6 +81,20 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results, reference, provenance) =
         run_li(&cfg_staging, &data.t, &data.channels)?;
 
+    if !cfg_staging.signals.is_empty() {
+        crate::signal::run_signal_analysis(
+            &cfg_staging,
+            &t_stride,
+            &sensor_rate_stride,
+            &sensor_integral_stride,
+            &data.t,
+            &data.channels,
+            reference.f_ref,
+        )?;
+    } else {
+        ui::skipped("signal analysis: no [[signals]] entries specified");
+    }
+
     // run phase analysis here
     let ch = cfg_staging.phase_signal_ch();
 

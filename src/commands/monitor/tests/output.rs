@@ -437,7 +437,7 @@ fn analyze_timeline_marks_done_current_and_pending_steps() {
             .expect("analyze has timeline stages");
 
     assert_eq!(timeline.done, 2);
-    assert_eq!(timeline.total, 6);
+    assert_eq!(timeline.total, 7);
     assert_eq!(timeline.steps[0].state, TimelineStepState::Done);
     assert_eq!(timeline.steps[1].state, TimelineStepState::Done);
     assert_eq!(timeline.steps[2].state, TimelineStepState::Current);

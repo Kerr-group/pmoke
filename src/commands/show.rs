@@ -83,6 +83,21 @@ fn print_config_summary(config: &Config) {
                     config.moke.moke_type, config.moke.use_sensor_ch, config.moke.factor
                 ),
             ],
+            vec![
+                "Signals".to_string(),
+                if config.signals.is_empty() {
+                    "not configured".to_string()
+                } else {
+                    config
+                        .signals
+                        .iter()
+                        .map(|signal| {
+                            format!("ch{} {} ({})", signal.channel, signal.label, signal.unit)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            ],
         ],
     );
 

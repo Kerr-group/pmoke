@@ -99,6 +99,8 @@ pub enum Command {
     Sensor,
     /// Run numerical lock-in analysis
     Li,
+    /// Average raw signal channels over the lock-in window
+    Signal,
     /// Rotate the reference phase for lock-in analysis
     Phase,
     /// Calculate the Kerr angle
@@ -106,7 +108,7 @@ pub enum Command {
     /// Deprecated alias for `moke`
     #[command(hide = true)]
     Kerr,
-    /// Run all analysis steps: reference, sensor, lock-in, phase, moke
+    /// Run all analysis steps: reference, sensor, lock-in, signal, phase, moke
     Analyze,
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
     #[cfg(feature = "hw-core")]

@@ -6,6 +6,7 @@ pub fn build_channel_list(cfg: &Config) -> Result<Vec<u8>> {
 
     channels.extend(cfg.roles.sensor_ch.iter().copied());
     channels.extend(cfg.roles.signal_ch.iter().copied());
+    channels.extend(cfg.signals.iter().map(|signal| signal.channel));
     channels.push(cfg.roles.reference_ch);
 
     channels.sort();

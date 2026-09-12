@@ -463,6 +463,7 @@ pub enum ValidationTarget {
     Reference,
     Sensor,
     Li,
+    Signal,
     Phase,
     Moke,
     Analyze,

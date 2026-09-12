@@ -256,6 +256,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         ValidationTarget::Reference
         | ValidationTarget::Sensor
         | ValidationTarget::Li
+        | ValidationTarget::Signal
         | ValidationTarget::Phase
         | ValidationTarget::Moke
         | ValidationTarget::Analyze => {}
@@ -294,6 +295,15 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_signal_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
             validate_analysis_input_exists(cfg)?;
+        }
+        ValidationTarget::Signal => {
+            validate_oscilloscope_required(cfg)?;
+            validate_reference_roles(cfg)?;
+            validate_sensor_roles(cfg)?;
+            validate_signal_roles(cfg)?;
+            validate_sensor_metadata(cfg)?;
+            validate_analysis_input_exists(cfg)?;
+            validate_signal_entries(cfg)?;
         }
         ValidationTarget::Phase => {
             validate_signal_roles(cfg)?;
@@ -373,6 +383,13 @@ fn validate_sensor_roles(cfg: &Config) -> Result<()> {
 fn validate_signal_roles(cfg: &Config) -> Result<()> {
     if cfg.roles.signal_ch.is_empty() {
         bail!("roles.signal_ch must contain at least one channel");
+    }
+    Ok(())
+}
+
+fn validate_signal_entries(cfg: &Config) -> Result<()> {
+    if cfg.signals.is_empty() {
+        bail!("no [[signals]] entries are configured");
     }
     Ok(())
 }
