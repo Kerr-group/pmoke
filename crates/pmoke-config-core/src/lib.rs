@@ -521,11 +521,15 @@ fn validate_channels(config: &ConfigV6, report: &mut ValidationReport) {
             SensorScale::Factor(_) => {}
         }
     }
-    assign(
-        config.reference.channel,
-        "reference.channel".to_string(),
-        report,
-    );
+    // A zero reference channel is the unspecified sentinel: it assigns no
+    // hardware channel and is rejected later by reference-gated targets.
+    if config.reference.channel != 0 {
+        assign(
+            config.reference.channel,
+            "reference.channel".to_string(),
+            report,
+        );
+    }
     for (index, channel) in config.lockin.channels.iter().copied().enumerate() {
         assign(channel, format!("lockin.channels[{index}]"), report);
     }

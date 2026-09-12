@@ -1,9 +1,9 @@
 use numpy::PyUntypedArrayMethods;
 use pmoke::config::{Lockin, LockinLpfKind, Plot, PlotDecimation};
 use pmoke::lockin::lockin_core::LockinProcessor;
-use pmoke::lockin::sensor::pulse_calculator::PulseIntegralCalculator;
 use pmoke::plot::decimate_xy_2d;
 use pmoke::python;
+use pmoke::sensor::pulse_calculator::PulseIntegralCalculator;
 use pmoke::utils::raw_csv::{RawCsvChannel, write_raw_csv};
 use pmoke::utils::raw_data::RawTimeAxis;
 use pmoke::utils::time_axis::WaveformTime;

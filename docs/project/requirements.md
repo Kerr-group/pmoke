@@ -48,6 +48,11 @@ The following surfaces are part of the product contract:
   over that same lock-in support window on the lock-in output grid; a channel
   listed in `[[signals]]` must not overlap sensor, reference, or lock-in
   channels.
+- The sensor stage needs no reference channel: it writes the stride-decimated
+  `sensor/sensor.csv` (time plus `{label} rate` and `{label} integral` columns)
+  and returns full-rate series that the lock-in stage strides onto its own
+  grid. A zero reference channel is the unspecified sentinel, rejected by
+  reference-gated stages.
 - Canonical acquisition and analysis artifacts use the versioned run layout,
   immutable configuration snapshots, checksums, and transactional publication.
   Legacy inputs remain compatibility behavior only where the current changelog

@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::constants::T_HEADER;
-use crate::lockin::sensor::extract_sensor_metadata;
+use crate::sensor::extract_sensor_metadata;
 use crate::utils::csv::write_csv;
 use anyhow::{Result, bail};
 use std::path::Path;

@@ -4,6 +4,12 @@
 
 ### Changes
 
+- `pmoke sensor` no longer requires a reference channel: it emits
+  `sensor/sensor.csv` (stride-decimated rate/integral series shared with the
+  sensor plots) with NPY export, and a zero reference channel is accepted as
+  the unspecified sentinel (reference-gated stages still reject it). The
+  sensor module moves from `src/lockin/sensor` to top-level `src/sensor`.
+
 - New `pmoke signal` command and `[[signals]]` readout: boxcar-averaged
   scope channels over the lock-in window, emitted as `signal/signal.csv`
   with time-trace plots and NPY export.

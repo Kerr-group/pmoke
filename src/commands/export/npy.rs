@@ -339,7 +339,8 @@ fn looks_like_canonical_analysis_csv(file: &str) -> bool {
     (file.starts_with("lockin/")
         || file.starts_with("kerr/")
         || file.starts_with("moke/")
-        || file.starts_with("signal/"))
+        || file.starts_with("signal/")
+        || file.starts_with("sensor/"))
         && file.ends_with(".csv")
 }
 
@@ -352,7 +353,7 @@ fn validate_canonical_analysis_csv_path(file: &str) -> Result<()> {
     let valid_root = matches!(
         components.first(),
         Some(std::path::Component::Normal(root))
-            if *root == "lockin" || *root == "kerr" || *root == "moke" || *root == "signal"
+            if *root == "lockin" || *root == "kerr" || *root == "moke" || *root == "signal" || *root == "sensor"
     );
     if path.is_absolute()
         || components.len() != 2
@@ -375,6 +376,7 @@ fn canonical_csv_npy_pairs(
         analysis_dir.join("kerr"),
         analysis_dir.join("moke"),
         analysis_dir.join("signal"),
+        analysis_dir.join("sensor"),
     ] {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
@@ -501,6 +503,9 @@ fn export_into(cfg: &Config, staging: &Path) -> Result<ExportMetadata> {
     sources.push((resolver.moke_csv(), format!("{MOKE_NAME}_results.csv")));
     if !cfg.signals.is_empty() {
         sources.push((resolver.signal_csv(), "signal_results.csv".to_string()));
+    }
+    if !cfg.roles.sensor_ch.is_empty() {
+        sources.push((resolver.sensor_csv(), "sensor_results.csv".to_string()));
     }
 
     let mut arrays = Vec::with_capacity(sources.len());
