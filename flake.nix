@@ -46,21 +46,18 @@
               });
               gsplot = pythonPackages.buildPythonPackage rec {
                 pname = "gsplot";
-                version = "0.2.0";
+                version = "0.4.2";
                 pyproject = true;
 
                 src = pythonPackages.fetchPypi {
                   inherit pname version;
-                  hash = "sha256-pZQmnAA4DRAAWQAD4mT3R8XSZYcRygsTVZoyT8XWBgM=";
+                  hash = "sha256-ufR/knpI1bz9SnAbCob6foD3fFX4wU95gl6R+3ZW9BY=";
                 };
 
                 build-system = [ pythonPackages.poetry-core ];
                 dependencies = with pythonPackages; [
                   matplotlib
                   numpy
-                  pyyaml
-                  rich
-                  types-pyyaml
                 ];
 
                 postInstall = ''

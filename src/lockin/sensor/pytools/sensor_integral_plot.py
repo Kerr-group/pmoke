@@ -1,21 +1,4 @@
-def _load_gsplot():
-    import importlib
-    import json
-    import os
-    import tempfile
-
-    previous = os.getcwd()
-    with tempfile.TemporaryDirectory(prefix="pmoke-gsplot-") as directory:
-        with open(os.path.join(directory, "gsplot.json"), "w") as config:
-            json.dump({"metadata": False}, config)
-        os.chdir(directory)
-        try:
-            return importlib.import_module("gsplot")
-        finally:
-            os.chdir(previous)
-
-
-gs = _load_gsplot()
+import gsplot as gs
 from numpy.typing import NDArray
 
 
@@ -50,13 +33,15 @@ class SensorIntegralPlotter:
     ):
         ch_num = len(index_arr)
         mosaic = "".join([chr(65 + i) for i in range(ch_num)])
-        axs = gs.axes(False, size=(6 * ch_num, 6), mosaic=mosaic, ion=interactive)
+        fig, axd = gs.subplots(mosaic=mosaic, size=(6 * ch_num, 6), unit="in")
+        axs = list(axd.values())
         for i, yi in enumerate(y):
             gs.line(axs[i], t * 1e6, yi, marker="", linestyle="-")
-
         label = [
             ["$t$ ($\\mu$s)", f"Ch {index_arr[i]} : {label_arr[i]} ({unit_arr[i]})"]
             for i in range(ch_num)
         ]
-        gs.label(label)
+        for ax, record in zip(axs, label):
+            gs.label(ax, record[0], record[1])
+            ax.grid()
         finish_plot(output_path, interactive)

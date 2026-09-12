@@ -1,24 +1,7 @@
 import numpy as np
 from numpy.typing import NDArray
 from scipy.special import jn
-
-
-def _load_gsplot():
-    import importlib
-    import json
-    import os
-    import tempfile
-
-    previous = os.getcwd()
-    with tempfile.TemporaryDirectory(prefix="pmoke-gsplot-") as directory:
-        with open(os.path.join(directory, "gsplot.json"), "w") as config:
-            json.dump({"metadata": False}, config)
-        os.chdir(directory)
-        try:
-            return importlib.import_module("gsplot")
-        finally:
-            os.chdir(previous)
-
+import gsplot as gs
 
 def finish_plot(output_path, interactive: bool):
     import matplotlib.pyplot as plt
@@ -32,7 +15,6 @@ def finish_plot(output_path, interactive: bool):
     elif output_path is not None:
         plt.savefig(output_path, bbox_inches="tight")
         plt.close("all")
-
 
 def decimation_indices(values: NDArray, max_points: int, method: str) -> NDArray:
     length = len(values)
@@ -61,7 +43,6 @@ def decimation_indices(values: NDArray, max_points: int, method: str) -> NDArray
     if unique.size <= max_points:
         return unique
     return unique[np.linspace(0, unique.size - 1, max_points, dtype=int)]
-
 
 class MokeStandardAnalyser:
     #: Shared modulation depth with the angle computation (D8).
@@ -125,7 +106,6 @@ class MokeStandardAnalyser:
         plot_error = None
         if save or interactive:
             try:
-                gs = _load_gsplot()
 
                 indices = decimation_indices(angle, max_points, decimation)
                 t_plot = t[indices]
@@ -133,26 +113,18 @@ class MokeStandardAnalyser:
                 angle_plot = angle[indices]
                 vm_plot = vm[indices]
 
-                axs = gs.axes(
-                    True,
-                    size=(12, 6),
-                    mosaic="AB",
-                    ion=interactive,
-                )
+                fig, axd = gs.subplots(mosaic="AB", size=(12, 6), unit="in")
+                axs = list(axd.values())
 
-                gs.scatter_colormap(axs[0], x_plot, angle_plot * 1e3, t_plot)
-                gs.scatter_colormap(axs[1], x_plot, vm_plot * 1e3, t_plot)
+                gs.cmap_scatter(axs[0], x_plot, angle_plot * 1e3, t_plot)
+                gs.cmap_scatter(axs[1], x_plot, vm_plot * 1e3, t_plot)
                 axs[0].grid()
 
                 title = fig_name + " using Standard"
-                gs.title(title)
+                gs.suptitle(fig, title)
 
-                gs.label(
-                    [
-                        [f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"],
-                        [f"{xlabel}", "$V_{\\rm m}$ (mV)"],
-                    ]
-                )
+                gs.label(axs[0], xlabel, "$\\theta_{\\rm K}$ (mrad)")
+                gs.label(axs[1], xlabel, "$V_{\\rm m}$ (mV)")
                 finish_plot(output_path, interactive)
             except Exception as exc:
                 plot_error = str(exc)
