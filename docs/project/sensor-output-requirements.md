@@ -55,7 +55,9 @@ without a reference channel. No code is copied from elsewhere.
   `li_stride_2d`; its return shape and all downstream consumers are unchanged.
 - D5 `ValidationTarget::Sensor` drops `reference_roles` (keeps oscilloscope,
   sensor roles/metadata, analysis input). Standalone sensor works with no
-  reference channel or recording.
+  reference channel or recording. Load-time validation treats
+  `reference_ch = 0` as the unspecified sentinel so a reference-free file
+  loads; Li/Reference targets still reject it via `reference_roles`.
 - D6 Provenance: `sensor/` CSVs register as `sensor`-kind artifacts with output
   checksums and NPY targets, mirroring the `signal` pattern. `published_through`
   is unaffected (sensor runs first; li/phase/moke dominate). Sensor stage keeps

@@ -296,6 +296,7 @@ fn describe_analysis_artifacts(
         dir.join("kerr"),
         dir.join("moke"),
         dir.join("signal"),
+        dir.join("sensor"),
     ] {
         if !entry.exists() {
             continue;
@@ -408,6 +409,7 @@ fn describe_plot_artifacts(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
             ("kerr", _) => Some(vec!["kerr/kerr.csv".to_string()]),
             ("moke", _) => Some(vec!["moke/moke.csv".to_string()]),
             ("signal", _) => Some(vec!["signal/signal.csv".to_string()]),
+            ("sensor", _) => Some(vec!["sensor/sensor.csv".to_string()]),
             _ => None,
         };
         artifacts.push(AnalysisArtifact {
@@ -497,6 +499,9 @@ fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
     }
     if stem == "signal" {
         return Ok(("signal".to_string(), None));
+    }
+    if stem == "sensor" {
+        return Ok(("sensor".to_string(), None));
     }
     let channel = stem
         .strip_prefix("ch")

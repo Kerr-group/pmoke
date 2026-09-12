@@ -1414,7 +1414,11 @@ fn validate_current_fields(
     for (index, sensor) in sensors.iter().enumerate() {
         assign(sensor.channel, format!("sensors[{index}].channel"));
     }
-    assign(reference.channel, "reference.channel".to_string());
+    // A zero reference channel is the unspecified sentinel: it assigns no
+    // hardware channel and is rejected later by reference-gated targets.
+    if reference.channel != 0 {
+        assign(reference.channel, "reference.channel".to_string());
+    }
     for (index, &channel) in signal_channels.iter().enumerate() {
         assign(channel, format!("{signal_path}[{index}]"));
     }
@@ -1422,7 +1426,7 @@ fn validate_current_fields(
         assign(signal.channel, format!("signals[{index}].channel"));
     }
 
-    if !channel_in_range(reference.channel) {
+    if reference.channel != 0 && !channel_in_range(reference.channel) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("reference.channel".to_string()),

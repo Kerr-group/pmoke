@@ -144,7 +144,7 @@ pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
             ));
         }
     }
-    if !seen.contains(&cfg.roles.reference_ch) {
+    if cfg.roles.reference_ch != 0 && !seen.contains(&cfg.roles.reference_ch) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("roles.reference_ch".to_string()),
