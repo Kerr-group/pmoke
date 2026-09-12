@@ -7,7 +7,7 @@ description: pmoke config schema version 5の自動生成fieldリファレンス
 
 > 型付きconfig metadata registryから自動生成。手動編集は上書き対象。
 
-<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={5} />
+<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={6} />
 
 [JSON Schema](https://kerr-group.github.io/pmoke/config.schema.json) · [`pmoke config explain`](../../cli/reference#pmoke-config-explain)
 
@@ -93,14 +93,14 @@ description: pmoke config schema version 5の自動生成fieldリファレンス
 | --- | --- | :---: | --- | --- |
 | `phase` | `table` | 必須 | - | 位相回転設定 第1から第6高調波のoffset。 |
 | `phase.offsets` | `float or expression array` · `rad` | 必須 | - | 6高調波の位相offset pi/2などの数式指定に対応するrad値。 **制約:** must contain exactly 6 finite values |
-## `kerr`
+## `moke`
 
 | path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |
 | --- | --- | :---: | --- | --- |
-| `kerr` | `table` | 必須 | - | Kerr角度の変換設定 校正用センサー、計算方法、最終係数を指定。 |
-| `kerr.sensor` | `integer` | 必須 | - | Kerr角度の校正に使用するセンサーチャンネル sensors配列に存在するチャンネルを指定。 **制約:** must reference sensors[].channel |
-| `kerr.method` | `string enum` | 必須 | `standard`, `harmonics` | Kerr角度の計算方法 standardまたはharmonics実装を選択。 |
-| `kerr.factor` | `float` | 必須 | - | Kerr角度の最終変換係数 選択したKerr角度計算後に乗算する値。 **制約:** must be finite |
+| `moke` | `table` | 必須 | - | Kerr角度の変換設定 校正用センサー、計算方法、最終係数を指定。 |
+| `moke.sensor` | `integer` | 必須 | - | Kerr角度の校正に使用するセンサーチャンネル sensors配列に存在するチャンネルを指定。 **制約:** must reference sensors[].channel |
+| `moke.method` | `string enum` | 必須 | `standard`, `harmonics` | Kerr角度の計算方法 standardまたはharmonics実装を選択。 |
+| `moke.factor` | `float` | 必須 | - | Kerr角度の最終変換係数 選択したKerr角度計算後に乗算する値。 **制約:** must be finite |
 ## `plot`
 
 | path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |

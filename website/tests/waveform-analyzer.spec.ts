@@ -36,7 +36,7 @@ for (const locale of ['en', 'ja'] as const) {
     await page.goto(`/pmoke/${locale}/docs/interactive/waveform-analyzer/`);
     const analyzer = page.locator('.waveform-analyzer');
     await expect(analyzer).toHaveAttribute('data-state', 'complete', { timeout: 20_000 });
-    await expect(analyzer.locator('canvas')).toHaveCount(4);
+    await expect(analyzer.locator('canvas')).toHaveCount(5);
     await expect(analyzer.getByText(locale === 'ja' ? 'ネイティブ版と数値一致' : 'Native-equivalent')).toBeVisible();
     await expect(analyzer.getByText(/pmoke-web-wasm\/0\.1\.0/u)).toBeVisible();
     const nonBlank = await analyzer.locator('canvas').evaluateAll((canvases) =>
@@ -93,7 +93,7 @@ test('maximum demo remains responsive and reports bounded output', async ({ page
   expect(csv).toContain('# sample_rate_hz=100000');
   expect(csv).toContain('# first_input_index=');
   expect(csv).toContain('# warnings=');
-  expect(csv).toContain('time_s,x_v,y_v,in_phase_v,out_of_phase_v,magnitude_v,phase_rad,kerr_rad');
+  expect(csv).toContain('time_s,x_v,y_v,in_phase_v,out_of_phase_v,magnitude_v,phase_rad,angle_rad,vm_v');
 });
 
 test('analysis cancellation preserves controls and recovers the worker', async ({ page }, testInfo) => {
@@ -198,8 +198,8 @@ test('local CSV stays in the worker and rejects a nonuniform axis', async ({ pag
     const time = index * 1e-5;
     const value = coefficients.reduce((total, coefficient, offset) => {
       const harmonic = offset + 1;
-      const kerrTerm = harmonic % 2 === 0 ? Math.cos(0.02) : Math.sin(0.02);
-      return total + 2 * coefficient * kerrTerm * Math.sin(harmonic * 2 * Math.PI * 1000 * time + 0.2);
+      const angleTerm = harmonic % 2 === 0 ? Math.cos(0.02) : Math.sin(0.02);
+      return total + 2 * coefficient * angleTerm * Math.sin(harmonic * 2 * Math.PI * 1000 * time + 0.2);
     }, 0);
     validRows.push(`${time},${value}`);
   }

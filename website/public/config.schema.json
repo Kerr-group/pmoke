@@ -2,7 +2,7 @@
   "$id": "https://kerr-group.github.io/pmoke/config.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "pmoke 0.4.1 configuration schema v5",
+  "description": "pmoke 0.4.1 configuration schema v6",
   "properties": {
     "data": {
       "additionalProperties": false,
@@ -85,50 +85,6 @@
         "required by trigger, autoshot, automeasure, and auto"
       ],
       "x-pmoke-path": "generator"
-    },
-    "kerr": {
-      "additionalProperties": false,
-      "description": "Kerr-angle conversion settings. Specifies the calibration sensor, calculation method, and final factor.",
-      "properties": {
-        "factor": {
-          "description": "Final Kerr-angle conversion factor. Applied after the selected Kerr-angle calculation.",
-          "title": "Final Kerr-angle conversion factor",
-          "type": "number",
-          "x-constraints": [
-            "must be finite"
-          ],
-          "x-pmoke-path": "kerr.factor"
-        },
-        "method": {
-          "description": "Kerr-angle calculation method. Selects the standard or harmonics-based analysis implementation.",
-          "enum": [
-            "standard",
-            "harmonics"
-          ],
-          "title": "Kerr-angle calculation method",
-          "type": "string",
-          "x-pmoke-path": "kerr.method"
-        },
-        "sensor": {
-          "description": "Sensor channel used for Kerr-angle calibration. The channel must also exist in the sensors array.",
-          "maximum": 8,
-          "minimum": 1,
-          "title": "Sensor channel used for Kerr-angle calibration",
-          "type": "integer",
-          "x-constraints": [
-            "must reference sensors[].channel"
-          ],
-          "x-pmoke-path": "kerr.sensor"
-        }
-      },
-      "required": [
-        "sensor",
-        "method",
-        "factor"
-      ],
-      "title": "Kerr-angle conversion settings",
-      "type": "object",
-      "x-pmoke-path": "kerr"
     },
     "lockin": {
       "additionalProperties": false,
@@ -300,6 +256,50 @@
       "title": "Numerical lock-in settings",
       "type": "object",
       "x-pmoke-path": "lockin"
+    },
+    "moke": {
+      "additionalProperties": false,
+      "description": "MOKE analysis settings. Specifies the calibration sensor, calculation method, and final factor.",
+      "properties": {
+        "factor": {
+          "description": "Final Kerr-angle conversion factor. Applied after the selected Kerr-angle calculation.",
+          "title": "Final Kerr-angle conversion factor",
+          "type": "number",
+          "x-constraints": [
+            "must be finite"
+          ],
+          "x-pmoke-path": "moke.factor"
+        },
+        "method": {
+          "description": "Kerr-angle calculation method. Selects the standard or harmonics-based analysis implementation.",
+          "enum": [
+            "standard",
+            "harmonics"
+          ],
+          "title": "Kerr-angle calculation method",
+          "type": "string",
+          "x-pmoke-path": "moke.method"
+        },
+        "sensor": {
+          "description": "Sensor channel used for Kerr-angle calibration. The channel must also exist in the sensors array.",
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Sensor channel used for Kerr-angle calibration",
+          "type": "integer",
+          "x-constraints": [
+            "must reference sensors[].channel"
+          ],
+          "x-pmoke-path": "moke.sensor"
+        }
+      },
+      "required": [
+        "sensor",
+        "method",
+        "factor"
+      ],
+      "title": "MOKE analysis settings",
+      "type": "object",
+      "x-pmoke-path": "moke"
     },
     "phase": {
       "additionalProperties": false,
@@ -689,7 +689,7 @@
       "x-pmoke-path": "sensors"
     },
     "version": {
-      "const": 5,
+      "const": 6,
       "description": "Configuration schema version. New and migrated configurations use schema version 5.",
       "title": "Configuration schema version",
       "type": "integer",
@@ -707,7 +707,7 @@
     "reference",
     "lockin",
     "phase",
-    "kerr"
+    "moke"
   ],
   "title": "pmoke config.toml",
   "type": "object",
@@ -1456,11 +1456,11 @@
         "default": null,
         "details_en": "Specifies the calibration sensor, calculation method, and final factor.",
         "details_ja": "校正用センサー、計算方法、最終係数を指定。",
-        "id": "kerr",
-        "path": "kerr",
+        "id": "moke",
+        "path": "moke",
         "required": "required",
         "since": 4,
-        "summary_en": "Kerr-angle conversion settings.",
+        "summary_en": "MOKE analysis settings.",
         "summary_ja": "Kerr角度の変換設定",
         "units": null,
         "valid_values": [],
@@ -1473,8 +1473,8 @@
         "default": null,
         "details_en": "The channel must also exist in the sensors array.",
         "details_ja": "sensors配列に存在するチャンネルを指定。",
-        "id": "kerr.sensor",
-        "path": "kerr.sensor",
+        "id": "moke.sensor",
+        "path": "moke.sensor",
         "required": "required",
         "since": 4,
         "summary_en": "Sensor channel used for Kerr-angle calibration.",
@@ -1488,8 +1488,8 @@
         "default": null,
         "details_en": "Selects the standard or harmonics-based analysis implementation.",
         "details_ja": "standardまたはharmonics実装を選択。",
-        "id": "kerr.method",
-        "path": "kerr.method",
+        "id": "moke.method",
+        "path": "moke.method",
         "required": "required",
         "since": 4,
         "summary_en": "Kerr-angle calculation method.",
@@ -1508,8 +1508,8 @@
         "default": null,
         "details_en": "Applied after the selected Kerr-angle calculation.",
         "details_ja": "選択したKerr角度計算後に乗算する値。",
-        "id": "kerr.factor",
-        "path": "kerr.factor",
+        "id": "moke.factor",
+        "path": "moke.factor",
         "required": "required",
         "since": 4,
         "summary_en": "Final Kerr-angle conversion factor.",
@@ -1627,10 +1627,10 @@
     ],
     "format_version": 1,
     "pmoke_version": "0.4.1",
-    "schema_version": 5,
+    "schema_version": 6,
     "semantic_constraints": [
       "channel assignments must be unique across sensors, reference, and lock-in signals",
-      "kerr.sensor must reference a configured sensor channel",
+      "moke.sensor must reference a configured sensor channel",
       "pulse background windows must not overlap",
       "lockin.filter must use the active boxcar_legacy fields only"
     ]

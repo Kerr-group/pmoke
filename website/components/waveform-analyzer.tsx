@@ -26,14 +26,14 @@ type Parameters = {
   amplitude: number;
   signalPhaseRad: number;
   noiseRms: number;
-  kerrAngleRad: number;
+  angleRad: number;
   seed: number;
   referencePhaseRad: number;
   halfWindowCycles: number;
   strideSamples: number;
   harmonic: number;
   rotationRad: number;
-  kerrFactor: number;
+  angleFactor: number;
 };
 
 type AnalysisLimits = {
@@ -77,6 +77,7 @@ type AnalysisResult = {
       Float64Array,
       Float64Array,
       Float64Array,
+      Float64Array,
     ];
     response: { frequency: Float64Array; magnitude: Float64Array };
   };
@@ -88,7 +89,8 @@ type AnalysisResult = {
     outOfPhase: Float64Array;
     magnitude: Float64Array;
     phase: Float64Array;
-    kerr: Float64Array;
+    angle: Float64Array;
+    vm: Float64Array;
   };
 };
 
@@ -105,14 +107,14 @@ const DEFAULTS: Parameters = {
   amplitude: 1,
   signalPhaseRad: 0.2,
   noiseRms: 0.002,
-  kerrAngleRad: 0.01,
+  angleRad: 0.01,
   seed: 42,
   referencePhaseRad: 0,
   halfWindowCycles: 1,
   strideSamples: 20,
   harmonic: 1,
   rotationRad: 0.2,
-  kerrFactor: 1,
+  angleFactor: 1,
 };
 
 const COPY = {
@@ -122,7 +124,7 @@ const COPY = {
     retry: 'Reload core', loading: 'Loading analysis core', ready: 'Ready', running: 'ANALYZING',
     complete: 'PARITY VERIFIED', error: 'Analysis unavailable', progress: 'RUN PROGRESS',
     signal: 'INPUT WAVEFORM', lockin: 'LOCK-IN X / Y', polar: 'MAGNITUDE / PHASE',
-    kerr: 'KERR ANGLE / FILTER RESPONSE', controls: 'ANALYSIS CONTROL', result: 'RUN METRICS',
+    kerr: 'KERR ANGLE / FILTER RESPONSE', vm: 'MONITOR VOLTAGE', controls: 'ANALYSIS CONTROL', result: 'RUN METRICS',
     filter: 'FILTER', filterValue: 'Boxcar legacy', parity: 'Native-equivalent', unsupported: 'Outside parity scope',
     export: 'Export CSV', copy: 'Copy summary', copied: 'Summary copied', samples: 'Samples',
     sampleRate: 'Sample rate', frequency: 'Reference', amplitude: 'Amplitude', phase: 'Signal phase',
@@ -130,11 +132,11 @@ const COPY = {
     harmonic: 'Harmonic', rotation: 'Rotation', factor: 'Kerr factor', seed: 'Seed',
     elapsed: 'Runtime', inputRate: 'Input rate', outputRate: 'Output rate', enbw: 'Estimated ENBW', support: 'Support',
     cutoff: 'Cutoff', cutoffValue: 'N/A · boxcar', trim: 'Input trim', settling: 'Settling', settlingValue: 'N/A · boxcar',
-    modulation: 'Modulation depth', output: 'Output samples', kerrMedian: 'Median Kerr angle', inputUnit: 'signal', timeUnit: 'time (s)',
+    modulation: 'Modulation depth', output: 'Output samples', angleMedian: 'Median Kerr angle', vmMedian: 'Median Vm', inputUnit: 'signal', timeUnit: 'time (s)',
     responseUnit: 'frequency (Hz)', csvHint: 'time,signal or signal-only; uniform finite values',
     uploadLimit: '16 MiB / 1,000,000 samples', local: 'Browser-local processing',
     unsupportedList: 'legacy FIR/IIR · phase fitting · standard Kerr-angle calculation',
-    stagePrepare: 'Preparing waveform', stageLockin: 'Extracting lock-in harmonics', stageKerr: 'Calculating Kerr angle from harmonics',
+    stagePrepare: 'Preparing waveform', stageLockin: 'Extracting lock-in harmonics', stageMoke: 'Calculating Kerr angle from harmonics',
     stageDecimate: 'Decimating display data', stageComplete: 'Analysis complete',
     warningLong: 'Long boxcar support reduces time resolution.',
     warningSparse: 'Output sampling is sparse relative to the reference frequency.',
@@ -146,7 +148,7 @@ const COPY = {
     retry: 'コアを再読み込み', loading: '解析コアを読み込み中', ready: '実行待機', running: '解析中',
     complete: '数値一致を確認済み', error: '解析機能の利用不可', progress: '実行進捗',
     signal: '入力波形', lockin: 'LOCK-IN X / Y', polar: '振幅 / 位相',
-    kerr: 'KERR ANGLE / フィルター応答', controls: '解析制御', result: '実行指標',
+    kerr: 'KERR ANGLE / フィルター応答', vm: 'モニタ電圧', controls: '解析制御', result: '実行指標',
     filter: 'フィルター', filterValue: '従来型Boxcar', parity: 'ネイティブ版と数値一致',
     unsupported: '数値一致の対象外', export: 'CSVを出力', copy: '要約をコピー', copied: '要約コピー済み',
     samples: 'サンプル数', sampleRate: 'サンプルレート', frequency: '参照周波数', amplitude: '振幅',
@@ -154,11 +156,11 @@ const COPY = {
     stride: 'ストライド', harmonic: '高調波', rotation: '位相回転', factor: 'Kerr係数', seed: '乱数種',
     elapsed: '計算時間', inputRate: '入力レート', outputRate: '出力レート', enbw: '推定 ENBW', support: '窓幅',
     cutoff: 'カットオフ', cutoffValue: '対象外・Boxcar', trim: '入力トリム', settling: '整定時間', settlingValue: '対象外・Boxcar',
-    modulation: '変調深度', output: '出力点数', kerrMedian: 'Kerr角度の中央値', inputUnit: '信号', timeUnit: '時間 (s)',
+    modulation: '変調深度', output: '出力点数', angleMedian: 'Kerr角度の中央値', vmMedian: 'Vm中央値', inputUnit: '信号', timeUnit: '時間 (s)',
     responseUnit: '周波数 (Hz)', csvHint: 'time,signalまたは信号単列（有限・等間隔の値）',
     uploadLimit: '16 MiB / 1,000,000 点', local: 'ブラウザ内処理',
     unsupportedList: '過去のFIR/IIR（移行専用）・位相フィッティング・標準Kerr角度計算',
-    stagePrepare: '波形を準備中', stageLockin: 'Lock-in高調波を抽出中', stageKerr: '高調波成分からKerr角度を計算中',
+    stagePrepare: '波形を準備中', stageLockin: 'Lock-in高調波を抽出中', stageMoke: '高調波成分からKerr角度を計算中',
     stageDecimate: '表示用データを間引き中', stageComplete: '解析完了',
     warningLong: '長いBoxcar窓による時間分解能低下',
     warningSparse: '参照周波数に対して疎な出力サンプリング',
@@ -376,13 +378,13 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
       `# first_input_index=${result.metadata.firstInputIndex}`,
       `# last_input_index=${result.metadata.lastInputIndex}`,
       `# warnings=${result.warnings.join('|') || 'none'}`,
-      'time_s,x_v,y_v,in_phase_v,out_of_phase_v,magnitude_v,phase_rad,kerr_rad',
+      'time_s,x_v,y_v,in_phase_v,out_of_phase_v,magnitude_v,phase_rad,angle_rad,vm_v',
     ];
     for (let index = 0; index < result.export.time.length; index += 1) {
       rows.push([
         result.export.time[index], result.export.x[index], result.export.y[index],
         result.export.inPhase[index], result.export.outOfPhase[index], result.export.magnitude[index],
-        result.export.phase[index], result.export.kerr[index],
+        result.export.phase[index], result.export.angle[index], result.export.vm[index],
       ].map((value) => value.toExponential(12)).join(','));
     }
     const url = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' }));
@@ -466,12 +468,16 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
           ]} />
         <SignalPlot title={text.kerr} xLabel={text.timeUnit} yLabel="rad"
           x={result?.display.lockin[0]} traces={[
-            { values: result?.display.lockin[5], color: '#a67cff', label: 'KERR' },
+            { values: result?.display.lockin[5], color: '#a67cff', label: 'ANGLE' },
           ]} secondary={{
             x: result?.display.response.frequency,
             values: result?.display.response.magnitude,
             color: '#6b7d85', label: '|H(f)|', xLabel: text.responseUnit,
           }} />
+        <SignalPlot title={text.vm} xLabel={text.timeUnit} yLabel="V"
+          x={result?.display.lockin[0]} traces={[
+            { values: result?.display.lockin[6], color: '#4dd0a6', label: 'VM' },
+          ]} />
       </div>
 
       <div className="analyzer-lower">
@@ -493,8 +499,8 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
               disabled={sourceMode === 'csv'} onChange={(signalPhaseRad) => setParameters((current) => ({ ...current, signalPhaseRad }))} />
             <NumberControl label={text.noise} value={parameters.noiseRms} min={0} max={1} step={0.001} suffix="V"
               disabled={sourceMode === 'csv'} onChange={(noiseRms) => setParameters((current) => ({ ...current, noiseRms }))} />
-            <NumberControl label={text.angle} value={parameters.kerrAngleRad} min={-0.1} max={0.1} step={0.001} suffix="rad"
-              disabled={sourceMode === 'csv'} onChange={(kerrAngleRad) => setParameters((current) => ({ ...current, kerrAngleRad }))} />
+            <NumberControl label={text.angle} value={parameters.angleRad} min={-0.1} max={0.1} step={0.001} suffix="rad"
+              disabled={sourceMode === 'csv'} onChange={(angleRad) => setParameters((current) => ({ ...current, angleRad }))} />
             <NumberControl label={text.window} value={parameters.halfWindowCycles} min={0.25} max={10} step={0.25} suffix="cycle"
               onChange={(halfWindowCycles) => setParameters((current) => ({ ...current, halfWindowCycles }))} />
             <NumberControl label={text.stride} value={parameters.strideSamples} min={1} max={10_000} step={1}
@@ -503,8 +509,8 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
               onChange={(harmonic) => setParameters((current) => ({ ...current, harmonic: Math.round(harmonic) }))} />
             <NumberControl label={text.rotation} value={parameters.rotationRad} min={-3.14} max={3.14} step={0.05} suffix="rad"
               onChange={(rotationRad) => setParameters((current) => ({ ...current, rotationRad }))} />
-            <NumberControl label={text.factor} value={parameters.kerrFactor} min={-10} max={10} step={0.1}
-              onChange={(kerrFactor) => setParameters((current) => ({ ...current, kerrFactor }))} />
+            <NumberControl label={text.factor} value={parameters.angleFactor} min={-10} max={10} step={0.1}
+              onChange={(angleFactor) => setParameters((current) => ({ ...current, angleFactor }))} />
           </fieldset>
           <div className="unsupported-contract"><span>{text.unsupported}</span><strong>{text.unsupportedList}</strong></div>
         </section>
@@ -526,7 +532,8 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
             <Metric label={text.trim} value={result ? `${formatInteger(result.metadata.firstInputIndex)}…${formatInteger(result.metadata.lastInputIndex)}` : '—'} />
             <Metric label={text.settling} value={text.settlingValue} />
             <Metric label={text.modulation} value={result ? result.metadata.modulationDepth.toFixed(6) : '—'} />
-            <Metric label={text.kerrMedian} value={result ? `${median(result.export.kerr).toExponential(4)} rad` : '—'} accent />
+            <Metric label={text.angleMedian} value={result ? `${median(result.export.angle).toExponential(4)} rad` : '—'} accent />
+            <Metric label={text.vmMedian} value={result ? `${median(result.export.vm).toExponential(4)} V` : '—'} accent />
           </dl>
           {result?.warnings.length ? <ul className="analyzer-warnings">{result.warnings.map((warning) => <li key={warning}>{warningLabel(locale, warning)}</li>)}</ul> : null}
         </section>
@@ -603,11 +610,11 @@ function drawPlot(canvas: HTMLCanvasElement, x: Float64Array | undefined, traces
   context.fillStyle = dark ? '#82939b' : '#637579'; context.font = '10px JetBrains Mono, monospace'; context.fillText(maxY.toExponential(1), 2, top + 4); context.fillText(minY.toExponential(1), 2, bottom);
 }
 
-function summaryText(result: AnalysisResult) { return [`pmoke waveform analysis`, `source=${singleLine(result.source.name)}`, `samples=${result.source.samples}`, `sample_rate_hz=${result.source.sampleRateHz}`, `algorithm=${result.metadata.algorithm}`, `parity=${result.metadata.parity}`, `runtime_ms=${result.metadata.elapsedMs.toFixed(3)}`, `output_rate_hz=${result.metadata.outputRateHz}`, `estimated_enbw_hz=${result.metadata.estimatedEnbwHz}`, `support_s=${result.metadata.supportS}`, `first_input_index=${result.metadata.firstInputIndex}`, `last_input_index=${result.metadata.lastInputIndex}`, `warnings=${result.warnings.join('|') || 'none'}`, `kerr_median_rad=${median(result.export.kerr)}`].join('\n'); }
+function summaryText(result: AnalysisResult) { return [`pmoke waveform analysis`, `source=${singleLine(result.source.name)}`, `samples=${result.source.samples}`, `sample_rate_hz=${result.source.sampleRateHz}`, `algorithm=${result.metadata.algorithm}`, `parity=${result.metadata.parity}`, `runtime_ms=${result.metadata.elapsedMs.toFixed(3)}`, `output_rate_hz=${result.metadata.outputRateHz}`, `estimated_enbw_hz=${result.metadata.estimatedEnbwHz}`, `support_s=${result.metadata.supportS}`, `first_input_index=${result.metadata.firstInputIndex}`, `last_input_index=${result.metadata.lastInputIndex}`, `warnings=${result.warnings.join('|') || 'none'}`, `angle_median_rad=${median(result.export.angle)}`, `vm_median_v=${median(result.export.vm)}`].join('\n'); }
 function singleLine(value: string) { return value.replace(/[\r\n\t]+/gu, ' ').trim(); }
 function median(values: Float64Array) { if (!values.length) return Number.NaN; const copy = Array.from(values).sort((a, b) => a - b); const middle = Math.floor(copy.length / 2); return copy.length % 2 ? copy[middle] : 0.5 * (copy[middle - 1] + copy[middle]); }
 function formatInteger(value: number) { return new Intl.NumberFormat('en-US').format(value); }
 function formatRate(value: number) { return value >= 1e6 ? `${(value / 1e6).toFixed(3)} MHz` : value >= 1e3 ? `${(value / 1e3).toFixed(3)} kHz` : `${value.toFixed(2)} Hz`; }
 function formatDuration(value: number) { return value < 1e-3 ? `${(value * 1e6).toFixed(2)} µs` : `${(value * 1e3).toFixed(2)} ms`; }
-function progressLabel(locale: Locale, stage: string) { const text = COPY[locale]; if (stage.startsWith('lockin:')) return `${text.stageLockin} ${stage.slice(7)}`; return ({ prepare: text.stagePrepare, kerr: text.stageKerr, decimate: text.stageDecimate, complete: text.stageComplete } as Record<string, string>)[stage] ?? stage; }
+function progressLabel(locale: Locale, stage: string) { const text = COPY[locale]; if (stage.startsWith('lockin:')) return `${text.stageLockin} ${stage.slice(7)}`; return ({ prepare: text.stagePrepare, moke: text.stageMoke, decimate: text.stageDecimate, complete: text.stageComplete } as Record<string, string>)[stage] ?? stage; }
 function warningLabel(locale: Locale, warning: string) { const text = COPY[locale]; return ({ long_window: text.warningLong, sparse_output: text.warningSparse, local_input: text.warningLocal } as Record<string, string>)[warning] ?? warning; }

@@ -1388,8 +1388,8 @@
         "subcommands": []
       },
       {
-        "name": "kerr",
-        "path": "pmoke kerr",
+        "name": "moke",
+        "path": "pmoke moke",
         "summary": "Calculate the Kerr angle",
         "required_feature": null,
         "arguments": [
@@ -1413,7 +1413,7 @@
       {
         "name": "analyze",
         "path": "pmoke analyze",
-        "summary": "Run all analysis steps: reference, sensor, lock-in, phase, Kerr",
+        "summary": "Run all analysis steps: reference, sensor, lock-in, phase, moke",
         "required_feature": null,
         "arguments": [
           {
@@ -1436,7 +1436,7 @@
       {
         "name": "process",
         "path": "pmoke process",
-        "summary": "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)",
+        "summary": "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)",
         "required_feature": "hw-core",
         "arguments": [
           {
