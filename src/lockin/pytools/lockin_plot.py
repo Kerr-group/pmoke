@@ -1,22 +1,6 @@
-def _load_gsplot():
-    import importlib
-    import json
-    import os
-    import tempfile
-
-    previous = os.getcwd()
-    with tempfile.TemporaryDirectory(prefix="pmoke-gsplot-") as directory:
-        with open(os.path.join(directory, "gsplot.json"), "w") as config:
-            json.dump({"metadata": False}, config)
-        os.chdir(directory)
-        try:
-            return importlib.import_module("gsplot")
-        finally:
-            os.chdir(previous)
-
-
-gs = _load_gsplot()
 import warnings
+
+import gsplot as gs
 from numpy.typing import NDArray
 
 warnings.filterwarnings(
@@ -58,9 +42,8 @@ class LIPlotter:
         mosaic = ";".join(
             [f"{chr(65 + 2*i)}{chr(65 + 2*i + 1)}" for i in range(ch_num)]
         )
-
-        axs = gs.axes(False, size=(12, 6 * ch_num), mosaic=mosaic, ion=interactive)
-
+        fig, axd = gs.subplots(mosaic=mosaic, size=(12, 6 * ch_num), unit="in")
+        axs = list(axd.values())
         label = []
         for i, si in enumerate(y):
             # si = [LI1x, LI1y, LI2x, LI2y, ...]
@@ -73,8 +56,7 @@ class LIPlotter:
             label_even = [
                 labels[idx] for idx in range(len(labels)) if (idx // 2) % 2 == 1
             ]
-            cm = gs.get_cmap("viridis", len(li_odd))
-
+            cm = gs.sample_cmap("viridis", count=len(li_odd))
             for j, li_odd_j in enumerate(li_odd):
                 gs.line(
                     axs[2 * i],
@@ -85,7 +67,6 @@ class LIPlotter:
                     marker="",
                     linestyle="-",
                 )
-
             for j, li_even_j in enumerate(li_even):
                 gs.line(
                     axs[2 * i + 1],
@@ -96,13 +77,12 @@ class LIPlotter:
                     marker="",
                     linestyle="-",
                 )
-
             label_i = [
                 ["$t$ ($\\mu$s)", f"Ch{index_arr[i]} : Lock-in Odd (V)"],
                 ["$t$ ($\\mu$s)", f"Ch{index_arr[i]} : Lock-in Even (V)"],
             ]
             label.extend(label_i)
-
-        gs.legend_axes(markerscale=3)
-        gs.label(label)
+        gs.legend(axs, markerscale=3)
+        for ax, record in zip(axs, label):
+            gs.label(ax, record[0], record[1])
         finish_plot(output_path, interactive)

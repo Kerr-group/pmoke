@@ -1,24 +1,9 @@
+import warnings
+
+import gsplot as gs
 import lmfit
 import numpy as np
-import warnings
 from numpy.typing import NDArray
-
-
-def _load_gsplot():
-    import importlib
-    import json
-    import os
-    import tempfile
-
-    previous = os.getcwd()
-    with tempfile.TemporaryDirectory(prefix="pmoke-gsplot-") as directory:
-        with open(os.path.join(directory, "gsplot.json"), "w") as config:
-            json.dump({"metadata": False}, config)
-        os.chdir(directory)
-        try:
-            return importlib.import_module("gsplot")
-        finally:
-            os.chdir(previous)
 
 warnings.filterwarnings(
     "ignore",
@@ -72,7 +57,9 @@ def decimation_indices(series, max_points: int, method: str) -> NDArray:
                 indices.append(start)
                 continue
             local = values[start:end][finite]
-            indices.extend((start + finite[np.argmin(local)], start + finite[np.argmax(local)]))
+            indices.extend(
+                (start + finite[np.argmin(local)], start + finite[np.argmax(local)])
+            )
     unique = np.unique(indices)
     if unique.size <= max_points:
         return unique
@@ -116,7 +103,6 @@ class OT0Analyser:
         plot_error = None
         if save or interactive:
             try:
-                gs = _load_gsplot()
 
                 indices = decimation_indices(
                     [m_ot0_1, m_ot0_2, m_ot0_3, m_ot0_4, m_ot0_5, m_ot0_6],
@@ -125,15 +111,28 @@ class OT0Analyser:
                 )
                 ones_plot = ones[indices]
 
-                axs = gs.axes(False, size=(6, 6), mosaic="A", ion=interactive)
-                cm = gs.get_cmap(cmap="viridis", N=6)
+                fig, axd = gs.subplots(mosaic="A", size=(6, 6), unit="in")
+                axs = list(axd.values())
+                cm = gs.sample_cmap("viridis", count=6)
 
-                gs.scatter(axs[0], ones_plot * 1, m_ot0_1[indices], label="1", color=cm[0])
-                gs.scatter(axs[0], ones_plot * 2, m_ot0_2[indices], label="2", color=cm[1])
-                gs.scatter(axs[0], ones_plot * 3, m_ot0_3[indices], label="3", color=cm[2])
-                gs.scatter(axs[0], ones_plot * 4, m_ot0_4[indices], label="4", color=cm[3])
-                gs.scatter(axs[0], ones_plot * 5, m_ot0_5[indices], label="5", color=cm[4])
-                gs.scatter(axs[0], ones_plot * 6, m_ot0_6[indices], label="6", color=cm[5])
+                gs.scatter(
+                    axs[0], ones_plot * 1, m_ot0_1[indices], label="1", color=cm[0]
+                )
+                gs.scatter(
+                    axs[0], ones_plot * 2, m_ot0_2[indices], label="2", color=cm[1]
+                )
+                gs.scatter(
+                    axs[0], ones_plot * 3, m_ot0_3[indices], label="3", color=cm[2]
+                )
+                gs.scatter(
+                    axs[0], ones_plot * 4, m_ot0_4[indices], label="4", color=cm[3]
+                )
+                gs.scatter(
+                    axs[0], ones_plot * 5, m_ot0_5[indices], label="5", color=cm[4]
+                )
+                gs.scatter(
+                    axs[0], ones_plot * 6, m_ot0_6[indices], label="6", color=cm[5]
+                )
 
                 gs.line(
                     axs[0],
@@ -147,7 +146,7 @@ class OT0Analyser:
 
                 gs.legend(axs[0], loc="best", markerscale=5)
 
-                gs.label([["$n$", "$-\\omega t_0$ (rad)", [0, 7], ["", ""]]])
+                gs.label(axs[0], "$n$", "$-\\omega t_0$ (rad)", xlim=[0, 7])
                 finish_plot(output_path, interactive)
             except Exception as exc:
                 plot_error = str(exc)
