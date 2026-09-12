@@ -160,8 +160,8 @@ pub fn run_signal_analysis<'a>(
                         output,
                         t_stride,
                         vec![mean.clone()],
-                        &[entry.label.clone()],
-                        &[entry.unit.clone()],
+                        std::slice::from_ref(&entry.label),
+                        std::slice::from_ref(&entry.unit),
                     )
                     .context("failed to plot signal means")
             },
