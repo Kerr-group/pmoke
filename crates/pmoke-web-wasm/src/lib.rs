@@ -135,6 +135,17 @@ pub fn calculate_harmonics_moke_packed(
 }
 
 #[wasm_bindgen]
+pub fn calculate_harmonics_vm_packed(
+    second: &[f64],
+    third: &[f64],
+    modulation_depth: f64,
+) -> Result<Box<[f64]>, JsError> {
+    let values = pmoke_analysis_core::calculate_harmonics_vm(second, third, modulation_depth)
+        .map_err(analysis_error)?;
+    Ok(values.into_boxed_slice())
+}
+
+#[wasm_bindgen]
 pub fn boxcar_response_interleaved(
     half_window_s: f64,
     max_frequency_hz: f64,

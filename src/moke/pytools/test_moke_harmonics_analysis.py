@@ -90,6 +90,31 @@ class MokeHarmonicsAnalyserTests(unittest.TestCase):
 
         self.assertAlmostEqual(actual[0], expected)
 
+    def test_get_vm_recovers_normalized_carrier_amplitude(self):
+        modulation_depth = 1.84
+        theta = 0.01
+        a2 = np.array([np.cos(2 * theta) * jv(2, modulation_depth)])
+        a3 = np.array([np.sin(2 * theta) * jv(3, modulation_depth)])
+
+        actual = MokeHarmonicsAnalyser.get_vm(modulation_depth, a2, a3)
+
+        self.assertAlmostEqual(actual[0], 0.5)
+
+    def test_get_vm_rejects_degenerate_inputs(self):
+        with self.assertRaises(ValueError):
+            MokeHarmonicsAnalyser.get_vm(
+                1.84, np.array([np.inf]), np.array([1.0])
+            )
+        with self.assertRaises(ValueError):
+            MokeHarmonicsAnalyser.get_vm(
+                np.nan, np.array([1.0]), np.array([1.0])
+            )
+        # jn(2, x) vanishes near x = 5.1356.
+        with self.assertRaises(ValueError):
+            MokeHarmonicsAnalyser.get_vm(
+                5.135622301840683, np.array([1.0]), np.array([1.0])
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

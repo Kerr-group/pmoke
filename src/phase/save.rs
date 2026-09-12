@@ -23,7 +23,10 @@ pub fn write_li_rotated_results<P: AsRef<Path>>(
         t,
         s_rate,
         s_integral,
-        li_rotated_result,
+        &li_rotated_result
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>(),
         save_npy,
     )
 }

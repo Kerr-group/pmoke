@@ -425,16 +425,24 @@ mod tests {
         run_analyze(&cfg, &data).unwrap();
 
         let columns = read_csv(cfg.paths().moke_csv()).unwrap();
-        let moke = columns.last().unwrap();
-        assert!(!moke.is_empty());
+        // Layout: time, sensor rate, sensor integral, angle per signal
+        // channel, Vm per signal channel.
+        let sensor_columns = cfg.roles.sensor_ch.len();
+        let angle = &columns[1 + 2 * sensor_columns];
+        let vm = columns.last().unwrap();
+        assert!(!angle.is_empty());
         let expected = 0.5 * (2.0 * theta).tan().atan();
-        let maximum_error = moke
+        let maximum_error = angle
             .iter()
             .map(|value| (value - expected).abs())
             .fold(0.0_f64, f64::max);
         assert!(
             maximum_error < 2.0e-4,
             "expected {expected}, maximum error was {maximum_error}"
+        );
+        assert!(
+            vm.iter().all(|value| value.is_finite() && *value >= 0.0),
+            "Vm must be a finite magnitude"
         );
         assert!(cfg.paths().analysis_manifest().is_file());
     }

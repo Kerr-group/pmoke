@@ -55,6 +55,29 @@ class MokeStandardAnalyserTests(unittest.TestCase):
 
         np.testing.assert_allclose(actual, [np.pi / 4, -np.pi / 4])
 
+    def test_vm_recovers_normalized_carrier_amplitude(self):
+        theta = 0.01
+        phim = 0.92
+        a1 = np.sin(2 * theta) / jn(2, 2 * phim)
+        a2 = np.cos(2 * theta) / jn(1, 2 * phim)
+
+        actual = MokeStandardAnalyser.calculate_vm(np.array([a1]), np.array([a2]))
+
+        self.assertAlmostEqual(actual[0], 0.5 / (jn(1, 2 * phim) * jn(2, 2 * phim)))
+
+    def test_vm_rejects_non_finite_inputs_and_phim(self):
+        with self.assertRaises(ValueError):
+            MokeStandardAnalyser.calculate_vm(np.array([np.inf]), np.array([1.0]))
+        with self.assertRaises(ValueError):
+            MokeStandardAnalyser.calculate_vm(np.array([1.0]), np.array([1.0]), np.nan)
+
+    def test_vm_rejects_bessel_zero_denominator(self):
+        # jn(1, x) vanishes at x = 3.8317059702075125, i.e. phim ~= 1.915853.
+        with self.assertRaises(ValueError):
+            MokeStandardAnalyser.calculate_vm(
+                np.array([1.0]), np.array([1.0]), 1.9158529851037562
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,3 +40,4 @@ pub const LI_ROTATED_NAME: &str = "lockin_rotated";
 
 pub const MOKE_NAME: &str = "moke";
 pub const ANGLE_HEADER: &str = "angle (rad)";
+pub const VM_HEADER: &str = "Vm (V)";

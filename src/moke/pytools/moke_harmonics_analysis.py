@@ -97,6 +97,24 @@ class MokeHarmonicsAnalyser:
             ratio = np.divide(a3, denominator)
         return 0.5 * np.arctan(ratio)
 
+    #: Shared guard with calculate_harmonics_vm in pmoke-analysis-core (FR-13).
+    BESSEL_DENOMINATOR_MIN = 1e-12
+
+    @staticmethod
+    def get_vm(x0: float, a2: NDArray, a3: NDArray) -> NDArray:
+        a2 = np.asarray(a2, dtype=float)
+        a3 = np.asarray(a3, dtype=float)
+        if not np.isfinite(x0):
+            raise ValueError("modulation depth must be finite")
+        if not np.all(np.isfinite(a2)) or not np.all(np.isfinite(a3)):
+            raise ValueError("harmonic inputs must be finite")
+        denominators = np.array([jn(2, x0), jn(3, x0)])
+        if not np.all(np.isfinite(denominators)) or np.any(
+            np.abs(denominators) <= MokeHarmonicsAnalyser.BESSEL_DENOMINATOR_MIN
+        ):
+            raise ValueError("Bessel denominators must be finite and nonzero")
+        return 0.5 * np.sqrt((a3 / denominators[1]) ** 2 + (a2 / denominators[0]) ** 2)
+
     def analyse(
         self,
         t: NDArray,
@@ -108,6 +126,7 @@ class MokeHarmonicsAnalyser:
         save: bool,
         interactive: bool,
         output_path,
+        vm_output_path,
         max_points: int,
         decimation: str,
     ):
@@ -124,22 +143,26 @@ class MokeHarmonicsAnalyser:
 
         moke = self.get_moke(x0, li2_in, li3_in, li4_in)
         moke = moke * factor
+        vm = self.get_vm(x0, li2_in, li3_in)
 
         plot_error = self.plot(
             t,
             x,
             moke,
+            vm,
             xlabel,
             fig_name,
             save,
             interactive,
             output_path,
+            vm_output_path,
             max_points,
             decimation,
         )
 
         return {
             "moke": moke,
+            "vm": vm,
             "plot_error": plot_error,
         }
 
@@ -148,11 +171,13 @@ class MokeHarmonicsAnalyser:
         t: NDArray,
         x: NDArray,
         moke: NDArray,
+        vm: NDArray,
         xlabel: str,
         fig_name: str,
         save: bool,
         interactive: bool,
         output_path,
+        vm_output_path,
         max_points: int,
         decimation: str,
     ):
@@ -180,6 +205,23 @@ class MokeHarmonicsAnalyser:
 
             gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
             finish_plot(output_path, interactive)
+
+            vm_indices = decimation_indices(vm, max_points, decimation)
+            vm_axs = gs.axes(
+                True,
+                size=(6, 6),
+                mosaic="A",
+                ion=interactive,
+            )
+
+            gs.scatter_colormap(
+                vm_axs[0], x_plot[vm_indices], vm[vm_indices], t_plot[vm_indices]
+            )
+            vm_axs[0].grid()
+            gs.title(fig_name + " Vm using Harmonics")
+
+            gs.label([[f"{xlabel}", "Vm (V)"]])
+            finish_plot(vm_output_path, interactive)
             return None
         except Exception as exc:
             return str(exc)

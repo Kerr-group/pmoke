@@ -88,6 +88,10 @@ artifact kind / `published_through` value `"kerr"`, `analysis/kerr/` directory,
 - A7 `Vm` CSV header notation is `Ch{N} Vm (V)`, mirroring the `angle` header
   `Ch{N} angle (rad)` renamed from legacy `Ch{N} Kerr angle (rad)`. Rationale:
   consistency with the existing header style.
+- A8 `phim` for the standard method stays the hardcoded `0.92` default shared by
+  the angle and `Vm` computations (no config promotion). Rationale: preserves
+  legacy numerics exactly; promotion can be proposed separately with
+  recalibration data.
 
 ## 4. Architecture
 
@@ -189,12 +193,9 @@ of the WASM boundary is unchanged.
 
 ## 8. Open questions (O)
 
-- O1 Source of `phim` for the standard method (currently a hardcoded `0.92`
-  default in `pytools/moke_standard_analysis.py`): promote to config, constant,
-  or keep as-is. Due: M1.
-- O2 Depth of legacy run-directory read compatibility (manifest only vs. CSV
+- O1 Depth of legacy run-directory read compatibility (manifest only vs. CSV
   reinterpretation). Due: M1.
-- O3 Sunset timeline for the `pmoke kerr` alias. Default: warn indefinitely (A5).
+- O2 Sunset timeline for the `pmoke kerr` alias. Default: warn indefinitely (A5).
   Due: M4.
 
 ## 9. Review conclusion (2026-09-12 self-review)
@@ -208,8 +209,8 @@ Strengths:
    breakage.
 
 Limits and upcoming decision points:
-1. Formulas are frozen (D8) but the `phim` source for the standard method is still
-   open (O1); M1 needs that call since `Vm` shares it.
+1. `Vm` shares the standard lane's `phim` default (A8); any future promotion
+   needs recalibration data.
 2. Web worker/WASM display design for the added `Vm` column still needs separate
    browser-side work (M3).
 3. The Python/Rust lane split (A6) means `Vm` needs two implementations plus

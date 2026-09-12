@@ -65,13 +65,13 @@ pub fn write_analysis_results<P: AsRef<Path>>(
     time: &[f64],
     sensor_rate: &[Vec<f64>],
     sensor_integral: &[Vec<f64>],
-    results: &[Vec<f64>],
+    results: &[&[f64]],
     save_npy: bool,
 ) -> Result<()> {
     let columns = std::iter::once(time)
         .chain(sensor_rate.iter().map(Vec::as_slice))
         .chain(sensor_integral.iter().map(Vec::as_slice))
-        .chain(results.iter().map(Vec::as_slice))
+        .chain(results.iter().copied())
         .collect::<Vec<_>>();
     let header_refs = headers.iter().map(String::as_str).collect::<Vec<_>>();
     let path_ref = path.as_ref();

@@ -10,7 +10,7 @@ pub use lockin::{
     analyze_boxcar_legacy, analyze_boxcar_legacy_pair, analyze_boxcar_legacy_pair_finite,
     boxcar_response_abs,
 };
-pub use moke::{HarmonicsMokeOutput, calculate_harmonics_moke};
+pub use moke::{HarmonicsMokeOutput, calculate_harmonics_moke, calculate_harmonics_vm};
 pub use phase::rotate_phase;
 pub use synthetic::{SyntheticSignalSettings, generate_synthetic_signal};
 

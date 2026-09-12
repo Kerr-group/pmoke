@@ -1,6 +1,6 @@
 use pmoke_analysis_core::{
     BoxcarLegacySettings, SyntheticSignalSettings, analyze_boxcar_legacy, calculate_harmonics_moke,
-    generate_synthetic_signal, rotate_phase,
+    calculate_harmonics_vm, generate_synthetic_signal, rotate_phase,
 };
 use serde::Deserialize;
 
@@ -33,6 +33,8 @@ struct Tolerances {
     lockin_phase_rel: f64,
     moke_abs: f64,
     angle_rel: f64,
+    vm_abs: f64,
+    vm_rel: f64,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +47,7 @@ struct Expected {
     harmonics: Vec<ExpectedHarmonic>,
     modulation_depth: f64,
     moke_rad: f64,
+    vm_v: f64,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +157,18 @@ fn shared_pipeline_recovers_the_reference_moke_fixture() {
         fixture.expected.moke_rad,
         fixture.tolerances.moke_abs,
         fixture.tolerances.angle_rel,
+    );
+    let vm = calculate_harmonics_vm(
+        &outputs[1].1.0,
+        &outputs[2].1.0,
+        moke.representative_modulation_depth,
+    )
+    .unwrap();
+    assert_close(
+        vm[fixture.expected.sample_index],
+        fixture.expected.vm_v,
+        fixture.tolerances.vm_abs,
+        fixture.tolerances.vm_rel,
     );
     for value in moke.values_rad {
         let tolerance =

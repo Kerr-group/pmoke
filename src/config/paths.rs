@@ -210,6 +210,14 @@ impl ArtifactPaths {
         self.moke_plot_dir().join(format!("ch{channel}_angle.png"))
     }
 
+    pub fn moke_vm_plot(&self) -> PathBuf {
+        self.moke_plot_dir().join("vm.png")
+    }
+
+    pub fn moke_vm_channel_plot(&self, channel: u8) -> PathBuf {
+        self.moke_plot_dir().join(format!("ch{channel}_vm.png"))
+    }
+
     pub fn debug_dir(&self) -> PathBuf {
         self.analysis_dir().join("debug")
     }

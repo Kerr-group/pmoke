@@ -14,6 +14,11 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::time::Instant;
 
+pub struct MokeChannelOutput {
+    pub angle: Vec<f64>,
+    pub vm: Vec<f64>,
+}
+
 pub fn run(cfg: &Config) -> Result<()> {
     let ch = cfg.phase_signal_ch();
 
@@ -103,7 +108,8 @@ pub fn run_moke_analysis(
         format!("sensor integral column for ch{moke_sensor_ch_index} is missing")
     })?;
     let factor = cfg.moke.factor;
-    let mut moke_results: Vec<Vec<f64>> = Vec::new();
+    let mut angle_results: Vec<Vec<f64>> = Vec::new();
+    let mut vm_results: Vec<Vec<f64>> = Vec::new();
     let pb = ui::progress("running Moke analysis", ch.len() as u64);
     for (ch_i, li_rotated_result) in ch.iter().zip(li_rotated_results.iter()) {
         pb.set_message(format!("Moke analysis ch{ch_i}"));
@@ -113,8 +119,13 @@ pub fn run_moke_analysis(
         } else {
             paths.moke_channel_plot(*ch_i)
         };
+        let vm_output_path = if ch.len() == 1 {
+            paths.moke_vm_plot()
+        } else {
+            paths.moke_vm_channel_plot(*ch_i)
+        };
 
-        let moke_i = match moke_type {
+        let channel_output = match moke_type {
             MokeType::Standard => MokeStandardAnalyser {}
                 .analyse(MokeStandardAnalysisInput {
                     plot: &cfg.plot,
@@ -125,6 +136,7 @@ pub fn run_moke_analysis(
                     xlabel: &concat_label,
                     fig_name,
                     output_path: &output_path,
+                    vm_output_path: &vm_output_path,
                 })
                 .context("failed to run Moke analysis")?,
             MokeType::Harmonics => MokeHarmonicsAnalyser {}
@@ -137,11 +149,13 @@ pub fn run_moke_analysis(
                     xlabel: &concat_label,
                     fig_name,
                     output_path: &output_path,
+                    vm_output_path: &vm_output_path,
                 })
                 .context("failed to run Moke harmonics analysis")?,
         };
 
-        moke_results.push(moke_i);
+        angle_results.push(channel_output.angle);
+        vm_results.push(channel_output.vm);
         pb.inc(1);
     }
     let path = paths.moke_csv();
@@ -152,7 +166,8 @@ pub fn run_moke_analysis(
         t,
         sensor_rate_ch,
         sensor_integral_ch,
-        &moke_results,
+        &angle_results,
+        &vm_results,
         cfg.lockin.save_npy,
     )?;
 

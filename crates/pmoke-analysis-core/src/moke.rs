@@ -91,6 +91,72 @@ pub fn calculate_harmonics_moke(
     })
 }
 
+/// Denominator guard: Bessel zeros are never hit exactly in floating point,
+/// so values at or below this magnitude count as degenerate.
+pub const BESSEL_DENOMINATOR_MIN: f64 = 1e-12;
+
+/// Monitor voltage from the second and third lock-in harmonics.
+///
+/// `Vm = 0.5 * sqrt((third / jn(3, depth))^2 + (second / jn(2, depth))^2)`
+/// with `depth` shared from the angle computation (D8).
+pub fn calculate_harmonics_vm(
+    second: &[f64],
+    third: &[f64],
+    modulation_depth: f64,
+) -> Result<Vec<f64>> {
+    let length = second.len();
+    if length == 0 {
+        return Err(AnalysisError::new(
+            "empty_harmonics",
+            "harmonic arrays must not be empty",
+        ));
+    }
+    if third.len() != length {
+        return Err(AnalysisError::new(
+            "length_mismatch",
+            "harmonic arrays must have equal lengths",
+        ));
+    }
+    if !modulation_depth.is_finite() {
+        return Err(AnalysisError::new(
+            "non_finite_modulation_depth",
+            "modulation depth must be finite",
+        ));
+    }
+    if second.iter().chain(third).any(|value| !value.is_finite()) {
+        return Err(AnalysisError::new(
+            "non_finite_harmonics",
+            "harmonic arrays must be finite",
+        ));
+    }
+    let bessel_orders = [libm::jn(2, modulation_depth), libm::jn(3, modulation_depth)];
+    if bessel_orders
+        .iter()
+        .any(|value| !value.is_finite() || value.abs() <= BESSEL_DENOMINATOR_MIN)
+    {
+        return Err(AnalysisError::new(
+            "zero_bessel_denominator",
+            "Bessel denominators must be finite and nonzero",
+        ));
+    }
+    let values: Vec<f64> = second
+        .iter()
+        .zip(third)
+        .map(|(&second_value, &third_value)| {
+            0.5 * ((third_value / bessel_orders[1]).powi(2)
+                + (second_value / bessel_orders[0]).powi(2))
+            .sqrt()
+        })
+        .collect();
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(AnalysisError::new(
+            "non_finite_vm",
+            "harmonics Vm calculation produced a non-finite result",
+        ));
+    }
+    Ok(values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +181,54 @@ mod tests {
                 .values_rad
                 .iter()
                 .all(|value| (value - expected).abs() < 1.0e-12)
+        );
+    }
+
+    #[test]
+    fn vm_recovers_normalized_carrier_amplitude() {
+        let depth = 1.84_f64;
+        let amplitude = 2.5_f64;
+        let second = vec![libm::jn(2, depth) * amplitude; 8];
+        let third = vec![libm::jn(3, depth) * amplitude; 8];
+        let values = calculate_harmonics_vm(&second, &third, depth).unwrap();
+        let expected = 0.5 * amplitude * 2.0_f64.sqrt();
+        assert!(
+            values
+                .iter()
+                .all(|value| (value - expected).abs() < 1.0e-12)
+        );
+    }
+
+    #[test]
+    fn vm_rejects_empty_misaligned_and_degenerate_inputs() {
+        assert_eq!(
+            calculate_harmonics_vm(&[], &[], 1.84).unwrap_err().code(),
+            "empty_harmonics"
+        );
+        assert_eq!(
+            calculate_harmonics_vm(&[1.0], &[1.0, 2.0], 1.84)
+                .unwrap_err()
+                .code(),
+            "length_mismatch"
+        );
+        assert_eq!(
+            calculate_harmonics_vm(&[1.0], &[1.0], f64::NAN)
+                .unwrap_err()
+                .code(),
+            "non_finite_modulation_depth"
+        );
+        assert_eq!(
+            calculate_harmonics_vm(&[1.0], &[f64::INFINITY], 1.84)
+                .unwrap_err()
+                .code(),
+            "non_finite_harmonics"
+        );
+        // jn(2, x) has a zero near x = 5.1356: Vm must refuse it explicitly.
+        assert_eq!(
+            calculate_harmonics_vm(&[1.0], &[1.0], 5.135_622_301_840_683)
+                .unwrap_err()
+                .code(),
+            "zero_bessel_denominator"
         );
     }
 
