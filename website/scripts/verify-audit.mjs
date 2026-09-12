@@ -2,37 +2,63 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ALLOWED_ADVISORY = Object.freeze({
-  // Temporary exact exception for the dev-only Lighthouse chain. Remove it
-  // when a verifiable patched extract-zip release is available.
-  github_advisory_id: 'GHSA-jmr9-qjv8-65gv',
-  module_name: 'extract-zip',
-  severity: 'high',
-  vulnerable_versions: '<=2.0.1',
-  patched_versions: '>=2.0.2',
-  finding: Object.freeze({
-    version: '2.0.1',
-    paths: Object.freeze([
-      '.>@lhci/cli>@lhci/utils>lighthouse>puppeteer-core>@puppeteer/browsers>extract-zip',
-      '.>@lhci/cli>lighthouse>puppeteer-core>@puppeteer/browsers>extract-zip',
-    ]),
-    dev: true,
-    optional: false,
-    bundled: false,
+const ALLOWED_ADVISORIES = Object.freeze([
+  Object.freeze({
+    // Temporary exact exception for the dev-only Lighthouse chain. Remove it
+    // when a verifiable patched extract-zip release is available.
+    github_advisory_id: 'GHSA-jmr9-qjv8-65gv',
+    module_name: 'extract-zip',
+    severity: 'high',
+    vulnerable_versions: '<=2.0.1',
+    patched_versions: '>=2.0.2',
+    finding: Object.freeze({
+      version: '2.0.1',
+      paths: Object.freeze([
+        '.>@lhci/cli>@lhci/utils>lighthouse>puppeteer-core>@puppeteer/browsers>extract-zip',
+        '.>@lhci/cli>lighthouse>puppeteer-core>@puppeteer/browsers>extract-zip',
+      ]),
+      dev: true,
+      optional: false,
+      bundled: false,
+    }),
   }),
-});
+  Object.freeze({
+    // Temporary exact exception for the dev-only Lighthouse chain. No
+    // patched extract-zip release exists (2.0.1 is still latest); remove it
+    // when a verifiable patched release is available.
+    github_advisory_id: 'GHSA-7pqw-9j4j-h8q3',
+    module_name: 'extract-zip',
+    severity: 'high',
+    vulnerable_versions: '<=2.0.1',
+    patched_versions: '>=2.0.2',
+    finding: Object.freeze({
+      version: '2.0.1',
+      paths: Object.freeze([
+        '.>@lhci/cli>@lhci/utils>lighthouse>puppeteer-core>@puppeteer/browsers>extract-zip',
+        '.>@lhci/cli>lighthouse>puppeteer-core>@puppeteer/browsers>extract-zip',
+      ]),
+      dev: true,
+      optional: false,
+      bundled: false,
+    }),
+  }),
+]);
 
 function sorted(values) {
   return [...values].sort();
 }
 
 function matchesAllowedAdvisory(advisory) {
+  return ALLOWED_ADVISORIES.some((allowed) => matchesAllowedEntry(advisory, allowed));
+}
+
+function matchesAllowedEntry(advisory, allowed) {
   if (
-    advisory.github_advisory_id !== ALLOWED_ADVISORY.github_advisory_id ||
-    advisory.module_name !== ALLOWED_ADVISORY.module_name ||
-    advisory.severity !== ALLOWED_ADVISORY.severity ||
-    advisory.vulnerable_versions !== ALLOWED_ADVISORY.vulnerable_versions ||
-    advisory.patched_versions !== ALLOWED_ADVISORY.patched_versions ||
+    advisory.github_advisory_id !== allowed.github_advisory_id ||
+    advisory.module_name !== allowed.module_name ||
+    advisory.severity !== allowed.severity ||
+    advisory.vulnerable_versions !== allowed.vulnerable_versions ||
+    advisory.patched_versions !== allowed.patched_versions ||
     advisory.findings?.length !== 1
   ) {
     return false;
@@ -40,11 +66,11 @@ function matchesAllowedAdvisory(advisory) {
 
   const [finding] = advisory.findings;
   return (
-    finding.version === ALLOWED_ADVISORY.finding.version &&
-    finding.dev === ALLOWED_ADVISORY.finding.dev &&
-    finding.optional === ALLOWED_ADVISORY.finding.optional &&
-    finding.bundled === ALLOWED_ADVISORY.finding.bundled &&
-    JSON.stringify(sorted(finding.paths)) === JSON.stringify(sorted(ALLOWED_ADVISORY.finding.paths))
+    finding.version === allowed.finding.version &&
+    finding.dev === allowed.finding.dev &&
+    finding.optional === allowed.finding.optional &&
+    finding.bundled === allowed.finding.bundled &&
+    JSON.stringify(sorted(finding.paths)) === JSON.stringify(sorted(allowed.finding.paths))
   );
 }
 
