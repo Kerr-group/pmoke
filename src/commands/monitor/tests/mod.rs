@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::{
-    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Kerr, KerrType, Lockin, LockinLpfKind, Phase,
+    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Lockin, LockinLpfKind, Moke, MokeType, Phase,
     Plot, Pulse, Reference, Roles, Screenshot, Window,
 };
 
@@ -76,9 +76,9 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                 phase: Phase {
                     m_omega_t0_offset: Vec::new(),
                 },
-                kerr: Kerr {
+                moke: Moke {
                     use_sensor_ch: 1,
-                    kerr_type: KerrType::Standard,
+                    moke_type: MokeType::Standard,
                     factor: 1.0,
                 },
             },

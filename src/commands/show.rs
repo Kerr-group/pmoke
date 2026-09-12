@@ -77,10 +77,10 @@ fn print_config_summary(config: &Config) {
                 ),
             ],
             vec![
-                "Kerr".to_string(),
+                "Moke".to_string(),
                 format!(
                     "{:?}, sensor=ch{}, factor={}",
-                    config.kerr.kerr_type, config.kerr.use_sensor_ch, config.kerr.factor
+                    config.moke.moke_type, config.moke.use_sensor_ch, config.moke.factor
                 ),
             ],
         ],

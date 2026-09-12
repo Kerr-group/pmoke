@@ -1,25 +1,25 @@
 use crate::analysis_results::{build_analysis_headers, write_analysis_results};
 use crate::config::Config;
-use crate::constants::KERR_HEADER;
+use crate::constants::ANGLE_HEADER;
 use anyhow::Result;
 use std::path::Path;
 
-pub fn get_kerr_headers(cfg: &Config) -> Result<Vec<String>> {
+pub fn get_moke_headers(cfg: &Config) -> Result<Vec<String>> {
     let use_signal_ch = cfg.phase_signal_ch();
-    let kerr_headers = use_signal_ch
+    let moke_headers = use_signal_ch
         .iter()
-        .map(|ch| format!("Ch{} {}", ch, KERR_HEADER))
+        .map(|ch| format!("Ch{} {}", ch, ANGLE_HEADER))
         .collect::<Vec<_>>();
-    build_analysis_headers(cfg, kerr_headers)
+    build_analysis_headers(cfg, moke_headers)
 }
 
-pub fn write_kerr_results<P: AsRef<Path>>(
+pub fn write_moke_results<P: AsRef<Path>>(
     fname: P,
     headers: &[String],
     t: &[f64],
     s_rate: &[Vec<f64>],
     s_integral: &[Vec<f64>],
-    kerr_results: &[Vec<f64>],
+    moke_results: &[Vec<f64>],
     save_npy: bool,
 ) -> Result<()> {
     write_analysis_results(
@@ -28,21 +28,21 @@ pub fn write_kerr_results<P: AsRef<Path>>(
         t,
         s_rate,
         s_integral,
-        kerr_results,
+        moke_results,
         save_npy,
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::get_kerr_headers;
+    use super::get_moke_headers;
     use crate::test_support::test_config;
 
     #[test]
-    fn kerr_headers_use_rate_integral_result_order() {
+    fn moke_headers_use_rate_integral_result_order() {
         let cfg = test_config(vec![1, 2], vec![3, 4]);
 
-        let headers = get_kerr_headers(&cfg).unwrap();
+        let headers = get_moke_headers(&cfg).unwrap();
 
         assert_eq!(
             headers,
@@ -52,8 +52,8 @@ mod tests {
                 "ch2 rate (T/s)".to_string(),
                 "ch1 integral (T)".to_string(),
                 "ch2 integral (T)".to_string(),
-                "Ch3 Kerr angle (rad)".to_string(),
-                "Ch4 Kerr angle (rad)".to_string(),
+                "Ch3 angle (rad)".to_string(),
+                "Ch4 angle (rad)".to_string(),
             ]
         );
     }

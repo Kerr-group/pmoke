@@ -346,11 +346,11 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Run numerical lock-in analysis" => "数値lock-in解析",
         "Rotate the reference phase for lock-in analysis" => "lock-in解析の参照位相回転",
         "Calculate the Kerr angle" => "Kerr角度を計算",
-        "Run all analysis steps: reference, sensor, lock-in, phase, Kerr" => {
-            "reference・sensor・lock-in・phase・Kerrの全解析"
+        "Run all analysis steps: reference, sensor, lock-in, phase, moke" => {
+            "reference・sensor・lock-in・phase・mokeの全解析"
         }
-        "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)" => {
-            "手動pulse trigger後のfetch・lock-in・phase・Kerr自動解析"
+        "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)" => {
+            "手動pulse trigger後のfetch・lock-in・phase・moke自動解析"
         }
         "Run the full automatic measurement and analysis" => "完全自動測定・解析",
         "Generate shell completion script" => "shell completion scriptの生成",

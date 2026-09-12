@@ -1,5 +1,5 @@
 use crate::config::{
-    Channel, Config, Fetch, Kerr, KerrType, Lockin, LockinLpfKind, Phase, Plot, Pulse, Reference,
+    Channel, Config, Fetch, Lockin, LockinLpfKind, Moke, MokeType, Phase, Plot, Pulse, Reference,
     Roles, Screenshot, Window,
 };
 
@@ -69,9 +69,9 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
         phase: Phase {
             m_omega_t0_offset: Vec::new(),
         },
-        kerr: Kerr {
+        moke: Moke {
             use_sensor_ch: 1,
-            kerr_type: KerrType::Standard,
+            moke_type: MokeType::Standard,
             factor: 1.0,
         },
     }

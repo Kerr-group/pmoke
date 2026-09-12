@@ -1,5 +1,5 @@
 use pmoke_analysis_core::{
-    BoxcarLegacySettings, SyntheticSignalSettings, analyze_boxcar_legacy, calculate_harmonics_kerr,
+    BoxcarLegacySettings, SyntheticSignalSettings, analyze_boxcar_legacy, calculate_harmonics_moke,
     generate_synthetic_signal, rotate_phase,
 };
 use serde::Deserialize;
@@ -19,20 +19,20 @@ struct Parameters {
     amplitude: f64,
     phase_rad: f64,
     noise_rms: f64,
-    kerr_angle_rad: f64,
+    angle_rad: f64,
     seed: u64,
     half_window_cycles: f64,
     stride_samples: usize,
     rotation_rad: f64,
-    kerr_factor: f64,
+    moke_factor: f64,
 }
 
 #[derive(Deserialize)]
 struct Tolerances {
     lockin_phase_abs: f64,
     lockin_phase_rel: f64,
-    kerr_abs: f64,
-    kerr_rel: f64,
+    moke_abs: f64,
+    angle_rel: f64,
 }
 
 #[derive(Deserialize)]
@@ -44,7 +44,7 @@ struct Expected {
     sample_index: usize,
     harmonics: Vec<ExpectedHarmonic>,
     modulation_depth: f64,
-    kerr_rad: f64,
+    moke_rad: f64,
 }
 
 #[derive(Deserialize)]
@@ -58,7 +58,7 @@ struct ExpectedHarmonic {
 }
 
 #[test]
-fn shared_pipeline_recovers_the_reference_kerr_fixture() {
+fn shared_pipeline_recovers_the_reference_moke_fixture() {
     let fixture: Fixture =
         serde_json::from_str(include_str!("fixtures/m4-synthetic-reference.json")).unwrap();
     let parameters = &fixture.parameters;
@@ -69,7 +69,7 @@ fn shared_pipeline_recovers_the_reference_kerr_fixture() {
         amplitude: parameters.amplitude,
         phase_rad: parameters.phase_rad,
         noise_rms: parameters.noise_rms,
-        kerr_angle_rad: parameters.kerr_angle_rad,
+        angle_rad: parameters.angle_rad,
         seed: parameters.seed,
     })
     .unwrap();
@@ -135,33 +135,33 @@ fn shared_pipeline_recovers_the_reference_kerr_fixture() {
         }
     }
 
-    let kerr = calculate_harmonics_kerr(
+    let moke = calculate_harmonics_moke(
         &outputs[1].1.0,
         &outputs[2].1.0,
         &outputs[3].1.0,
         &outputs[5].1.0,
-        parameters.kerr_factor,
+        parameters.moke_factor,
     )
     .unwrap();
     assert_close(
-        kerr.representative_modulation_depth,
+        moke.representative_modulation_depth,
         fixture.expected.modulation_depth,
-        fixture.tolerances.kerr_abs,
-        fixture.tolerances.kerr_rel,
+        fixture.tolerances.moke_abs,
+        fixture.tolerances.angle_rel,
     );
     assert_close(
-        kerr.values_rad[fixture.expected.sample_index],
-        fixture.expected.kerr_rad,
-        fixture.tolerances.kerr_abs,
-        fixture.tolerances.kerr_rel,
+        moke.values_rad[fixture.expected.sample_index],
+        fixture.expected.moke_rad,
+        fixture.tolerances.moke_abs,
+        fixture.tolerances.angle_rel,
     );
-    for value in kerr.values_rad {
-        let tolerance = fixture.tolerances.kerr_abs
-            + fixture.tolerances.kerr_rel * parameters.kerr_angle_rad.abs();
+    for value in moke.values_rad {
+        let tolerance =
+            fixture.tolerances.moke_abs + fixture.tolerances.angle_rel * parameters.angle_rad.abs();
         assert!(
-            (value - parameters.kerr_angle_rad).abs() <= tolerance,
+            (value - parameters.angle_rad).abs() <= tolerance,
             "expected {}, got {value}",
-            parameters.kerr_angle_rad,
+            parameters.angle_rad,
         );
     }
 }

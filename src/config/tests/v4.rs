@@ -84,7 +84,7 @@ fn v4_base_schema_normalizes_to_runtime_config() {
 }
 
 #[test]
-fn historical_v4_normalized_output_uses_v5_schema_and_round_trips() {
+fn historical_v4_normalized_output_uses_v6_schema_and_round_trips() {
     let text = v4_base().replace(
         "scale = { factor = -39364.84663082185 }",
         "scale = { max_abs = 55.0, polarity = -1 }",
@@ -108,7 +108,7 @@ fn historical_v4_normalized_output_uses_v5_schema_and_round_trips() {
         config: round_trip, ..
     } = load_from_str(&rendered)
     else {
-        panic!("rendered v5 config must be readable:\n{rendered}");
+        panic!("rendered v6 config must be readable:\n{rendered}");
     };
     let sensor = round_trip
         .channels
@@ -121,13 +121,14 @@ fn historical_v4_normalized_output_uses_v5_schema_and_round_trips() {
 }
 
 #[test]
-fn v5_core_and_native_normalized_output_have_identical_values() {
+fn v6_core_and_native_normalized_output_have_identical_values() {
     let fixtures = [
-        ("boxcar", v4_base().replace("version = 4", "version = 5")),
+        ("boxcar", v4_base().replace("version = 4", "version = 6").replace("[kerr]", "[moke]")),
         (
             "canonical Prologix generator",
             v4_base()
-                .replace("version = 4", "version = 5")
+                .replace("version = 4", "version = 6")
+                .replace("[kerr]", "[moke]")
                 .replacen(
                     "[data]",
                     "[generator]\nmodel = \"WF1946B\"\nconnection = \"prologix-tcp://192.0.2.20?addr=11\"\n\n[data]",
@@ -455,11 +456,14 @@ fn v4_removed_filter_kind_is_reported_as_migration_diagnostic() {
 }
 
 #[test]
-fn v5_removed_filter_kind_is_reported_as_migration_diagnostic() {
-    let text = v4_base().replace("version = 4", "version = 5").replace(
-        "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
-        "filter = { kind = \"fir_zero_phase\", half_window_cycles = 1.0 }",
-    );
+fn v6_removed_filter_kind_is_reported_as_migration_diagnostic() {
+    let text = v4_base()
+        .replace("version = 4", "version = 6")
+        .replace("[kerr]", "[moke]")
+        .replace(
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+            "filter = { kind = \"fir_zero_phase\", half_window_cycles = 1.0 }",
+        );
     let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
         panic!("expected removed-filter migration diagnostics");
     };
@@ -474,11 +478,14 @@ fn v5_removed_filter_kind_is_reported_as_migration_diagnostic() {
 }
 
 #[test]
-fn v5_removed_filter_field_is_reported_as_migration_diagnostic() {
-    let text = v4_base().replace("version = 4", "version = 5").replace(
-        "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
-        "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0, cutoff_hz = 10.0 }",
-    );
+fn v6_removed_filter_field_is_reported_as_migration_diagnostic() {
+    let text = v4_base()
+        .replace("version = 4", "version = 6")
+        .replace("[kerr]", "[moke]")
+        .replace(
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0, cutoff_hz = 10.0 }",
+        );
     let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
         panic!("expected removed-filter field migration diagnostics");
     };
@@ -492,11 +499,14 @@ fn v5_removed_filter_field_is_reported_as_migration_diagnostic() {
 }
 
 #[test]
-fn v5_unknown_filter_kind_remains_a_schema_diagnostic() {
-    let text = v4_base().replace("version = 4", "version = 5").replace(
-        "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
-        "filter = { kind = \"future_filter\", half_window_cycles = 1.0 }",
-    );
+fn v6_unknown_filter_kind_remains_a_schema_diagnostic() {
+    let text = v4_base()
+        .replace("version = 4", "version = 6")
+        .replace("[kerr]", "[moke]")
+        .replace(
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }",
+            "filter = { kind = \"future_filter\", half_window_cycles = 1.0 }",
+        );
     let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
         panic!("expected unknown-filter schema diagnostics");
     };

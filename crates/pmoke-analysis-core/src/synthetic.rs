@@ -19,7 +19,7 @@ pub struct SyntheticSignalSettings {
     pub amplitude: f64,
     pub phase_rad: f64,
     pub noise_rms: f64,
-    pub kerr_angle_rad: f64,
+    pub angle_rad: f64,
     pub seed: u64,
 }
 
@@ -36,7 +36,7 @@ pub fn generate_synthetic_signal(settings: SyntheticSignalSettings) -> Result<Ve
         ("amplitude", settings.amplitude),
         ("phase_rad", settings.phase_rad),
         ("noise_rms", settings.noise_rms),
-        ("kerr_angle_rad", settings.kerr_angle_rad),
+        ("angle_rad", settings.angle_rad),
     ] {
         if !value.is_finite() {
             return Err(AnalysisError::new(
@@ -61,10 +61,10 @@ pub fn generate_synthetic_signal(settings: SyntheticSignalSettings) -> Result<Ve
             "the sixth reference harmonic must remain below Nyquist",
         ));
     }
-    if settings.kerr_angle_rad.abs() >= std::f64::consts::FRAC_PI_4 {
+    if settings.angle_rad.abs() >= std::f64::consts::FRAC_PI_4 {
         return Err(AnalysisError::new(
-            "invalid_kerr_angle",
-            "kerr_angle_rad magnitude must be below pi/4",
+            "invalid_angle",
+            "angle_rad magnitude must be below pi/4",
         ));
     }
 
@@ -75,12 +75,12 @@ pub fn generate_synthetic_signal(settings: SyntheticSignalSettings) -> Result<Ve
         let mut value = 0.0;
         for (offset, coefficient) in HARMONIC_COEFFICIENTS.iter().enumerate() {
             let harmonic = offset + 1;
-            let kerr_term = if harmonic.is_multiple_of(2) {
-                (2.0 * settings.kerr_angle_rad).cos()
+            let moke_term = if harmonic.is_multiple_of(2) {
+                (2.0 * settings.angle_rad).cos()
             } else {
-                (2.0 * settings.kerr_angle_rad).sin()
+                (2.0 * settings.angle_rad).sin()
             };
-            let harmonic_amplitude = settings.amplitude * coefficient * kerr_term;
+            let harmonic_amplitude = settings.amplitude * coefficient * moke_term;
             value += 2.0
                 * harmonic_amplitude
                 * (TAU * harmonic as f64 * settings.reference_frequency_hz * time
@@ -129,7 +129,7 @@ mod tests {
             amplitude: 1.0,
             phase_rad: 0.2,
             noise_rms: 0.01,
-            kerr_angle_rad: 0.01,
+            angle_rad: 0.01,
             seed: 42,
         }
     }

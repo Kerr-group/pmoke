@@ -65,7 +65,7 @@ def decimation_indices(values: NDArray, max_points: int, method: str) -> NDArray
     return unique[np.linspace(0, unique.size - 1, max_points, dtype=int)]
 
 
-class KerrHarmonicsAnalyser:
+class MokeHarmonicsAnalyser:
     def __init__(self):
         pass
 
@@ -89,7 +89,7 @@ class KerrHarmonicsAnalyser:
         return float(np.median(valid_x0))
 
     @staticmethod
-    def get_kerr(
+    def get_moke(
         x0: Union[float, NDArray], a2: NDArray, a3: NDArray, a4: NDArray
     ) -> NDArray:
         denominator = (a2 + a4) * x0 / 6
@@ -122,13 +122,13 @@ class KerrHarmonicsAnalyser:
         x0_series = self.get_modulation_depth(li2_in, li4_in, li6_in)
         x0 = self.get_representative_modulation_depth(x0_series)
 
-        kerr = self.get_kerr(x0, li2_in, li3_in, li4_in)
-        kerr = kerr * factor
+        moke = self.get_moke(x0, li2_in, li3_in, li4_in)
+        moke = moke * factor
 
         plot_error = self.plot(
             t,
             x,
-            kerr,
+            moke,
             xlabel,
             fig_name,
             save,
@@ -139,7 +139,7 @@ class KerrHarmonicsAnalyser:
         )
 
         return {
-            "kerr": kerr,
+            "moke": moke,
             "plot_error": plot_error,
         }
 
@@ -147,7 +147,7 @@ class KerrHarmonicsAnalyser:
     def plot(
         t: NDArray,
         x: NDArray,
-        kerr: NDArray,
+        moke: NDArray,
         xlabel: str,
         fig_name: str,
         save: bool,
@@ -161,10 +161,10 @@ class KerrHarmonicsAnalyser:
         try:
             gs = _load_gsplot()
 
-            indices = decimation_indices(kerr, max_points, decimation)
+            indices = decimation_indices(moke, max_points, decimation)
             t_plot = t[indices]
             x_plot = x[indices]
-            kerr_plot = kerr[indices]
+            moke_plot = moke[indices]
 
             axs = gs.axes(
                 True,
@@ -173,7 +173,7 @@ class KerrHarmonicsAnalyser:
                 ion=interactive,
             )
 
-            gs.scatter_colormap(axs[0], x_plot, kerr_plot * 1e3, t_plot)
+            gs.scatter_colormap(axs[0], x_plot, moke_plot * 1e3, t_plot)
             axs[0].grid()
             title = fig_name + " using Harmonics"
             gs.title(title)

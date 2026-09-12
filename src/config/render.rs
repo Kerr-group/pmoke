@@ -9,10 +9,10 @@ pub fn render_normalized_config(config: &Config) -> Result<String> {
             "current-schema normalized config has no oscilloscope configuration"
         ));
     }
-    let can_render_v5 = config.instruments.is_some()
+    let can_render_v6 = config.instruments.is_some()
         && (config.version >= 4 || !legacy_timebase_is_required(config)?);
-    if can_render_v5 {
-        render_config_v5(config)
+    if can_render_v6 {
+        render_config_v6(config)
     } else {
         render_legacy_resolved_config(config)
     }
@@ -38,6 +38,10 @@ pub(super) fn render_config_v4(config: &Config) -> Result<String> {
 
 pub(super) fn render_config_v5(config: &Config) -> Result<String> {
     toml::to_string_pretty(&normalized_config_v5(config)?).map_err(Into::into)
+}
+
+pub(super) fn render_config_v6(config: &Config) -> Result<String> {
+    toml::to_string_pretty(&normalized_config_v6(config)?).map_err(Into::into)
 }
 
 fn normalized_config_v4(config: &Config) -> Result<NormalizedConfigV4> {
@@ -92,9 +96,9 @@ fn normalized_config_v4(config: &Config) -> Result<NormalizedConfigV4> {
             offsets: config.phase.m_omega_t0_offset.clone(),
         },
         kerr: KerrOutputV4 {
-            sensor: config.kerr.use_sensor_ch,
-            method: config.kerr.kerr_type,
-            factor: config.kerr.factor,
+            sensor: config.moke.use_sensor_ch,
+            method: config.moke.moke_type,
+            factor: config.moke.factor,
         },
         plot: plot_output_v4(&config.plot),
     })
@@ -152,9 +156,69 @@ fn normalized_config_v5(config: &Config) -> Result<NormalizedConfigV5> {
             offsets: config.phase.m_omega_t0_offset.clone(),
         },
         kerr: KerrOutputV4 {
-            sensor: config.kerr.use_sensor_ch,
-            method: config.kerr.kerr_type,
-            factor: config.kerr.factor,
+            sensor: config.moke.use_sensor_ch,
+            method: config.moke.moke_type,
+            factor: config.moke.factor,
+        },
+        plot: plot_output_v4(&config.plot),
+    })
+}
+
+fn normalized_config_v6(config: &Config) -> Result<NormalizedConfigV6> {
+    let instruments = config
+        .instruments
+        .as_ref()
+        .ok_or_else(|| anyhow!("version 6 normalized config has no oscilloscope"))?;
+    let scope = ScopeOutputV4 {
+        model: instruments.oscilloscope.model.clone(),
+        connection: connection_uri(&instruments.oscilloscope.connection),
+    };
+    let generator = instruments
+        .function_generator
+        .as_ref()
+        .map(|generator| GeneratorOutputV4 {
+            model: generator.model.clone(),
+            connection: connection_uri(&generator.connection),
+        });
+    let sensors = config
+        .roles
+        .sensor_ch
+        .iter()
+        .map(|&channel| sensor_output_v4(config, channel))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(NormalizedConfigV6 {
+        version: 6,
+        scope,
+        generator,
+        data: DataOutputConfigV4 {
+            output: match config.fetch.output {
+                FetchOutput::Csv => DataOutputV4::Csv,
+                FetchOutput::Raw => DataOutputV4::Raw,
+                FetchOutput::CsvAndRaw => DataOutputV4::Both,
+            },
+            input: config.fetch.analysis_input,
+            screenshot: config.screenshot.enabled,
+        },
+        sensors,
+        pulse: PulseOutputV4 {
+            background_before: config.pulse.bg_window_before,
+            background_after: config.pulse.bg_window_after,
+        },
+        reference: ReferenceOutputV4 {
+            channel: config.roles.reference_ch,
+            fft_window: config.reference.fft_window,
+            stride_samples: config.reference.stride_samples,
+            window_samples: config.reference.window_samples,
+        },
+        lockin: lockin_output_v5(&config.lockin, &config.roles.signal_ch),
+        phase: PhaseOutputV4 {
+            offsets: config.phase.m_omega_t0_offset.clone(),
+        },
+        moke: MokeOutputV6 {
+            sensor: config.moke.use_sensor_ch,
+            method: config.moke.moke_type,
+            factor: config.moke.factor,
         },
         plot: plot_output_v4(&config.plot),
     })

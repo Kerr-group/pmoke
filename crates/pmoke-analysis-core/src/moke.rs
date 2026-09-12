@@ -2,18 +2,18 @@ use crate::{AnalysisError, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HarmonicsKerrOutput {
+pub struct HarmonicsMokeOutput {
     pub values_rad: Vec<f64>,
     pub representative_modulation_depth: f64,
 }
 
-pub fn calculate_harmonics_kerr(
+pub fn calculate_harmonics_moke(
     a2: &[f64],
     a3: &[f64],
     a4: &[f64],
     a6: &[f64],
     factor: f64,
-) -> Result<HarmonicsKerrOutput> {
+) -> Result<HarmonicsMokeOutput> {
     let length = a2.len();
     if length == 0 {
         return Err(AnalysisError::new(
@@ -80,12 +80,12 @@ pub fn calculate_harmonics_kerr(
         .collect::<Vec<_>>();
     if values_rad.iter().any(|value| !value.is_finite()) {
         return Err(AnalysisError::new(
-            "non_finite_kerr",
-            "harmonics Kerr calculation produced a non-finite result",
+            "non_finite_moke",
+            "harmonics Moke calculation produced a non-finite result",
         ));
     }
 
-    Ok(HarmonicsKerrOutput {
+    Ok(HarmonicsMokeOutput {
         values_rad,
         representative_modulation_depth: modulation_depth,
     })
@@ -96,7 +96,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recovers_folded_kerr_angle() {
+    fn recovers_folded_angle() {
         let theta = 0.01_f64;
         let coefficients = [
             0.315_745_306_087_972_3,
@@ -108,7 +108,7 @@ mod tests {
         let a3 = vec![(2.0 * theta).sin() * coefficients[1]; 8];
         let a4 = vec![(2.0 * theta).cos() * coefficients[2]; 8];
         let a6 = vec![(2.0 * theta).cos() * coefficients[3]; 8];
-        let output = calculate_harmonics_kerr(&a2, &a3, &a4, &a6, 1.0).unwrap();
+        let output = calculate_harmonics_moke(&a2, &a3, &a4, &a6, 1.0).unwrap();
         let expected = 0.5 * (2.0 * theta).tan().atan();
         assert!(
             output
@@ -121,13 +121,13 @@ mod tests {
     #[test]
     fn rejects_non_finite_and_misaligned_inputs() {
         assert_eq!(
-            calculate_harmonics_kerr(&[1.0], &[1.0, 2.0], &[1.0], &[1.0], 1.0)
+            calculate_harmonics_moke(&[1.0], &[1.0, 2.0], &[1.0], &[1.0], 1.0)
                 .unwrap_err()
                 .code(),
             "length_mismatch"
         );
         assert_eq!(
-            calculate_harmonics_kerr(&[1.0], &[f64::INFINITY], &[1.0], &[1.0], 1.0)
+            calculate_harmonics_moke(&[1.0], &[f64::INFINITY], &[1.0], &[1.0], 1.0)
                 .unwrap_err()
                 .code(),
             "non_finite_harmonics"

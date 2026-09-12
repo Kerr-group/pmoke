@@ -13,7 +13,7 @@ pub(crate) enum AnalysisStage {
     Sensor,
     Li,
     Phase,
-    Kerr,
+    Moke,
     ExportNpy,
 }
 
@@ -410,7 +410,7 @@ pub fn write_run_state(
             .as_ref()
             .and_then(|analysis| analysis.published_through.as_deref())
         {
-            Some("kerr") => ("complete".to_string(), "analysis".to_string()),
+            Some("kerr") | Some("moke") => ("complete".to_string(), "analysis".to_string()),
             Some(stage @ ("li" | "phase")) => {
                 ("analyzing".to_string(), format!("{stage}_complete"))
             }
@@ -477,7 +477,7 @@ fn analysis_run_state(
     let command = stage.strip_suffix("_complete").unwrap_or(stage);
     if !matches!(
         command,
-        "analysis" | "li" | "phase" | "kerr" | "reference" | "sensor" | "export_npy"
+        "analysis" | "li" | "phase" | "kerr" | "moke" | "reference" | "sensor" | "export_npy"
     ) {
         return Ok(existing);
     }
@@ -725,7 +725,7 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
             &resolver.lockin_xy_npy(channel),
             &staging.lockin_xy_npy(channel),
         )?;
-        if stage == AnalysisStage::Kerr {
+        if stage == AnalysisStage::Moke {
             copy_required_file(
                 &resolver.lockin_rotated_csv(channel),
                 &staging.lockin_rotated_csv(channel),
@@ -748,7 +748,7 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
             copy_optional_tree(&source, &staging.plot_dir().join(name))?;
         }
     }
-    if stage == AnalysisStage::Kerr {
+    if stage == AnalysisStage::Moke {
         copy_optional_tree(&canonical.phase_plot_dir(), &staging.phase_plot_dir())?;
     }
     copy_optional_tree(&canonical.debug_dir(), &staging.debug_dir())?;

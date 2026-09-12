@@ -1,16 +1,16 @@
 mod error;
-mod kerr;
 mod lockin;
+mod moke;
 mod phase;
 mod synthetic;
 
 pub use error::{AnalysisError, Result};
-pub use kerr::{HarmonicsKerrOutput, calculate_harmonics_kerr};
 pub use lockin::{
     BoxcarLegacyOutput, BoxcarLegacyPairOutput, BoxcarLegacySettings, FiniteSignal, LockinMetadata,
     analyze_boxcar_legacy, analyze_boxcar_legacy_pair, analyze_boxcar_legacy_pair_finite,
     boxcar_response_abs,
 };
+pub use moke::{HarmonicsMokeOutput, calculate_harmonics_moke};
 pub use phase::rotate_phase;
 pub use synthetic::{SyntheticSignalSettings, generate_synthetic_signal};
 

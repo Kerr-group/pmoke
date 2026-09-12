@@ -854,7 +854,7 @@ filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 [phase]
 offsets = [0, 0, 0, 0, 0, 0]
 
-[kerr]
+[moke]
 sensor = 1
 method = "standard"
 factor = 1.0

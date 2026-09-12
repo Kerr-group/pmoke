@@ -40,7 +40,7 @@ pub fn run(config_path: &str, command: &ConfigCommand) -> Result<ConfigCommandOu
     }
 }
 
-const CONFIG_TEMPLATE_V5: &str = r#"version = 5
+const CONFIG_TEMPLATE_V6: &str = r#"version = 6
 
 [scope]
 model = "DHO5108"
@@ -90,7 +90,7 @@ filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 [phase]
 offsets = [0, 0, 0, 0, 0, 0]
 
-[kerr]
+[moke]
 sensor = 1
 method = "harmonics" # "standard" or "harmonics"
 factor = -1.0
@@ -106,15 +106,15 @@ fn run_init(source: &Path, output: Option<&Path>, force: bool) -> Result<ConfigC
 
     ensure_template_is_valid()?;
     if stdout_output {
-        print!("{CONFIG_TEMPLATE_V5}");
+        print!("{CONFIG_TEMPLATE_V6}");
         io::stdout()
             .flush()
             .context("failed to flush config template to stdout")?;
     } else if force {
-        replace_output(destination, CONFIG_TEMPLATE_V5.as_bytes())?;
+        replace_output(destination, CONFIG_TEMPLATE_V6.as_bytes())?;
         ui::saved(format!("initialized config at {}", destination.display()));
     } else {
-        write_new_output(destination, CONFIG_TEMPLATE_V5.as_bytes())?;
+        write_new_output(destination, CONFIG_TEMPLATE_V6.as_bytes())?;
         ui::saved(format!("initialized config at {}", destination.display()));
     }
 
@@ -201,7 +201,7 @@ fn print_field_docs(title: &str, docs: &[ConfigFieldDoc]) {
 }
 
 fn ensure_template_is_valid() -> Result<()> {
-    match load_from_str(CONFIG_TEMPLATE_V5) {
+    match load_from_str(CONFIG_TEMPLATE_V6) {
         ConfigLoad::Ready { .. } => Ok(()),
         ConfigLoad::Diagnostics(diagnostics) => bail!(
             "bundled config template is invalid: {} diagnostic(s)",
@@ -743,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn init_writes_a_valid_v5_template() {
+    fn init_writes_a_valid_v6_template() {
         let dir = TempDir::new();
         let source = dir.0.join("config.toml");
 
@@ -751,14 +751,14 @@ mod tests {
 
         assert_eq!(outcome.exit_code, 0);
         let text = fs::read_to_string(&source).unwrap();
-        assert!(text.contains("version = 5"));
+        assert!(text.contains("version = 6"));
         assert!(matches!(load_from_str(&text), ConfigLoad::Ready { .. }));
     }
 
     #[test]
-    fn init_template_is_valid_v5_config() {
+    fn init_template_is_valid_v6_config() {
         assert!(matches!(
-            load_from_str(CONFIG_TEMPLATE_V5),
+            load_from_str(CONFIG_TEMPLATE_V6),
             ConfigLoad::Ready { .. }
         ));
     }
@@ -819,7 +819,7 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&target).unwrap(), "target contents");
         let text = fs::read_to_string(&source).unwrap();
-        assert!(text.contains("version = 5"));
+        assert!(text.contains("version = 6"));
         assert!(
             !fs::symlink_metadata(&source)
                 .unwrap()
@@ -832,7 +832,7 @@ mod tests {
     fn validate_returns_zero_for_valid_config_and_one_for_invalid_config() {
         let dir = TempDir::new();
         let valid = dir.0.join("valid.toml");
-        fs::write(&valid, CONFIG_TEMPLATE_V5).unwrap();
+        fs::write(&valid, CONFIG_TEMPLATE_V6).unwrap();
         let invalid = dir.0.join("invalid.toml");
         fs::write(&invalid, "version = 5\nunknown = true\n").unwrap();
 

@@ -76,7 +76,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
         }
     };
 
-    if version == 5 {
+    if version == 6 {
         let report = pmoke_config_core::validate_config_toml(s);
         if !report.valid {
             return core_diagnostics(report);
@@ -124,6 +124,15 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
             Ok(raw) => normalize_v5(raw),
             Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
                 version: Some(5),
+                warnings: Vec::new(),
+                diagnostics: vec![diag],
+                normalized: None,
+            }),
+        },
+        6 => match deserialize_versioned::<ConfigV6>(s) {
+            Ok(raw) => normalize_v6(raw),
+            Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
+                version: Some(6),
                 warnings: Vec::new(),
                 diagnostics: vec![diag],
                 normalized: None,
@@ -445,7 +454,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
         },
-        kerr: raw.kerr.into(),
+        moke: raw.kerr.into(),
     };
 
     let validation = validate_common(&mut cfg);
@@ -526,7 +535,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
         },
-        kerr: raw.kerr.into(),
+        moke: raw.kerr.into(),
     };
 
     let validation = validate_common(&mut cfg);
@@ -600,7 +609,7 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
         phase: Phase {
             m_omega_t0_offset: raw.phase.m_omega_t0_offset,
         },
-        kerr: raw.kerr.into(),
+        moke: raw.kerr.into(),
     };
 
     let validation = validate_common(&mut cfg);
@@ -720,7 +729,8 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         &raw.sensors,
         &raw.reference,
         &raw.lockin.signal_channels,
-        &raw.kerr,
+        raw.kerr.factor,
+        "kerr.factor",
         &raw.pulse,
         &mut errors,
     );
@@ -820,9 +830,9 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         phase: Phase {
             m_omega_t0_offset: raw.phase.offsets,
         },
-        kerr: Kerr {
+        moke: Moke {
             use_sensor_ch: raw.kerr.sensor,
-            kerr_type: raw.kerr.method,
+            moke_type: raw.kerr.method,
             factor: raw.kerr.factor,
         },
     };
@@ -944,7 +954,8 @@ fn normalize_v5(raw: ConfigV5) -> ConfigLoad {
         &raw.sensors,
         &raw.reference,
         &raw.lockin.signal_channels,
-        &raw.kerr,
+        raw.kerr.factor,
+        "kerr.factor",
         &raw.pulse,
         &mut errors,
     );
@@ -1032,9 +1043,9 @@ fn normalize_v5(raw: ConfigV5) -> ConfigLoad {
         phase: Phase {
             m_omega_t0_offset: raw.phase.offsets,
         },
-        kerr: Kerr {
+        moke: Moke {
             use_sensor_ch: raw.kerr.sensor,
-            kerr_type: raw.kerr.method,
+            moke_type: raw.kerr.method,
             factor: raw.kerr.factor,
         },
     };
@@ -1061,6 +1072,219 @@ fn normalize_v5(raw: ConfigV5) -> ConfigLoad {
     }
 }
 
+fn normalize_v6(raw: ConfigV6) -> ConfigLoad {
+    let mut errors = Vec::new();
+    let deprecated_plot_output_dir = raw.plot.output_dir.is_some();
+
+    let scope_connection = match parse_connection_v4(&raw.scope.connection, "scope.connection") {
+        Ok(connection) => Some(connection),
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
+    let generator_connection = match raw.generator.as_ref() {
+        Some(generator) => match parse_connection_v4(&generator.connection, "generator.connection")
+        {
+            Ok(connection) => Some(connection),
+            Err(error) => {
+                errors.push(error);
+                None
+            }
+        },
+        None => None,
+    };
+
+    if raw.version != 6 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("version".to_string()),
+            format!(
+                "version 6 schema must declare version = 6 (got {})",
+                raw.version
+            ),
+            None,
+        ));
+    }
+    if raw.scope.model != "DHO5108" {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("scope.model".to_string()),
+            format!("unsupported oscilloscope model: {}", raw.scope.model),
+            Some("use model = \"DHO5108\"".to_string()),
+        ));
+    }
+    if let Some(connection) = &scope_connection {
+        match connection {
+            Connection::Tcpip { .. } => {}
+            Connection::Usbtmc { .. } if usbtmc_supported() => {}
+            Connection::Usbtmc { .. } => {
+                errors.push(usbtmc_unsupported_diagnostic("scope.connection"))
+            }
+            Connection::Gpib { .. } => errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("scope.connection".to_string()),
+                "DHO5108 does not support a GPIB connection",
+                Some("use tcp://host:port or visa:RESOURCE".to_string()),
+            )),
+            Connection::PrologixTcp { .. } | Connection::PrologixSerial { .. } => {
+                errors.push(ConfigDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Some("scope.connection".to_string()),
+                    "DHO5108 does not support a Prologix GPIB connection",
+                    Some("use tcp://host:port or visa:RESOURCE".to_string()),
+                ));
+            }
+        }
+    }
+    if let Some(generator) = &raw.generator {
+        if generator.model != "WF1946B" {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("generator.model".to_string()),
+                format!("unsupported function generator model: {}", generator.model),
+                Some("use model = \"WF1946B\"".to_string()),
+            ));
+        }
+        if let Some(connection) = &generator_connection
+            && !matches!(
+                connection,
+                Connection::Gpib { .. }
+                    | Connection::PrologixTcp { .. }
+                    | Connection::PrologixSerial { .. }
+            )
+        {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("generator.connection".to_string()),
+                "WF1946B requires a GPIB or Prologix connection",
+                Some("use gpib://board/address, prologix-tcp://host:1234?addr=11, or prologix-serial:///dev/cu.usbserial?addr=11".to_string()),
+            ));
+        }
+    }
+
+    validate_current_fields(
+        &raw.sensors,
+        &raw.reference,
+        &raw.lockin.signal_channels,
+        raw.moke.factor,
+        "moke.factor",
+        &raw.pulse,
+        &mut errors,
+    );
+
+    if scope_connection.is_none() || (raw.generator.is_some() && generator_connection.is_none()) {
+        return ConfigLoad::Diagnostics(ConfigDiagnostics {
+            version: Some(6),
+            warnings: Vec::new(),
+            diagnostics: errors,
+            normalized: None,
+        });
+    }
+    let scope_connection = scope_connection.expect("scope connection parsed above");
+    let signal_channels = raw.lockin.signal_channels.clone();
+
+    let sensor_ch = raw
+        .sensors
+        .iter()
+        .map(|sensor| sensor.channel)
+        .collect::<Vec<_>>();
+    let mut channels = raw
+        .sensors
+        .iter()
+        .map(channel_from_sensor_v4)
+        .collect::<Vec<_>>();
+    channels.extend(signal_channels.iter().map(|&index| Channel {
+        index,
+        factor: None,
+        scale_to_abs_max: None,
+        label: None,
+        unit_out: None,
+    }));
+    channels.push(Channel {
+        index: raw.reference.channel,
+        factor: None,
+        scale_to_abs_max: None,
+        label: None,
+        unit_out: None,
+    });
+
+    let function_generator = raw.generator.map(|generator| FunctionGenerator {
+        connection: generator_connection.expect("generator connection parsed above"),
+        model: generator.model,
+    });
+    let mut cfg = Config {
+        version: 6,
+        instruments: Some(Instruments {
+            function_generator,
+            oscilloscope: Oscilloscope {
+                connection: scope_connection,
+                model: raw.scope.model,
+            },
+        }),
+        fetch: Fetch {
+            output: match raw.data.output {
+                DataOutputV4::Csv => FetchOutput::Csv,
+                DataOutputV4::Raw => FetchOutput::Raw,
+                DataOutputV4::Both => FetchOutput::CsvAndRaw,
+            },
+            analysis_input: raw.data.input,
+        },
+        screenshot: Screenshot {
+            enabled: raw.data.screenshot,
+        },
+        plot: raw.plot.into(),
+        source_path: PathBuf::from("config.toml"),
+        source_text: None,
+        artifact_root: None,
+        plot_output_relative: None,
+        legacy_timebase: None,
+        force: false,
+        staging_active: false,
+        roles: Roles {
+            sensor_ch,
+            reference_ch: raw.reference.channel,
+            signal_ch: signal_channels,
+        },
+        channels,
+        pulse: Pulse {
+            bg_window_before: raw.pulse.background_before,
+            bg_window_after: raw.pulse.background_after,
+        },
+        reference: raw.reference.into(),
+        lockin: raw.lockin.into(),
+        phase: Phase {
+            m_omega_t0_offset: raw.phase.offsets,
+        },
+        moke: Moke {
+            use_sensor_ch: raw.moke.sensor,
+            moke_type: raw.moke.method,
+            factor: raw.moke.factor,
+        },
+    };
+
+    let mut validation = remap_v6_validation(validate_common(&mut cfg));
+    if deprecated_plot_output_dir {
+        validation.warnings.push(ConfigWarning::new(
+            "plot.output_dir is deprecated and ignored; canonical plots are written under analysis/plots",
+        ));
+    }
+    errors.extend(validation.errors);
+    if errors.is_empty() {
+        ConfigLoad::Ready {
+            config: cfg,
+            warnings: validation.warnings,
+        }
+    } else {
+        ConfigLoad::Diagnostics(ConfigDiagnostics {
+            version: Some(6),
+            warnings: validation.warnings,
+            diagnostics: errors,
+            normalized: None,
+        })
+    }
+}
+
 fn channel_from_sensor_v4(sensor: &SensorV4) -> Channel {
     let (factor, scale_to_abs_max) = match sensor.scale {
         SensorScaleV4::Factor(ref scale) => (Some(scale.factor), None),
@@ -1075,14 +1299,31 @@ fn channel_from_sensor_v4(sensor: &SensorV4) -> Channel {
     }
 }
 
-fn remap_v4_validation(mut validation: ValidationSummary) -> ValidationSummary {
+fn remap_v4_validation(validation: ValidationSummary) -> ValidationSummary {
+    remap_section_terms(validation, ("moke.use_sensor_ch", "kerr.sensor"))
+}
+
+fn remap_v6_validation(validation: ValidationSummary) -> ValidationSummary {
+    remap_section_terms(validation, ("moke.use_sensor_ch", "moke.sensor"))
+}
+
+fn remap_section_terms(
+    mut validation: ValidationSummary,
+    section_term: (&str, &str),
+) -> ValidationSummary {
     for warning in &mut validation.warnings {
-        warning.message = v4_config_terms(&warning.message);
+        warning.message = versioned_config_terms(&warning.message, section_term);
     }
     for error in &mut validation.errors {
-        error.path = error.path.as_deref().map(v4_config_terms);
-        error.message = v4_config_terms(&error.message);
-        error.suggestion = error.suggestion.as_deref().map(v4_config_terms);
+        error.path = error
+            .path
+            .as_deref()
+            .map(|path| versioned_config_terms(path, section_term));
+        error.message = versioned_config_terms(&error.message, section_term);
+        error.suggestion = error
+            .suggestion
+            .as_deref()
+            .map(|suggestion| versioned_config_terms(suggestion, section_term));
     }
     validation.errors.retain(|error| {
         !(error.path.as_deref() == Some("channels")
@@ -1091,45 +1332,45 @@ fn remap_v4_validation(mut validation: ValidationSummary) -> ValidationSummary {
     validation
 }
 
-fn v4_config_terms(value: &str) -> String {
-    [
-        (
-            "lockin.lpf_sync_average_cycles",
-            "lockin.filter.sync_average_cycles",
-        ),
-        (
-            "lockin.lpf_half_window_cycles",
-            "lockin.filter.half_window_cycles",
-        ),
-        (
-            "lockin.lpf_stopband_atten_db",
-            "lockin.filter.stopband_atten_db",
-        ),
-        (
-            "lockin.lpf_cutoff_ref_ratio",
-            "lockin.filter.cutoff_ref_ratio",
-        ),
-        ("lockin.lpf_cutoff_hz", "lockin.filter.cutoff_hz"),
-        ("lockin.lpf_iir_order", "lockin.filter.iir_order"),
-        ("lockin.lpf_debug_label", "lockin.debug_label"),
-        ("lockin.lpf_kind", "lockin.filter.kind"),
-        ("phase.m_omega_t0_offset", "phase.offsets"),
-        ("pulse.bg_window_before", "pulse.background_before"),
-        ("pulse.bg_window_after", "pulse.background_after"),
-        ("kerr.use_sensor_ch", "kerr.sensor"),
-        ("roles.reference_ch", "reference.channel"),
-        ("roles.signal_ch", "lockin.signal_channels"),
-        ("roles.sensor_ch", "sensors"),
-    ]
-    .into_iter()
-    .fold(value.to_string(), |text, (old, new)| text.replace(old, new))
+fn versioned_config_terms(value: &str, section_term: (&str, &str)) -> String {
+    std::iter::once(section_term)
+        .chain([
+            (
+                "lockin.lpf_sync_average_cycles",
+                "lockin.filter.sync_average_cycles",
+            ),
+            (
+                "lockin.lpf_half_window_cycles",
+                "lockin.filter.half_window_cycles",
+            ),
+            (
+                "lockin.lpf_stopband_atten_db",
+                "lockin.filter.stopband_atten_db",
+            ),
+            (
+                "lockin.lpf_cutoff_ref_ratio",
+                "lockin.filter.cutoff_ref_ratio",
+            ),
+            ("lockin.lpf_cutoff_hz", "lockin.filter.cutoff_hz"),
+            ("lockin.lpf_iir_order", "lockin.filter.iir_order"),
+            ("lockin.lpf_debug_label", "lockin.debug_label"),
+            ("lockin.lpf_kind", "lockin.filter.kind"),
+            ("phase.m_omega_t0_offset", "phase.offsets"),
+            ("pulse.bg_window_before", "pulse.background_before"),
+            ("pulse.bg_window_after", "pulse.background_after"),
+            ("roles.reference_ch", "reference.channel"),
+            ("roles.signal_ch", "lockin.signal_channels"),
+            ("roles.sensor_ch", "sensors"),
+        ])
+        .fold(value.to_string(), |text, (old, new)| text.replace(old, new))
 }
 
 fn validate_current_fields(
     sensors: &[SensorV4],
     reference: &ReferenceV4,
     signal_channels: &[u8],
-    kerr: &KerrV4,
+    moke_factor: f64,
+    moke_factor_path: &str,
     pulse: &PulseV4,
     errors: &mut Vec<ConfigDiagnostic>,
 ) {
@@ -1249,11 +1490,11 @@ fn validate_current_fields(
             None,
         ));
     }
-    if !kerr.factor.is_finite() {
+    if !moke_factor.is_finite() {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
-            Some("kerr.factor".to_string()),
-            "kerr.factor must be finite",
+            Some(moke_factor_path.to_string()),
+            format!("{moke_factor_path} must be finite"),
             None,
         ));
     }

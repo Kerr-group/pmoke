@@ -4,13 +4,13 @@ pub mod connection;
 mod model;
 
 use connection::{ConnectionDefaults, ConnectionUri};
-use model::{ConfigV5, SensorScale, Window};
+use model::{ConfigV6, SensorScale, Window};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 pub const REPORT_FORMAT_VERSION: u32 = 1;
-pub const CONFIG_SCHEMA_VERSION: u32 = 5;
+pub const CONFIG_SCHEMA_VERSION: u32 = 6;
 pub const MAX_CONFIG_BYTES: usize = 1_048_576;
 pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CORE_COMMIT: &str = env!("PMOKE_SOURCE_COMMIT");
@@ -173,7 +173,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
                 Some("version".to_string()),
                 None,
                 "missing required top-level `version`",
-                Some("add `version = 5` at the top of the configuration".to_string()),
+                Some("add `version = 6` at the top of the configuration".to_string()),
             );
             return report;
         }
@@ -191,7 +191,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
                     Some("version".to_string()),
                     None,
                     "version must be a non-negative integer",
-                    Some("set `version = 5`".to_string()),
+                    Some("set `version = 6`".to_string()),
                 );
                 return report;
             }
@@ -231,7 +231,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
             return report;
         }
     };
-    let mut config = match serde_path_to_error::deserialize::<_, ConfigV5>(deserializer) {
+    let mut config = match serde_path_to_error::deserialize::<_, ConfigV6>(deserializer) {
         Ok(config) => config,
         Err(error) => {
             let mut report = ValidationReport::new(Some(version));
@@ -250,7 +250,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
     };
 
     let mut report = ValidationReport::new(Some(version));
-    validate_v5(&mut config, &mut report);
+    validate_v6(&mut config, &mut report);
     report.valid = report.error_count() == 0;
     if report.valid {
         report.summary = Some(summary(&config));
@@ -271,14 +271,14 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
     report
 }
 
-fn validate_v5(config: &mut ConfigV5, report: &mut ValidationReport) {
+fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
     if config.version != CONFIG_SCHEMA_VERSION {
         error(
             report,
             DiagnosticCode::InvalidVersion,
             "version",
             format!(
-                "version 5 schema must declare version = 5 (got {})",
+                "version 6 schema must declare version = 6 (got {})",
                 config.version
             ),
         );
@@ -416,26 +416,26 @@ fn validate_v5(config: &mut ConfigV5, report: &mut ValidationReport) {
             ),
         }
     }
-    if !config.kerr.factor.is_finite() {
+    if !config.moke.factor.is_finite() {
         error(
             report,
             DiagnosticCode::InvalidRange,
-            "kerr.factor",
-            "kerr.factor must be finite",
+            "moke.factor",
+            "moke.factor must be finite",
         );
     }
     if !config
         .sensors
         .iter()
-        .any(|sensor| sensor.channel == config.kerr.sensor)
+        .any(|sensor| sensor.channel == config.moke.sensor)
     {
         error(
             report,
             DiagnosticCode::InvalidRange,
-            "kerr.sensor",
+            "moke.sensor",
             format!(
-                "kerr.sensor ({}) is not defined in sensors",
-                config.kerr.sensor
+                "moke.sensor ({}) is not defined in sensors",
+                config.moke.sensor
             ),
         );
     }
@@ -449,7 +449,7 @@ fn validate_v5(config: &mut ConfigV5, report: &mut ValidationReport) {
     }
 }
 
-fn validate_channels(config: &ConfigV5, report: &mut ValidationReport) {
+fn validate_channels(config: &ConfigV6, report: &mut ValidationReport) {
     let mut assignments = BTreeMap::<u8, String>::new();
     let mut assign = |channel: u8, path: String, report: &mut ValidationReport| {
         if !(1..=8).contains(&channel) {
@@ -531,7 +531,7 @@ fn validate_channels(config: &ConfigV5, report: &mut ValidationReport) {
     }
 }
 
-fn validate_windows(config: &ConfigV5, report: &mut ValidationReport) {
+fn validate_windows(config: &ConfigV6, report: &mut ValidationReport) {
     check_window(
         report,
         "pulse.background_before",
@@ -561,7 +561,7 @@ fn validate_windows(config: &ConfigV5, report: &mut ValidationReport) {
     }
 }
 
-fn validate_filter(config: &ConfigV5, report: &mut ValidationReport) {
+fn validate_filter(config: &ConfigV6, report: &mut ValidationReport) {
     let filter = &config.lockin.filter;
     positive_f64(
         report,
@@ -626,7 +626,7 @@ fn safe_debug_label(label: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
-fn summary(config: &ConfigV5) -> ConfigSummary {
+fn summary(config: &ConfigV6) -> ConfigSummary {
     ConfigSummary {
         version: config.version,
         scope_model: config.scope.model.clone(),
@@ -719,7 +719,7 @@ fn push(
 mod tests {
     use super::*;
 
-    const VALID: &str = r#"version = 5
+    const VALID: &str = r#"version = 6
 [scope]
 model = "DHO5108"
 connection = "tcp://192.0.2.10:55255"
@@ -746,14 +746,14 @@ stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 [phase]
 offsets = [0, 0, 0, 0, 0, 0]
-[kerr]
+[moke]
 sensor = 1
 method = "harmonics"
 factor = -1.0
 "#;
 
     #[test]
-    fn valid_v5_has_actual_summary_and_normalized_output() {
+    fn valid_v6_has_actual_summary_and_normalized_output() {
         let report = validate_config_toml(VALID);
         assert!(report.valid, "{:#?}", report.diagnostics);
         let summary = report.summary.unwrap();
@@ -793,7 +793,7 @@ factor = -1.0
 
     #[test]
     fn syntax_diagnostic_has_a_source_span() {
-        let report = validate_config_toml("version = 5\n[scope\n");
+        let report = validate_config_toml("version = 6\n[scope\n");
         let span = report.diagnostics[0].span.as_ref().unwrap();
         assert!(span.line >= 2);
         assert!(span.column >= 1);
@@ -807,7 +807,7 @@ factor = -1.0
 
     #[test]
     fn exact_size_limit_is_still_parsed() {
-        let input = format!("version = 5\n#{}", "x".repeat(MAX_CONFIG_BYTES - 13));
+        let input = format!("version = 6\n#{}", "x".repeat(MAX_CONFIG_BYTES - 13));
         assert_eq!(input.len(), MAX_CONFIG_BYTES);
         let report = validate_config_toml(&input);
         assert_ne!(report.diagnostics[0].code, DiagnosticCode::InputTooLarge);
@@ -820,7 +820,7 @@ factor = -1.0
         );
         assert_eq!(unknown.diagnostics[0].code, DiagnosticCode::SchemaMismatch);
 
-        let legacy = validate_config_toml(&VALID.replacen("version = 5", "version = 3", 1));
+        let legacy = validate_config_toml(&VALID.replacen("version = 6", "version = 3", 1));
         assert_eq!(
             legacy.diagnostics[0].code,
             DiagnosticCode::UnsupportedVersion
@@ -828,7 +828,7 @@ factor = -1.0
         assert_eq!(legacy.schema_version, Some(3));
 
         let oversized_version =
-            validate_config_toml(&VALID.replacen("version = 5", "version = 4294967300", 1));
+            validate_config_toml(&VALID.replacen("version = 6", "version = 4294967300", 1));
         assert_eq!(
             oversized_version.diagnostics[0].code,
             DiagnosticCode::InvalidVersion

@@ -238,9 +238,11 @@ impl AnalysisBackup {
             candidates.push((legacy_meta.clone(), PathBuf::from("analysis_metadata.toml")));
         }
 
-        let legacy_kerr = run_dir.join("kerr_results.csv");
-        if legacy_kerr.exists() {
-            candidates.push((legacy_kerr.clone(), PathBuf::from("kerr_results.csv")));
+        for legacy_results in ["kerr_results.csv", "moke_results.csv"] {
+            let legacy_file = run_dir.join(legacy_results);
+            if legacy_file.exists() {
+                candidates.push((legacy_file.clone(), PathBuf::from(legacy_results)));
+            }
         }
 
         // Wildcards for lockin results
@@ -422,6 +424,7 @@ fn has_any_analysis_artifact(run_dir: &Path) -> Result<bool> {
         run_dir.join("analysis_npy"),
         run_dir.join("analysis_metadata.toml"),
         run_dir.join("kerr_results.csv"),
+        run_dir.join("moke_results.csv"),
     ] {
         if path_exists_for_preflight(&artifact)? {
             return Ok(true);

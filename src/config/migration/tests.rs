@@ -143,7 +143,7 @@ fn v1_filter_length_is_migrated_with_explicit_lossy_warning() {
 }
 
 #[test]
-fn v2_raw_input_can_advance_to_v5_without_legacy_timebase() {
+fn v2_raw_input_can_advance_to_v6_without_legacy_timebase() {
     let v2 = v3_config()
         .replacen(
             "version = 3",
@@ -157,9 +157,11 @@ fn v2_raw_input_can_advance_to_v5_without_legacy_timebase() {
         );
     let fixture = TempConfig::new(&v2);
     let plan = plan_latest_executable_migration(&fixture.path, Some(&fixture.path)).unwrap();
-    assert_eq!(plan.target_version, 5);
+    assert_eq!(plan.target_version, 6);
     assert!(plan.changed);
     assert!(!plan.target_toml.contains("[timebase]"));
+    assert!(plan.target_toml.contains("version = 6"));
+    assert!(plan.target_toml.contains("[moke]"));
 }
 
 #[test]

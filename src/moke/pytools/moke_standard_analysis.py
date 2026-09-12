@@ -63,7 +63,7 @@ def decimation_indices(values: NDArray, max_points: int, method: str) -> NDArray
     return unique[np.linspace(0, unique.size - 1, max_points, dtype=int)]
 
 
-class KerrStandardAnalyser:
+class MokeStandardAnalyser:
     def __init__(self):
         pass
 
@@ -97,17 +97,17 @@ class KerrStandardAnalyser:
         li5_in, li5_out = ys[8], ys[9]
         li6_in, li6_out = ys[10], ys[11]
 
-        kerr = factor * self.calculate(li1_in, li2_in)
+        moke = factor * self.calculate(li1_in, li2_in)
 
         plot_error = None
         if save or interactive:
             try:
                 gs = _load_gsplot()
 
-                indices = decimation_indices(kerr, max_points, decimation)
+                indices = decimation_indices(moke, max_points, decimation)
                 t_plot = t[indices]
                 x_plot = x[indices]
-                kerr_plot = kerr[indices]
+                moke_plot = moke[indices]
 
                 axs = gs.axes(
                     True,
@@ -116,7 +116,7 @@ class KerrStandardAnalyser:
                     ion=interactive,
                 )
 
-                gs.scatter_colormap(axs[0], x_plot, kerr_plot * 1e3, t_plot)
+                gs.scatter_colormap(axs[0], x_plot, moke_plot * 1e3, t_plot)
                 axs[0].grid()
 
                 title = fig_name + " using Standard"
@@ -128,6 +128,6 @@ class KerrStandardAnalyser:
                 plot_error = str(exc)
 
         return {
-            "kerr": kerr,
+            "moke": moke,
             "plot_error": plot_error,
         }

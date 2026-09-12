@@ -9,9 +9,9 @@ pub fn build(reference: &ConfigReference) -> Value {
         "description": format!("pmoke {} configuration schema v{}", reference.pmoke_version, reference.schema_version),
         "type": "object",
         "additionalProperties": false,
-        "required": ["version", "scope", "data", "pulse", "reference", "lockin", "phase", "kerr"],
+        "required": ["version", "scope", "data", "pulse", "reference", "lockin", "phase", "moke"],
         "properties": {
-            "version": annotate(reference, "version", json!({"type": "integer", "const": 5})),
+            "version": annotate(reference, "version", json!({"type": "integer", "const": reference.schema_version})),
             "scope": annotate(reference, "scope", instrument(reference, "scope", false)),
             "generator": annotate(reference, "generator", instrument(reference, "generator", true)),
             "data": annotate(reference, "data", object(
@@ -53,12 +53,12 @@ pub fn build(reference: &ConfigReference) -> Value {
                     "items": {"oneOf": [{"type": "number"}, {"type": "string"}]}
                 })))],
             )),
-            "kerr": annotate(reference, "kerr", object(
+            "moke": annotate(reference, "moke", object(
                 &["sensor", "method", "factor"],
                 [
-                    ("sensor", channel(reference, "kerr.sensor")),
-                    ("method", enum_string(reference, "kerr.method")),
-                    ("factor", annotate(reference, "kerr.factor", json!({"type": "number"}))),
+                    ("sensor", channel(reference, "moke.sensor")),
+                    ("method", enum_string(reference, "moke.method")),
+                    ("factor", annotate(reference, "moke.factor", json!({"type": "number"}))),
                 ],
             )),
             "plot": annotate(reference, "plot", plot(reference)),
@@ -70,7 +70,7 @@ pub fn build(reference: &ConfigReference) -> Value {
             "fields": reference.fields,
             "semantic_constraints": [
                 "channel assignments must be unique across sensors, reference, and lock-in signals",
-                "kerr.sensor must reference a configured sensor channel",
+                "moke.sensor must reference a configured sensor channel",
                 "pulse background windows must not overlap",
                 "lockin.filter must use the active boxcar_legacy fields only"
             ]
@@ -388,7 +388,7 @@ mod tests {
     fn generated_schema_uses_registry_metadata() {
         let reference = pmoke::config::config_reference();
         let schema = build(&reference);
-        assert_eq!(schema["properties"]["version"]["const"], 5);
+        assert_eq!(schema["properties"]["version"]["const"], 6);
         assert_eq!(
             schema["properties"]["lockin"]["properties"]["filter"]["oneOf"]
                 .as_array()

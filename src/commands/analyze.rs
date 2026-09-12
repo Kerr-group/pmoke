@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
-    kerr::run_kerr_analysis,
     lockin::run_li,
+    moke::run_moke_analysis,
     phase::run_phase_analysis,
     ui,
     utils::waveform::{WaveformData, read_all_fetched_waveforms},
@@ -94,8 +94,8 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
         )?;
         drop(li_results);
 
-        // run Kerr analysis here
-        run_kerr_analysis(
+        // run Moke analysis here
+        run_moke_analysis(
             &cfg_staging,
             &t_stride,
             &sensor_rate_stride,
@@ -188,7 +188,7 @@ pub(crate) fn validate_waveform_data(data: &WaveformData) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{analyze, run_analyze, validate_waveform_data};
-    use crate::config::{KerrType, LockinLpfKind, Window};
+    use crate::config::{LockinLpfKind, MokeType, Window};
     use crate::utils::csv::read_csv;
     use crate::utils::waveform::WaveformData;
     use std::f64::consts::PI;
@@ -337,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_harmonics_pipeline_recovers_folded_kerr_angle() {
+    fn synthetic_harmonics_pipeline_recovers_folded_angle() {
         let directory = TemporaryDirectory::new();
         let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
         cfg.source_path = directory.0.join("config.toml");
@@ -361,7 +361,7 @@ mod tests {
         cfg.lockin.stride_samples = 20;
         cfg.lockin.lpf_half_window_cycles = 1.0;
         cfg.phase.m_omega_t0_offset = vec![0.0; 6];
-        cfg.kerr.kerr_type = KerrType::Harmonics;
+        cfg.moke.moke_type = MokeType::Harmonics;
 
         let sample_count = 20_000;
         let dt = 1.0e-5;
@@ -424,11 +424,11 @@ mod tests {
 
         run_analyze(&cfg, &data).unwrap();
 
-        let columns = read_csv(cfg.paths().kerr_csv()).unwrap();
-        let kerr = columns.last().unwrap();
-        assert!(!kerr.is_empty());
+        let columns = read_csv(cfg.paths().moke_csv()).unwrap();
+        let moke = columns.last().unwrap();
+        assert!(!moke.is_empty());
         let expected = 0.5 * (2.0 * theta).tan().atan();
-        let maximum_error = kerr
+        let maximum_error = moke
             .iter()
             .map(|value| (value - expected).abs())
             .fold(0.0_f64, f64::max);
@@ -464,7 +464,7 @@ mod tests {
         cfg.lockin.stride_samples = 20;
         cfg.lockin.lpf_half_window_cycles = 1.0;
         cfg.phase.m_omega_t0_offset = vec![0.0; 6];
-        cfg.kerr.kerr_type = KerrType::Harmonics;
+        cfg.moke.moke_type = MokeType::Harmonics;
 
         let sample_count = 20_000;
         let dt = 1.0e-5;
@@ -543,7 +543,7 @@ mod tests {
         cfg.lockin.stride_samples = 25;
         run_analyze(&cfg, &data).unwrap();
         assert!(cfg.paths().analysis_manifest().is_file());
-        assert!(!cfg.paths().kerr_csv().with_extension("npy").exists());
+        assert!(!cfg.paths().moke_csv().with_extension("npy").exists());
         assert_eq!(
             std::fs::read(cfg.paths().source_config()).unwrap(),
             acquisition_config
@@ -561,7 +561,7 @@ mod tests {
             i64::from(crate::lockin::provenance::ANALYSIS_MANIFEST_SCHEMA_VERSION)
         );
         assert_eq!(manifest["generation"].as_integer(), Some(2));
-        assert_eq!(manifest["published_through"].as_str(), Some("kerr"));
+        assert_eq!(manifest["published_through"].as_str(), Some("moke"));
         assert_eq!(
             manifest["config_source"].as_str(),
             Some("config.source.toml")
@@ -580,25 +580,25 @@ mod tests {
         );
         assert!(manifest.get("source_waveform").is_none());
         let artifacts = manifest["artifacts"].as_array().unwrap();
-        let kerr_artifact = artifacts
+        let moke_artifact = artifacts
             .iter()
-            .find(|artifact| artifact["kind"].as_str() == Some("kerr"))
+            .find(|artifact| artifact["kind"].as_str() == Some("moke"))
             .unwrap();
-        assert!(kerr_artifact["rows"].as_integer().unwrap() > 0);
-        assert!(kerr_artifact["columns"].as_integer().unwrap() > 0);
-        assert_eq!(kerr_artifact["dtype"].as_str(), Some("<f8"));
-        assert_eq!(kerr_artifact["order"].as_str(), Some("C"));
+        assert!(moke_artifact["rows"].as_integer().unwrap() > 0);
+        assert!(moke_artifact["columns"].as_integer().unwrap() > 0);
+        assert_eq!(moke_artifact["dtype"].as_str(), Some("<f8"));
+        assert_eq!(moke_artifact["order"].as_str(), Some("C"));
 
         let outputs = manifest["outputs"].as_array().unwrap();
         assert!(
             outputs
                 .iter()
-                .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.csv")
+                .any(|v| v["file"].as_str().unwrap() == "moke/moke.csv")
         );
         assert!(
             !outputs
                 .iter()
-                .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy")
+                .any(|v| v["file"].as_str().unwrap() == "moke/moke.npy")
         );
 
         // Third run with save_npy = true succeeds
@@ -606,19 +606,19 @@ mod tests {
         run_analyze(&cfg, &data).unwrap();
 
         // Verify NPY is generated
-        assert!(cfg.paths().kerr_csv().with_extension("npy").exists());
+        assert!(cfg.paths().moke_csv().with_extension("npy").exists());
         let manifest_content_2 = std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap();
         let manifest_2: toml::Value = toml::from_str(&manifest_content_2).unwrap();
         let outputs_2 = manifest_2["outputs"].as_array().unwrap();
         assert!(
             outputs_2
                 .iter()
-                .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.csv")
+                .any(|v| v["file"].as_str().unwrap() == "moke/moke.csv")
         );
         assert!(
             outputs_2
                 .iter()
-                .any(|v| v["file"].as_str().unwrap() == "kerr/kerr.npy")
+                .any(|v| v["file"].as_str().unwrap() == "moke/moke.npy")
         );
     }
 
@@ -708,11 +708,11 @@ mod tests {
         for file in [
             paths.lockin_xy_csv(3),
             paths.lockin_rotated_csv(3),
-            paths.kerr_csv(),
+            paths.moke_csv(),
             paths.reference_fit_plot(),
             paths.lockin_xy_combined_plot(),
             paths.phase_rotated_combined_plot(),
-            paths.kerr_plot(),
+            paths.moke_plot(),
             paths.analysis_manifest(),
         ] {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -738,20 +738,20 @@ mod tests {
         assert!(phase.paths().lockin_xy_combined_plot().is_file());
         assert!(!phase.paths().lockin_rotated_csv(3).exists());
         assert!(!phase.paths().phase_rotated_combined_plot().exists());
-        assert!(!phase.paths().kerr_csv().exists());
-        assert!(!phase.paths().kerr_plot().exists());
+        assert!(!phase.paths().moke_csv().exists());
+        assert!(!phase.paths().moke_plot().exists());
         std::fs::remove_dir_all(phase.paths().analysis_dir()).unwrap();
 
-        let kerr = crate::commands::run_dir::prepare_analysis_staging(
+        let moke = crate::commands::run_dir::prepare_analysis_staging(
             &cfg,
-            crate::commands::run_dir::AnalysisStage::Kerr,
+            crate::commands::run_dir::AnalysisStage::Moke,
         )
         .unwrap();
-        assert!(kerr.paths().lockin_xy_csv(3).is_file());
-        assert!(kerr.paths().lockin_rotated_csv(3).is_file());
-        assert!(kerr.paths().phase_rotated_combined_plot().is_file());
-        assert!(!kerr.paths().kerr_csv().exists());
-        assert!(!kerr.paths().kerr_plot().exists());
+        assert!(moke.paths().lockin_xy_csv(3).is_file());
+        assert!(moke.paths().lockin_rotated_csv(3).is_file());
+        assert!(moke.paths().phase_rotated_combined_plot().is_file());
+        assert!(!moke.paths().moke_csv().exists());
+        assert!(!moke.paths().moke_plot().exists());
     }
 
     #[test]
@@ -762,7 +762,7 @@ mod tests {
         cfg.set_artifact_root(directory.0.clone());
         let paths = cfg.paths();
 
-        // 1. Setup a fully analyzed manifest with li, phase, kerr stages
+        // 1. Setup a fully analyzed manifest with li, phase, moke stages
         let manifest_path = paths.analysis_manifest();
         std::fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
 
@@ -770,7 +770,7 @@ mod tests {
         for file in [
             paths.lockin_xy_csv(3),
             paths.lockin_rotated_csv(3),
-            paths.kerr_csv(),
+            paths.moke_csv(),
         ] {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, b"data").unwrap();
@@ -779,7 +779,7 @@ mod tests {
             paths.reference_fit_plot(),
             paths.lockin_xy_combined_plot(),
             paths.phase_rotated_combined_plot(),
-            paths.kerr_plot(),
+            paths.moke_plot(),
         ] {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, b"\x89PNG\r\n\x1a\n").unwrap();
@@ -799,9 +799,13 @@ pmoke_version = "0.2.0"
 completed_at = "2026-07-12T19:00:01Z"
 pmoke_version = "0.2.0"
 
-[stages.kerr]
+[stages.moke]
 completed_at = "2026-07-12T19:00:02Z"
 pmoke_version = "0.2.0"
+
+[stages.kerr]
+completed_at = "2026-07-12T19:00:02Z"
+pmoke_version = "0.1.0"
 
 [[artifacts]]
 kind = "lockin_xy"
@@ -812,6 +816,10 @@ csv = "lockin/ch3_xy.csv"
 kind = "lockin_rotated"
 channel = 3
 csv = "lockin/ch3_rotated.csv"
+
+[[artifacts]]
+kind = "moke"
+csv = "moke/moke.csv"
 
 [[artifacts]]
 kind = "kerr"
@@ -835,7 +843,7 @@ csv = "kerr/kerr.csv"
         crate::commands::run_dir::write_analysis_config_snapshots(&phase_cfg).unwrap();
         crate::lockin::provenance::refresh_analysis_manifest_outputs(&phase_cfg, "phase").unwrap();
 
-        // Check stages after phase re-run: stages.li exists, stages.phase updated, stages.kerr/export_npy deleted
+        // Check stages after phase re-run: stages.li exists, stages.phase updated, stages.moke/export_npy deleted
         let manifest_content =
             std::fs::read_to_string(phase_cfg.paths().analysis_manifest()).unwrap();
         let manifest: toml::Value = toml::from_str(&manifest_content).unwrap();
@@ -845,10 +853,11 @@ csv = "kerr/kerr.csv"
         let stages = manifest["stages"].as_table().unwrap();
         assert!(stages.contains_key("li"));
         assert!(stages.contains_key("phase"));
+        assert!(!stages.contains_key("moke"));
         assert!(!stages.contains_key("kerr"));
         assert!(!stages.contains_key("export_npy"));
 
-        // Check artifacts after phase: lockin_rotated and kerr should be gone because they are not carried forward
+        // Check artifacts after phase: lockin_rotated, moke, and legacy kerr should be gone because they are not carried forward
         let artifacts = manifest["artifacts"].as_array().unwrap();
         assert!(
             artifacts
@@ -860,6 +869,7 @@ csv = "kerr/kerr.csv"
                 .iter()
                 .any(|a| a["kind"].as_str() == Some("lockin_rotated"))
         );
+        assert!(!artifacts.iter().any(|a| a["kind"].as_str() == Some("moke")));
         assert!(!artifacts.iter().any(|a| a["kind"].as_str() == Some("kerr")));
 
         // 3. Re-run li staging from the original full state
@@ -908,6 +918,7 @@ csv = "kerr/kerr.csv"
         let stages_li = manifest_li["stages"].as_table().unwrap();
         assert!(stages_li.contains_key("li"));
         assert!(!stages_li.contains_key("phase"));
+        assert!(!stages_li.contains_key("moke"));
         assert!(!stages_li.contains_key("kerr"));
     }
 }

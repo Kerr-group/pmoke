@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::constants::{KERR_NAME, LI_RESULTS_NAME, LI_ROTATED_NAME};
+use crate::constants::{LI_RESULTS_NAME, LI_ROTATED_NAME, MOKE_NAME};
 use crate::ui;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
@@ -336,7 +336,8 @@ fn collect_analysis_outputs(
 }
 
 fn looks_like_canonical_analysis_csv(file: &str) -> bool {
-    (file.starts_with("lockin/") || file.starts_with("kerr/")) && file.ends_with(".csv")
+    (file.starts_with("lockin/") || file.starts_with("kerr/") || file.starts_with("moke/"))
+        && file.ends_with(".csv")
 }
 
 fn validate_canonical_analysis_csv_path(file: &str) -> Result<()> {
@@ -347,7 +348,7 @@ fn validate_canonical_analysis_csv_path(file: &str) -> Result<()> {
     let components = path.components().collect::<Vec<_>>();
     let valid_root = matches!(
         components.first(),
-        Some(std::path::Component::Normal(root)) if *root == "lockin" || *root == "kerr"
+        Some(std::path::Component::Normal(root)) if *root == "lockin" || *root == "kerr" || *root == "moke"
     );
     if path.is_absolute()
         || components.len() != 2
@@ -365,7 +366,11 @@ fn canonical_csv_npy_pairs(
 ) -> Result<Vec<(PathBuf, PathBuf)>> {
     let mut actual_csvs = BTreeSet::new();
     let mut existing_npys = BTreeSet::new();
-    for directory in [analysis_dir.join("lockin"), analysis_dir.join("kerr")] {
+    for directory in [
+        analysis_dir.join("lockin"),
+        analysis_dir.join("kerr"),
+        analysis_dir.join("moke"),
+    ] {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -488,7 +493,7 @@ fn export_into(cfg: &Config, staging: &Path) -> Result<ExportMetadata> {
             format!("{LI_ROTATED_NAME}_ch{channel}.csv"),
         ));
     }
-    sources.push((resolver.kerr_csv(), format!("{KERR_NAME}_results.csv")));
+    sources.push((resolver.moke_csv(), format!("{MOKE_NAME}_results.csv")));
 
     let mut arrays = Vec::with_capacity(sources.len());
     for (source, source_name) in sources {
@@ -671,7 +676,7 @@ mod tests {
     #[test]
     fn csv_table_rejects_header_only_analysis_output() {
         let path = temporary_file().with_extension("csv");
-        fs::write(&path, "time (s),Kerr angle (rad)\n").unwrap();
+        fs::write(&path, "time (s),angle (rad)\n").unwrap();
 
         let error = read_csv_table(&path).unwrap_err();
 
@@ -690,15 +695,15 @@ mod tests {
             paths.lockin_xy_csv(2),
             paths.lockin_xy_csv(3),
             paths.lockin_rotated_csv(2),
-            paths.kerr_csv(),
+            paths.moke_csv(),
         ] {
             fs::create_dir_all(csv.parent().unwrap()).unwrap();
             fs::write(csv, "time (s),value\n0,1\n1,2\n").unwrap();
         }
-        let kerr_plot = paths.kerr_plot();
-        fs::create_dir_all(kerr_plot.parent().unwrap()).unwrap();
+        let moke_plot = paths.moke_plot();
+        fs::create_dir_all(moke_plot.parent().unwrap()).unwrap();
         let png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0];
-        fs::write(&kerr_plot, png).unwrap();
+        fs::write(&moke_plot, png).unwrap();
         crate::commands::run_dir::write_analysis_config_snapshots(&cfg).unwrap();
         fs::write(
             paths.analysis_manifest(),
@@ -712,16 +717,16 @@ mod tests {
         assert!(paths.lockin_xy_npy(2).is_file());
         assert!(paths.lockin_xy_npy(3).is_file());
         assert!(paths.lockin_rotated_npy(2).is_file());
-        assert!(paths.kerr_npy().is_file());
+        assert!(paths.moke_npy().is_file());
         let manifest = fs::read_to_string(paths.analysis_manifest()).unwrap();
         assert!(manifest.contains("lockin/ch2_xy.npy"));
-        assert!(manifest.contains("kerr/kerr.npy"));
+        assert!(manifest.contains("moke/moke.npy"));
         let analysis_source = fs::read(paths.analysis_source_config()).unwrap();
 
-        fs::write(&kerr_plot, b"tampered plot").unwrap();
+        fs::write(&moke_plot, b"tampered plot").unwrap();
         let error = export_canonical(&cfg).unwrap_err();
         assert!(error.to_string().contains("output checksum mismatch"));
-        fs::write(&kerr_plot, png).unwrap();
+        fs::write(&moke_plot, png).unwrap();
 
         let extra_output = paths.debug_dir().join("unrecorded.txt");
         fs::create_dir_all(extra_output.parent().unwrap()).unwrap();

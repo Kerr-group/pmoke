@@ -28,8 +28,8 @@ pub(super) fn render_config(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
             ),
         ],
         vec![
-            "Kerr".to_string(),
-            format!("{:?}, factor={}", cfg.kerr.kerr_type, cfg.kerr.factor),
+            "Moke".to_string(),
+            format!("{:?}, factor={}", cfg.moke.moke_type, cfg.moke.factor),
         ],
     ];
     frame.render_widget(
@@ -457,8 +457,8 @@ pub(super) fn artifact_rows(cfg: Option<&Config>) -> Vec<ArtifactRow> {
             ));
         }
         files.push((
-            "kerr".to_string(),
-            resolver.kerr_csv().display().to_string(),
+            "moke".to_string(),
+            resolver.moke_csv().display().to_string(),
         ));
     }
 

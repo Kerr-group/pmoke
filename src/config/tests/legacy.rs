@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::MokeType;
 
 #[test]
 fn v1_filter_length_maps_to_half_window_cycles_and_legacy_boxcar() {
@@ -433,4 +434,48 @@ lpf_half_window_cycles = 1.0
 
     let error = validate_sensor_metadata(&config).unwrap_err();
     assert!(error.to_string().contains("not listed in roles.sensor_ch"));
+}
+
+#[test]
+fn v5_kerr_section_is_aliased_to_moke_with_values_preserved() {
+    let text = r#"
+version = 5
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+[data]
+output = "raw"
+input = "raw"
+[[sensors]]
+channel = 1
+scale = { factor = -2.0 }
+label = "field"
+unit = "T"
+[pulse]
+background_before = { start = -0.005, end = -0.001 }
+background_after = { start = 0.01, end = 0.02 }
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.005 }
+stride_samples = 100
+window_samples = 1000
+[lockin]
+signal_channels = [3]
+workers = 2
+stride_samples = 100
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+[kerr]
+sensor = 1
+method = "harmonics"
+factor = -1.0
+"#;
+
+    let ConfigLoad::Ready { config, .. } = load_from_str(text) else {
+        panic!("expected ready v5 load with [kerr] section");
+    };
+    assert_eq!(config.moke.use_sensor_ch, 1);
+    assert!(matches!(config.moke.moke_type, MokeType::Harmonics));
+    assert_eq!(config.moke.factor, -1.0);
 }
