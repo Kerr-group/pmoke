@@ -167,6 +167,8 @@ pub struct Config {
     pub staging_active: bool,
     pub roles: Roles,
     pub channels: Vec<Channel>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signals: Vec<Signal>,
     pub pulse: Pulse,
     pub reference: Reference,
     pub lockin: Lockin,
@@ -382,6 +384,13 @@ pub struct Channel {
     pub scale_to_abs_max: Option<f64>,
     pub label: Option<String>,
     pub unit_out: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Signal {
+    pub channel: u8,
+    pub label: String,
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

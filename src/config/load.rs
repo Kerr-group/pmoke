@@ -437,6 +437,7 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
             signal_ch: raw.roles.signal_ch,
         },
         channels: raw.channels.into_iter().map(Into::into).collect(),
+        signals: Vec::new(),
         pulse: raw.pulse.into(),
         reference: raw.reference.into(),
         lockin: Lockin {
@@ -518,6 +519,7 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
             signal_ch: raw.roles.signal_ch,
         },
         channels: raw.channels.into_iter().map(Into::into).collect(),
+        signals: Vec::new(),
         pulse: raw.pulse.into(),
         reference: raw.reference.into(),
         lockin: Lockin {
@@ -592,6 +594,7 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
             signal_ch: raw.roles.signal_ch,
         },
         channels: raw.channels.into_iter().map(Into::into).collect(),
+        signals: Vec::new(),
         pulse: raw.pulse.into(),
         reference: raw.reference.into(),
         lockin: Lockin {
@@ -730,6 +733,7 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         &raw.reference,
         &raw.lockin.signal_channels,
         "lockin.signal_channels",
+        &[],
         raw.kerr.factor,
         "kerr.factor",
         &raw.pulse,
@@ -822,6 +826,7 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
             signal_ch: signal_channels,
         },
         channels,
+        signals: Vec::new(),
         pulse: Pulse {
             bg_window_before: raw.pulse.background_before,
             bg_window_after: raw.pulse.background_after,
@@ -956,6 +961,7 @@ fn normalize_v5(raw: ConfigV5) -> ConfigLoad {
         &raw.reference,
         &raw.lockin.channels,
         "lockin.channels",
+        &[],
         raw.kerr.factor,
         "kerr.factor",
         &raw.pulse,
@@ -1036,6 +1042,7 @@ fn normalize_v5(raw: ConfigV5) -> ConfigLoad {
             signal_ch: signal_channels,
         },
         channels,
+        signals: Vec::new(),
         pulse: Pulse {
             bg_window_before: raw.pulse.background_before,
             bg_window_after: raw.pulse.background_after,
@@ -1170,6 +1177,7 @@ fn normalize_v6(raw: ConfigV6) -> ConfigLoad {
         &raw.reference,
         &raw.lockin.channels,
         "lockin.channels",
+        &raw.signals,
         raw.moke.factor,
         "moke.factor",
         &raw.pulse,
@@ -1250,6 +1258,15 @@ fn normalize_v6(raw: ConfigV6) -> ConfigLoad {
             signal_ch: signal_channels,
         },
         channels,
+        signals: raw
+            .signals
+            .into_iter()
+            .map(|signal| Signal {
+                channel: signal.channel,
+                label: signal.label,
+                unit: signal.unit,
+            })
+            .collect(),
         pulse: Pulse {
             bg_window_before: raw.pulse.background_before,
             bg_window_after: raw.pulse.background_after,
@@ -1374,6 +1391,7 @@ fn validate_current_fields(
     reference: &ReferenceV4,
     signal_channels: &[u8],
     signal_path: &str,
+    signals: &[SignalV4],
     moke_factor: f64,
     moke_factor_path: &str,
     pulse: &PulseV4,
@@ -1400,6 +1418,9 @@ fn validate_current_fields(
     for (index, &channel) in signal_channels.iter().enumerate() {
         assign(channel, format!("{signal_path}[{index}]"));
     }
+    for (index, signal) in signals.iter().enumerate() {
+        assign(signal.channel, format!("signals[{index}].channel"));
+    }
 
     if !channel_in_range(reference.channel) {
         errors.push(ConfigDiagnostic::new(
@@ -1418,6 +1439,32 @@ fn validate_current_fields(
                 DiagnosticKind::Validation,
                 Some(format!("{signal_path}[{index}]")),
                 format!("DHO5108 channel must be in 1..=8 (got {channel})"),
+                None,
+            ));
+        }
+    }
+    for (index, signal) in signals.iter().enumerate() {
+        if !channel_in_range(signal.channel) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("signals[{index}].channel")),
+                format!("DHO5108 channel must be in 1..=8 (got {})", signal.channel),
+                None,
+            ));
+        }
+        if signal.label.trim().is_empty() {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("signals[{index}].label")),
+                "signal label must not be empty".to_string(),
+                None,
+            ));
+        }
+        if signal.unit.trim().is_empty() {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("signals[{index}].unit")),
+                "signal unit must not be empty".to_string(),
                 None,
             ));
         }

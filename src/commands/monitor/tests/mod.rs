@@ -52,6 +52,7 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                         unit_out: None,
                     })
                     .collect(),
+                signals: Vec::new(),
                 pulse: Pulse {
                     bg_window_before: window,
                     bg_window_after: window,
