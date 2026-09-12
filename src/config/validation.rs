@@ -283,7 +283,6 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         }
         ValidationTarget::Sensor => {
             validate_oscilloscope_required(cfg)?;
-            validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
             validate_analysis_input_exists(cfg)?;

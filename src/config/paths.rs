@@ -156,6 +156,18 @@ impl ArtifactPaths {
         self.signal_plot_dir().join(format!("ch{channel}_mean.png"))
     }
 
+    pub fn sensor_dir(&self) -> PathBuf {
+        self.analysis_dir().join("sensor")
+    }
+
+    pub fn sensor_csv(&self) -> PathBuf {
+        self.sensor_dir().join("sensor.csv")
+    }
+
+    pub fn sensor_npy(&self) -> PathBuf {
+        self.sensor_dir().join("sensor.npy")
+    }
+
     pub fn plot_dir(&self) -> PathBuf {
         self.analysis_dir().join("plots")
     }
@@ -363,6 +375,10 @@ impl ArtifactResolver {
 
     pub fn signal_csv(&self) -> PathBuf {
         self.paths.signal_csv()
+    }
+
+    pub fn sensor_csv(&self) -> PathBuf {
+        self.paths.sensor_csv()
     }
 
     pub fn lockin_xy_npy(&self, channel: u8) -> PathBuf {

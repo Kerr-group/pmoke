@@ -12,8 +12,8 @@ mod moke;
 mod phase;
 pub mod plot;
 pub mod python;
-mod signal;
 pub mod sensor;
+mod signal;
 #[cfg(test)]
 mod test_support;
 mod ui;

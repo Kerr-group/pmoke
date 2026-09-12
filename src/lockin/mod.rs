@@ -14,6 +14,7 @@ use crate::lockin::provenance::LockinProvenance;
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use crate::lockin::reference::run_fit_ref_core;
 use crate::lockin::save::{get_li_headers, write_li_results};
+use crate::lockin::stride::{li_stride_2d, li_stride_time};
 use crate::sensor::{SensorOutput, run_sensor};
 use crate::utils::time_axis::TimeAxisRef;
 use crate::utils::waveform::read_all_fetched_waveforms;
@@ -89,15 +90,22 @@ pub fn run_li<'a>(
     let ref_data = data[ref_idx].as_slice();
     let signal_data: Vec<&[f64]> = signal_idx.iter().map(|&idx| data[idx].as_slice()).collect();
 
+    // Sensor analysis (reference-free; runs before the reference fit)
+    let SensorOutput {
+        rate: sensor_rate_full,
+        integral: sensor_integral_full,
+        ..
+    } = run_sensor(cfg, t, &sensor_data, &sensor_ch)?;
+
     // Reference analysis
     let ref_fit_params = run_fit_ref_core(cfg, t, ref_data)?;
 
-    // Sensor analysis
-    let SensorOutput {
-        t: mut t_stride,
-        rate: mut sensor_rate_stride,
-        integral: mut sensor_integral_stride,
-    } = run_sensor(cfg, t, &sensor_data, &sensor_ch, ref_fit_params.f_ref)?;
+    // Stride the full-rate sensor series onto the lock-in grid here, so the
+    // downstream inputs are identical to the pre-decoupling layout.
+    let mut t_stride = li_stride_time(cfg, t, ref_fit_params.f_ref)?;
+    let mut sensor_rate_stride = li_stride_2d(cfg, t, &sensor_rate_full, ref_fit_params.f_ref)?;
+    let mut sensor_integral_stride =
+        li_stride_2d(cfg, t, &sensor_integral_full, ref_fit_params.f_ref)?;
 
     // Lock-in processing
     let lockin_output = li_process(cfg, t, &signal_ch, &signal_data, ref_fit_params)?;
