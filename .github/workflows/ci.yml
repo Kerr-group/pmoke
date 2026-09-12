@@ -86,7 +86,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Test Kerr harmonics calculation
+      - name: Test Moke harmonics calculation
         run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s src/moke/pytools -p "test_*.py"
 
       - name: Test Python utilities
