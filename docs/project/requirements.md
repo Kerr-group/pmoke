@@ -44,7 +44,10 @@ The following surfaces are part of the product contract:
   rendering a v6 resolved snapshot.
 - The active lock-in LPF is `boxcar_legacy` only. The configuration keeps the
   `kind` discriminator so a future LPF can be added as a separately specified
-  schema and runtime contract.
+  schema and runtime contract. The `[[signals]]` readout averages raw channels
+  over that same lock-in support window on the lock-in output grid; a channel
+  listed in `[[signals]]` must not overlap sensor, reference, or lock-in
+  channels.
 - Canonical acquisition and analysis artifacts use the versioned run layout,
   immutable configuration snapshots, checksums, and transactional publication.
   Legacy inputs remain compatibility behavior only where the current changelog
