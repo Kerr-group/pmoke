@@ -32,6 +32,19 @@ test('accepts only the documented unresolved development advisory', () => {
   assert.equal(result.unexpected.length, 0);
 });
 
+test('accepts the second documented extract-zip advisory', () => {
+  const secondAdvisory = {
+    ...knownAdvisory,
+    github_advisory_id: 'GHSA-7pqw-9j4j-h8q3',
+  };
+  const result = evaluateAudit({
+    advisories: { first: knownAdvisory, second: secondAdvisory },
+    metadata: { vulnerabilities: { high: 2 } },
+  });
+  assert.equal(result.accepted.length, 2);
+  assert.equal(result.unexpected.length, 0);
+});
+
 test('accepts an audit with no advisories', () => {
   const result = evaluateAudit({ advisories: {}, metadata: { vulnerabilities: {} } });
   assert.deepEqual(result, { accepted: [], unexpected: [] });
