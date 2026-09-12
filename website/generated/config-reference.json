@@ -501,8 +501,8 @@
       "constraints": []
     },
     {
-      "id": "lockin.signal_channels",
-      "path": "lockin.signal_channels",
+      "id": "lockin.channels",
+      "path": "lockin.channels",
       "value_type": "integer array",
       "required": "conditional",
       "default": null,

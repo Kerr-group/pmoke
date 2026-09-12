@@ -4,6 +4,9 @@
 
 ### Changes
 
+- The `[lockin]` setting `signal_channels` is renamed to `channels`
+  (schema stays at version 6; existing files using the old key keep working).
+
 - The Kerr analysis concept is renamed to MOKE: configuration schema version 6
   uses the `[moke]` section (version 5 `[kerr]` files migrate with values
   preserved), the command is `pmoke moke` (`pmoke kerr` remains as a deprecated

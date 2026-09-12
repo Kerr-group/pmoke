@@ -729,6 +729,7 @@ fn normalize_v4(raw: ConfigV4) -> ConfigLoad {
         &raw.sensors,
         &raw.reference,
         &raw.lockin.signal_channels,
+        "lockin.signal_channels",
         raw.kerr.factor,
         "kerr.factor",
         &raw.pulse,
@@ -953,7 +954,8 @@ fn normalize_v5(raw: ConfigV5) -> ConfigLoad {
     validate_current_fields(
         &raw.sensors,
         &raw.reference,
-        &raw.lockin.signal_channels,
+        &raw.lockin.channels,
+        "lockin.channels",
         raw.kerr.factor,
         "kerr.factor",
         &raw.pulse,
@@ -969,7 +971,7 @@ fn normalize_v5(raw: ConfigV5) -> ConfigLoad {
         });
     }
     let scope_connection = scope_connection.expect("scope connection parsed above");
-    let signal_channels = raw.lockin.signal_channels.clone();
+    let signal_channels = raw.lockin.channels.clone();
 
     let sensor_ch = raw
         .sensors
@@ -1166,7 +1168,8 @@ fn normalize_v6(raw: ConfigV6) -> ConfigLoad {
     validate_current_fields(
         &raw.sensors,
         &raw.reference,
-        &raw.lockin.signal_channels,
+        &raw.lockin.channels,
+        "lockin.channels",
         raw.moke.factor,
         "moke.factor",
         &raw.pulse,
@@ -1182,7 +1185,7 @@ fn normalize_v6(raw: ConfigV6) -> ConfigLoad {
         });
     }
     let scope_connection = scope_connection.expect("scope connection parsed above");
-    let signal_channels = raw.lockin.signal_channels.clone();
+    let signal_channels = raw.lockin.channels.clone();
 
     let sensor_ch = raw
         .sensors
@@ -1359,16 +1362,18 @@ fn versioned_config_terms(value: &str, section_term: (&str, &str)) -> String {
             ("pulse.bg_window_before", "pulse.background_before"),
             ("pulse.bg_window_after", "pulse.background_after"),
             ("roles.reference_ch", "reference.channel"),
-            ("roles.signal_ch", "lockin.signal_channels"),
+            ("roles.signal_ch", "lockin.channels"),
             ("roles.sensor_ch", "sensors"),
         ])
         .fold(value.to_string(), |text, (old, new)| text.replace(old, new))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_current_fields(
     sensors: &[SensorV4],
     reference: &ReferenceV4,
     signal_channels: &[u8],
+    signal_path: &str,
     moke_factor: f64,
     moke_factor_path: &str,
     pulse: &PulseV4,
@@ -1393,7 +1398,7 @@ fn validate_current_fields(
     }
     assign(reference.channel, "reference.channel".to_string());
     for (index, &channel) in signal_channels.iter().enumerate() {
-        assign(channel, format!("lockin.signal_channels[{index}]"));
+        assign(channel, format!("{signal_path}[{index}]"));
     }
 
     if !channel_in_range(reference.channel) {
@@ -1411,7 +1416,7 @@ fn validate_current_fields(
         if !channel_in_range(channel) {
             errors.push(ConfigDiagnostic::new(
                 DiagnosticKind::Validation,
-                Some(format!("lockin.signal_channels[{index}]")),
+                Some(format!("{signal_path}[{index}]")),
                 format!("DHO5108 channel must be in 1..=8 (got {channel})"),
                 None,
             ));

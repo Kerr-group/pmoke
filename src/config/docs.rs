@@ -435,7 +435,7 @@ pub const CONFIG_FIELD_DOCS: &[ConfigFieldDoc] = &[
         &[],
     ),
     field(
-        "lockin.signal_channels",
+        "lockin.channels",
         "integer array",
         Conditional,
         None,

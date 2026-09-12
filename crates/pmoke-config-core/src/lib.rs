@@ -526,8 +526,8 @@ fn validate_channels(config: &ConfigV6, report: &mut ValidationReport) {
         "reference.channel".to_string(),
         report,
     );
-    for (index, channel) in config.lockin.signal_channels.iter().copied().enumerate() {
-        assign(channel, format!("lockin.signal_channels[{index}]"), report);
+    for (index, channel) in config.lockin.channels.iter().copied().enumerate() {
+        assign(channel, format!("lockin.channels[{index}]"), report);
     }
 }
 
@@ -641,7 +641,7 @@ fn summary(config: &ConfigV6) -> ConfigSummary {
             .map(|generator| generator.connection.clone()),
         sensor_channels: config.sensors.iter().map(|sensor| sensor.channel).collect(),
         reference_channel: config.reference.channel,
-        signal_channels: config.lockin.signal_channels.clone(),
+        signal_channels: config.lockin.channels.clone(),
         lockin_filter: config.lockin.filter.kind().to_string(),
         lockin_workers: config.lockin.workers,
         plot_mode: config.plot.mode.as_str().to_string(),
@@ -740,7 +740,7 @@ fft_window = { start = 0.0, end = 0.005 }
 stride_samples = 100
 window_samples = 1000
 [lockin]
-signal_channels = [3]
+channels = [3]
 workers = 2
 stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
@@ -776,7 +776,7 @@ factor = -1.0
     #[test]
     fn repeated_channels_keep_the_original_assignment_path() {
         let input = VALID
-            .replace("signal_channels = [3]", "signal_channels = [1, 1]")
+            .replace("channels = [3]", "channels = [1, 1]")
             .replace("channel = 2", "channel = 1");
         let report = validate_config_toml(&input);
         let duplicates = report
@@ -789,6 +789,14 @@ factor = -1.0
             item.message
                 .contains("first assigned at sensors[0].channel")
         }));
+    }
+
+    #[test]
+    fn legacy_signal_channels_key_is_aliased_to_channels() {
+        let input = VALID.replace("channels = [3]", "signal_channels = [3]");
+        let report = validate_config_toml(&input);
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        assert_eq!(report.summary.unwrap().signal_channels, vec![3]);
     }
 
     #[test]

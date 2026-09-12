@@ -98,7 +98,7 @@ fn historical_v4_normalized_output_uses_v6_schema_and_round_trips() {
     assert!(rendered.contains("[[sensors]]"));
     assert!(rendered.contains("[reference]"));
     assert!(rendered.contains("channel = 3"));
-    assert!(rendered.contains("signal_channels = [2]"));
+    assert!(rendered.contains("channels = [2]"));
     assert!(!rendered.contains("[instruments]"));
     assert!(!rendered.contains("[roles]"));
     assert!(!rendered.contains("[channels]"));

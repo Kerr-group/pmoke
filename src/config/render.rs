@@ -318,7 +318,7 @@ fn lockin_output_v5(lockin: &Lockin, signal_channels: &[u8]) -> LockinOutputV5 {
         },
     };
     LockinOutputV5 {
-        signal_channels: signal_channels.to_vec(),
+        channels: signal_channels.to_vec(),
         workers: lockin.workers,
         stride_samples: lockin.stride_samples,
         filter,

@@ -75,7 +75,7 @@ description: Generated field reference for pmoke config schema version 5.
 | Path | Type | Required | Default / values | Description and constraints |
 | --- | --- | :---: | --- | --- |
 | `lockin` | `table` | required | - | Numerical lock-in settings. Defines signal channels, parallelism, output stride, and low-pass filtering. |
-| `lockin.signal_channels` | `integer array` | conditional | - | Channels demodulated by lock-in analysis. At least one channel is required by lock-in and downstream analysis. **Constraints:** each value must be in 1..=8; must be unique across all channel roles |
+| `lockin.channels` | `integer array` | conditional | - | Channels demodulated by lock-in analysis. At least one channel is required by lock-in and downstream analysis. **Constraints:** each value must be in 1..=8; must be unique across all channel roles |
 | `lockin.workers` | `integer` | required | - | Parallel lock-in worker count. Values near the physical CPU count are a practical starting point. **Constraints:** must be positive |
 | `lockin.stride_samples` | `integer` · `samples` | required | - | Lock-in output stride in input samples. Input sample rate divided by this value gives the output sample rate. **Constraints:** must be positive |
 | `lockin.filter` | `tagged inline table` | required | - | Lock-in low-pass filter configuration. The current runtime accepts the boxcar_legacy kind; fields from other kinds are not part of schema v5. **Constraints:** fields from other filter kinds are rejected |

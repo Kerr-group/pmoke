@@ -216,7 +216,8 @@ pub(super) struct LockinV4 {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct LockinV5 {
-    pub(super) signal_channels: Vec<u8>,
+    #[serde(alias = "signal_channels")]
+    pub(super) channels: Vec<u8>,
     pub(super) workers: usize,
     pub(super) stride_samples: usize,
     pub(super) filter: LockinFilterV5,
@@ -474,7 +475,7 @@ pub(super) struct LockinOutputV4 {
 
 #[derive(Serialize)]
 pub(super) struct LockinOutputV5 {
-    pub(super) signal_channels: Vec<u8>,
+    pub(super) channels: Vec<u8>,
     pub(super) workers: usize,
     pub(super) stride_samples: usize,
     pub(super) filter: LockinFilterOutputV5,
