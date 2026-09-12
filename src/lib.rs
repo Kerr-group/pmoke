@@ -7,8 +7,8 @@ pub mod config;
 mod connection;
 mod constants;
 pub mod docs;
-mod kerr;
 pub mod lockin;
+mod moke;
 mod phase;
 pub mod plot;
 pub mod python;
@@ -191,8 +191,12 @@ fn run_with(args: Cli) -> Result<()> {
             Some(Command::Phase) => {
                 run_validated(&cfg, ValidationTarget::Phase, commands::phase::phase)
             }
+            Some(Command::Moke) => {
+                run_validated(&cfg, ValidationTarget::Moke, commands::moke::moke)
+            }
             Some(Command::Kerr) => {
-                run_validated(&cfg, ValidationTarget::Kerr, commands::kerr::kerr)
+                crate::ui::warn("`pmoke kerr` is deprecated; use `pmoke moke`");
+                run_validated(&cfg, ValidationTarget::Moke, commands::moke::moke)
             }
             Some(Command::Analyze) => {
                 run_validated(&cfg, ValidationTarget::Analyze, commands::analyze::analyze)
@@ -233,8 +237,12 @@ fn run_with(args: Cli) -> Result<()> {
             Some(Command::Phase) => {
                 run_validated(&cfg, ValidationTarget::Phase, commands::phase::phase)
             }
+            Some(Command::Moke) => {
+                run_validated(&cfg, ValidationTarget::Moke, commands::moke::moke)
+            }
             Some(Command::Kerr) => {
-                run_validated(&cfg, ValidationTarget::Kerr, commands::kerr::kerr)
+                crate::ui::warn("`pmoke kerr` is deprecated; use `pmoke moke`");
+                run_validated(&cfg, ValidationTarget::Moke, commands::moke::moke)
             }
             Some(Command::Analyze) => {
                 run_validated(&cfg, ValidationTarget::Analyze, commands::analyze::analyze)

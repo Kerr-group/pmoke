@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ConfigV5 {
+pub(crate) struct ConfigV6 {
     pub version: u32,
     pub scope: Scope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -14,7 +14,7 @@ pub(crate) struct ConfigV5 {
     pub reference: Reference,
     pub lockin: Lockin,
     pub phase: Phase,
-    pub kerr: Kerr,
+    pub moke: Moke,
     #[serde(default)]
     pub plot: Plot,
 }
@@ -239,15 +239,15 @@ fn contains_print_call(expression: &str) -> bool {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Kerr {
+pub(crate) struct Moke {
     pub sensor: u8,
-    pub method: KerrMethod,
+    pub method: MokeMethod,
     pub factor: f64,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum KerrMethod {
+pub(crate) enum MokeMethod {
     Standard,
     Harmonics,
 }

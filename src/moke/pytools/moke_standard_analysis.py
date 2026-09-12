@@ -63,17 +63,38 @@ def decimation_indices(values: NDArray, max_points: int, method: str) -> NDArray
     return unique[np.linspace(0, unique.size - 1, max_points, dtype=int)]
 
 
-class KerrStandardAnalyser:
+class MokeStandardAnalyser:
+    #: Shared modulation depth with the angle computation (D8).
+    DEFAULT_PHIM = 0.92
+    #: Bessel denominators at or below this magnitude count as degenerate,
+    #: mirroring BESSEL_DENOMINATOR_MIN in pmoke-analysis-core (FR-13).
+    BESSEL_DENOMINATOR_MIN = 1e-12
+
     def __init__(self):
         pass
 
     @staticmethod
-    def calculate(a1: NDArray, a2: NDArray, phim=0.92) -> NDArray:
+    def calculate(a1: NDArray, a2: NDArray, phim=DEFAULT_PHIM) -> NDArray:
         frac_top = jn(2, 2 * phim) * a1
         frac_bottom = jn(1, 2 * phim) * a2
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = np.divide(frac_top, frac_bottom)
         return (1 / 2) * np.arctan(ratio)
+
+    @staticmethod
+    def calculate_vm(a1: NDArray, a2: NDArray, phim=DEFAULT_PHIM) -> NDArray:
+        a1 = np.asarray(a1, dtype=float)
+        a2 = np.asarray(a2, dtype=float)
+        if not np.isfinite(phim):
+            raise ValueError("phim must be finite")
+        if not np.all(np.isfinite(a1)) or not np.all(np.isfinite(a2)):
+            raise ValueError("harmonic inputs must be finite")
+        denominators = np.array([jn(1, 2 * phim), jn(2, 2 * phim)])
+        if not np.all(np.isfinite(denominators)) or np.any(
+            np.abs(denominators) <= MokeStandardAnalyser.BESSEL_DENOMINATOR_MIN
+        ):
+            raise ValueError("Bessel denominators must be finite and nonzero")
+        return 0.5 * np.sqrt((a1 / denominators[0]) ** 2 + (a2 / denominators[1]) ** 2)
 
     def analyse(
         self,
@@ -86,6 +107,7 @@ class KerrStandardAnalyser:
         save: bool,
         interactive: bool,
         output_path,
+        vm_output_path,
         max_points: int,
         decimation: str,
     ):
@@ -97,17 +119,18 @@ class KerrStandardAnalyser:
         li5_in, li5_out = ys[8], ys[9]
         li6_in, li6_out = ys[10], ys[11]
 
-        kerr = factor * self.calculate(li1_in, li2_in)
+        angle = factor * self.calculate(li1_in, li2_in)
+        vm = self.calculate_vm(li1_in, li2_in)
 
         plot_error = None
         if save or interactive:
             try:
                 gs = _load_gsplot()
 
-                indices = decimation_indices(kerr, max_points, decimation)
+                indices = decimation_indices(angle, max_points, decimation)
                 t_plot = t[indices]
                 x_plot = x[indices]
-                kerr_plot = kerr[indices]
+                angle_plot = angle[indices]
 
                 axs = gs.axes(
                     True,
@@ -116,7 +139,7 @@ class KerrStandardAnalyser:
                     ion=interactive,
                 )
 
-                gs.scatter_colormap(axs[0], x_plot, kerr_plot * 1e3, t_plot)
+                gs.scatter_colormap(axs[0], x_plot, angle_plot * 1e3, t_plot)
                 axs[0].grid()
 
                 title = fig_name + " using Standard"
@@ -124,10 +147,29 @@ class KerrStandardAnalyser:
 
                 gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
                 finish_plot(output_path, interactive)
+
+                vm_indices = decimation_indices(vm, max_points, decimation)
+                vm_axs = gs.axes(
+                    True,
+                    size=(6, 6),
+                    mosaic="A",
+                    ion=interactive,
+                )
+
+                gs.scatter_colormap(
+                    vm_axs[0], x_plot[vm_indices], vm[vm_indices], t_plot[vm_indices]
+                )
+                vm_axs[0].grid()
+
+                gs.title(fig_name + " Vm using Standard")
+
+                gs.label([[f"{xlabel}", "Vm (V)"]])
+                finish_plot(vm_output_path, interactive)
             except Exception as exc:
                 plot_error = str(exc)
 
         return {
-            "kerr": kerr,
+            "angle": angle,
+            "vm": vm,
             "plot_error": plot_error,
         }

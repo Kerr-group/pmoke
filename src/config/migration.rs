@@ -1,6 +1,6 @@
 use super::{
     Config, ConfigLoad, FetchAnalysisInput, Plot, load_from_path, load_from_str, render_config_v4,
-    render_config_v5,
+    render_config_v5, render_config_v6,
 };
 use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR};
 use anyhow::{Context, Result, anyhow, bail};
@@ -9,7 +9,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const LATEST_CONFIG_VERSION: u32 = 5;
+pub const LATEST_CONFIG_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MigrationLevel {
@@ -259,11 +259,17 @@ pub fn plan_migration(
                 .context("source config cannot be represented by the v4 output schema")?,
             "generated v4 config",
         )
-    } else {
+    } else if target_version == 5 {
         (
             render_config_v5(&config)
                 .context("source config cannot be represented by the v5 output schema")?,
             "generated v5 config",
+        )
+    } else {
+        (
+            render_config_v6(&config)
+                .context("source config cannot be represented by the v6 output schema")?,
+            "generated v6 config",
         )
     };
     let (target_config, target_warnings) = ready_config(load_from_str(&target_toml), target_label)?;
@@ -407,6 +413,20 @@ fn plan_to_v3(
     })
 }
 
+fn rename_moke_to_legacy_kerr(table: &mut toml::map::Map<String, toml::Value>) -> Result<()> {
+    if let Some(moke) = table.remove("moke") {
+        let mut kerr = moke
+            .as_table()
+            .cloned()
+            .ok_or_else(|| anyhow!("normalized [moke] did not encode as a TOML table"))?;
+        if let Some(moke_type) = kerr.remove("moke_type") {
+            kerr.insert("kerr_type".to_string(), moke_type);
+        }
+        table.insert("kerr".to_string(), toml::Value::Table(kerr));
+    }
+    Ok(())
+}
+
 fn render_config_v2(config: &Config) -> Result<String> {
     let timebase = config
         .legacy_timebase
@@ -416,6 +436,7 @@ fn render_config_v2(config: &Config) -> Result<String> {
     let table = value
         .as_table_mut()
         .ok_or_else(|| anyhow!("normalized config did not encode as a TOML table"))?;
+    rename_moke_to_legacy_kerr(table)?;
     table.insert("version".to_string(), toml::Value::Integer(2));
     table.insert(
         "timebase".to_string(),
@@ -429,6 +450,7 @@ fn render_config_v3(config: &Config) -> Result<String> {
     let table = value
         .as_table_mut()
         .ok_or_else(|| anyhow!("normalized config did not encode as a TOML table"))?;
+    rename_moke_to_legacy_kerr(table)?;
     table.insert("version".to_string(), toml::Value::Integer(3));
     toml::to_string_pretty(&value).context("failed to render v3 config")
 }

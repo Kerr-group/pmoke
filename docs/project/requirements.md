@@ -33,14 +33,15 @@ The following surfaces are part of the product contract:
 
 - `Cargo.lock` remains intentional and reviewable. Source, dependency,
   feature, license, and platform changes are reviewed together.
-- Configuration schema version 5 is canonical. Versions 1–4 remain readable
-  when their structure is recognized. Historical LPF kinds that cannot be
+- Configuration schema version 6 is canonical. Versions 1–5 remain readable
+  when their structure is recognized; a version 5 `[kerr]` section is aliased
+  to `[moke]` with values preserved. Historical LPF kinds that cannot be
   represented by the active runtime produce an explicit migration diagnostic;
   they are never silently changed to `boxcar_legacy`. Migration is
   preview-only by default; potentially behavior-changing migration requires
   explicit acceptance. A validated legacy `[timebase]` is preserved when a
   CSV without a recorded time axis still requires it, even when that prevents
-  rendering a v5 resolved snapshot.
+  rendering a v6 resolved snapshot.
 - The active lock-in LPF is `boxcar_legacy` only. The configuration keeps the
   `kind` discriminator so a future LPF can be added as a separately specified
   schema and runtime contract.

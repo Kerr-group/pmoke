@@ -39,7 +39,7 @@ pub(super) enum MonitorAction {
     Sensor,
     Li,
     Phase,
-    Kerr,
+    Moke,
     Analyze,
     Doctor,
     RawVerify,
@@ -69,7 +69,7 @@ impl MonitorAction {
             Self::Sensor => "Sensor",
             Self::Li => "Lock-in",
             Self::Phase => "Phase",
-            Self::Kerr => "Kerr",
+            Self::Moke => "Moke",
             Self::Analyze => "Analyze",
             Self::Doctor => "Doctor",
             Self::RawVerify => "RAW verify",
@@ -101,8 +101,8 @@ impl MonitorAction {
             Self::Sensor => "Integrate sensor pulse channels.",
             Self::Li => "Run numerical lock-in and write analysis/lockin/chN_xy.csv.",
             Self::Phase => "Rotate lock-in phase and write analysis/lockin/chN_rotated.csv.",
-            Self::Kerr => "Calculate the Kerr angle from rotated lock-in data.",
-            Self::Analyze => "Run reference, sensor, lock-in, phase, and Kerr.",
+            Self::Moke => "Calculate the Kerr angle from rotated lock-in data.",
+            Self::Analyze => "Run reference, sensor, lock-in, phase, and Moke.",
             Self::Doctor => "Check config, storage, Python, and available instruments.",
             Self::RawVerify => "Verify the RAW manifest, sizes, and channel checksums.",
             #[cfg(feature = "hw-core")]
@@ -131,7 +131,7 @@ impl MonitorAction {
             Self::Sensor => Some(ValidationTarget::Sensor),
             Self::Li => Some(ValidationTarget::Li),
             Self::Phase => Some(ValidationTarget::Phase),
-            Self::Kerr => Some(ValidationTarget::Kerr),
+            Self::Moke => Some(ValidationTarget::Moke),
             Self::Analyze => Some(ValidationTarget::Analyze),
             Self::Doctor | Self::RawVerify => None,
             #[cfg(feature = "hw-core")]
@@ -160,7 +160,7 @@ impl MonitorAction {
             Self::Sensor => "sensor",
             Self::Li => "li",
             Self::Phase => "phase",
-            Self::Kerr => "kerr",
+            Self::Moke => "moke",
             Self::Analyze => "analyze",
             Self::Doctor => "doctor",
             Self::RawVerify => "raw verify",
@@ -190,7 +190,7 @@ impl MonitorAction {
             Self::Sensor => &["sensor"],
             Self::Li => &["li"],
             Self::Phase => &["phase"],
-            Self::Kerr => &["kerr"],
+            Self::Moke => &["moke"],
             Self::Analyze => &["analyze"],
             Self::Doctor => &["doctor"],
             Self::RawVerify => &["raw", "verify"],
@@ -226,7 +226,7 @@ impl MonitorAction {
             | Self::Sensor
             | Self::Li
             | Self::Phase
-            | Self::Kerr
+            | Self::Moke
             | Self::Analyze => ActionGroup::Analysis,
             #[cfg(feature = "hw-core")]
             Self::Process | Self::Auto => ActionGroup::EndToEnd,
@@ -254,7 +254,7 @@ pub(super) fn monitor_actions() -> Vec<MonitorAction> {
         MonitorAction::Sensor,
         MonitorAction::Li,
         MonitorAction::Phase,
-        MonitorAction::Kerr,
+        MonitorAction::Moke,
         MonitorAction::Analyze,
         MonitorAction::Doctor,
         MonitorAction::RawVerify,

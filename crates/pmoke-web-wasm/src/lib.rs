@@ -44,7 +44,7 @@ pub fn generate_analysis_demo(
     amplitude: f64,
     phase_rad: f64,
     noise_rms: f64,
-    kerr_angle_rad: f64,
+    angle_rad: f64,
     seed: u32,
 ) -> Result<Box<[f64]>, JsError> {
     pmoke_analysis_core::generate_synthetic_signal(pmoke_analysis_core::SyntheticSignalSettings {
@@ -54,7 +54,7 @@ pub fn generate_analysis_demo(
         amplitude,
         phase_rad,
         noise_rms,
-        kerr_angle_rad,
+        angle_rad,
         seed: u64::from(seed),
     })
     .map(Vec::into_boxed_slice)
@@ -119,19 +119,30 @@ pub fn rotate_phase_interleaved(
 }
 
 #[wasm_bindgen]
-pub fn calculate_harmonics_kerr_packed(
+pub fn calculate_harmonics_moke_packed(
     a2: &[f64],
     a3: &[f64],
     a4: &[f64],
     a6: &[f64],
     factor: f64,
 ) -> Result<Box<[f64]>, JsError> {
-    let output = pmoke_analysis_core::calculate_harmonics_kerr(a2, a3, a4, a6, factor)
+    let output = pmoke_analysis_core::calculate_harmonics_moke(a2, a3, a4, a6, factor)
         .map_err(analysis_error)?;
     let mut packed = Vec::with_capacity(output.values_rad.len() + 1);
     packed.push(output.representative_modulation_depth);
     packed.extend(output.values_rad);
     Ok(packed.into_boxed_slice())
+}
+
+#[wasm_bindgen]
+pub fn calculate_harmonics_vm_packed(
+    second: &[f64],
+    third: &[f64],
+    modulation_depth: f64,
+) -> Result<Box<[f64]>, JsError> {
+    let values = pmoke_analysis_core::calculate_harmonics_vm(second, third, modulation_depth)
+        .map_err(analysis_error)?;
+    Ok(values.into_boxed_slice())
 }
 
 #[wasm_bindgen]
@@ -266,7 +277,7 @@ mod tests {
     #[test]
     fn wasm_config_validation_returns_valid_json() {
         let json = validate_config_toml(
-            r#"version = 5
+            r#"version = 6
 [scope]
 model = "DHO5108"
 connection = "tcp://192.0.2.10:55255"
@@ -293,7 +304,7 @@ stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
 [phase]
 offsets = [0, 0, 0, 0, 0, 0]
-[kerr]
+[moke]
 sensor = 1
 method = "harmonics"
 factor = -1.0

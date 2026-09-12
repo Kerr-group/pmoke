@@ -44,17 +44,17 @@ fn workflow_search_selects_an_action_and_ignores_collapsed_groups() {
     app.collapsed_groups.insert(ActionGroup::Analysis);
 
     app.begin_action_search();
-    for ch in "kerr".chars() {
+    for ch in "moke".chars() {
         app.push_action_query(ch);
     }
 
     assert_eq!(
         app.selected_workflow_entry(),
-        Some(WorkflowEntry::Action(MonitorAction::Kerr))
+        Some(WorkflowEntry::Action(MonitorAction::Moke))
     );
     assert!(
         app.workflow_entries()
-            .contains(&WorkflowEntry::Action(MonitorAction::Kerr))
+            .contains(&WorkflowEntry::Action(MonitorAction::Moke))
     );
 }
 

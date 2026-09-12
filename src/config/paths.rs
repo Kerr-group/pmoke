@@ -124,12 +124,12 @@ impl ArtifactPaths {
             .join(format!("ch{channel}_rotated.npy"))
     }
 
-    pub fn kerr_csv(&self) -> PathBuf {
-        self.analysis_dir().join("kerr").join("kerr.csv")
+    pub fn moke_csv(&self) -> PathBuf {
+        self.analysis_dir().join("moke").join("moke.csv")
     }
 
-    pub fn kerr_npy(&self) -> PathBuf {
-        self.analysis_dir().join("kerr").join("kerr.npy")
+    pub fn moke_npy(&self) -> PathBuf {
+        self.analysis_dir().join("moke").join("moke.npy")
     }
 
     pub fn plot_dir(&self) -> PathBuf {
@@ -152,8 +152,8 @@ impl ArtifactPaths {
         self.plot_dir().join("phase")
     }
 
-    pub fn kerr_plot_dir(&self) -> PathBuf {
-        self.plot_dir().join("kerr")
+    pub fn moke_plot_dir(&self) -> PathBuf {
+        self.plot_dir().join("moke")
     }
 
     pub fn reference_fit_plot(&self) -> PathBuf {
@@ -202,12 +202,20 @@ impl ArtifactPaths {
         self.phase_plot_dir().join("omega_t0.png")
     }
 
-    pub fn kerr_plot(&self) -> PathBuf {
-        self.kerr_plot_dir().join("kerr.png")
+    pub fn moke_plot(&self) -> PathBuf {
+        self.moke_plot_dir().join("angle.png")
     }
 
-    pub fn kerr_channel_plot(&self, channel: u8) -> PathBuf {
-        self.kerr_plot_dir().join(format!("ch{channel}_kerr.png"))
+    pub fn moke_channel_plot(&self, channel: u8) -> PathBuf {
+        self.moke_plot_dir().join(format!("ch{channel}_angle.png"))
+    }
+
+    pub fn moke_vm_plot(&self) -> PathBuf {
+        self.moke_plot_dir().join("vm.png")
+    }
+
+    pub fn moke_vm_channel_plot(&self, channel: u8) -> PathBuf {
+        self.moke_plot_dir().join(format!("ch{channel}_vm.png"))
     }
 
     pub fn debug_dir(&self) -> PathBuf {
@@ -317,8 +325,8 @@ impl ArtifactResolver {
         new_path
     }
 
-    pub fn kerr_csv(&self) -> PathBuf {
-        let new_path = self.paths.kerr_csv();
+    pub fn moke_csv(&self) -> PathBuf {
+        let new_path = self.paths.moke_csv();
         if new_path.exists() {
             return new_path;
         }
@@ -361,8 +369,8 @@ impl ArtifactResolver {
         new_path
     }
 
-    pub fn kerr_npy(&self) -> PathBuf {
-        let new_path = self.paths.kerr_npy();
+    pub fn moke_npy(&self) -> PathBuf {
+        let new_path = self.paths.moke_npy();
         if new_path.exists() {
             return new_path;
         }
@@ -411,12 +419,12 @@ mod tests {
             PathBuf::from("shot with space measurement/analysis/plots/phase/ch3_rotated.png")
         );
         assert_eq!(
-            paths.kerr_plot(),
-            PathBuf::from("shot with space measurement/analysis/plots/kerr/kerr.png")
+            paths.moke_plot(),
+            PathBuf::from("shot with space measurement/analysis/plots/moke/angle.png")
         );
         assert_eq!(
-            paths.to_staging().kerr_plot(),
-            PathBuf::from("shot with space measurement/analysis.incomplete/plots/kerr/kerr.png")
+            paths.to_staging().moke_plot(),
+            PathBuf::from("shot with space measurement/analysis.incomplete/plots/moke/angle.png")
         );
     }
 }

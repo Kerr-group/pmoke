@@ -99,6 +99,25 @@ pub(super) struct ConfigV5 {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct ConfigV6 {
+    pub(super) version: u32,
+    pub(super) scope: ScopeV4,
+    #[serde(default)]
+    pub(super) generator: Option<GeneratorV4>,
+    pub(super) data: DataV4,
+    #[serde(default)]
+    pub(super) sensors: Vec<SensorV4>,
+    pub(super) pulse: PulseV4,
+    pub(super) reference: ReferenceV4,
+    pub(super) lockin: LockinV5,
+    pub(super) phase: PhaseV4,
+    pub(super) moke: MokeV6,
+    #[serde(default)]
+    pub(super) plot: PlotV4,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ScopeV4 {
     pub(super) model: String,
     pub(super) connection: String,
@@ -284,7 +303,15 @@ pub(super) struct PhaseV4 {
 #[serde(deny_unknown_fields)]
 pub(super) struct KerrV4 {
     pub(super) sensor: u8,
-    pub(super) method: KerrType,
+    pub(super) method: MokeType,
+    pub(super) factor: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MokeV6 {
+    pub(super) sensor: u8,
+    pub(super) method: MokeType,
     pub(super) factor: f64,
 }
 
@@ -358,6 +385,22 @@ pub(super) struct NormalizedConfigV5 {
     pub(super) lockin: LockinOutputV5,
     pub(super) phase: PhaseOutputV4,
     pub(super) kerr: KerrOutputV4,
+    pub(super) plot: PlotOutputV4,
+}
+
+#[derive(Serialize)]
+pub(super) struct NormalizedConfigV6 {
+    pub(super) version: u32,
+    pub(super) scope: ScopeOutputV4,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) generator: Option<GeneratorOutputV4>,
+    pub(super) data: DataOutputConfigV4,
+    pub(super) sensors: Vec<SensorOutputV4>,
+    pub(super) pulse: PulseOutputV4,
+    pub(super) reference: ReferenceOutputV4,
+    pub(super) lockin: LockinOutputV5,
+    pub(super) phase: PhaseOutputV4,
+    pub(super) moke: MokeOutputV6,
     pub(super) plot: PlotOutputV4,
 }
 
@@ -469,7 +512,14 @@ pub(super) struct PhaseOutputV4 {
 #[derive(Serialize)]
 pub(super) struct KerrOutputV4 {
     pub(super) sensor: u8,
-    pub(super) method: KerrType,
+    pub(super) method: MokeType,
+    pub(super) factor: f64,
+}
+
+#[derive(Serialize)]
+pub(super) struct MokeOutputV6 {
+    pub(super) sensor: u8,
+    pub(super) method: MokeType,
     pub(super) factor: f64,
 }
 
@@ -761,7 +811,7 @@ pub(super) struct PhaseV2 {
 #[derive(Debug, Deserialize)]
 pub(super) struct KerrV1 {
     pub(super) use_sensor_ch: u8,
-    pub(super) kerr_type: KerrType,
+    pub(super) kerr_type: MokeType,
     pub(super) factor: f64,
 }
 
@@ -769,7 +819,7 @@ pub(super) struct KerrV1 {
 #[serde(deny_unknown_fields)]
 pub(super) struct KerrV2 {
     pub(super) use_sensor_ch: u8,
-    pub(super) kerr_type: KerrType,
+    pub(super) kerr_type: MokeType,
     pub(super) factor: f64,
 }
 

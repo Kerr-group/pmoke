@@ -51,16 +51,21 @@ self.onmessage = async (event) => {
       harmonics.push({ ...decoded, inPhase: rotated.first, outOfPhase: rotated.second });
     }
 
-    progress(generation, 0.78, 'kerr');
-    const kerrPacked = wasm.calculate_harmonics_kerr_packed(
+    progress(generation, 0.78, 'moke');
+    const anglePacked = wasm.calculate_harmonics_moke_packed(
       harmonics[1].inPhase,
       harmonics[2].inPhase,
       harmonics[3].inPhase,
       harmonics[5].inPhase,
-      parameters.kerrFactor,
+      parameters.angleFactor,
     );
-    const modulationDepth = kerrPacked[0];
-    const kerr = kerrPacked.slice(1);
+    const modulationDepth = anglePacked[0];
+    const angle = anglePacked.slice(1);
+    const vm = wasm.calculate_harmonics_vm_packed(
+      harmonics[1].inPhase,
+      harmonics[2].inPhase,
+      modulationDepth,
+    );
     const selected = harmonics[parameters.harmonic - 1];
     const magnitude = new Float64Array(selected.x.length);
     const phase = new Float64Array(selected.x.length);
@@ -79,7 +84,7 @@ self.onmessage = async (event) => {
     const display = {
       input: decimateInput(signal, source.startTimeS, source.sampleRateHz, 1_200),
       lockin: decimateAligned(
-        [selected.time, selected.x, selected.y, magnitude, phase, kerr],
+        [selected.time, selected.x, selected.y, magnitude, phase, angle, vm],
         1_200,
       ),
       response: { frequency: response.first, magnitude: response.second },
@@ -122,7 +127,8 @@ self.onmessage = async (event) => {
         outOfPhase: selected.outOfPhase,
         magnitude,
         phase,
-        kerr,
+        angle,
+        vm,
       },
     };
     const transfer = collectBuffers(result);
@@ -158,7 +164,7 @@ function prepareSource(source, parameters) {
         parameters.amplitude,
         parameters.signalPhaseRad,
         parameters.noiseRms,
-        parameters.kerrAngleRad,
+        parameters.angleRad,
         parameters.seed,
       ),
     };

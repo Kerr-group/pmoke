@@ -291,7 +291,7 @@ fn describe_analysis_artifacts(
 ) -> Result<(BTreeMap<String, ColumnSet>, Vec<AnalysisArtifact>)> {
     let mut column_sets = BTreeMap::new();
     let mut artifacts = Vec::new();
-    for entry in [dir.join("lockin"), dir.join("kerr")] {
+    for entry in [dir.join("lockin"), dir.join("kerr"), dir.join("moke")] {
         if !entry.exists() {
             continue;
         }
@@ -386,6 +386,7 @@ fn describe_plot_artifacts(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
             ("phase", "omega_t0") => "phase_offset_plot",
             ("phase", _) => "phase_rotated_plot",
             ("kerr", _) => "kerr_plot",
+            ("moke", _) => "moke_plot",
             _ => return Err(anyhow::anyhow!("unknown plot stage: {stage}")),
         };
         let depends_on = match (stage, stem) {
@@ -399,6 +400,7 @@ fn describe_plot_artifacts(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
                 None => matching_analysis_csvs(dir, "_rotated.csv")?,
             }),
             ("kerr", _) => Some(vec!["kerr/kerr.csv".to_string()]),
+            ("moke", _) => Some(vec!["moke/moke.csv".to_string()]),
             _ => None,
         };
         artifacts.push(AnalysisArtifact {
@@ -483,6 +485,9 @@ fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
     if stem == "kerr" {
         return Ok(("kerr".to_string(), None));
     }
+    if stem == "moke" {
+        return Ok(("moke".to_string(), None));
+    }
     let channel = stem
         .strip_prefix("ch")
         .and_then(|value| value.split('_').next())
@@ -546,7 +551,16 @@ pub fn stage_config_fingerprint(cfg: &Config, stage: &str) -> Result<String> {
             &cfg.reference,
             &cfg.lockin,
             &cfg.phase,
-            &cfg.kerr,
+            &cfg.moke,
+        )),
+        "moke" => serde_json::to_vec(&(
+            &cfg.roles,
+            &channels,
+            &cfg.pulse,
+            &cfg.reference,
+            &cfg.lockin,
+            &cfg.phase,
+            &cfg.moke,
         )),
         _ => bail!("unknown analysis stage fingerprint: {stage}"),
     }
@@ -704,9 +718,9 @@ pub fn write_analysis_metadata(
     let has_phase = artifacts
         .iter()
         .any(|a| a.kind == "lockin_rotated" || a.kind == "phase_rotated_plot");
-    let has_kerr = artifacts
-        .iter()
-        .any(|a| a.kind == "kerr" || a.kind == "kerr_plot");
+    let has_moke = artifacts.iter().any(|a| {
+        a.kind == "kerr" || a.kind == "kerr_plot" || a.kind == "moke" || a.kind == "moke_plot"
+    });
     if has_phase {
         stages.insert(
             "phase".to_string(),
@@ -718,13 +732,13 @@ pub fn write_analysis_metadata(
             },
         );
     }
-    if has_kerr {
+    if has_moke {
         stages.insert(
-            "kerr".to_string(),
+            "moke".to_string(),
             StageProvenance {
                 completed_at: now.clone(),
                 pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
-                config_sha256: stage_config_fingerprint(cfg, "kerr")?,
+                config_sha256: stage_config_fingerprint(cfg, "moke")?,
                 git_commit: option_env!("PMOKE_GIT_COMMIT").map(str::to_string),
             },
         );
@@ -746,8 +760,8 @@ pub fn write_analysis_metadata(
         config_source_sha256,
         config_sha256: config_resolved_sha256.clone(),
         config_resolved_sha256,
-        published_through: if has_kerr {
-            "kerr"
+        published_through: if has_moke {
+            "moke"
         } else if has_phase {
             "phase"
         } else {
@@ -830,8 +844,11 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
     };
     let outputs = scan_outputs(parent)?;
     let (column_sets, artifacts) = describe_analysis_artifacts(parent)?;
-    let published_through = if artifacts.iter().any(|artifact| artifact.kind == "kerr") {
-        Some("kerr")
+    let published_through = if artifacts
+        .iter()
+        .any(|artifact| artifact.kind == "kerr" || artifact.kind == "moke")
+    {
+        Some("moke")
     } else if artifacts
         .iter()
         .any(|artifact| artifact.kind == "lockin_rotated")
@@ -947,7 +964,7 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
     }
 
     match stage {
-        "li" | "phase" | "kerr" => {
+        "li" | "phase" | "kerr" | "moke" => {
             table.remove("exported_at");
         }
         "reference" | "sensor" => {}
@@ -970,7 +987,7 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
             "pmoke_version".to_string(),
             toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
         );
-        if matches!(stage, "li" | "phase" | "kerr") {
+        if matches!(stage, "li" | "phase" | "kerr" | "moke") {
             stage_prov.insert(
                 "config_sha256".to_string(),
                 toml::Value::String(stage_config_fingerprint(cfg, stage)?),
@@ -1024,11 +1041,13 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
         if stage == "li" {
             section.remove("phase");
             section.remove("kerr");
+            section.remove("moke");
             section.remove("export_npy");
         } else if stage == "phase" {
             section.remove("kerr");
+            section.remove("moke");
             section.remove("export_npy");
-        } else if stage == "kerr" {
+        } else if stage == "kerr" || stage == "moke" {
             section.remove("export_npy");
         }
         section.insert(stage.to_string(), toml::Value::Table(stage_prov));
@@ -1187,15 +1206,15 @@ mod tests {
             phase
         );
 
-        let mut kerr_changed = cfg.clone();
-        kerr_changed.kerr.factor = 2.0;
+        let mut moke_changed = cfg.clone();
+        moke_changed.moke.factor = 2.0;
         assert_eq!(
-            stage_config_fingerprint(&kerr_changed, "phase").unwrap(),
+            stage_config_fingerprint(&moke_changed, "phase").unwrap(),
             phase
         );
         assert_ne!(
-            stage_config_fingerprint(&kerr_changed, "kerr").unwrap(),
-            stage_config_fingerprint(&cfg, "kerr").unwrap()
+            stage_config_fingerprint(&moke_changed, "moke").unwrap(),
+            stage_config_fingerprint(&cfg, "moke").unwrap()
         );
     }
 

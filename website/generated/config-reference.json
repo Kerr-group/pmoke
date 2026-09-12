@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "pmoke_version": "0.4.1",
-  "schema_version": 5,
+  "schema_version": 6,
   "fields": [
     {
       "id": "version",
@@ -742,23 +742,23 @@
       ]
     },
     {
-      "id": "kerr",
-      "path": "kerr",
+      "id": "moke",
+      "path": "moke",
       "value_type": "table",
       "required": "required",
       "default": null,
       "valid_values": [],
       "units": null,
       "since": 4,
-      "summary_en": "Kerr-angle conversion settings.",
+      "summary_en": "MOKE analysis settings.",
       "details_en": "Specifies the calibration sensor, calculation method, and final factor.",
       "summary_ja": "Kerr角度の変換設定",
       "details_ja": "校正用センサー、計算方法、最終係数を指定。",
       "constraints": []
     },
     {
-      "id": "kerr.sensor",
-      "path": "kerr.sensor",
+      "id": "moke.sensor",
+      "path": "moke.sensor",
       "value_type": "integer",
       "required": "required",
       "default": null,
@@ -774,8 +774,8 @@
       ]
     },
     {
-      "id": "kerr.method",
-      "path": "kerr.method",
+      "id": "moke.method",
+      "path": "moke.method",
       "value_type": "string enum",
       "required": "required",
       "default": null,
@@ -792,8 +792,8 @@
       "constraints": []
     },
     {
-      "id": "kerr.factor",
-      "path": "kerr.factor",
+      "id": "moke.factor",
+      "path": "moke.factor",
       "value_type": "float",
       "required": "required",
       "default": null,

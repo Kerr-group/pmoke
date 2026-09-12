@@ -38,5 +38,6 @@ pub const LI_ROTATED_HEADER: [&str; 12] = [
 ];
 pub const LI_ROTATED_NAME: &str = "lockin_rotated";
 
-pub const KERR_NAME: &str = "kerr";
-pub const KERR_HEADER: &str = "Kerr angle (rad)";
+pub const MOKE_NAME: &str = "moke";
+pub const ANGLE_HEADER: &str = "angle (rad)";
+pub const VM_HEADER: &str = "Vm (V)";

@@ -31,7 +31,7 @@ pub use pmoke_config_core::{
 };
 pub(crate) use render::connection_uri;
 pub use render::render_normalized_config;
-use render::{render_config_v4, render_config_v5};
+use render::{render_config_v4, render_config_v5, render_config_v6};
 use schema::*;
 use validation::validate_common;
 pub use validation::validate_for_target;
@@ -171,7 +171,7 @@ pub struct Config {
     pub reference: Reference,
     pub lockin: Lockin,
     pub phase: Phase,
-    pub kerr: Kerr,
+    pub moke: Moke,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -430,15 +430,15 @@ pub struct Phase {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum KerrType {
+pub enum MokeType {
     Standard,
     Harmonics,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Kerr {
+pub struct Moke {
     pub use_sensor_ch: u8,
-    pub kerr_type: KerrType,
+    pub moke_type: MokeType,
     pub factor: f64,
 }
 
@@ -455,7 +455,7 @@ pub enum ValidationTarget {
     Sensor,
     Li,
     Phase,
-    Kerr,
+    Moke,
     Analyze,
     Process,
     Auto,
@@ -839,21 +839,21 @@ impl From<ReferenceV4> for Reference {
     }
 }
 
-impl From<KerrV1> for Kerr {
+impl From<KerrV1> for Moke {
     fn from(value: KerrV1) -> Self {
         Self {
             use_sensor_ch: value.use_sensor_ch,
-            kerr_type: value.kerr_type,
+            moke_type: value.kerr_type,
             factor: value.factor,
         }
     }
 }
 
-impl From<KerrV2> for Kerr {
+impl From<KerrV2> for Moke {
     fn from(value: KerrV2) -> Self {
         Self {
             use_sensor_ch: value.use_sensor_ch,
-            kerr_type: value.kerr_type,
+            moke_type: value.kerr_type,
             factor: value.factor,
         }
     }

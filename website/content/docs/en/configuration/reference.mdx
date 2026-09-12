@@ -7,7 +7,7 @@ description: Generated field reference for pmoke config schema version 5.
 
 > Generated from the typed config metadata registry. Manual edits are overwritten.
 
-<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={5} />
+<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={6} />
 
 [JSON Schema](https://kerr-group.github.io/pmoke/config.schema.json) · [`pmoke config explain`](../../cli/reference#pmoke-config-explain)
 
@@ -93,14 +93,14 @@ description: Generated field reference for pmoke config schema version 5.
 | --- | --- | :---: | --- | --- |
 | `phase` | `table` | required | - | Phase-rotation settings. Contains offsets for the first six harmonic components. |
 | `phase.offsets` | `float or expression array` · `rad` | required | - | Six harmonic phase offsets. Numeric expressions such as pi/2 are accepted. **Constraints:** must contain exactly 6 finite values |
-## `kerr`
+## `moke`
 
 | Path | Type | Required | Default / values | Description and constraints |
 | --- | --- | :---: | --- | --- |
-| `kerr` | `table` | required | - | Kerr-angle conversion settings. Specifies the calibration sensor, calculation method, and final factor. |
-| `kerr.sensor` | `integer` | required | - | Sensor channel used for Kerr-angle calibration. The channel must also exist in the sensors array. **Constraints:** must reference sensors[].channel |
-| `kerr.method` | `string enum` | required | `standard`, `harmonics` | Kerr-angle calculation method. Selects the standard or harmonics-based analysis implementation. |
-| `kerr.factor` | `float` | required | - | Final Kerr-angle conversion factor. Applied after the selected Kerr-angle calculation. **Constraints:** must be finite |
+| `moke` | `table` | required | - | MOKE analysis settings. Specifies the calibration sensor, calculation method, and final factor. |
+| `moke.sensor` | `integer` | required | - | Sensor channel used for Kerr-angle calibration. The channel must also exist in the sensors array. **Constraints:** must reference sensors[].channel |
+| `moke.method` | `string enum` | required | `standard`, `harmonics` | Kerr-angle calculation method. Selects the standard or harmonics-based analysis implementation. |
+| `moke.factor` | `float` | required | - | Final Kerr-angle conversion factor. Applied after the selected Kerr-angle calculation. **Constraints:** must be finite |
 ## `plot`
 
 | Path | Type | Required | Default / values | Description and constraints |

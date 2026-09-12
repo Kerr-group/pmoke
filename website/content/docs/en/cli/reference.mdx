@@ -7,7 +7,7 @@ description: Generated command and option reference for the complete pmoke featu
 
 > Generated from typed clap metadata. Manual edits are overwritten.
 
-<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={5} />
+<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={6} />
 
 ## Command index
 
@@ -31,9 +31,9 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke sensor`](#pmoke-sensor) | Analyze the sensor signal | core |
 | [`pmoke li`](#pmoke-li) | Run numerical lock-in analysis | core |
 | [`pmoke phase`](#pmoke-phase) | Rotate the reference phase for lock-in analysis | core |
-| [`pmoke kerr`](#pmoke-kerr) | Calculate the Kerr angle | core |
-| [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, phase, Kerr | core |
-| [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr) | hw-core |
+| [`pmoke moke`](#pmoke-moke) | Calculate the Kerr angle | core |
+| [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, phase, moke | core |
+| [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
 | [`pmoke completions`](#pmoke-completions) | Generate shell completion script | core |
 
@@ -487,12 +487,12 @@ pmoke phase [-h, --help]
 | `-h, --help` | - | - | Print help | - |
 
 
-## `pmoke kerr`
+## `pmoke moke`
 
 Calculate the Kerr angle
 
 ```text
-pmoke kerr [-h, --help]
+pmoke moke [-h, --help]
 ```
 
 | Option | Required | Default / values | Description | Conflicts |
@@ -502,7 +502,7 @@ pmoke kerr [-h, --help]
 
 ## `pmoke analyze`
 
-Run all analysis steps: reference, sensor, lock-in, phase, Kerr
+Run all analysis steps: reference, sensor, lock-in, phase, moke
 
 ```text
 pmoke analyze [-h, --help]
@@ -515,7 +515,7 @@ pmoke analyze [-h, --help]
 
 ## `pmoke process`
 
-Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)
+Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
 
 > **Required feature:** `hw-core`
 

@@ -4,12 +4,12 @@ pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
 
-    if !matches!(cfg.version, 3..=5) {
+    if !matches!(cfg.version, 3..=6) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("version".to_string()),
             format!(
-                "normalized config must have version 3, 4, or 5 (got {})",
+                "normalized config must have version 3, 4, 5, or 6 (got {})",
                 cfg.version
             ),
             None,
@@ -155,13 +155,13 @@ pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
             None,
         ));
     }
-    if !cfg.roles.sensor_ch.contains(&cfg.kerr.use_sensor_ch) {
+    if !cfg.roles.sensor_ch.contains(&cfg.moke.use_sensor_ch) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
-            Some("kerr.use_sensor_ch".to_string()),
+            Some("moke.use_sensor_ch".to_string()),
             format!(
-                "kerr.use_sensor_ch ({}) is not included in roles.sensor_ch",
-                cfg.kerr.use_sensor_ch
+                "moke.use_sensor_ch ({}) is not included in roles.sensor_ch",
+                cfg.moke.use_sensor_ch
             ),
             None,
         ));
@@ -257,7 +257,7 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
         | ValidationTarget::Sensor
         | ValidationTarget::Li
         | ValidationTarget::Phase
-        | ValidationTarget::Kerr
+        | ValidationTarget::Moke
         | ValidationTarget::Analyze => {}
     }
 
@@ -300,11 +300,11 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_sensor_metadata(cfg)?;
             validate_lockin_results_exist(cfg)?;
         }
-        ValidationTarget::Kerr => {
+        ValidationTarget::Moke => {
             validate_signal_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
-            validate_kerr_sensor(cfg)?;
+            validate_moke_sensor(cfg)?;
             validate_rotated_results_exist(cfg)?;
         }
         ValidationTarget::Analyze => {
@@ -377,11 +377,11 @@ fn validate_signal_roles(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-fn validate_kerr_sensor(cfg: &Config) -> Result<()> {
-    if !cfg.roles.sensor_ch.contains(&cfg.kerr.use_sensor_ch) {
+fn validate_moke_sensor(cfg: &Config) -> Result<()> {
+    if !cfg.roles.sensor_ch.contains(&cfg.moke.use_sensor_ch) {
         bail!(
-            "kerr.use_sensor_ch ({}) must be included in roles.sensor_ch",
-            cfg.kerr.use_sensor_ch
+            "moke.use_sensor_ch ({}) must be included in roles.sensor_ch",
+            cfg.moke.use_sensor_ch
         );
     }
     Ok(())

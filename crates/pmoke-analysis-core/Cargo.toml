@@ -8,6 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/Kerr-group/pmoke"
 
 [dependencies]
+libm = "=0.2.16"
 serde = { version = "1.0.229", features = ["derive"] }
 
 [dev-dependencies]

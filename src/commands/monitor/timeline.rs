@@ -504,14 +504,14 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["phase plot completed"],
             },
         ],
-        MonitorAction::Kerr => vec![
+        MonitorAction::Moke => vec![
             StageSpec {
                 label: "Calculate",
-                markers: &["kerr analysis completed"],
+                markers: &["moke analysis completed"],
             },
             StageSpec {
                 label: "Save",
-                markers: &["kerr analysis results"],
+                markers: &["moke analysis results"],
             },
         ],
         MonitorAction::Analyze => vec![
@@ -536,8 +536,8 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["phase analysis completed"],
             },
             StageSpec {
-                label: "Kerr",
-                markers: &["kerr analysis completed"],
+                label: "Moke",
+                markers: &["moke analysis completed"],
             },
         ],
         #[cfg(feature = "hw-core")]
@@ -609,8 +609,8 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["phase analysis completed"],
             },
             StageSpec {
-                label: "Kerr",
-                markers: &["kerr analysis completed"],
+                label: "Moke",
+                markers: &["moke analysis completed"],
             },
         ],
         #[cfg(feature = "hw-core")]
@@ -644,8 +644,8 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["phase analysis completed"],
             },
             StageSpec {
-                label: "Kerr",
-                markers: &["kerr analysis completed"],
+                label: "Moke",
+                markers: &["moke analysis completed"],
             },
         ],
     }

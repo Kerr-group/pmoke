@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changes
+
+- The Kerr analysis concept is renamed to MOKE: configuration schema version 6
+  uses the `[moke]` section (version 5 `[kerr]` files migrate with values
+  preserved), the command is `pmoke moke` (`pmoke kerr` remains as a deprecated
+  alias), and analysis outputs use `moke_results.csv` with `angle` and monitor
+  voltage (`Vm`) columns.
+
 ## v0.4.1 — 2026-08-21
 
 ### Changes

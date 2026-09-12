@@ -1,3 +1,4 @@
+use super::MokeChannelOutput;
 use crate::config::Plot;
 use crate::python;
 use anyhow::{Context, Result};
@@ -7,13 +8,13 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 #[allow(dead_code)]
-const KERR_STANDARD_ANALYSIS_PY: &str = include_str!("pytools/kerr_standard_analysis.py");
-static KERR_STANDARD_ANALYSIS_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
+const MOKE_STANDARD_ANALYSIS_PY: &str = include_str!("pytools/moke_standard_analysis.py");
+static MOKE_STANDARD_ANALYSIS_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 
 #[allow(dead_code)]
-pub struct KerrStandardAnalyser {}
+pub struct MokeStandardAnalyser {}
 
-pub struct KerrStandardAnalysisInput<'a> {
+pub struct MokeStandardAnalysisInput<'a> {
     pub plot: &'a Plot,
     pub t: &'a [f64],
     pub x: &'a [f64],
@@ -22,29 +23,32 @@ pub struct KerrStandardAnalysisInput<'a> {
     pub xlabel: &'a String,
     pub fig_name: String,
     pub output_path: &'a Path,
+    pub vm_output_path: &'a Path,
 }
 
-impl KerrStandardAnalyser {
-    pub fn analyse(&self, input: KerrStandardAnalysisInput<'_>) -> Result<Vec<f64>> {
+impl MokeStandardAnalyser {
+    pub fn analyse(&self, input: MokeStandardAnalysisInput<'_>) -> Result<MokeChannelOutput> {
         let output = crate::plot::prepare_plot_output(input.plot, input.output_path)?;
+        let vm_output = crate::plot::prepare_plot_output(input.plot, input.vm_output_path)?;
         Python::attach(|py| {
             let analysis_mod = python::cached_module(
                 py,
-                &KERR_STANDARD_ANALYSIS_MODULE,
-                KERR_STANDARD_ANALYSIS_PY,
-                "kerr_standard_analysis.py",
-                "kerr_standard_analysis",
+                &MOKE_STANDARD_ANALYSIS_MODULE,
+                MOKE_STANDARD_ANALYSIS_PY,
+                "moke_standard_analysis.py",
+                "moke_standard_analysis",
             )
-            .context("failed to load kerr_standard_analysis.py")?;
+            .context("failed to load moke_standard_analysis.py")?;
             let t_obj = python::f64_array1(py, input.t);
             let x_obj = python::f64_array1(py, input.x);
             let ys_obj = python::f64_array2(py, input.ys)?;
             let output_string = output.map(|path| path.to_string_lossy().into_owned());
+            let vm_output_string = vm_output.map(|path| path.to_string_lossy().into_owned());
 
             let analyser = analysis_mod
-                .getattr("KerrStandardAnalyser")?
+                .getattr("MokeStandardAnalyser")?
                 .call0()
-                .context("failed to create KerrStandardAnalyser instance")?;
+                .context("failed to create MokeStandardAnalyser instance")?;
 
             let res = analyser
                 .call_method1(
@@ -59,17 +63,19 @@ impl KerrStandardAnalyser {
                         output_string.is_some(),
                         input.plot.interactive && input.plot.enabled,
                         output_string,
+                        vm_output_string,
                         input.plot.max_points,
                         input.plot.decimation.as_str(),
                     ),
                 )
-                .context("python KerrStandardAnalyser.analyse(...) failed")?;
+                .context("python MokeStandardAnalyser.analyse(...) failed")?;
 
-            let kerr = python::extract_f64_array1(&res.get_item("kerr")?)?;
+            let angle = python::extract_f64_array1(&res.get_item("angle")?)?;
+            let vm = python::extract_f64_array1(&res.get_item("vm")?)?;
             let plot_error: Option<String> = res.get_item("plot_error")?.extract()?;
-            crate::plot::finish_embedded_plot(input.plot, output, plot_error, "Kerr standard")?;
+            crate::plot::finish_embedded_plot(input.plot, output, plot_error, "Moke standard")?;
 
-            Ok(kerr)
+            Ok(MokeChannelOutput { angle, vm })
         })
     }
 }

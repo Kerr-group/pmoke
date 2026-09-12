@@ -7,7 +7,7 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 
 > 型付きclap metadataから自動生成。手動編集は上書き対象。
 
-<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={5} />
+<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={6} />
 
 ## コマンド索引
 
@@ -31,9 +31,9 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 | [`pmoke sensor`](#pmoke-sensor) | センサー信号解析 | core |
 | [`pmoke li`](#pmoke-li) | 数値lock-in解析 | core |
 | [`pmoke phase`](#pmoke-phase) | lock-in解析の参照位相回転 | core |
-| [`pmoke kerr`](#pmoke-kerr) | Kerr角度を計算 | core |
-| [`pmoke analyze`](#pmoke-analyze) | reference・sensor・lock-in・phase・Kerrの全解析 | core |
-| [`pmoke process`](#pmoke-process) | 手動pulse trigger後のfetch・lock-in・phase・Kerr自動解析 | hw-core |
+| [`pmoke moke`](#pmoke-moke) | Kerr角度を計算 | core |
+| [`pmoke analyze`](#pmoke-analyze) | reference・sensor・lock-in・phase・mokeの全解析 | core |
+| [`pmoke process`](#pmoke-process) | 手動pulse trigger後のfetch・lock-in・phase・moke自動解析 | hw-core |
 | [`pmoke auto`](#pmoke-auto) | 完全自動測定・解析 | hw-core |
 | [`pmoke completions`](#pmoke-completions) | shell completion scriptの生成 | core |
 
@@ -487,12 +487,12 @@ pmoke phase [-h, --help]
 | `-h, --help` | - | - | help表示 | - |
 
 
-## `pmoke kerr`
+## `pmoke moke`
 
 Kerr角度を計算
 
 ```text
-pmoke kerr [-h, --help]
+pmoke moke [-h, --help]
 ```
 
 | option | 必須 | 既定値 / 候補 | 説明 | 競合 |
@@ -502,7 +502,7 @@ pmoke kerr [-h, --help]
 
 ## `pmoke analyze`
 
-reference・sensor・lock-in・phase・Kerrの全解析
+reference・sensor・lock-in・phase・mokeの全解析
 
 ```text
 pmoke analyze [-h, --help]
@@ -515,7 +515,7 @@ pmoke analyze [-h, --help]
 
 ## `pmoke process`
 
-手動pulse trigger後のfetch・lock-in・phase・Kerr自動解析
+手動pulse trigger後のfetch・lock-in・phase・moke自動解析
 
 > **必要なfeature:** `hw-core`
 

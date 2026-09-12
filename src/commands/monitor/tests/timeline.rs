@@ -254,7 +254,7 @@ fn narrow_timeline_wraps_compact_steps_without_dropping_stages() {
             state: TimelineStepState::Pending,
         },
         TimelineStep {
-            label: "Kerr",
+            label: "Moke",
             state: TimelineStepState::Pending,
         },
     ];

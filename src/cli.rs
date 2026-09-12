@@ -102,10 +102,13 @@ pub enum Command {
     /// Rotate the reference phase for lock-in analysis
     Phase,
     /// Calculate the Kerr angle
+    Moke,
+    /// Deprecated alias for `moke`
+    #[command(hide = true)]
     Kerr,
-    /// Run all analysis steps: reference, sensor, lock-in, phase, Kerr
+    /// Run all analysis steps: reference, sensor, lock-in, phase, moke
     Analyze,
-    /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, Kerr)
+    /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
     #[cfg(feature = "hw-core")]
     Process,
     /// Run the full automatic measurement and analysis

@@ -1,24 +1,29 @@
-pub mod kerr_harmonics_analysis;
-pub mod kerr_standard_analysis;
+pub mod moke_harmonics_analysis;
+pub mod moke_standard_analysis;
 pub mod save;
 
 use crate::analysis_results::parse_analysis_result_files;
-use crate::config::{Channel, KerrType};
-use crate::constants::{KERR_NAME, LI_ROTATED_HEADER};
-use crate::kerr::kerr_harmonics_analysis::{KerrHarmonicsAnalyser, KerrHarmonicsAnalysisInput};
-use crate::kerr::kerr_standard_analysis::{KerrStandardAnalyser, KerrStandardAnalysisInput};
-use crate::kerr::save::{get_kerr_headers, write_kerr_results};
+use crate::config::{Channel, MokeType};
+use crate::constants::{LI_ROTATED_HEADER, MOKE_NAME};
+use crate::moke::moke_harmonics_analysis::{MokeHarmonicsAnalyser, MokeHarmonicsAnalysisInput};
+use crate::moke::moke_standard_analysis::{MokeStandardAnalyser, MokeStandardAnalysisInput};
+use crate::moke::save::{get_moke_headers, write_moke_results};
 use crate::ui;
 use crate::{config::Config, utils::csv::read_csv};
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::time::Instant;
 
+pub struct MokeChannelOutput {
+    pub angle: Vec<f64>,
+    pub vm: Vec<f64>,
+}
+
 pub fn run(cfg: &Config) -> Result<()> {
     let ch = cfg.phase_signal_ch();
 
     if ch.is_empty() {
-        ui::skipped("Kerr analysis: no phase signal channels specified");
+        ui::skipped("Moke analysis: no phase signal channels specified");
         return Ok(());
     }
 
@@ -51,7 +56,7 @@ pub fn run(cfg: &Config) -> Result<()> {
         "phase-rotated lock-in results",
     )?;
 
-    run_kerr_analysis(
+    run_moke_analysis(
         cfg,
         &data.time,
         &data.sensor_rate,
@@ -62,7 +67,7 @@ pub fn run(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn run_kerr_analysis(
+pub fn run_moke_analysis(
     cfg: &Config,
     t: &[f64],
     sensor_rate_ch: &[Vec<f64>],
@@ -70,53 +75,59 @@ pub fn run_kerr_analysis(
     li_rotated_results: &[Vec<Vec<f64>>],
 ) -> Result<()> {
     let paths = cfg.paths();
-    let kerr_sensor_ch_index = cfg.kerr.use_sensor_ch;
+    let moke_sensor_ch_index = cfg.moke.use_sensor_ch;
 
     let ch_conf: &Channel = cfg
         .channels
         .iter()
-        .find(|ch| ch.index == kerr_sensor_ch_index)
+        .find(|ch| ch.index == moke_sensor_ch_index)
         .with_context(|| {
-            format!("Kerr sensor channel {kerr_sensor_ch_index} is missing from channels")
+            format!("Moke sensor channel {moke_sensor_ch_index} is missing from channels")
         })?;
 
     let label = ch_conf.label.as_ref().with_context(|| {
         format!(
             "Channel label is missing for channel {}",
-            kerr_sensor_ch_index
+            moke_sensor_ch_index
         )
     })?;
     let unit = ch_conf.unit_out.as_ref().with_context(|| {
         format!(
             "Channel unit is missing for channel {}",
-            kerr_sensor_ch_index
+            moke_sensor_ch_index
         )
     })?;
     let concat_label = format!("{} ({})", label, unit);
 
     let ch = cfg.phase_signal_ch();
 
-    let kerr_type = &cfg.kerr.kerr_type;
+    let moke_type = &cfg.moke.moke_type;
 
-    let kerr_sensor_pos = kerr_sensor_position(cfg)?;
-    let sensor_integral = sensor_integral_ch.get(kerr_sensor_pos).with_context(|| {
-        format!("sensor integral column for ch{kerr_sensor_ch_index} is missing")
+    let moke_sensor_pos = moke_sensor_position(cfg)?;
+    let sensor_integral = sensor_integral_ch.get(moke_sensor_pos).with_context(|| {
+        format!("sensor integral column for ch{moke_sensor_ch_index} is missing")
     })?;
-    let factor = cfg.kerr.factor;
-    let mut kerr_results: Vec<Vec<f64>> = Vec::new();
-    let pb = ui::progress("running Kerr analysis", ch.len() as u64);
+    let factor = cfg.moke.factor;
+    let mut angle_results: Vec<Vec<f64>> = Vec::new();
+    let mut vm_results: Vec<Vec<f64>> = Vec::new();
+    let pb = ui::progress("running Moke analysis", ch.len() as u64);
     for (ch_i, li_rotated_result) in ch.iter().zip(li_rotated_results.iter()) {
-        pb.set_message(format!("Kerr analysis ch{ch_i}"));
-        let fig_name = format!("{}_ch{}", KERR_NAME, ch_i);
+        pb.set_message(format!("Moke analysis ch{ch_i}"));
+        let fig_name = format!("{}_ch{}", MOKE_NAME, ch_i);
         let output_path = if ch.len() == 1 {
-            paths.kerr_plot()
+            paths.moke_plot()
         } else {
-            paths.kerr_channel_plot(*ch_i)
+            paths.moke_channel_plot(*ch_i)
+        };
+        let vm_output_path = if ch.len() == 1 {
+            paths.moke_vm_plot()
+        } else {
+            paths.moke_vm_channel_plot(*ch_i)
         };
 
-        let kerr_i = match kerr_type {
-            KerrType::Standard => KerrStandardAnalyser {}
-                .analyse(KerrStandardAnalysisInput {
+        let channel_output = match moke_type {
+            MokeType::Standard => MokeStandardAnalyser {}
+                .analyse(MokeStandardAnalysisInput {
                     plot: &cfg.plot,
                     t,
                     x: sensor_integral,
@@ -125,10 +136,11 @@ pub fn run_kerr_analysis(
                     xlabel: &concat_label,
                     fig_name,
                     output_path: &output_path,
+                    vm_output_path: &vm_output_path,
                 })
-                .context("failed to run Kerr analysis")?,
-            KerrType::Harmonics => KerrHarmonicsAnalyser {}
-                .analyse(KerrHarmonicsAnalysisInput {
+                .context("failed to run Moke analysis")?,
+            MokeType::Harmonics => MokeHarmonicsAnalyser {}
+                .analyse(MokeHarmonicsAnalysisInput {
                     plot: &cfg.plot,
                     t,
                     x: sensor_integral,
@@ -137,55 +149,58 @@ pub fn run_kerr_analysis(
                     xlabel: &concat_label,
                     fig_name,
                     output_path: &output_path,
+                    vm_output_path: &vm_output_path,
                 })
-                .context("failed to run Kerr harmonics analysis")?,
+                .context("failed to run Moke harmonics analysis")?,
         };
 
-        kerr_results.push(kerr_i);
+        angle_results.push(channel_output.angle);
+        vm_results.push(channel_output.vm);
         pb.inc(1);
     }
-    let path = paths.kerr_csv();
-    let headers = get_kerr_headers(cfg)?;
-    write_kerr_results(
+    let path = paths.moke_csv();
+    let headers = get_moke_headers(cfg)?;
+    write_moke_results(
         &path,
         &headers,
         t,
         sensor_rate_ch,
         sensor_integral_ch,
-        &kerr_results,
+        &angle_results,
+        &vm_results,
         cfg.lockin.save_npy,
     )?;
 
-    ui::finish_saved(pb, format!("Kerr analysis results for channels {:?}", ch));
-    ui::success("Kerr analysis completed");
+    ui::finish_saved(pb, format!("Moke analysis results for channels {:?}", ch));
+    ui::success("Moke analysis completed");
 
     Ok(())
 }
 
-fn kerr_sensor_position(cfg: &Config) -> Result<usize> {
-    let kerr_sensor_ch_index = cfg.kerr.use_sensor_ch;
+fn moke_sensor_position(cfg: &Config) -> Result<usize> {
+    let moke_sensor_ch_index = cfg.moke.use_sensor_ch;
     cfg.roles
         .sensor_ch
         .iter()
-        .position(|&ch| ch == kerr_sensor_ch_index)
+        .position(|&ch| ch == moke_sensor_ch_index)
         .with_context(|| {
-            format!("kerr.use_sensor_ch {kerr_sensor_ch_index} is not in roles.sensor_ch")
+            format!("moke.use_sensor_ch {moke_sensor_ch_index} is not in roles.sensor_ch")
         })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::kerr_sensor_position;
+    use super::moke_sensor_position;
     use crate::test_support::test_config;
 
     #[test]
-    fn kerr_sensor_position_uses_configured_sensor_channel_order() {
+    fn moke_sensor_position_uses_configured_sensor_channel_order() {
         let mut cfg = test_config(vec![2, 4], vec![3]);
 
-        cfg.kerr.use_sensor_ch = 4;
-        assert_eq!(kerr_sensor_position(&cfg).unwrap(), 1);
+        cfg.moke.use_sensor_ch = 4;
+        assert_eq!(moke_sensor_position(&cfg).unwrap(), 1);
 
-        cfg.kerr.use_sensor_ch = 1;
-        assert!(kerr_sensor_position(&cfg).is_err());
+        cfg.moke.use_sensor_ch = 1;
+        assert!(moke_sensor_position(&cfg).is_err());
     }
 }
