@@ -728,4 +728,102 @@ mod tests {
         assert_eq!(boxcar_response_abs(half_window, 0.0).unwrap(), 1.0);
         assert!(boxcar_response_abs(half_window, 500.0).unwrap() < 1.0e-15);
     }
+
+    #[test]
+    fn geometry_golden_matches_independent_grid() {
+        #[derive(serde::Deserialize)]
+        struct Payload {
+            schema_version: u32,
+            cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            length: usize,
+            dt: f64,
+            stride: usize,
+            f_ref: f64,
+            cycles: f64,
+            t_start: f64,
+            expected_error: Option<String>,
+            n_half: Option<usize>,
+            integration_points: Option<usize>,
+            i_start: Option<usize>,
+            i_end: Option<usize>,
+            row_count: Option<usize>,
+            first_center: Option<usize>,
+            last_center: Option<usize>,
+            first_time: Option<f64>,
+            last_time: Option<f64>,
+            first_support: Option<[usize; 2]>,
+            last_support: Option<[usize; 2]>,
+        }
+        let payload: Payload =
+            serde_json::from_str(include_str!("../tests/fixtures/joint-gls/geometry.json"))
+                .unwrap();
+        assert_eq!(payload.schema_version, 1);
+        assert!(!payload.cases.is_empty());
+        for case in &payload.cases {
+            let settings = BoxcarLegacySettings {
+                start_time_s: case.t_start,
+                sample_interval_s: case.dt,
+                reference_frequency_hz: case.f_ref,
+                reference_phase_rad: 0.0,
+                half_window_cycles: case.cycles,
+                stride_samples: case.stride,
+                harmonic: 1,
+            };
+            let signal = vec![0.0; case.length];
+            if let Some(expected_code) = &case.expected_error {
+                assert_eq!(
+                    analyze_boxcar_legacy(&signal, settings).unwrap_err().code(),
+                    expected_code,
+                    "case {}",
+                    case.name
+                );
+                continue;
+            }
+            let geometry = Geometry::new(&signal, settings).unwrap();
+            let (n_half, i_start, i_end) = (
+                case.n_half.unwrap(),
+                case.i_start.unwrap(),
+                case.i_end.unwrap(),
+            );
+            assert_eq!(geometry.half_window_samples, n_half, "case {}", case.name);
+            assert_eq!(geometry.i_start, i_start, "case {}", case.name);
+            assert_eq!(geometry.i_end, i_end, "case {}", case.name);
+            let output = analyze_boxcar_legacy(&signal, settings).unwrap();
+            assert_eq!(output.metadata.output_samples, case.row_count.unwrap());
+            assert_eq!(
+                output.metadata.first_input_index,
+                case.first_center.unwrap()
+            );
+            assert_eq!(output.metadata.last_input_index, case.last_center.unwrap());
+            let (first_center, last_center) =
+                (case.first_center.unwrap(), case.last_center.unwrap());
+            assert_eq!(
+                case.first_support.unwrap(),
+                [first_center - n_half - 1, first_center + n_half + 1]
+            );
+            assert_eq!(
+                case.last_support.unwrap(),
+                [last_center - n_half - 1, last_center + n_half + 1]
+            );
+            let time_tolerance = 1.0e-12;
+            assert!(
+                (output.time_s[0] - case.first_time.unwrap()).abs() < time_tolerance,
+                "case {}",
+                case.name
+            );
+            assert!(
+                (*output.time_s.last().unwrap() - case.last_time.unwrap()).abs() < time_tolerance,
+                "case {}",
+                case.name
+            );
+            assert_eq!(
+                case.integration_points.unwrap(),
+                (case.length - 1) / case.stride + 1
+            );
+        }
+    }
 }
