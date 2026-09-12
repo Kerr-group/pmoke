@@ -47,7 +47,9 @@ def decimation_indices(values: NDArray, max_points: int, method: str) -> NDArray
         raise ValueError(f"unknown plot decimation method: {method}")
     if max_points == 1:
         finite = np.flatnonzero(np.isfinite(values))
-        return np.array([0 if finite.size == 0 else finite[np.argmax(np.abs(values[finite]))]])
+        return np.array(
+            [0 if finite.size == 0 else finite[np.argmax(np.abs(values[finite]))]]
+        )
     bins = max(1, max_points // 2)
     indices = []
     for bin_index in range(bins):
@@ -58,7 +60,9 @@ def decimation_indices(values: NDArray, max_points: int, method: str) -> NDArray
             indices.append(start)
             continue
         local = values[start:end][finite]
-        indices.extend((start + finite[np.argmin(local)], start + finite[np.argmax(local)]))
+        indices.extend(
+            (start + finite[np.argmin(local)], start + finite[np.argmax(local)])
+        )
     unique = np.unique(indices)
     if unique.size <= max_points:
         return unique
@@ -190,38 +194,28 @@ class MokeHarmonicsAnalyser:
             t_plot = t[indices]
             x_plot = x[indices]
             moke_plot = moke[indices]
+            vm_plot = vm[indices]
 
             axs = gs.axes(
                 True,
-                size=(6, 6),
-                mosaic="A",
-                ion=interactive,
+                size=(12, 6),
+                mosaic="AB",
             )
 
             gs.scatter_colormap(axs[0], x_plot, moke_plot * 1e3, t_plot)
+            gs.scatter_colormap(axs[1], x_plot, vm_plot * 1e3, t_plot)
             axs[0].grid()
             title = fig_name + " using Harmonics"
             gs.title(title)
 
-            gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
+            gs.label(
+                [
+                    [f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"],
+                    [f"{xlabel}", "$V_{\\rm m}$ (mV)"],
+                ]
+            )
             finish_plot(output_path, interactive)
 
-            vm_indices = decimation_indices(vm, max_points, decimation)
-            vm_axs = gs.axes(
-                True,
-                size=(6, 6),
-                mosaic="A",
-                ion=interactive,
-            )
-
-            gs.scatter_colormap(
-                vm_axs[0], x_plot[vm_indices], vm[vm_indices], t_plot[vm_indices]
-            )
-            vm_axs[0].grid()
-            gs.title(fig_name + " Vm using Harmonics")
-
-            gs.label([[f"{xlabel}", "Vm (V)"]])
-            finish_plot(vm_output_path, interactive)
             return None
         except Exception as exc:
             return str(exc)
