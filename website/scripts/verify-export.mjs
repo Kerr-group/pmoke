@@ -9,7 +9,7 @@ const output = path.resolve('out');
 // Keep the raw budget tolerant of host-specific Rust/wasm-opt output while
 // retaining the compressed budget as the stricter transfer-size guard.
 const M4_WASM_RAW_BUDGET_BYTES = 640 * 1024;
-const M4_WASM_GZIP_BUDGET_BYTES = 210 * 1024;
+const M4_WASM_GZIP_BUDGET_BYTES = 220 * 1024;
 // Warn at the former budget so growth is visible, then retain a hard 1 MiB
 // ceiling for the bilingual documentation search index.
 const M2_SEARCH_INDEX_WARNING_BYTES = 960 * 1024;

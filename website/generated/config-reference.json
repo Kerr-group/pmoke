@@ -809,6 +809,75 @@
       ]
     },
     {
+      "id": "signals",
+      "path": "signals",
+      "value_type": "array of tables",
+      "required": "optional",
+      "default": "[]",
+      "valid_values": [],
+      "units": null,
+      "since": 4,
+      "summary_en": "Raw-signal readout entries.",
+      "details_en": "Each entry averages one channel over the lock-in window.",
+      "summary_ja": "生信号読出し一覧",
+      "details_ja": "lock-in窓で平均するchannel毎の指定。",
+      "constraints": [
+        "channels must not overlap sensor, reference, or lock-in channels"
+      ]
+    },
+    {
+      "id": "signals[].channel",
+      "path": "signals[].channel",
+      "value_type": "integer",
+      "required": "required",
+      "default": null,
+      "valid_values": [],
+      "units": null,
+      "since": 4,
+      "summary_en": "Oscilloscope signal channel.",
+      "details_en": "The current DHO5108 mapping accepts channels 1 through 8.",
+      "summary_ja": "信号チャンネル番号",
+      "details_ja": "DHO5108向け1以上8以下の番号。",
+      "constraints": [
+        "1 <= value <= 8",
+        "must be unique across all channel roles"
+      ]
+    },
+    {
+      "id": "signals[].label",
+      "path": "signals[].label",
+      "value_type": "string",
+      "required": "required",
+      "default": null,
+      "valid_values": [],
+      "units": null,
+      "since": 4,
+      "summary_en": "Plot label for the signal.",
+      "details_en": "Matplotlib mathtext may be supplied as a TOML literal string.",
+      "summary_ja": "信号プロットラベル",
+      "details_ja": "TOML literal stringで指定可能なMatplotlib mathtext。",
+      "constraints": [
+        "must not be empty"
+      ]
+    },
+    {
+      "id": "signals[].unit",
+      "path": "signals[].unit",
+      "value_type": "string",
+      "required": "required",
+      "default": null,
+      "valid_values": [],
+      "units": null,
+      "since": 4,
+      "summary_en": "Output unit for the averaged signal.",
+      "details_en": "Used in tables, plots, and saved analysis headers.",
+      "summary_ja": "平均信号の出力単位",
+      "details_ja": "表・プロット・解析保存headerでの単位。",
+      "constraints": [
+        "must not be empty"
+      ]
+    },
+    {
       "id": "plot",
       "path": "plot",
       "value_type": "table",

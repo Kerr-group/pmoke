@@ -66,7 +66,20 @@ self.onmessage = async (event) => {
       harmonics[2].inPhase,
       modulationDepth,
     );
+    progress(generation, 0.82, 'signal');
+    const signalMean = wasm.boxcar_mean_packed(
+      signal,
+      source.startTimeS,
+      source.sampleRateHz,
+      metadata.halfWindowS,
+      parameters.strideSamples,
+    );
     const selected = harmonics[parameters.harmonic - 1];
+    if (signalMean.length !== selected.time.length) {
+      throw new Error(
+        `invalid_wasm_output: signal mean length ${signalMean.length} mismatches grid ${selected.time.length}`,
+      );
+    }
     const magnitude = new Float64Array(selected.x.length);
     const phase = new Float64Array(selected.x.length);
     for (let index = 0; index < selected.x.length; index += 1) {
@@ -84,7 +97,7 @@ self.onmessage = async (event) => {
     const display = {
       input: decimateInput(signal, source.startTimeS, source.sampleRateHz, 1_200),
       lockin: decimateAligned(
-        [selected.time, selected.x, selected.y, magnitude, phase, angle, vm],
+        [selected.time, selected.x, selected.y, magnitude, phase, angle, vm, signalMean],
         1_200,
       ),
       response: { frequency: response.first, magnitude: response.second },
@@ -129,6 +142,7 @@ self.onmessage = async (event) => {
         phase,
         angle,
         vm,
+        signalMean,
       },
     };
     const transfer = collectBuffers(result);

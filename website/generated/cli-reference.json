@@ -1365,6 +1365,29 @@
         "subcommands": []
       },
       {
+        "name": "signal",
+        "path": "pmoke signal",
+        "summary": "Average raw signal channels over the lock-in window",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
         "name": "phase",
         "path": "pmoke phase",
         "summary": "Rotate the reference phase for lock-in analysis",
@@ -1413,7 +1436,7 @@
       {
         "name": "analyze",
         "path": "pmoke analyze",
-        "summary": "Run all analysis steps: reference, sensor, lock-in, phase, moke",
+        "summary": "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke",
         "required_feature": null,
         "arguments": [
           {

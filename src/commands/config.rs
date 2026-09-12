@@ -95,6 +95,12 @@ sensor = 1
 method = "harmonics" # "standard" or "harmonics"
 factor = -1.0
 
+# Raw-signal readout (optional; omit the section when unused).
+# [[signals]]
+# channel = 4
+# label = "DC"
+# unit = "V"
+
 [plot]
 mode = "both" # "off", "save", "interactive", or "both"
 decimation = "min_max" # "none", "stride", or "min_max"

@@ -490,6 +490,20 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["lock-in plot completed"],
             },
         ],
+        MonitorAction::Signal => vec![
+            StageSpec {
+                label: "Read",
+                markers: &["fetched data"],
+            },
+            StageSpec {
+                label: "Lock-in",
+                markers: &["lock-in processing completed"],
+            },
+            StageSpec {
+                label: "Signal",
+                markers: &["signal means"],
+            },
+        ],
         MonitorAction::Phase => vec![
             StageSpec {
                 label: "Fit",
@@ -530,6 +544,10 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
             StageSpec {
                 label: "Lock-in",
                 markers: &["lock-in processing completed"],
+            },
+            StageSpec {
+                label: "Signal",
+                markers: &["signal means"],
             },
             StageSpec {
                 label: "Phase",
@@ -605,6 +623,10 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
                 markers: &["lock-in processing completed"],
             },
             StageSpec {
+                label: "Signal",
+                markers: &["signal means"],
+            },
+            StageSpec {
                 label: "Phase",
                 markers: &["phase analysis completed"],
             },
@@ -638,6 +660,10 @@ fn action_stage_specs(action: MonitorAction) -> Vec<StageSpec> {
             StageSpec {
                 label: "Lock-in",
                 markers: &["lock-in processing completed"],
+            },
+            StageSpec {
+                label: "Signal",
+                markers: &["signal means"],
             },
             StageSpec {
                 label: "Phase",

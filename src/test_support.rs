@@ -45,6 +45,7 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
                 unit_out: Some("T".to_string()),
             })
             .collect(),
+        signals: Vec::new(),
         pulse: Pulse {
             bg_window_before: window,
             bg_window_after: window,

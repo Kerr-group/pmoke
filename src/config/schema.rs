@@ -113,6 +113,8 @@ pub(super) struct ConfigV6 {
     pub(super) phase: PhaseV4,
     pub(super) moke: MokeV6,
     #[serde(default)]
+    pub(super) signals: Vec<SignalV4>,
+    #[serde(default)]
     pub(super) plot: PlotV4,
 }
 
@@ -152,6 +154,14 @@ pub(super) enum DataOutputV4 {
 pub(super) struct SensorV4 {
     pub(super) channel: u8,
     pub(super) scale: SensorScaleV4,
+    pub(super) label: String,
+    pub(super) unit: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SignalV4 {
+    pub(super) channel: u8,
     pub(super) label: String,
     pub(super) unit: String,
 }
@@ -402,6 +412,8 @@ pub(super) struct NormalizedConfigV6 {
     pub(super) lockin: LockinOutputV5,
     pub(super) phase: PhaseOutputV4,
     pub(super) moke: MokeOutputV6,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) signals: Vec<SignalOutputV4>,
     pub(super) plot: PlotOutputV4,
 }
 
@@ -428,6 +440,13 @@ pub(super) struct DataOutputConfigV4 {
 pub(super) struct SensorOutputV4 {
     pub(super) channel: u8,
     pub(super) scale: SensorScaleOutputV4,
+    pub(super) label: String,
+    pub(super) unit: String,
+}
+
+#[derive(Serialize)]
+pub(super) struct SignalOutputV4 {
+    pub(super) channel: u8,
     pub(super) label: String,
     pub(super) unit: String,
 }

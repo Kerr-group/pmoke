@@ -291,7 +291,12 @@ fn describe_analysis_artifacts(
 ) -> Result<(BTreeMap<String, ColumnSet>, Vec<AnalysisArtifact>)> {
     let mut column_sets = BTreeMap::new();
     let mut artifacts = Vec::new();
-    for entry in [dir.join("lockin"), dir.join("kerr"), dir.join("moke")] {
+    for entry in [
+        dir.join("lockin"),
+        dir.join("kerr"),
+        dir.join("moke"),
+        dir.join("signal"),
+    ] {
         if !entry.exists() {
             continue;
         }
@@ -387,6 +392,7 @@ fn describe_plot_artifacts(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
             ("phase", _) => "phase_rotated_plot",
             ("kerr", _) => "kerr_plot",
             ("moke", _) => "moke_plot",
+            ("signal", _) => "signal_plot",
             _ => return Err(anyhow::anyhow!("unknown plot stage: {stage}")),
         };
         let depends_on = match (stage, stem) {
@@ -401,6 +407,7 @@ fn describe_plot_artifacts(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
             }),
             ("kerr", _) => Some(vec!["kerr/kerr.csv".to_string()]),
             ("moke", _) => Some(vec!["moke/moke.csv".to_string()]),
+            ("signal", _) => Some(vec!["signal/signal.csv".to_string()]),
             _ => None,
         };
         artifacts.push(AnalysisArtifact {
@@ -488,6 +495,9 @@ fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
     if stem == "moke" {
         return Ok(("moke".to_string(), None));
     }
+    if stem == "signal" {
+        return Ok(("signal".to_string(), None));
+    }
     let channel = stem
         .strip_prefix("ch")
         .and_then(|value| value.split('_').next())
@@ -561,6 +571,14 @@ pub fn stage_config_fingerprint(cfg: &Config, stage: &str) -> Result<String> {
             &cfg.lockin,
             &cfg.phase,
             &cfg.moke,
+        )),
+        "signal" => serde_json::to_vec(&(
+            &cfg.roles,
+            &channels,
+            &cfg.pulse,
+            &cfg.reference,
+            &cfg.lockin,
+            &cfg.signals,
         )),
         _ => bail!("unknown analysis stage fingerprint: {stage}"),
     }
@@ -964,7 +982,7 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
     }
 
     match stage {
-        "li" | "phase" | "kerr" | "moke" => {
+        "li" | "phase" | "kerr" | "moke" | "signal" => {
             table.remove("exported_at");
         }
         "reference" | "sensor" => {}
@@ -987,7 +1005,7 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
             "pmoke_version".to_string(),
             toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
         );
-        if matches!(stage, "li" | "phase" | "kerr" | "moke") {
+        if matches!(stage, "li" | "phase" | "kerr" | "moke" | "signal") {
             stage_prov.insert(
                 "config_sha256".to_string(),
                 toml::Value::String(stage_config_fingerprint(cfg, stage)?),
@@ -1042,6 +1060,7 @@ pub fn refresh_analysis_manifest_outputs(cfg: &Config, stage: &str) -> Result<()
             section.remove("phase");
             section.remove("kerr");
             section.remove("moke");
+            section.remove("signal");
             section.remove("export_npy");
         } else if stage == "phase" {
             section.remove("kerr");

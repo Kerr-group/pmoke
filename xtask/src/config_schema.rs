@@ -61,6 +61,11 @@ pub fn build(reference: &ConfigReference) -> Value {
                     ("factor", annotate(reference, "moke.factor", json!({"type": "number"}))),
                 ],
             )),
+            "signals": annotate(reference, "signals", json!({
+                "type": "array",
+                "items": signal(reference),
+                "default": []
+            })),
             "plot": annotate(reference, "plot", plot(reference)),
         },
         "x-pmoke": {
@@ -69,7 +74,7 @@ pub fn build(reference: &ConfigReference) -> Value {
             "schema_version": reference.schema_version,
             "fields": reference.fields,
             "semantic_constraints": [
-                "channel assignments must be unique across sensors, reference, and lock-in signals",
+                "channel assignments must be unique across sensors, reference, lock-in signals, and signals",
                 "moke.sensor must reference a configured sensor channel",
                 "pulse background windows must not overlap",
                 "lockin.filter must use the active boxcar_legacy fields only"
@@ -108,6 +113,31 @@ fn instrument(reference: &ConfigReference, prefix: &str, optional: bool) -> Valu
         );
     }
     schema
+}
+
+fn signal(reference: &ConfigReference) -> Value {
+    object(
+        &["channel", "label", "unit"],
+        [
+            ("channel", channel(reference, "signals[].channel")),
+            (
+                "label",
+                annotate(
+                    reference,
+                    "signals[].label",
+                    json!({"type": "string", "minLength": 1}),
+                ),
+            ),
+            (
+                "unit",
+                annotate(
+                    reference,
+                    "signals[].unit",
+                    json!({"type": "string", "minLength": 1}),
+                ),
+            ),
+        ],
+    )
 }
 
 fn sensor(reference: &ConfigReference) -> Value {

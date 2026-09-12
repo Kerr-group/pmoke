@@ -12,6 +12,7 @@ pub(crate) enum AnalysisStage {
     Reference,
     Sensor,
     Li,
+    Signal,
     Phase,
     Moke,
     ExportNpy,
@@ -411,7 +412,7 @@ pub fn write_run_state(
             .and_then(|analysis| analysis.published_through.as_deref())
         {
             Some("kerr") | Some("moke") => ("complete".to_string(), "analysis".to_string()),
-            Some(stage @ ("li" | "phase")) => {
+            Some(stage @ ("li" | "phase" | "signal")) => {
                 ("analyzing".to_string(), format!("{stage}_complete"))
             }
             _ if state.status != "failed" => (state.status.clone(), state.stage.clone()),
@@ -477,7 +478,15 @@ fn analysis_run_state(
     let command = stage.strip_suffix("_complete").unwrap_or(stage);
     if !matches!(
         command,
-        "analysis" | "li" | "phase" | "kerr" | "moke" | "reference" | "sensor" | "export_npy"
+        "analysis"
+            | "li"
+            | "phase"
+            | "kerr"
+            | "moke"
+            | "signal"
+            | "reference"
+            | "sensor"
+            | "export_npy"
     ) {
         return Ok(existing);
     }
@@ -710,7 +719,7 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
         return Ok(staging_cfg);
     }
 
-    if stage == AnalysisStage::Li {
+    if stage == AnalysisStage::Li || stage == AnalysisStage::Signal {
         return Ok(staging_cfg);
     }
 

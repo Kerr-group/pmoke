@@ -12,6 +12,7 @@ mod moke;
 mod phase;
 pub mod plot;
 pub mod python;
+mod signal;
 #[cfg(test)]
 mod test_support;
 mod ui;
@@ -188,6 +189,9 @@ fn run_with(args: Cli) -> Result<()> {
                 run_validated(&cfg, ValidationTarget::Sensor, commands::sensor::sensor)
             }
             Some(Command::Li) => run_validated(&cfg, ValidationTarget::Li, commands::li::li),
+            Some(Command::Signal) => {
+                run_validated(&cfg, ValidationTarget::Signal, commands::signal::signal)
+            }
             Some(Command::Phase) => {
                 run_validated(&cfg, ValidationTarget::Phase, commands::phase::phase)
             }
@@ -234,6 +238,9 @@ fn run_with(args: Cli) -> Result<()> {
                 run_validated(&cfg, ValidationTarget::Sensor, commands::sensor::sensor)
             }
             Some(Command::Li) => run_validated(&cfg, ValidationTarget::Li, commands::li::li),
+            Some(Command::Signal) => {
+                run_validated(&cfg, ValidationTarget::Signal, commands::signal::signal)
+            }
             Some(Command::Phase) => {
                 run_validated(&cfg, ValidationTarget::Phase, commands::phase::phase)
             }

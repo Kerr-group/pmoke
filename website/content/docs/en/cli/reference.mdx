@@ -30,9 +30,10 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke reference`](#pmoke-reference) | Fit the recorded EOM-drive sine wave | core |
 | [`pmoke sensor`](#pmoke-sensor) | Analyze the sensor signal | core |
 | [`pmoke li`](#pmoke-li) | Run numerical lock-in analysis | core |
+| [`pmoke signal`](#pmoke-signal) | Average raw signal channels over the lock-in window | core |
 | [`pmoke phase`](#pmoke-phase) | Rotate the reference phase for lock-in analysis | core |
 | [`pmoke moke`](#pmoke-moke) | Calculate the Kerr angle | core |
-| [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, phase, moke | core |
+| [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, signal, phase, moke | core |
 | [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
 | [`pmoke completions`](#pmoke-completions) | Generate shell completion script | core |
@@ -474,6 +475,19 @@ pmoke li [-h, --help]
 | `-h, --help` | - | - | Print help | - |
 
 
+## `pmoke signal`
+
+Average raw signal channels over the lock-in window
+
+```text
+pmoke signal [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | Print help | - |
+
+
 ## `pmoke phase`
 
 Rotate the reference phase for lock-in analysis
@@ -502,7 +516,7 @@ pmoke moke [-h, --help]
 
 ## `pmoke analyze`
 
-Run all analysis steps: reference, sensor, lock-in, phase, moke
+Run all analysis steps: reference, sensor, lock-in, signal, phase, moke
 
 ```text
 pmoke analyze [-h, --help]

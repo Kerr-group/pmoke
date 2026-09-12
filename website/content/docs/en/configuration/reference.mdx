@@ -101,6 +101,18 @@ description: Generated field reference for pmoke config schema version 5.
 | `moke.sensor` | `integer` | required | - | Sensor channel used for Kerr-angle calibration. The channel must also exist in the sensors array. **Constraints:** must reference sensors[].channel |
 | `moke.method` | `string enum` | required | `standard`, `harmonics` | Kerr-angle calculation method. Selects the standard or harmonics-based analysis implementation. |
 | `moke.factor` | `float` | required | - | Final Kerr-angle conversion factor. Applied after the selected Kerr-angle calculation. **Constraints:** must be finite |
+## `signals`
+
+| Path | Type | Required | Default / values | Description and constraints |
+| --- | --- | :---: | --- | --- |
+| `signals` | `array of tables` | optional | `[]` | Raw-signal readout entries. Each entry averages one channel over the lock-in window. **Constraints:** channels must not overlap sensor, reference, or lock-in channels |
+## `signals[]`
+
+| Path | Type | Required | Default / values | Description and constraints |
+| --- | --- | :---: | --- | --- |
+| `signals[].channel` | `integer` | required | - | Oscilloscope signal channel. The current DHO5108 mapping accepts channels 1 through 8. **Constraints:** 1 &lt;= value &lt;= 8; must be unique across all channel roles |
+| `signals[].label` | `string` | required | - | Plot label for the signal. Matplotlib mathtext may be supplied as a TOML literal string. **Constraints:** must not be empty |
+| `signals[].unit` | `string` | required | - | Output unit for the averaged signal. Used in tables, plots, and saved analysis headers. **Constraints:** must not be empty |
 ## `plot`
 
 | Path | Type | Required | Default / values | Description and constraints |

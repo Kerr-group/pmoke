@@ -167,6 +167,8 @@ pub struct Config {
     pub staging_active: bool,
     pub roles: Roles,
     pub channels: Vec<Channel>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signals: Vec<Signal>,
     pub pulse: Pulse,
     pub reference: Reference,
     pub lockin: Lockin,
@@ -385,6 +387,13 @@ pub struct Channel {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct Signal {
+    pub channel: u8,
+    pub label: String,
+    pub unit: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Pulse {
     pub bg_window_before: Window,
     pub bg_window_after: Window,
@@ -454,6 +463,7 @@ pub enum ValidationTarget {
     Reference,
     Sensor,
     Li,
+    Signal,
     Phase,
     Moke,
     Analyze,

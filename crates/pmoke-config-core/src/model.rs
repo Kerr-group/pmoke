@@ -15,6 +15,8 @@ pub(crate) struct ConfigV6 {
     pub lockin: Lockin,
     pub phase: Phase,
     pub moke: Moke,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signals: Vec<Signal>,
     #[serde(default)]
     pub plot: Plot,
 }
@@ -99,6 +101,14 @@ pub(crate) struct Window {
 pub(crate) struct Pulse {
     pub background_before: Window,
     pub background_after: Window,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Signal {
+    pub channel: u8,
+    pub label: String,
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

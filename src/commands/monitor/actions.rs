@@ -38,6 +38,7 @@ pub(super) enum MonitorAction {
     Reference,
     Sensor,
     Li,
+    Signal,
     Phase,
     Moke,
     Analyze,
@@ -68,6 +69,7 @@ impl MonitorAction {
             Self::Reference => "Reference",
             Self::Sensor => "Sensor",
             Self::Li => "Lock-in",
+            Self::Signal => "Signal",
             Self::Phase => "Phase",
             Self::Moke => "Moke",
             Self::Analyze => "Analyze",
@@ -100,6 +102,7 @@ impl MonitorAction {
             }
             Self::Sensor => "Integrate sensor pulse channels.",
             Self::Li => "Run numerical lock-in and write analysis/lockin/chN_xy.csv.",
+            Self::Signal => "Average readout channels and write analysis/signal/signal.csv.",
             Self::Phase => "Rotate lock-in phase and write analysis/lockin/chN_rotated.csv.",
             Self::Moke => "Calculate the Kerr angle from rotated lock-in data.",
             Self::Analyze => "Run reference, sensor, lock-in, phase, and Moke.",
@@ -130,6 +133,7 @@ impl MonitorAction {
             Self::Reference => Some(ValidationTarget::Reference),
             Self::Sensor => Some(ValidationTarget::Sensor),
             Self::Li => Some(ValidationTarget::Li),
+            Self::Signal => Some(ValidationTarget::Signal),
             Self::Phase => Some(ValidationTarget::Phase),
             Self::Moke => Some(ValidationTarget::Moke),
             Self::Analyze => Some(ValidationTarget::Analyze),
@@ -159,6 +163,7 @@ impl MonitorAction {
             Self::Reference => "reference",
             Self::Sensor => "sensor",
             Self::Li => "li",
+            Self::Signal => "signal",
             Self::Phase => "phase",
             Self::Moke => "moke",
             Self::Analyze => "analyze",
@@ -189,6 +194,7 @@ impl MonitorAction {
             Self::Reference => &["reference"],
             Self::Sensor => &["sensor"],
             Self::Li => &["li"],
+            Self::Signal => &["signal"],
             Self::Phase => &["phase"],
             Self::Moke => &["moke"],
             Self::Analyze => &["analyze"],
@@ -225,6 +231,7 @@ impl MonitorAction {
             Self::Reference
             | Self::Sensor
             | Self::Li
+            | Self::Signal
             | Self::Phase
             | Self::Moke
             | Self::Analyze => ActionGroup::Analysis,
@@ -253,6 +260,7 @@ pub(super) fn monitor_actions() -> Vec<MonitorAction> {
         MonitorAction::Reference,
         MonitorAction::Sensor,
         MonitorAction::Li,
+        MonitorAction::Signal,
         MonitorAction::Phase,
         MonitorAction::Moke,
         MonitorAction::Analyze,

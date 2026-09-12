@@ -97,6 +97,11 @@ sensor = 1
 method = "harmonics"
 factor = -1.0
 
+[[signals]]
+channel = 4
+label = "DC"
+unit = "V"
+
 [plot]
 mode = "save"
 decimation = "min_max"

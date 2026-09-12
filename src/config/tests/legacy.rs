@@ -521,3 +521,111 @@ factor = -1.0
     };
     assert_eq!(config.roles.signal_ch, vec![3]);
 }
+
+fn v6_signals_base() -> String {
+    r#"
+version = 6
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+[data]
+output = "raw"
+input = "raw"
+[[sensors]]
+channel = 1
+scale = { factor = -2.0 }
+label = "field"
+unit = "T"
+[pulse]
+background_before = { start = -0.005, end = -0.001 }
+background_after = { start = 0.01, end = 0.02 }
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.005 }
+stride_samples = 100
+window_samples = 1000
+[lockin]
+channels = [3]
+workers = 2
+stride_samples = 100
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+[moke]
+sensor = 1
+method = "harmonics"
+factor = -1.0
+[[signals]]
+channel = 4
+label = "DC"
+unit = "V"
+"#
+    .to_string()
+}
+
+#[test]
+fn v6_signals_entries_load_and_normalize() {
+    let ConfigLoad::Ready { config, .. } = load_from_str(&v6_signals_base()) else {
+        panic!("expected ready v6 load with [[signals]]");
+    };
+    assert_eq!(config.signals.len(), 1);
+    assert_eq!(config.signals[0].channel, 4);
+    assert_eq!(config.signals[0].label, "DC");
+    assert_eq!(config.signals[0].unit, "V");
+
+    let rendered = render_normalized_config(&config).unwrap();
+    assert!(rendered.contains("[[signals]]"));
+    assert!(rendered.contains("channel = 4"));
+    let ConfigLoad::Ready { .. } = load_from_str(&rendered) else {
+        panic!("rendered v6 config with [[signals]] must be readable");
+    };
+}
+
+#[test]
+fn v6_signals_overlap_with_lockin_is_rejected() {
+    let text = v6_signals_base().replace("channel = 4", "channel = 3");
+    let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
+        panic!("expected diagnostics for overlapping signal channel");
+    };
+    assert!(
+        diagnostics
+            .diagnostics
+            .iter()
+            .any(|item| item.message.contains("assigned more than once"))
+    );
+}
+
+#[test]
+fn v6_signals_out_of_range_is_rejected() {
+    let text = v6_signals_base().replace("channel = 4", "channel = 9");
+    let ConfigLoad::Diagnostics(diagnostics) = load_from_str(&text) else {
+        panic!("expected diagnostics for out-of-range signal channel");
+    };
+    assert!(
+        diagnostics
+            .diagnostics
+            .iter()
+            .any(|item| item.message.contains("must be in 1..=8"))
+    );
+}
+
+#[test]
+fn v6_without_signals_stays_ready_and_omits_the_section() {
+    let text = v6_signals_base()
+        .lines()
+        .filter(|line| {
+            let line = line.trim();
+            line != "[[signals]]"
+                && !line.starts_with("channel = 4")
+                && line != "label = \"DC\""
+                && line != "unit = \"V\""
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ConfigLoad::Ready { config, .. } = load_from_str(&text) else {
+        panic!("expected ready v6 load without [[signals]]");
+    };
+    assert!(config.signals.is_empty());
+    let rendered = render_normalized_config(&config).unwrap();
+    assert!(!rendered.contains("[[signals]]"));
+}

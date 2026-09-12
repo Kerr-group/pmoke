@@ -101,6 +101,18 @@ description: pmoke config schema version 5の自動生成fieldリファレンス
 | `moke.sensor` | `integer` | 必須 | - | Kerr角度の校正に使用するセンサーチャンネル sensors配列に存在するチャンネルを指定。 **制約:** must reference sensors[].channel |
 | `moke.method` | `string enum` | 必須 | `standard`, `harmonics` | Kerr角度の計算方法 standardまたはharmonics実装を選択。 |
 | `moke.factor` | `float` | 必須 | - | Kerr角度の最終変換係数 選択したKerr角度計算後に乗算する値。 **制約:** must be finite |
+## `signals`
+
+| path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |
+| --- | --- | :---: | --- | --- |
+| `signals` | `array of tables` | 任意 | `[]` | 生信号読出し一覧 lock-in窓で平均するchannel毎の指定。 **制約:** channels must not overlap sensor, reference, or lock-in channels |
+## `signals[]`
+
+| path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |
+| --- | --- | :---: | --- | --- |
+| `signals[].channel` | `integer` | 必須 | - | 信号チャンネル番号 DHO5108向け1以上8以下の番号。 **制約:** 1 &lt;= value &lt;= 8; must be unique across all channel roles |
+| `signals[].label` | `string` | 必須 | - | 信号プロットラベル TOML literal stringで指定可能なMatplotlib mathtext。 **制約:** must not be empty |
+| `signals[].unit` | `string` | 必須 | - | 平均信号の出力単位 表・プロット・解析保存headerでの単位。 **制約:** must not be empty |
 ## `plot`
 
 | path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |

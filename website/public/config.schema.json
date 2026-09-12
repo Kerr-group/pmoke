@@ -688,6 +688,59 @@
       ],
       "x-pmoke-path": "sensors"
     },
+    "signals": {
+      "default": [],
+      "description": "Raw-signal readout entries. Each entry averages one channel over the lock-in window.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "description": "Oscilloscope signal channel. The current DHO5108 mapping accepts channels 1 through 8.",
+            "maximum": 8,
+            "minimum": 1,
+            "title": "Oscilloscope signal channel",
+            "type": "integer",
+            "x-constraints": [
+              "1 <= value <= 8",
+              "must be unique across all channel roles"
+            ],
+            "x-pmoke-path": "signals[].channel"
+          },
+          "label": {
+            "description": "Plot label for the signal. Matplotlib mathtext may be supplied as a TOML literal string.",
+            "minLength": 1,
+            "title": "Plot label for the signal",
+            "type": "string",
+            "x-constraints": [
+              "must not be empty"
+            ],
+            "x-pmoke-path": "signals[].label"
+          },
+          "unit": {
+            "description": "Output unit for the averaged signal. Used in tables, plots, and saved analysis headers.",
+            "minLength": 1,
+            "title": "Output unit for the averaged signal",
+            "type": "string",
+            "x-constraints": [
+              "must not be empty"
+            ],
+            "x-pmoke-path": "signals[].unit"
+          }
+        },
+        "required": [
+          "channel",
+          "label",
+          "unit"
+        ],
+        "type": "object"
+      },
+      "title": "Raw-signal readout entries",
+      "type": "array",
+      "x-constraints": [
+        "channels must not overlap sensor, reference, or lock-in channels"
+      ],
+      "x-pmoke-path": "signals"
+    },
     "version": {
       "const": 6,
       "description": "Configuration schema version. New and migrated configurations use schema version 5.",
@@ -1519,6 +1572,75 @@
         "value_type": "float"
       },
       {
+        "constraints": [
+          "channels must not overlap sensor, reference, or lock-in channels"
+        ],
+        "default": "[]",
+        "details_en": "Each entry averages one channel over the lock-in window.",
+        "details_ja": "lock-in窓で平均するchannel毎の指定。",
+        "id": "signals",
+        "path": "signals",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Raw-signal readout entries.",
+        "summary_ja": "生信号読出し一覧",
+        "units": null,
+        "valid_values": [],
+        "value_type": "array of tables"
+      },
+      {
+        "constraints": [
+          "1 <= value <= 8",
+          "must be unique across all channel roles"
+        ],
+        "default": null,
+        "details_en": "The current DHO5108 mapping accepts channels 1 through 8.",
+        "details_ja": "DHO5108向け1以上8以下の番号。",
+        "id": "signals[].channel",
+        "path": "signals[].channel",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Oscilloscope signal channel.",
+        "summary_ja": "信号チャンネル番号",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [
+          "must not be empty"
+        ],
+        "default": null,
+        "details_en": "Matplotlib mathtext may be supplied as a TOML literal string.",
+        "details_ja": "TOML literal stringで指定可能なMatplotlib mathtext。",
+        "id": "signals[].label",
+        "path": "signals[].label",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Plot label for the signal.",
+        "summary_ja": "信号プロットラベル",
+        "units": null,
+        "valid_values": [],
+        "value_type": "string"
+      },
+      {
+        "constraints": [
+          "must not be empty"
+        ],
+        "default": null,
+        "details_en": "Used in tables, plots, and saved analysis headers.",
+        "details_ja": "表・プロット・解析保存headerでの単位。",
+        "id": "signals[].unit",
+        "path": "signals[].unit",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Output unit for the averaged signal.",
+        "summary_ja": "平均信号の出力単位",
+        "units": null,
+        "valid_values": [],
+        "value_type": "string"
+      },
+      {
         "constraints": [],
         "default": "defaults",
         "details_en": "Controls display/save behavior, decimation, and error policy.",
@@ -1629,7 +1751,7 @@
     "pmoke_version": "0.4.1",
     "schema_version": 6,
     "semantic_constraints": [
-      "channel assignments must be unique across sensors, reference, and lock-in signals",
+      "channel assignments must be unique across sensors, reference, lock-in signals, and signals",
       "moke.sensor must reference a configured sensor channel",
       "pulse background windows must not overlap",
       "lockin.filter must use the active boxcar_legacy fields only"

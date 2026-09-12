@@ -187,6 +187,84 @@ pub fn analyze_boxcar_legacy_pair_finite(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BoxcarMeanSettings {
+    pub start_time_s: f64,
+    pub sample_interval_s: f64,
+    pub half_window_s: f64,
+    pub stride_samples: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoxcarMeanOutput {
+    pub time_s: Vec<f64>,
+    pub mean: Vec<f64>,
+    pub metadata: LockinMetadata,
+}
+
+/// Trapezoidal boxcar mean over the lock-in support window.
+///
+/// Each output is the time average of the raw signal over
+/// `[center - half_window_s, center + half_window_s]` with the same
+/// trapezoidal weights and edge interpolation the lock-in uses, evaluated at
+/// the same stride centers. The output grid therefore aligns sample-for-sample
+/// with [`analyze_boxcar_legacy`] for identical length, stride, and window.
+pub fn boxcar_mean(signal: &[f64], settings: BoxcarMeanSettings) -> Result<BoxcarMeanOutput> {
+    let signal = FiniteSignal::new(signal)?.as_slice();
+    require_finite("start_time_s", settings.start_time_s)?;
+    require_positive_finite("sample_interval_s", settings.sample_interval_s)?;
+    require_positive_finite("half_window_s", settings.half_window_s)?;
+    let geometry = Geometry::from_half_window(
+        signal.len(),
+        settings.sample_interval_s,
+        settings.half_window_s,
+        settings.stride_samples,
+    )?;
+    let weights = legacy_boxcar_weights(
+        geometry.half_window_samples,
+        geometry.half_window_s,
+        settings.sample_interval_s,
+    );
+    let window_len = weights.len();
+    let output_samples = geometry.i_end - geometry.i_start + 1;
+    let mut mean = Vec::with_capacity(output_samples);
+    for index in geometry.i_start..=geometry.i_end {
+        let center = index * settings.stride_samples;
+        let raw_start = center - geometry.half_window_samples - 1;
+        let window = &signal[raw_start..raw_start + window_len];
+        mean.push(
+            weights
+                .iter()
+                .zip(window.iter())
+                .map(|(weight, sample)| weight * sample)
+                .sum(),
+        );
+    }
+    let time_s = (0..output_samples)
+        .map(|index| {
+            let input_index =
+                geometry.i_start * settings.stride_samples + index * settings.stride_samples;
+            settings.start_time_s + input_index as f64 * settings.sample_interval_s
+        })
+        .collect();
+    let sample_rate_hz = 1.0 / settings.sample_interval_s;
+    Ok(BoxcarMeanOutput {
+        time_s,
+        mean,
+        metadata: LockinMetadata {
+            input_samples: signal.len(),
+            output_samples,
+            sample_rate_hz,
+            output_rate_hz: sample_rate_hz / settings.stride_samples as f64,
+            half_window_s: geometry.half_window_s,
+            support_s: 2.0 * geometry.half_window_s,
+            estimated_enbw_hz: enbw_hz(&weights, sample_rate_hz),
+            first_input_index: geometry.i_start * settings.stride_samples,
+            last_input_index: geometry.i_end * settings.stride_samples,
+        },
+    })
+}
+
 pub fn boxcar_response_abs(half_window_s: f64, frequency_hz: f64) -> Result<f64> {
     require_positive_finite("half_window_s", half_window_s)?;
     require_nonnegative_finite("frequency_hz", frequency_hz)?;
@@ -226,16 +304,41 @@ impl Geometry {
             ));
         }
         let half_window_s = settings.half_window_cycles / settings.reference_frequency_hz;
-        if !half_window_s.is_finite() || half_window_s < settings.sample_interval_s {
+        Self::from_half_window(
+            signal.len(),
+            settings.sample_interval_s,
+            half_window_s,
+            settings.stride_samples,
+        )
+    }
+
+    fn from_half_window(
+        signal_len: usize,
+        sample_interval_s: f64,
+        half_window_s: f64,
+        stride_samples: usize,
+    ) -> Result<Self> {
+        if signal_len < 2 {
+            return Err(AnalysisError::new(
+                "signal_too_short",
+                "signal must contain at least two samples",
+            ));
+        }
+        if stride_samples == 0 {
+            return Err(AnalysisError::new(
+                "invalid_stride",
+                "stride_samples must be positive",
+            ));
+        }
+        if !half_window_s.is_finite() || half_window_s < sample_interval_s {
             return Err(AnalysisError::new(
                 "window_too_short",
                 "half-window must be finite and at least one sample interval",
             ));
         }
-        let half_window_samples =
-            ((half_window_s / settings.sample_interval_s).floor() as usize).max(1);
-        let integration_points = ((signal.len() - 1) / settings.stride_samples) + 1;
-        let i_start = 2 + (half_window_samples + 1) / settings.stride_samples;
+        let half_window_samples = ((half_window_s / sample_interval_s).floor() as usize).max(1);
+        let integration_points = ((signal_len - 1) / stride_samples) + 1;
+        let i_start = 2 + (half_window_samples + 1) / stride_samples;
         let i_end = integration_points.saturating_sub(i_start);
         if i_end < i_start {
             return Err(AnalysisError::new(
@@ -243,12 +346,12 @@ impl Geometry {
                 "signal does not contain a complete lock-in window",
             ));
         }
-        let first_center = i_start * settings.stride_samples;
-        let last_center = i_end * settings.stride_samples;
+        let first_center = i_start * stride_samples;
+        let last_center = i_end * stride_samples;
         if first_center <= half_window_samples
             || last_center
                 .checked_add(half_window_samples + 1)
-                .is_none_or(|index| index >= signal.len())
+                .is_none_or(|index| index >= signal_len)
         {
             return Err(AnalysisError::new(
                 "window_out_of_range",
@@ -457,6 +560,90 @@ fn require_nonnegative_finite(name: &str, value: f64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mean_settings() -> BoxcarMeanSettings {
+        BoxcarMeanSettings {
+            start_time_s: -0.01,
+            sample_interval_s: 1.0e-5,
+            half_window_s: 1.0e-3,
+            stride_samples: 20,
+        }
+    }
+
+    #[test]
+    fn boxcar_mean_recovers_constant_and_ramp() {
+        let settings = mean_settings();
+        let constant = vec![2.5; 20_000];
+        let result = boxcar_mean(&constant, settings).unwrap();
+        assert!(result.mean.iter().all(|value| (value - 2.5).abs() < 1.0e-9));
+        let ramp = (0..20_000)
+            .map(|index| settings.start_time_s + index as f64 * settings.sample_interval_s)
+            .collect::<Vec<_>>();
+        let result = boxcar_mean(&ramp, settings).unwrap();
+        assert_eq!(result.time_s.len(), result.mean.len());
+        for (time, mean) in result.time_s.iter().zip(result.mean.iter()) {
+            assert!(
+                (mean - time).abs() < 1.0e-9,
+                "ramp mean {mean} differs from center time {time}"
+            );
+        }
+    }
+
+    #[test]
+    fn boxcar_mean_shares_the_lockin_output_grid() {
+        let legacy = settings();
+        let half_window_s = legacy.half_window_cycles / legacy.reference_frequency_hz;
+        let signal = (0..20_000)
+            .map(|index| (index as f64 * 0.001).sin())
+            .collect::<Vec<_>>();
+        let lockin = analyze_boxcar_legacy(&signal, legacy).unwrap();
+        let mean = boxcar_mean(
+            &signal,
+            BoxcarMeanSettings {
+                start_time_s: legacy.start_time_s,
+                sample_interval_s: legacy.sample_interval_s,
+                half_window_s,
+                stride_samples: legacy.stride_samples,
+            },
+        )
+        .unwrap();
+        assert_eq!(mean.time_s, lockin.time_s);
+        assert_eq!(
+            mean.metadata.first_input_index,
+            lockin.metadata.first_input_index
+        );
+        assert_eq!(
+            mean.metadata.last_input_index,
+            lockin.metadata.last_input_index
+        );
+    }
+
+    #[test]
+    fn boxcar_mean_rejects_degenerate_inputs() {
+        let settings = mean_settings();
+        assert!(boxcar_mean(&[], settings).is_err());
+        assert!(boxcar_mean(&[1.0, f64::NAN], settings).is_err());
+        assert!(
+            boxcar_mean(
+                &[1.0; 100],
+                BoxcarMeanSettings {
+                    half_window_s: f64::NAN,
+                    ..settings
+                },
+            )
+            .is_err()
+        );
+        assert!(
+            boxcar_mean(
+                &[1.0; 100],
+                BoxcarMeanSettings {
+                    stride_samples: 0,
+                    ..settings
+                },
+            )
+            .is_err()
+        );
+    }
 
     fn settings() -> BoxcarLegacySettings {
         BoxcarLegacySettings {

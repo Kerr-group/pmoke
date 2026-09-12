@@ -6,8 +6,9 @@ mod synthetic;
 
 pub use error::{AnalysisError, Result};
 pub use lockin::{
-    BoxcarLegacyOutput, BoxcarLegacyPairOutput, BoxcarLegacySettings, FiniteSignal, LockinMetadata,
-    analyze_boxcar_legacy, analyze_boxcar_legacy_pair, analyze_boxcar_legacy_pair_finite,
+    BoxcarLegacyOutput, BoxcarLegacyPairOutput, BoxcarLegacySettings, BoxcarMeanOutput,
+    BoxcarMeanSettings, FiniteSignal, LockinMetadata, analyze_boxcar_legacy,
+    analyze_boxcar_legacy_pair, analyze_boxcar_legacy_pair_finite, boxcar_mean,
     boxcar_response_abs,
 };
 pub use moke::{HarmonicsMokeOutput, calculate_harmonics_moke, calculate_harmonics_vm};

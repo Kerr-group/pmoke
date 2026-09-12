@@ -220,6 +220,15 @@ fn normalized_config_v6(config: &Config) -> Result<NormalizedConfigV6> {
             method: config.moke.moke_type,
             factor: config.moke.factor,
         },
+        signals: config
+            .signals
+            .iter()
+            .map(|signal| SignalOutputV4 {
+                channel: signal.channel,
+                label: signal.label.clone(),
+                unit: signal.unit.clone(),
+            })
+            .collect(),
         plot: plot_output_v4(&config.plot),
     })
 }

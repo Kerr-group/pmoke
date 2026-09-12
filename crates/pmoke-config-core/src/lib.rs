@@ -529,6 +529,26 @@ fn validate_channels(config: &ConfigV6, report: &mut ValidationReport) {
     for (index, channel) in config.lockin.channels.iter().copied().enumerate() {
         assign(channel, format!("lockin.channels[{index}]"), report);
     }
+    for (index, signal) in config.signals.iter().enumerate() {
+        let base = format!("signals[{index}]");
+        assign(signal.channel, format!("{base}.channel"), report);
+        if signal.label.trim().is_empty() {
+            error(
+                report,
+                DiagnosticCode::EmptyValue,
+                format!("{base}.label"),
+                "signal label must not be empty",
+            );
+        }
+        if signal.unit.trim().is_empty() {
+            error(
+                report,
+                DiagnosticCode::EmptyValue,
+                format!("{base}.unit"),
+                "signal unit must not be empty",
+            );
+        }
+    }
 }
 
 fn validate_windows(config: &ConfigV6, report: &mut ValidationReport) {
@@ -770,6 +790,22 @@ factor = -1.0
         assert!(report.diagnostics.iter().any(|item| {
             item.code == DiagnosticCode::DuplicateChannel
                 && item.path.as_deref() == Some("reference.channel")
+        }));
+    }
+
+    #[test]
+    fn signals_entries_validate_and_overlap_is_rejected() {
+        let input = format!("{VALID}\n[[signals]]\nchannel = 4\nlabel = \"DC\"\nunit = \"V\"\n");
+        let report = validate_config_toml(&input);
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        assert!(report.normalized_toml.unwrap().contains("[[signals]]"));
+
+        let overlap = format!("{VALID}\n[[signals]]\nchannel = 3\nlabel = \"DC\"\nunit = \"V\"\n");
+        let report = validate_config_toml(&overlap);
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|item| {
+            item.code == DiagnosticCode::DuplicateChannel
+                && item.path.as_deref() == Some("signals[0].channel")
         }));
     }
 
