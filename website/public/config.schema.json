@@ -388,7 +388,7 @@
           "x-pmoke-path": "plot.on_error"
         },
         "output_dir": {
-          "description": "Deprecated plot directory compatibility field. Version 5 accepts but ignores this field; artifacts use the canonical run layout.",
+          "description": "Deprecated plot directory compatibility field. Version 6 accepts but ignores this field; artifacts use the canonical run layout.",
           "title": "Deprecated plot directory compatibility field",
           "type": "string",
           "x-constraints": [
@@ -743,11 +743,11 @@
     },
     "version": {
       "const": 6,
-      "description": "Configuration schema version. New and migrated configurations use schema version 5.",
+      "description": "Configuration schema version. New and migrated configurations use schema version 6.",
       "title": "Configuration schema version",
       "type": "integer",
       "x-constraints": [
-        "must equal 5"
+        "must equal 6"
       ],
       "x-pmoke-path": "version"
     }
@@ -768,11 +768,11 @@
     "fields": [
       {
         "constraints": [
-          "must equal 5"
+          "must equal 6"
         ],
         "default": null,
-        "details_en": "New and migrated configurations use schema version 5.",
-        "details_ja": "新規設定と移行済み設定で使用するバージョン5。",
+        "details_en": "New and migrated configurations use schema version 6.",
+        "details_ja": "新規設定と移行済み設定で使用するバージョン6。",
         "id": "version",
         "path": "version",
         "required": "required",
@@ -781,7 +781,7 @@
         "summary_ja": "設定スキーマのバージョン",
         "units": null,
         "valid_values": [
-          "5"
+          "6"
         ],
         "value_type": "integer"
       },
@@ -1734,8 +1734,8 @@
           "ignored with a warning"
         ],
         "default": "absent",
-        "details_en": "Version 5 accepts but ignores this field; artifacts use the canonical run layout.",
-        "details_ja": "version 5で受理後に無視される値。artifactは標準run layout。",
+        "details_en": "Version 6 accepts but ignores this field; artifacts use the canonical run layout.",
+        "details_ja": "version 6で受理後に無視される値。artifactは標準run layout。",
         "id": "plot.output_dir",
         "path": "plot.output_dir",
         "required": "optional",
