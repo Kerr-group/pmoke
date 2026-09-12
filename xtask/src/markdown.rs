@@ -75,18 +75,26 @@ pub fn render_cli(reference: &CliReference, locale: Locale) -> Result<String> {
 
 pub fn render_config(reference: &ConfigReference, locale: Locale) -> String {
     let mut output = String::new();
-    let (title, description, generated, schema_label) = match locale {
+    let (title, generated, schema_label) = match locale {
         Locale::English => (
             "Configuration Reference",
-            "Generated field reference for pmoke config schema version 5.",
             "Generated from the typed config metadata registry. Manual edits are overwritten.",
             "JSON Schema",
         ),
         Locale::Japanese => (
             "設定リファレンス",
-            "pmoke config schema version 5の自動生成fieldリファレンス。",
             "型付きconfig metadata registryから自動生成。手動編集は上書き対象。",
             "JSON Schema",
+        ),
+    };
+    let description = match locale {
+        Locale::English => format!(
+            "Generated field reference for pmoke config schema version {}.",
+            reference.schema_version
+        ),
+        Locale::Japanese => format!(
+            "pmoke config schema version {}の自動生成fieldリファレンス。",
+            reference.schema_version
         ),
     };
     writeln!(

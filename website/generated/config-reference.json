@@ -10,16 +10,16 @@
       "required": "required",
       "default": null,
       "valid_values": [
-        "5"
+        "6"
       ],
       "units": null,
       "since": 4,
       "summary_en": "Configuration schema version.",
-      "details_en": "New and migrated configurations use schema version 5.",
+      "details_en": "New and migrated configurations use schema version 6.",
       "summary_ja": "設定スキーマのバージョン",
-      "details_ja": "新規設定と移行済み設定で使用するバージョン5。",
+      "details_ja": "新規設定と移行済み設定で使用するバージョン6。",
       "constraints": [
-        "must equal 5"
+        "must equal 6"
       ]
     },
     {
@@ -976,9 +976,9 @@
       "units": null,
       "since": 4,
       "summary_en": "Deprecated plot directory compatibility field.",
-      "details_en": "Version 5 accepts but ignores this field; artifacts use the canonical run layout.",
+      "details_en": "Version 6 accepts but ignores this field; artifacts use the canonical run layout.",
       "summary_ja": "非推奨のplot directory互換field",
-      "details_ja": "version 5で受理後に無視される値。artifactは標準run layout。",
+      "details_ja": "version 6で受理後に無視される値。artifactは標準run layout。",
       "constraints": [
         "ignored with a warning"
       ]
