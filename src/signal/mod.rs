@@ -1,7 +1,9 @@
 pub mod save;
+pub mod signal_plot;
 
 use crate::config::Config;
 use crate::signal::save::{get_signal_headers, write_signal_results};
+use crate::signal::signal_plot::SignalPlotter;
 use crate::ui;
 use crate::utils::channels::build_channel_list;
 use crate::utils::time_axis::TimeAxisRef;
@@ -123,6 +125,48 @@ pub fn run_signal_analysis<'a>(
             ui::fmt_duration(t0_instant.elapsed())
         ),
     );
+
+    let labels = cfg
+        .signals
+        .iter()
+        .map(|signal| signal.label.clone())
+        .collect::<Vec<_>>();
+    let units = cfg
+        .signals
+        .iter()
+        .map(|signal| signal.unit.clone())
+        .collect::<Vec<_>>();
+    crate::plot::run_plot(
+        &cfg.plot,
+        &cfg.paths().signal_combined_plot(),
+        "plotting signal means",
+        "signal plot completed",
+        |output| {
+            SignalPlotter {}
+                .plot(&cfg.plot, output, t_stride, means.clone(), &labels, &units)
+                .context("failed to plot signal means")
+        },
+    )?;
+    for (entry, mean) in cfg.signals.iter().zip(means.iter()) {
+        crate::plot::run_plot(
+            &cfg.plot,
+            &cfg.paths().signal_channel_plot(entry.channel),
+            format!("plotting signal ch{}", entry.channel),
+            format!("signal ch{} plot completed", entry.channel),
+            |output| {
+                SignalPlotter {}
+                    .plot(
+                        &cfg.plot,
+                        output,
+                        t_stride,
+                        vec![mean.clone()],
+                        &[entry.label.clone()],
+                        &[entry.unit.clone()],
+                    )
+                    .context("failed to plot signal means")
+            },
+        )?;
+    }
     Ok(outputs)
 }
 

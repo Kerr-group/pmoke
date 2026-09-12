@@ -146,6 +146,27 @@ pub fn calculate_harmonics_vm_packed(
 }
 
 #[wasm_bindgen]
+pub fn boxcar_mean_packed(
+    signal: &[f64],
+    start_time_s: f64,
+    sample_rate_hz: f64,
+    half_window_s: f64,
+    stride_samples: usize,
+) -> Result<Box<[f64]>, JsError> {
+    let output = pmoke_analysis_core::boxcar_mean(
+        signal,
+        pmoke_analysis_core::BoxcarMeanSettings {
+            start_time_s,
+            sample_interval_s: 1.0 / sample_rate_hz,
+            half_window_s,
+            stride_samples,
+        },
+    )
+    .map_err(analysis_error)?;
+    Ok(output.mean.into_boxed_slice())
+}
+
+#[wasm_bindgen]
 pub fn boxcar_response_interleaved(
     half_window_s: f64,
     max_frequency_hz: f64,

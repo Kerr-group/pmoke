@@ -4,6 +4,10 @@
 
 ### Changes
 
+- New `pmoke signal` command and `[[signals]]` readout: boxcar-averaged
+  scope channels over the lock-in window, emitted as `signal/signal.csv`
+  with time-trace plots and NPY export.
+
 - The `[lockin]` setting `signal_channels` is renamed to `channels`
   (schema stays at version 6; existing files using the old key keep working).
 

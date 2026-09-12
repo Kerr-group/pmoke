@@ -144,6 +144,18 @@ impl ArtifactPaths {
         self.signal_dir().join("signal.npy")
     }
 
+    pub fn signal_plot_dir(&self) -> PathBuf {
+        self.plot_dir().join("signal")
+    }
+
+    pub fn signal_combined_plot(&self) -> PathBuf {
+        self.signal_plot_dir().join("mean.png")
+    }
+
+    pub fn signal_channel_plot(&self, channel: u8) -> PathBuf {
+        self.signal_plot_dir().join(format!("ch{channel}_mean.png"))
+    }
+
     pub fn plot_dir(&self) -> PathBuf {
         self.analysis_dir().join("plots")
     }

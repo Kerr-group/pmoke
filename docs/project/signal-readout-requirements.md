@@ -54,8 +54,12 @@ copied from elsewhere.
   `signal/ch{N}_mean.png` plus combined `signal/mean.png`. Axis labels come from
   each entry's `label`/`unit`. Combined angle-vs-signal loop plots are out of scope
   (deferred to a later analysis step).
-- D8 CSV: one file per entry (`signal/ch{N}_mean.csv`); headers follow the
-  `[[sensors]]` convention using each entry's `label`/`unit`.
+- D8 CSV: a single combined file (`signal/signal.csv`) mirroring `moke/moke.csv`:
+  time, sensor rate/integral columns, then one mean column per entry in
+  `[[signals]]` order with headers `Ch{N} {label} mean ({unit})`. A combined
+  file keeps one artifact kind (`signal`) so the manifest column-set guard,
+  NPY export, and web CSV handling stay uniform. Per-entry files would give
+  each column set a different header and trip the guard.
 
 ## 3. Open questions (O)
 
@@ -66,7 +70,8 @@ copied from elsewhere.
 - M1 Config: `[[signals]]` parse/validate (range 1..=8, intra-list duplicates,
   cross-role collision as error), template, core model, unit tests.
 - M2 Core + stage: `boxcar_mean` in analysis-core with fixtures, `signal` stage
-  (`pmoke signal` + analyze integration), CSV + manifest + provenance, fetch list.
+  (`pmoke signal` + analyze integration), combined CSV + manifest + provenance,
+  fetch list.
 - M3 Plot (`signal_plot.py`, per-channel + combined) + NPY + Web/WASM + generated
   docs; pnpm check and analyzer e2e.
 - M4 Reviews, PR, stable-requirements reflection, changelog.

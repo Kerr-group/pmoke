@@ -78,6 +78,7 @@ type AnalysisResult = {
       Float64Array,
       Float64Array,
       Float64Array,
+      Float64Array,
     ];
     response: { frequency: Float64Array; magnitude: Float64Array };
   };
@@ -91,6 +92,7 @@ type AnalysisResult = {
     phase: Float64Array;
     angle: Float64Array;
     vm: Float64Array;
+    signalMean: Float64Array;
   };
 };
 
@@ -124,7 +126,7 @@ const COPY = {
     retry: 'Reload core', loading: 'Loading analysis core', ready: 'Ready', running: 'ANALYZING',
     complete: 'PARITY VERIFIED', error: 'Analysis unavailable', progress: 'RUN PROGRESS',
     signal: 'INPUT WAVEFORM', lockin: 'LOCK-IN X / Y', polar: 'MAGNITUDE / PHASE',
-    kerr: 'KERR ANGLE / FILTER RESPONSE', vm: 'MONITOR VOLTAGE', controls: 'ANALYSIS CONTROL', result: 'RUN METRICS',
+    kerr: 'KERR ANGLE / FILTER RESPONSE', vm: 'MONITOR VOLTAGE', sigmean: 'SIGNAL MEAN', controls: 'ANALYSIS CONTROL', result: 'RUN METRICS',
     filter: 'FILTER', filterValue: 'Boxcar legacy', parity: 'Native-equivalent', unsupported: 'Outside parity scope',
     export: 'Export CSV', copy: 'Copy summary', copied: 'Summary copied', samples: 'Samples',
     sampleRate: 'Sample rate', frequency: 'Reference', amplitude: 'Amplitude', phase: 'Signal phase',
@@ -136,7 +138,7 @@ const COPY = {
     responseUnit: 'frequency (Hz)', csvHint: 'time,signal or signal-only; uniform finite values',
     uploadLimit: '16 MiB / 1,000,000 samples', local: 'Browser-local processing',
     unsupportedList: 'legacy FIR/IIR · phase fitting · standard Kerr-angle calculation',
-    stagePrepare: 'Preparing waveform', stageLockin: 'Extracting lock-in harmonics', stageMoke: 'Calculating Kerr angle from harmonics',
+    stagePrepare: 'Preparing waveform', stageLockin: 'Extracting lock-in harmonics', stageMoke: 'Calculating Kerr angle from harmonics', stageSignal: 'Averaging signal over the lock-in window',
     stageDecimate: 'Decimating display data', stageComplete: 'Analysis complete',
     warningLong: 'Long boxcar support reduces time resolution.',
     warningSparse: 'Output sampling is sparse relative to the reference frequency.',
@@ -148,7 +150,7 @@ const COPY = {
     retry: 'コアを再読み込み', loading: '解析コアを読み込み中', ready: '実行待機', running: '解析中',
     complete: '数値一致を確認済み', error: '解析機能の利用不可', progress: '実行進捗',
     signal: '入力波形', lockin: 'LOCK-IN X / Y', polar: '振幅 / 位相',
-    kerr: 'KERR ANGLE / フィルター応答', vm: 'モニタ電圧', controls: '解析制御', result: '実行指標',
+    kerr: 'KERR ANGLE / フィルター応答', vm: 'モニタ電圧', sigmean: '信号平均', controls: '解析制御', result: '実行指標',
     filter: 'フィルター', filterValue: '従来型Boxcar', parity: 'ネイティブ版と数値一致',
     unsupported: '数値一致の対象外', export: 'CSVを出力', copy: '要約をコピー', copied: '要約コピー済み',
     samples: 'サンプル数', sampleRate: 'サンプルレート', frequency: '参照周波数', amplitude: '振幅',
@@ -160,7 +162,7 @@ const COPY = {
     responseUnit: '周波数 (Hz)', csvHint: 'time,signalまたは信号単列（有限・等間隔の値）',
     uploadLimit: '16 MiB / 1,000,000 点', local: 'ブラウザ内処理',
     unsupportedList: '過去のFIR/IIR（移行専用）・位相フィッティング・標準Kerr角度計算',
-    stagePrepare: '波形を準備中', stageLockin: 'Lock-in高調波を抽出中', stageMoke: '高調波成分からKerr角度を計算中',
+    stagePrepare: '波形を準備中', stageLockin: 'Lock-in高調波を抽出中', stageMoke: '高調波成分からKerr角度を計算中', stageSignal: 'lock-in窓で信号を平均中',
     stageDecimate: '表示用データを間引き中', stageComplete: '解析完了',
     warningLong: '長いBoxcar窓による時間分解能低下',
     warningSparse: '参照周波数に対して疎な出力サンプリング',
@@ -378,13 +380,14 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
       `# first_input_index=${result.metadata.firstInputIndex}`,
       `# last_input_index=${result.metadata.lastInputIndex}`,
       `# warnings=${result.warnings.join('|') || 'none'}`,
-      'time_s,x_v,y_v,in_phase_v,out_of_phase_v,magnitude_v,phase_rad,angle_rad,vm_v',
+      'time_s,x_v,y_v,in_phase_v,out_of_phase_v,magnitude_v,phase_rad,angle_rad,vm_v,signal_mean_v',
     ];
     for (let index = 0; index < result.export.time.length; index += 1) {
       rows.push([
         result.export.time[index], result.export.x[index], result.export.y[index],
         result.export.inPhase[index], result.export.outOfPhase[index], result.export.magnitude[index],
         result.export.phase[index], result.export.angle[index], result.export.vm[index],
+        result.export.signalMean[index],
       ].map((value) => value.toExponential(12)).join(','));
     }
     const url = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' }));
@@ -477,6 +480,10 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
         <SignalPlot title={text.vm} xLabel={text.timeUnit} yLabel="V"
           x={result?.display.lockin[0]} traces={[
             { values: result?.display.lockin[6], color: '#4dd0a6', label: 'VM' },
+          ]} />
+        <SignalPlot title={text.sigmean} xLabel={text.timeUnit} yLabel="V"
+          x={result?.display.lockin[0]} traces={[
+            { values: result?.display.lockin[7], color: '#e8b93e', label: 'MEAN' },
           ]} />
       </div>
 
@@ -616,5 +623,5 @@ function median(values: Float64Array) { if (!values.length) return Number.NaN; c
 function formatInteger(value: number) { return new Intl.NumberFormat('en-US').format(value); }
 function formatRate(value: number) { return value >= 1e6 ? `${(value / 1e6).toFixed(3)} MHz` : value >= 1e3 ? `${(value / 1e3).toFixed(3)} kHz` : `${value.toFixed(2)} Hz`; }
 function formatDuration(value: number) { return value < 1e-3 ? `${(value * 1e6).toFixed(2)} µs` : `${(value * 1e3).toFixed(2)} ms`; }
-function progressLabel(locale: Locale, stage: string) { const text = COPY[locale]; if (stage.startsWith('lockin:')) return `${text.stageLockin} ${stage.slice(7)}`; return ({ prepare: text.stagePrepare, moke: text.stageMoke, decimate: text.stageDecimate, complete: text.stageComplete } as Record<string, string>)[stage] ?? stage; }
+function progressLabel(locale: Locale, stage: string) { const text = COPY[locale]; if (stage.startsWith('lockin:')) return `${text.stageLockin} ${stage.slice(7)}`; return ({ prepare: text.stagePrepare, moke: text.stageMoke, signal: text.stageSignal, decimate: text.stageDecimate, complete: text.stageComplete } as Record<string, string>)[stage] ?? stage; }
 function warningLabel(locale: Locale, warning: string) { const text = COPY[locale]; return ({ long_window: text.warningLong, sparse_output: text.warningSparse, local_input: text.warningLocal } as Record<string, string>)[warning] ?? warning; }

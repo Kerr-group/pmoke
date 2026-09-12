@@ -36,7 +36,7 @@ for (const locale of ['en', 'ja'] as const) {
     await page.goto(`/pmoke/${locale}/docs/interactive/waveform-analyzer/`);
     const analyzer = page.locator('.waveform-analyzer');
     await expect(analyzer).toHaveAttribute('data-state', 'complete', { timeout: 20_000 });
-    await expect(analyzer.locator('canvas')).toHaveCount(5);
+    await expect(analyzer.locator('canvas')).toHaveCount(6);
     await expect(analyzer.getByText(locale === 'ja' ? 'ネイティブ版と数値一致' : 'Native-equivalent')).toBeVisible();
     await expect(analyzer.getByText(/pmoke-web-wasm\/0\.1\.0/u)).toBeVisible();
     const nonBlank = await analyzer.locator('canvas').evaluateAll((canvases) =>
@@ -93,7 +93,7 @@ test('maximum demo remains responsive and reports bounded output', async ({ page
   expect(csv).toContain('# sample_rate_hz=100000');
   expect(csv).toContain('# first_input_index=');
   expect(csv).toContain('# warnings=');
-  expect(csv).toContain('time_s,x_v,y_v,in_phase_v,out_of_phase_v,magnitude_v,phase_rad,angle_rad,vm_v');
+  expect(csv).toContain('time_s,x_v,y_v,in_phase_v,out_of_phase_v,magnitude_v,phase_rad,angle_rad,vm_v,signal_mean_v');
 });
 
 test('analysis cancellation preserves controls and recovers the worker', async ({ page }, testInfo) => {

@@ -392,6 +392,7 @@ fn describe_plot_artifacts(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
             ("phase", _) => "phase_rotated_plot",
             ("kerr", _) => "kerr_plot",
             ("moke", _) => "moke_plot",
+            ("signal", _) => "signal_plot",
             _ => return Err(anyhow::anyhow!("unknown plot stage: {stage}")),
         };
         let depends_on = match (stage, stem) {
@@ -406,6 +407,7 @@ fn describe_plot_artifacts(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
             }),
             ("kerr", _) => Some(vec!["kerr/kerr.csv".to_string()]),
             ("moke", _) => Some(vec!["moke/moke.csv".to_string()]),
+            ("signal", _) => Some(vec!["signal/signal.csv".to_string()]),
             _ => None,
         };
         artifacts.push(AnalysisArtifact {

@@ -1,0 +1,63 @@
+use crate::config::Plot;
+use crate::plot::decimate_xy_2d;
+use crate::python;
+use anyhow::{Context, Result};
+use pyo3::prelude::*;
+use pyo3::types::PyModule;
+use std::path::Path;
+use std::sync::OnceLock;
+
+const SIGNAL_PLOT_PY: &str = include_str!("pytools/signal_plot.py");
+static SIGNAL_PLOT_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
+
+#[allow(dead_code)]
+pub struct SignalPlotter {}
+
+impl SignalPlotter {
+    pub fn plot(
+        &self,
+        plot: &Plot,
+        output: Option<&Path>,
+        t: &[f64],
+        y: Vec<Vec<f64>>,
+        labels: &[String],
+        units: &[String],
+    ) -> Result<()> {
+        Python::attach(|py| {
+            let plot_mod = python::cached_module(
+                py,
+                &SIGNAL_PLOT_MODULE,
+                SIGNAL_PLOT_PY,
+                "signal_plot.py",
+                "signal_plot",
+            )
+            .context("failed to load signal_plot.py")?;
+            let (t_plot, y_plot) = decimate_xy_2d(plot, t, &y)?;
+            let t_obj = python::f64_array1(py, &t_plot);
+            let y_obj = python::f64_array2(py, &y_plot)?;
+            let output = output.map(|path| path.to_string_lossy().into_owned());
+
+            let plotter = plot_mod
+                .getattr("SignalPlotter")?
+                .call0()
+                .context("failed to create SignalPlotter instance")?;
+
+            plotter
+                .call_method1(
+                    "plot",
+                    (
+                        t_obj,
+                        y_obj,
+                        labels,
+                        units,
+                        output.is_some(),
+                        plot.interactive,
+                        output,
+                    ),
+                )
+                .context("python SignalPlotter.plot(...) failed")?;
+
+            Ok(())
+        })
+    }
+}
