@@ -131,40 +131,29 @@ class MokeStandardAnalyser:
                 t_plot = t[indices]
                 x_plot = x[indices]
                 angle_plot = angle[indices]
+                vm_plot = vm[indices]
 
                 axs = gs.axes(
                     True,
-                    size=(6, 6),
-                    mosaic="A",
+                    size=(12, 6),
+                    mosaic="AB",
                     ion=interactive,
                 )
 
                 gs.scatter_colormap(axs[0], x_plot, angle_plot * 1e3, t_plot)
+                gs.scatter_colormap(axs[1], x_plot, vm_plot * 1e3, t_plot)
                 axs[0].grid()
 
                 title = fig_name + " using Standard"
                 gs.title(title)
 
-                gs.label([[f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"]])
+                gs.label(
+                    [
+                        [f"{xlabel}", "$\\theta_{\\rm K}$ (mrad)"],
+                        [f"{xlabel}", "$V_{\\rm m}$ (mV)"],
+                    ]
+                )
                 finish_plot(output_path, interactive)
-
-                vm_indices = decimation_indices(vm, max_points, decimation)
-                vm_axs = gs.axes(
-                    True,
-                    size=(6, 6),
-                    mosaic="A",
-                    ion=interactive,
-                )
-
-                gs.scatter_colormap(
-                    vm_axs[0], x_plot[vm_indices], vm[vm_indices], t_plot[vm_indices]
-                )
-                vm_axs[0].grid()
-
-                gs.title(fig_name + " Vm using Standard")
-
-                gs.label([[f"{xlabel}", "Vm (V)"]])
-                finish_plot(vm_output_path, interactive)
             except Exception as exc:
                 plot_error = str(exc)
 
