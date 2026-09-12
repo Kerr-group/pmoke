@@ -113,7 +113,8 @@ pub(crate) struct Reference {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Lockin {
-    pub signal_channels: Vec<u8>,
+    #[serde(alias = "signal_channels")]
+    pub channels: Vec<u8>,
     pub workers: usize,
     pub stride_samples: usize,
     pub filter: Filter,

@@ -90,6 +90,23 @@
       "additionalProperties": false,
       "description": "Numerical lock-in settings. Defines signal channels, parallelism, output stride, and low-pass filtering.",
       "properties": {
+        "channels": {
+          "description": "Channels demodulated by lock-in analysis. At least one channel is required by lock-in and downstream analysis.",
+          "items": {
+            "maximum": 8,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Channels demodulated by lock-in analysis",
+          "type": "array",
+          "uniqueItems": true,
+          "x-constraints": [
+            "each value must be in 1..=8",
+            "must be unique across all channel roles"
+          ],
+          "x-pmoke-path": "lockin.channels"
+        },
         "debug_label": {
           "description": "Safe suffix for debug artifacts. The label is restricted to a short ASCII filename-safe subset.",
           "maxLength": 64,
@@ -162,23 +179,6 @@
           "type": "boolean",
           "x-pmoke-path": "lockin.save_npy"
         },
-        "signal_channels": {
-          "description": "Channels demodulated by lock-in analysis. At least one channel is required by lock-in and downstream analysis.",
-          "items": {
-            "maximum": 8,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "minItems": 1,
-          "title": "Channels demodulated by lock-in analysis",
-          "type": "array",
-          "uniqueItems": true,
-          "x-constraints": [
-            "each value must be in 1..=8",
-            "must be unique across all channel roles"
-          ],
-          "x-pmoke-path": "lockin.signal_channels"
-        },
         "snr_background_window": {
           "additionalProperties": false,
           "description": "Optional background window for SNR diagnostics. An inline table with finite start and end values.",
@@ -248,7 +248,7 @@
         }
       },
       "required": [
-        "signal_channels",
+        "channels",
         "workers",
         "stride_samples",
         "filter"
@@ -1218,8 +1218,8 @@
         "default": null,
         "details_en": "At least one channel is required by lock-in and downstream analysis.",
         "details_ja": "lock-inと後段解析で必要な1件以上のchannel番号。",
-        "id": "lockin.signal_channels",
-        "path": "lockin.signal_channels",
+        "id": "lockin.channels",
+        "path": "lockin.channels",
         "required": "conditional",
         "since": 4,
         "summary_en": "Channels demodulated by lock-in analysis.",

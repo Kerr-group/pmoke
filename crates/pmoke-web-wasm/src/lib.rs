@@ -298,7 +298,7 @@ fft_window = { start = 0.0, end = 0.005 }
 stride_samples = 100
 window_samples = 1000
 [lockin]
-signal_channels = [3]
+channels = [3]
 workers = 2
 stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }

@@ -479,3 +479,45 @@ factor = -1.0
     assert!(matches!(config.moke.moke_type, MokeType::Harmonics));
     assert_eq!(config.moke.factor, -1.0);
 }
+
+#[test]
+fn v6_lockin_signal_channels_key_is_aliased_to_channels() {
+    let text = r#"
+version = 6
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+[data]
+output = "raw"
+input = "raw"
+[[sensors]]
+channel = 1
+scale = { factor = -2.0 }
+label = "field"
+unit = "T"
+[pulse]
+background_before = { start = -0.005, end = -0.001 }
+background_after = { start = 0.01, end = 0.02 }
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.005 }
+stride_samples = 100
+window_samples = 1000
+[lockin]
+signal_channels = [3]
+workers = 2
+stride_samples = 100
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+[moke]
+sensor = 1
+method = "harmonics"
+factor = -1.0
+"#;
+
+    let ConfigLoad::Ready { config, .. } = load_from_str(text) else {
+        panic!("expected ready v6 load with legacy lockin key");
+    };
+    assert_eq!(config.roles.signal_ch, vec![3]);
+}

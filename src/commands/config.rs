@@ -82,7 +82,7 @@ stride_samples = 10_000
 window_samples = 1_000
 
 [lockin]
-signal_channels = [3]
+channels = [3]
 workers = 2
 stride_samples = 100
 filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }

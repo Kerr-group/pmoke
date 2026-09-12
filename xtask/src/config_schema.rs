@@ -165,13 +165,13 @@ fn sensor(reference: &ConfigReference) -> Value {
 
 fn lockin(reference: &ConfigReference) -> Value {
     object(
-        &["signal_channels", "workers", "stride_samples", "filter"],
+        &["channels", "workers", "stride_samples", "filter"],
         [
             (
-                "signal_channels",
+                "channels",
                 annotate(
                     reference,
-                    "lockin.signal_channels",
+                    "lockin.channels",
                     json!({
                         "type": "array",
                         "minItems": 1,

@@ -75,7 +75,7 @@ description: pmoke config schema version 5の自動生成fieldリファレンス
 | path | 型 | 必須状態 | 既定値 / 候補 | 説明・制約 |
 | --- | --- | :---: | --- | --- |
 | `lockin` | `table` | 必須 | - | 数値lock-in設定 信号channel、並列度、出力間引き、low-pass filterの指定。 |
-| `lockin.signal_channels` | `integer array` | 条件付き | - | lock-in 復調対象チャンネル lock-inと後段解析で必要な1件以上のchannel番号。 **制約:** each value must be in 1..=8; must be unique across all channel roles |
+| `lockin.channels` | `integer array` | 条件付き | - | lock-in 復調対象チャンネル lock-inと後段解析で必要な1件以上のchannel番号。 **制約:** each value must be in 1..=8; must be unique across all channel roles |
 | `lockin.workers` | `integer` | 必須 | - | lock-inの並列worker数 物理CPU数付近を初期値とする並列度。 **制約:** must be positive |
 | `lockin.stride_samples` | `integer` · `samples` | 必須 | - | lock-in 出力間引き幅 入力sample rateを割るsample数。出力sample rateを決定。 **制約:** must be positive |
 | `lockin.filter` | `tagged inline table` | 必須 | - | lock-in low-pass filter 設定 schema v5ではboxcar_legacyのみを使用。 **制約:** fields from other filter kinds are rejected |
