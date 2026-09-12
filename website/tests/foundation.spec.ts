@@ -87,7 +87,7 @@ test('config validator recovers from a Wasm load failure without losing input', 
   await page.goto('/pmoke/ja/docs/configuration/validation/');
   const validator = page.locator('.config-validator');
   await expect(validator.getByText('検証機能は利用不可', { exact: true })).toBeVisible();
-  await expect(validator.getByLabel('設定入力')).toHaveValue(/version = 5/u);
+  await expect(validator.getByLabel('設定入力')).toHaveValue(/version = 6/u);
 
   await page.unroute('**/wasm/pmoke_web_wasm.js');
   await validator.getByRole('button', { name: 'Wasmを再読み込み' }).click();
