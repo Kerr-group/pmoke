@@ -361,6 +361,10 @@ impl ArtifactResolver {
         new_path
     }
 
+    pub fn signal_csv(&self) -> PathBuf {
+        self.paths.signal_csv()
+    }
+
     pub fn lockin_xy_npy(&self, channel: u8) -> PathBuf {
         let new_path = self.paths.lockin_xy_npy(channel);
         if new_path.exists() {
