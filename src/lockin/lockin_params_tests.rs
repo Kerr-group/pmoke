@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::{LockinEstimator, LockinWindow};
 
 fn test_lockin() -> Lockin {
     Lockin {
@@ -6,6 +7,8 @@ fn test_lockin() -> Lockin {
         stride_samples: 1,
         lpf_kind: LockinLpfKind::BoxcarLegacy,
         lpf_half_window_cycles: 1.0,
+        window: LockinWindow::legacy_boxcar(1.0),
+        estimator: LockinEstimator::BoxcarLegacy,
         lpf_debug_output: false,
         lpf_debug_label: None,
         lpf_debug_overwrite: false,

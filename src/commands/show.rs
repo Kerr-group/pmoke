@@ -69,8 +69,8 @@ fn print_config_summary(config: &Config) {
             vec![
                 "Lock-in".to_string(),
                 format!(
-                    "{:?}, workers={}, stride={}, debug={}",
-                    config.lockin.lpf_kind,
+                    "{}, workers={}, stride={}, debug={}",
+                    config.lockin.estimator_name(),
                     config.lockin.workers,
                     config.lockin.stride_samples,
                     config.lockin.lpf_debug_output

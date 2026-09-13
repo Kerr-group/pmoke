@@ -1123,6 +1123,8 @@ mod tests {
         cfg.lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
         cfg.lockin.stride_samples = 10;
         cfg.lockin.lpf_half_window_cycles = 1.0;
+        cfg.lockin.window = crate::config::LockinWindow::legacy_boxcar(1.0);
+        cfg.lockin.estimator = crate::config::LockinEstimator::BoxcarLegacy;
         let dt = 1.0e-5;
         let f_ref = 1_000.0;
         let time = (0..4_000)

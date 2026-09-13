@@ -1,4 +1,4 @@
-use crate::config::{Config, LockinLpfKind, Window};
+use crate::config::{Config, Window};
 use crate::lockin::lockin_core::{
     HarmonicLockinResult, legacy_boxcar_enbw_hz, legacy_boxcar_response_abs,
 };
@@ -57,7 +57,7 @@ fn prepare_debug_dir(
         .join(label)
         .join(format!(
             "{}_ch{}_h{}",
-            lpf_kind_name(cfg.lockin.lpf_kind),
+            cfg.lockin.estimator_name(),
             signal_ch,
             harmonic
         ));
@@ -91,16 +91,10 @@ fn prepare_debug_dir(
 fn auto_label(cfg: &Config, params: LockinParams) -> String {
     format!(
         "{}_{}_cutoff_none_half_{:.6}",
-        lpf_kind_name(cfg.lockin.lpf_kind),
+        cfg.lockin.estimator_name(),
         params.cutoff_source.as_str(),
         cfg.lockin.lpf_half_window_cycles
     )
-}
-
-fn lpf_kind_name(kind: LockinLpfKind) -> &'static str {
-    match kind {
-        LockinLpfKind::BoxcarLegacy => "boxcar_legacy",
-    }
 }
 
 fn write_metadata(
@@ -115,7 +109,7 @@ fn write_metadata(
         ("harmonic".to_string(), harmonic.to_string()),
         (
             "lpf_kind".to_string(),
-            lpf_kind_name(cfg.lockin.lpf_kind).to_string(),
+            cfg.lockin.estimator_name().to_string(),
         ),
         ("f_ref".to_string(), params.f_ref.to_string()),
         ("dt".to_string(), params.dt.to_string()),

@@ -94,7 +94,7 @@ fn check_and_output_enforce_lossy_acceptance_end_to_end() {
         "stderr: {}",
         String::from_utf8_lossy(&written.stderr)
     );
-    assert!(fs::read_to_string(&target).unwrap().contains("version = 6"));
+    assert!(fs::read_to_string(&target).unwrap().contains("version = 7"));
     assert_eq!(fs::read_to_string(&source).unwrap(), original);
 
     let latest = pmoke(&target, &["config", "migrate", "--check"]);
@@ -140,7 +140,7 @@ fn v2_csv_without_time_stays_executable_instead_of_advancing_to_v5() {
 }
 
 #[test]
-fn v2_csv_with_recorded_time_can_advance_to_v6() {
+fn v2_csv_with_recorded_time_can_advance_to_v7() {
     let dir = TempDir::new();
     let source = dir.0.join("config.toml");
     let target = dir.0.join("config.v5.toml");
@@ -176,7 +176,7 @@ fn v2_csv_with_recorded_time_can_advance_to_v6() {
         String::from_utf8_lossy(&written.stderr)
     );
     let migrated = fs::read_to_string(&target).unwrap();
-    assert!(migrated.contains("version = 6"));
+    assert!(migrated.contains("version = 7"));
     assert!(!migrated.contains("[timebase]"));
 }
 
@@ -202,6 +202,6 @@ fn in_place_migration_with_bare_relative_config_path_succeeds() {
         String::from_utf8_lossy(&output.stderr)
     );
     let migrated = fs::read_to_string(&source).unwrap();
-    assert!(migrated.contains("version = 6"));
+    assert!(migrated.contains("version = 7"));
     assert!(dir.0.join("config.toml.v3.bak").exists());
 }

@@ -2,7 +2,7 @@
   "$id": "https://kerr-group.github.io/pmoke/config.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "pmoke 0.4.1 configuration schema v6",
+  "description": "pmoke 0.4.1 configuration schema v7",
   "properties": {
     "data": {
       "additionalProperties": false,
@@ -89,6 +89,25 @@
     "lockin": {
       "additionalProperties": false,
       "description": "Numerical lock-in settings. Defines signal channels, parallelism, output stride, and low-pass filtering.",
+      "oneOf": [
+        {
+          "required": [
+            "channels",
+            "workers",
+            "stride_samples",
+            "filter"
+          ]
+        },
+        {
+          "required": [
+            "channels",
+            "workers",
+            "stride_samples",
+            "window",
+            "estimator"
+          ]
+        }
+      ],
       "properties": {
         "channels": {
           "description": "Channels demodulated by lock-in analysis. At least one channel is required by lock-in and downstream analysis.",
@@ -134,8 +153,162 @@
           "type": "boolean",
           "x-pmoke-path": "lockin.debug_overwrite"
         },
+        "estimator": {
+          "description": "Lock-in estimator selection (schema v7). boxcar_legacy keeps the historical estimator; joint_harmonic_gls is an explicit opt-in with its own settings. Estimator selection is never a filter kind.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "boxcar_legacy",
+                  "description": "Lock-in estimator algorithm. boxcar_legacy is the historical estimator. joint_harmonic_gls selects the phase-aware joint harmonic estimator and requires its settings block.",
+                  "title": "Lock-in estimator algorithm",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.estimator.kind"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "calibrations": {
+                  "default": [],
+                  "description": "Immutable calibration bindings, one per lock-in channel. Each entry binds a channel to a calibration artifact path plus its expected SHA-256 digest. Unexpanded template placeholders are rejected.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "channel": {
+                        "maximum": 8,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "path": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "sha256": {
+                        "pattern": "^[0-9a-f]{64}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "channel",
+                      "path",
+                      "sha256"
+                    ],
+                    "type": "object"
+                  },
+                  "title": "Immutable calibration bindings, one per lock-in channel",
+                  "type": "array",
+                  "x-constraints": [
+                    "exactly one entry per lockin.channels value"
+                  ],
+                  "x-pmoke-path": "lockin.estimator.calibrations"
+                },
+                "covariance_output": {
+                  "default": "diagonal",
+                  "description": "XY covariance serialization mode. Controls how much of the estimator covariance is written to run artifacts.",
+                  "enum": [
+                    "none",
+                    "diagonal",
+                    "full"
+                  ],
+                  "title": "XY covariance serialization mode",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.estimator.covariance_output"
+                },
+                "envelope_degree": {
+                  "const": 0,
+                  "default": 0,
+                  "description": "Envelope polynomial degree. Exactly 0 in v1: no envelope drift terms are supported.",
+                  "title": "Envelope polynomial degree",
+                  "type": "integer",
+                  "x-constraints": [
+                    "must be exactly 0"
+                  ],
+                  "x-pmoke-path": "lockin.estimator.envelope_degree"
+                },
+                "failure_policy": {
+                  "default": "error",
+                  "description": "Estimator failure policy. Exactly error in v1: any estimator failure aborts the run instead of falling back.",
+                  "enum": [
+                    "error"
+                  ],
+                  "title": "Estimator failure policy",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.estimator.failure_policy"
+                },
+                "fit_harmonics": {
+                  "description": "Harmonics spanned by the joint fit. Ascending unique positive harmonics. Must contain every output harmonic; the model size 1 + 2 * len must stay within the parameter limit.",
+                  "items": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "minItems": 1,
+                  "title": "Harmonics spanned by the joint fit",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "x-constraints": [
+                    "must be ascending unique positive harmonics"
+                  ],
+                  "x-pmoke-path": "lockin.estimator.fit_harmonics"
+                },
+                "kind": {
+                  "const": "joint_harmonic_gls",
+                  "description": "Lock-in estimator algorithm. boxcar_legacy is the historical estimator. joint_harmonic_gls selects the phase-aware joint harmonic estimator and requires its settings block.",
+                  "title": "Lock-in estimator algorithm",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.estimator.kind"
+                },
+                "noise_mode": {
+                  "description": "GLS noise model family. Selects the whitening contract: identity, per-phase diagonal, stationary correlated, or phase-correlated.",
+                  "enum": [
+                    "identity",
+                    "phase_diagonal",
+                    "stationary_correlated",
+                    "phase_correlated"
+                  ],
+                  "title": "GLS noise model family",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.estimator.noise_mode"
+                },
+                "output_harmonics": {
+                  "description": "Harmonics reported by the joint estimator. Exactly 1 through 6 in v1.",
+                  "items": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxItems": 6,
+                  "minItems": 6,
+                  "title": "Harmonics reported by the joint estimator",
+                  "type": "array",
+                  "x-constraints": [
+                    "must be exactly [1, 2, 3, 4, 5, 6]"
+                  ],
+                  "x-pmoke-path": "lockin.estimator.output_harmonics"
+                }
+              },
+              "required": [
+                "kind",
+                "fit_harmonics",
+                "output_harmonics",
+                "noise_mode"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "Lock-in estimator selection (schema v7)",
+          "x-constraints": [
+            "GLS-only settings are rejected under boxcar_legacy"
+          ],
+          "x-pmoke-path": "lockin.estimator"
+        },
         "filter": {
-          "description": "Lock-in low-pass filter configuration. The current runtime accepts the boxcar_legacy kind; fields from other kinds are not part of schema v5.",
+          "description": "Lock-in low-pass filter configuration. Schema v6 and earlier: the runtime accepts the boxcar_legacy kind; fields from other kinds are rejected. Schema v7 replaces this table with lockin.window and lockin.estimator.",
           "oneOf": [
             {
               "additionalProperties": false,
@@ -236,6 +409,49 @@
           "x-pmoke-path": "lockin.stride_samples",
           "x-units": "samples"
         },
+        "window": {
+          "additionalProperties": false,
+          "description": "Lock-in analysis window contract (schema v7). Replaces lockin.filter in v7 with an explicit window/estimator split. Schema v6 and earlier use lockin.filter instead.",
+          "properties": {
+            "edge_policy": {
+              "description": "Lock-in edge policy. legacy_trim keeps the historical boxcar edge trimming behavior.",
+              "enum": [
+                "legacy_trim"
+              ],
+              "title": "Lock-in edge policy",
+              "type": "string",
+              "x-pmoke-path": "lockin.window.edge_policy"
+            },
+            "half_window_cycles": {
+              "description": "Half-window scale in reference cycles. The boxcar integration window extends symmetrically by this many reference cycles.",
+              "exclusiveMinimum": 0,
+              "title": "Half-window scale in reference cycles",
+              "type": "number",
+              "x-constraints": [
+                "must be finite and positive"
+              ],
+              "x-pmoke-path": "lockin.window.half_window_cycles",
+              "x-units": "reference cycles"
+            },
+            "kind": {
+              "description": "Lock-in window kind. reference_cycles is the only v1 window: the half window is measured in reference cycles.",
+              "enum": [
+                "reference_cycles"
+              ],
+              "title": "Lock-in window kind",
+              "type": "string",
+              "x-pmoke-path": "lockin.window.kind"
+            }
+          },
+          "required": [
+            "kind",
+            "half_window_cycles",
+            "edge_policy"
+          ],
+          "title": "Lock-in analysis window contract (schema v7)",
+          "type": "object",
+          "x-pmoke-path": "lockin.window"
+        },
         "workers": {
           "description": "Parallel lock-in worker count. Values near the physical CPU count are a practical starting point.",
           "minimum": 1,
@@ -250,8 +466,7 @@
       "required": [
         "channels",
         "workers",
-        "stride_samples",
-        "filter"
+        "stride_samples"
       ],
       "title": "Numerical lock-in settings",
       "type": "object",
@@ -742,12 +957,15 @@
       "x-pmoke-path": "signals"
     },
     "version": {
-      "const": 6,
-      "description": "Configuration schema version. New and migrated configurations use schema version 6.",
+      "description": "Configuration schema version. New and migrated configurations use schema version 7; version 6 stays accepted.",
+      "enum": [
+        6,
+        7
+      ],
       "title": "Configuration schema version",
       "type": "integer",
       "x-constraints": [
-        "must equal 6"
+        "must equal 6 or 7"
       ],
       "x-pmoke-path": "version"
     }
@@ -768,11 +986,11 @@
     "fields": [
       {
         "constraints": [
-          "must equal 6"
+          "must equal 6 or 7"
         ],
         "default": null,
-        "details_en": "New and migrated configurations use schema version 6.",
-        "details_ja": "新規設定と移行済み設定で使用するバージョン6。",
+        "details_en": "New and migrated configurations use schema version 7; version 6 stays accepted.",
+        "details_ja": "新規設定と移行済み設定はバージョン7。バージョン6も受理。",
         "id": "version",
         "path": "version",
         "required": "required",
@@ -781,7 +999,8 @@
         "summary_ja": "設定スキーマのバージョン",
         "units": null,
         "valid_values": [
-          "6"
+          "6",
+          "7"
         ],
         "value_type": "integer"
       },
@@ -1316,12 +1535,246 @@
         "value_type": "integer"
       },
       {
+        "constraints": [],
+        "default": null,
+        "details_en": "Replaces lockin.filter in v7 with an explicit window/estimator split. Schema v6 and earlier use lockin.filter instead.",
+        "details_ja": "v7ではlockin.filterをwindow/estimator分離に置換。schema v6以前はlockin.filterを使用。",
+        "id": "lockin.window",
+        "path": "lockin.window",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Lock-in analysis window contract (schema v7).",
+        "summary_ja": "lock-in 解析窓契約（schema v7）",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "reference_cycles is the only v1 window: the half window is measured in reference cycles.",
+        "details_ja": "v1の窓はreference_cyclesのみ。半窓幅を参照周期単位で測る。",
+        "id": "lockin.window.kind",
+        "path": "lockin.window.kind",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Lock-in window kind.",
+        "summary_ja": "lock-in 窓種別",
+        "units": null,
+        "valid_values": [
+          "reference_cycles"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "must be finite and positive"
+        ],
+        "default": null,
+        "details_en": "The boxcar integration window extends symmetrically by this many reference cycles.",
+        "details_ja": "boxcar積分窓を参照周期単位で指定する半窓幅。",
+        "id": "lockin.window.half_window_cycles",
+        "path": "lockin.window.half_window_cycles",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Half-window scale in reference cycles.",
+        "summary_ja": "参照周期単位の半窓幅",
+        "units": "reference cycles",
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "legacy_trim keeps the historical boxcar edge trimming behavior.",
+        "details_ja": "従来boxcarの端部トリム動作を維持する。",
+        "id": "lockin.window.edge_policy",
+        "path": "lockin.window.edge_policy",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Lock-in edge policy.",
+        "summary_ja": "lock-in 端部処理",
+        "units": null,
+        "valid_values": [
+          "legacy_trim"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "GLS-only settings are rejected under boxcar_legacy"
+        ],
+        "default": null,
+        "details_en": "boxcar_legacy keeps the historical estimator; joint_harmonic_gls is an explicit opt-in with its own settings. Estimator selection is never a filter kind.",
+        "details_ja": "boxcar_legacyは従来推定器。joint_harmonic_glsは独自設定つき明示opt-in。推定器選択はfilter kindではない。",
+        "id": "lockin.estimator",
+        "path": "lockin.estimator",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Lock-in estimator selection (schema v7).",
+        "summary_ja": "lock-in 推定器選択（schema v7）",
+        "units": null,
+        "valid_values": [],
+        "value_type": "tagged table"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "boxcar_legacy is the historical estimator. joint_harmonic_gls selects the phase-aware joint harmonic estimator and requires its settings block.",
+        "details_ja": "boxcar_legacyは従来推定器。joint_harmonic_glsは位相考慮joint harmonic推定器で設定ブロック必須。",
+        "id": "lockin.estimator.kind",
+        "path": "lockin.estimator.kind",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Lock-in estimator algorithm.",
+        "summary_ja": "lock-in 推定器アルゴリズム",
+        "units": null,
+        "valid_values": [
+          "boxcar_legacy",
+          "joint_harmonic_gls"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "must be ascending unique positive harmonics"
+        ],
+        "default": null,
+        "details_en": "Ascending unique positive harmonics. Must contain every output harmonic; the model size 1 + 2 * len must stay within the parameter limit.",
+        "details_ja": "昇順・重複なし・正の高調波。出力高調波をすべて含む。モデル規模1 + 2 * lenはパラメータ上限内。",
+        "id": "lockin.estimator.fit_harmonics",
+        "path": "lockin.estimator.fit_harmonics",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Harmonics spanned by the joint fit.",
+        "summary_ja": "joint fit対象高調波",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer array"
+      },
+      {
+        "constraints": [
+          "must be exactly [1, 2, 3, 4, 5, 6]"
+        ],
+        "default": null,
+        "details_en": "Exactly 1 through 6 in v1.",
+        "details_ja": "v1では1から6まで過不足なく。",
+        "id": "lockin.estimator.output_harmonics",
+        "path": "lockin.estimator.output_harmonics",
+        "required": "required",
+        "since": 4,
+        "summary_en": "Harmonics reported by the joint estimator.",
+        "summary_ja": "joint推定器の出力高調波",
+        "units": null,
+        "valid_values": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6"
+        ],
+        "value_type": "integer array"
+      },
+      {
+        "constraints": [
+          "must be exactly 0"
+        ],
+        "default": "0",
+        "details_en": "Exactly 0 in v1: no envelope drift terms are supported.",
+        "details_ja": "v1では0のみ。包絡ドリフト項は未対応。",
+        "id": "lockin.estimator.envelope_degree",
+        "path": "lockin.estimator.envelope_degree",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Envelope polynomial degree.",
+        "summary_ja": "包絡多項式次数",
+        "units": null,
+        "valid_values": [
+          "0"
+        ],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [],
+        "default": null,
+        "details_en": "Selects the whitening contract: identity, per-phase diagonal, stationary correlated, or phase-correlated.",
+        "details_ja": "白色化契約の選択。identity・位相別対角・定常相関・位相相関。",
+        "id": "lockin.estimator.noise_mode",
+        "path": "lockin.estimator.noise_mode",
+        "required": "required",
+        "since": 4,
+        "summary_en": "GLS noise model family.",
+        "summary_ja": "GLS雑音モデル種別",
+        "units": null,
+        "valid_values": [
+          "identity",
+          "phase_diagonal",
+          "stationary_correlated",
+          "phase_correlated"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [],
+        "default": "diagonal",
+        "details_en": "Controls how much of the estimator covariance is written to run artifacts.",
+        "details_ja": "推定器共分散のrun成果物への書き出し量を制御。",
+        "id": "lockin.estimator.covariance_output",
+        "path": "lockin.estimator.covariance_output",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "XY covariance serialization mode.",
+        "summary_ja": "XY共分散の出力形式",
+        "units": null,
+        "valid_values": [
+          "none",
+          "diagonal",
+          "full"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [],
+        "default": "error",
+        "details_en": "Exactly error in v1: any estimator failure aborts the run instead of falling back.",
+        "details_ja": "v1ではerrorのみ。失敗時は代替動作せずrun中断。",
+        "id": "lockin.estimator.failure_policy",
+        "path": "lockin.estimator.failure_policy",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Estimator failure policy.",
+        "summary_ja": "推定器失敗時方針",
+        "units": null,
+        "valid_values": [
+          "error"
+        ],
+        "value_type": "string enum"
+      },
+      {
+        "constraints": [
+          "exactly one entry per lockin.channels value"
+        ],
+        "default": "[]",
+        "details_en": "Each entry binds a channel to a calibration artifact path plus its expected SHA-256 digest. Unexpanded template placeholders are rejected.",
+        "details_ja": "channelとcalibration成果物パス＋期待SHA-256の束縛。未展開テンプレートは拒否。",
+        "id": "lockin.estimator.calibrations",
+        "path": "lockin.estimator.calibrations",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Immutable calibration bindings, one per lock-in channel.",
+        "summary_ja": "不変calibration束縛。lock-in channel毎に1件",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table array"
+      },
+      {
         "constraints": [
           "fields from other filter kinds are rejected"
         ],
         "default": null,
-        "details_en": "The current runtime accepts the boxcar_legacy kind; fields from other kinds are not part of schema v5.",
-        "details_ja": "schema v5ではboxcar_legacyのみを使用。",
+        "details_en": "Schema v6 and earlier: the runtime accepts the boxcar_legacy kind; fields from other kinds are rejected. Schema v7 replaces this table with lockin.window and lockin.estimator.",
+        "details_ja": "schema v6以前はboxcar_legacyのみ。v7ではlockin.window/lockin.estimatorに置換。",
         "id": "lockin.filter",
         "path": "lockin.filter",
         "required": "required",
@@ -1749,12 +2202,14 @@
     ],
     "format_version": 1,
     "pmoke_version": "0.4.1",
-    "schema_version": 6,
+    "schema_version": 7,
     "semantic_constraints": [
       "channel assignments must be unique across sensors, reference, lock-in signals, and signals",
       "moke.sensor must reference a configured sensor channel",
       "pulse background windows must not overlap",
-      "lockin.filter must use the active boxcar_legacy fields only"
+      "v6 lockin.filter must use the active boxcar_legacy fields only",
+      "v7 lockin selects either the filter contract or the window plus estimator contracts, never both",
+      "joint_harmonic_gls requires fit/output harmonics, a noise mode, and one calibration digest per lock-in channel"
     ]
   }
 }

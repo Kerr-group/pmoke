@@ -8,6 +8,7 @@ use std::fs;
 mod general;
 mod legacy;
 mod v4;
+mod v7;
 
 fn v2_base_lockin(lockin: &str) -> String {
     let lockin = if lockin.contains("lpf_kind") {

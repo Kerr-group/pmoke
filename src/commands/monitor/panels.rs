@@ -23,8 +23,10 @@ pub(super) fn render_config(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
         vec![
             "Lock-in".to_string(),
             format!(
-                "{:?}, workers={}, stride={}",
-                cfg.lockin.lpf_kind, cfg.lockin.workers, cfg.lockin.stride_samples
+                "{}, workers={}, stride={}",
+                cfg.lockin.estimator_name(),
+                cfg.lockin.workers,
+                cfg.lockin.stride_samples
             ),
         ],
         vec![

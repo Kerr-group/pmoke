@@ -10,9 +10,9 @@ pmoke --config config.toml config validate
 pmoke config explain lockin.filter
 ```
 
-Validation covers TOML syntax, unknown v6 keys, ranges, channel roles, filter
-constraints, connection URI syntax, and model/transport compatibility. It does not
-open an instrument.
+Validation covers TOML syntax, unknown v6/v7 keys, ranges, channel roles, window
+and estimator constraints, connection URI syntax, and model/transport compatibility.
+It does not open an instrument.
 
 The v6 runtime accepts only `boxcar_legacy` for `lockin.filter.kind`. Historical
 FIR/IIR kinds and fields such as `fir_zero_phase`, `sync_iir_zero_phase`, and
@@ -24,7 +24,7 @@ Runtime validation remains authoritative for cross-field and hardware semantics.
 
 ## Browser validator
 
-The tool validates canonical schema v6 in a dedicated Web Worker. Input remains in
+The tool validates canonical schemas v6 and v7 in a dedicated Web Worker. Input remains in
 the browser. Driver availability, filesystem state, Python packages, and hardware
 reachability remain native `pmoke doctor` checks. Migrate v1-v5 files before browser
 validation.
@@ -37,7 +37,7 @@ Previewing a migration never changes the source file:
 
 ```bash
 pmoke --config legacy.toml config migrate
-pmoke --config legacy.toml config migrate --output config.v6.toml
+pmoke --config legacy.toml config migrate --output config.v7.toml
 pmoke --config legacy.toml config migrate --in-place
 ```
 

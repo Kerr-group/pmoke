@@ -1,6 +1,6 @@
 ---
 title: 設定作成
-description: signal roleとartifactを軸にしたschema v6設定。
+description: signal roleとartifactを軸にしたschema v7設定。
 ---
 
 過去の実験設定を複製せず、実行中binaryが提供する現行templateを起点に設定:
@@ -14,7 +14,7 @@ pmoke config init --output config.toml
 オシロスコープとのdirect接続を`scope`に定義。trigger sourceと、direct GPIBまたはPrologix adapterを`generator`に定義。
 
 ```toml
-version = 6
+version = 7
 
 [scope]
 model = "DHO5108"
@@ -45,7 +45,14 @@ fft_window = { start = 0.0, end = 0.015 }
 
 [lockin]
 channels = [3]
-filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+
+[lockin.window]
+kind = "reference_cycles"
+half_window_cycles = 1.0
+edge_policy = "legacy_trim"
+
+[lockin.estimator]
+kind = "boxcar_legacy"
 ```
 
 生信号読出しは任意。各`[[signals]]`は1チャンネルをlock-in窓で平均する:

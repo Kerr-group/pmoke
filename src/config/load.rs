@@ -76,7 +76,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
         }
     };
 
-    if version == 6 {
+    if version == 6 || version == 7 {
         let report = pmoke_config_core::validate_config_toml(s);
         if !report.valid {
             return core_diagnostics(report);
@@ -129,6 +129,15 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
                 normalized: None,
             }),
         },
+        7 => match deserialize_versioned::<ConfigV7>(s) {
+            Ok(raw) => normalize_v7(raw),
+            Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
+                version: Some(7),
+                warnings: Vec::new(),
+                diagnostics: vec![diag],
+                normalized: None,
+            }),
+        },
         6 => match deserialize_versioned::<ConfigV6>(s) {
             Ok(raw) => normalize_v6(raw),
             Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
@@ -146,7 +155,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
                 DiagnosticKind::Parse,
                 Some("version".to_string()),
                 format!("unsupported config version: {other}"),
-                Some("use version = 1, 2, or 3 for legacy configs, version = 4 for the historical current schema, or version = 5 for the current schema"
+                Some("use version = 1, 2, or 3 for legacy configs, version = 4 for the historical current schema, or version = 6 for the previous schema, or version = 7 for the current schema"
                     .to_string()),
             )],
                 normalized: None,
@@ -445,6 +454,8 @@ fn normalize_v1(raw: ConfigV1) -> ConfigLoad {
             stride_samples: raw.lockin.stride_samples,
             lpf_kind,
             lpf_half_window_cycles,
+            window: LockinWindow::legacy_boxcar(lpf_half_window_cycles),
+            estimator: LockinEstimator::BoxcarLegacy,
             lpf_debug_output: raw.lockin.lpf_debug_output,
             lpf_debug_label: raw.lockin.lpf_debug_label,
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
@@ -527,6 +538,8 @@ fn normalize_v2(raw: ConfigV2) -> ConfigLoad {
             stride_samples: raw.lockin.stride_samples,
             lpf_kind,
             lpf_half_window_cycles: raw.lockin.lpf_half_window_cycles,
+            window: LockinWindow::legacy_boxcar(raw.lockin.lpf_half_window_cycles),
+            estimator: LockinEstimator::BoxcarLegacy,
             lpf_debug_output: raw.lockin.lpf_debug_output,
             lpf_debug_label: raw.lockin.lpf_debug_label,
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
@@ -602,6 +615,8 @@ fn normalize_v3(raw: ConfigV3) -> ConfigLoad {
             stride_samples: raw.lockin.stride_samples,
             lpf_kind,
             lpf_half_window_cycles: raw.lockin.lpf_half_window_cycles,
+            window: LockinWindow::legacy_boxcar(raw.lockin.lpf_half_window_cycles),
+            estimator: LockinEstimator::BoxcarLegacy,
             lpf_debug_output: raw.lockin.lpf_debug_output,
             lpf_debug_label: raw.lockin.lpf_debug_label,
             lpf_debug_overwrite: raw.lockin.lpf_debug_overwrite,
@@ -1305,6 +1320,250 @@ fn normalize_v6(raw: ConfigV6) -> ConfigLoad {
     }
 }
 
+fn normalize_v7(raw: ConfigV7) -> ConfigLoad {
+    let mut errors = Vec::new();
+    let deprecated_plot_output_dir = raw.plot.output_dir.is_some();
+
+    let scope_connection = match parse_connection_v4(&raw.scope.connection, "scope.connection") {
+        Ok(connection) => Some(connection),
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
+    let generator_connection = match raw.generator.as_ref() {
+        Some(generator) => match parse_connection_v4(&generator.connection, "generator.connection")
+        {
+            Ok(connection) => Some(connection),
+            Err(error) => {
+                errors.push(error);
+                None
+            }
+        },
+        None => None,
+    };
+
+    if raw.version != 7 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("version".to_string()),
+            format!(
+                "version 7 schema must declare version = 7 (got {})",
+                raw.version
+            ),
+            None,
+        ));
+    }
+    if raw.scope.model != "DHO5108" {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("scope.model".to_string()),
+            format!("unsupported oscilloscope model: {}", raw.scope.model),
+            Some("use model = \"DHO5108\"".to_string()),
+        ));
+    }
+    if let Some(connection) = &scope_connection {
+        match connection {
+            Connection::Tcpip { .. } => {}
+            Connection::Usbtmc { .. } if usbtmc_supported() => {}
+            Connection::Usbtmc { .. } => {
+                errors.push(usbtmc_unsupported_diagnostic("scope.connection"))
+            }
+            Connection::Gpib { .. } => errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("scope.connection".to_string()),
+                "DHO5108 does not support a GPIB connection",
+                Some("use tcp://host:port or visa:RESOURCE".to_string()),
+            )),
+            Connection::PrologixTcp { .. } | Connection::PrologixSerial { .. } => {
+                errors.push(ConfigDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Some("scope.connection".to_string()),
+                    "DHO5108 does not support a Prologix GPIB connection",
+                    Some("use tcp://host:port or visa:RESOURCE".to_string()),
+                ));
+            }
+        }
+    }
+    if let Some(generator) = &raw.generator {
+        if generator.model != "WF1946B" {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("generator.model".to_string()),
+                format!("unsupported function generator model: {}", generator.model),
+                Some("use model = \"WF1946B\"".to_string()),
+            ));
+        }
+        if let Some(connection) = &generator_connection
+            && !matches!(
+                connection,
+                Connection::Gpib { .. }
+                    | Connection::PrologixTcp { .. }
+                    | Connection::PrologixSerial { .. }
+            )
+        {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("generator.connection".to_string()),
+                "WF1946B requires a GPIB or Prologix connection",
+                Some("use gpib://board/address, prologix-tcp://host:1234?addr=11, or prologix-serial:///dev/cu.usbserial?addr=11".to_string()),
+            ));
+        }
+    }
+
+    validate_current_fields(
+        &raw.sensors,
+        &raw.reference,
+        &raw.lockin.channels,
+        "lockin.channels",
+        &raw.signals,
+        raw.moke.factor,
+        "moke.factor",
+        &raw.pulse,
+        &mut errors,
+    );
+
+    if scope_connection.is_none() || (raw.generator.is_some() && generator_connection.is_none()) {
+        return ConfigLoad::Diagnostics(ConfigDiagnostics {
+            version: Some(7),
+            warnings: Vec::new(),
+            diagnostics: errors,
+            normalized: None,
+        });
+    }
+    let scope_connection = scope_connection.expect("scope connection parsed above");
+    let signal_channels = raw.lockin.channels.clone();
+
+    let sensor_ch = raw
+        .sensors
+        .iter()
+        .map(|sensor| sensor.channel)
+        .collect::<Vec<_>>();
+    let mut channels = raw
+        .sensors
+        .iter()
+        .map(channel_from_sensor_v4)
+        .collect::<Vec<_>>();
+    channels.extend(signal_channels.iter().map(|&index| Channel {
+        index,
+        factor: None,
+        scale_to_abs_max: None,
+        label: None,
+        unit_out: None,
+    }));
+    channels.push(Channel {
+        index: raw.reference.channel,
+        factor: None,
+        scale_to_abs_max: None,
+        label: None,
+        unit_out: None,
+    });
+
+    let function_generator = raw.generator.map(|generator| FunctionGenerator {
+        connection: generator_connection.expect("generator connection parsed above"),
+        model: generator.model,
+    });
+    let window_v7: LockinWindow = raw.lockin.window.into();
+    let estimator_v7: LockinEstimator = raw.lockin.estimator.into();
+    // Legacy-compat mirrors: the legacy boxcar view always reflects the
+    // window cycles. Execution dispatches on `estimator`, never on these
+    // mirrors; a GLS configuration parses here and fails loudly at the
+    // lock-in entry point (no silent fallback).
+    let lockin_v7 = Lockin {
+        workers: raw.lockin.workers,
+        stride_samples: raw.lockin.stride_samples,
+        lpf_kind: LockinLpfKind::BoxcarLegacy,
+        lpf_half_window_cycles: window_v7.half_window_cycles,
+        window: window_v7,
+        estimator: estimator_v7,
+        lpf_debug_output: raw.lockin.debug_output,
+        lpf_debug_label: raw.lockin.debug_label,
+        lpf_debug_overwrite: raw.lockin.debug_overwrite,
+        snr_background_window: raw.lockin.snr_background_window,
+        snr_signal_window: raw.lockin.snr_signal_window,
+        save_npy: raw.lockin.save_npy,
+    };
+    let mut cfg = Config {
+        version: 7,
+        instruments: Some(Instruments {
+            function_generator,
+            oscilloscope: Oscilloscope {
+                connection: scope_connection,
+                model: raw.scope.model,
+            },
+        }),
+        fetch: Fetch {
+            output: match raw.data.output {
+                DataOutputV4::Csv => FetchOutput::Csv,
+                DataOutputV4::Raw => FetchOutput::Raw,
+                DataOutputV4::Both => FetchOutput::CsvAndRaw,
+            },
+            analysis_input: raw.data.input,
+        },
+        screenshot: Screenshot {
+            enabled: raw.data.screenshot,
+        },
+        plot: raw.plot.into(),
+        source_path: PathBuf::from("config.toml"),
+        source_text: None,
+        artifact_root: None,
+        plot_output_relative: None,
+        legacy_timebase: None,
+        force: false,
+        staging_active: false,
+        roles: Roles {
+            sensor_ch,
+            reference_ch: raw.reference.channel,
+            signal_ch: signal_channels,
+        },
+        channels,
+        signals: raw
+            .signals
+            .into_iter()
+            .map(|signal| Signal {
+                channel: signal.channel,
+                label: signal.label,
+                unit: signal.unit,
+            })
+            .collect(),
+        pulse: Pulse {
+            bg_window_before: raw.pulse.background_before,
+            bg_window_after: raw.pulse.background_after,
+        },
+        reference: raw.reference.into(),
+        lockin: lockin_v7,
+        phase: Phase {
+            m_omega_t0_offset: raw.phase.offsets,
+        },
+        moke: Moke {
+            use_sensor_ch: raw.moke.sensor,
+            moke_type: raw.moke.method,
+            factor: raw.moke.factor,
+        },
+    };
+
+    let mut validation = remap_v7_validation(validate_common(&mut cfg));
+    if deprecated_plot_output_dir {
+        validation.warnings.push(ConfigWarning::new(
+            "plot.output_dir is deprecated and ignored; canonical plots are written under analysis/plots",
+        ));
+    }
+    errors.extend(validation.errors);
+    if errors.is_empty() {
+        ConfigLoad::Ready {
+            config: cfg,
+            warnings: validation.warnings,
+        }
+    } else {
+        ConfigLoad::Diagnostics(ConfigDiagnostics {
+            version: Some(7),
+            warnings: validation.warnings,
+            diagnostics: errors,
+            normalized: None,
+        })
+    }
+}
+
 fn channel_from_sensor_v4(sensor: &SensorV4) -> Channel {
     let (factor, scale_to_abs_max) = match sensor.scale {
         SensorScaleV4::Factor(ref scale) => (Some(scale.factor), None),
@@ -1324,6 +1583,10 @@ fn remap_v4_validation(validation: ValidationSummary) -> ValidationSummary {
 }
 
 fn remap_v6_validation(validation: ValidationSummary) -> ValidationSummary {
+    remap_section_terms(validation, ("moke.use_sensor_ch", "moke.sensor"))
+}
+
+fn remap_v7_validation(validation: ValidationSummary) -> ValidationSummary {
     remap_section_terms(validation, ("moke.use_sensor_ch", "moke.sensor"))
 }
 
