@@ -218,29 +218,33 @@ fn apply_method_estimator(cfg: &mut Config, method: &CompareMethod) -> Result<()
             noise_mode,
             covariance_output,
         } => {
-            let calibrations = match &cfg.lockin.estimator {
-                LockinEstimator::JointHarmonicGls(gls) => gls.calibrations.clone(),
+            let base = match &cfg.lockin.estimator {
+                LockinEstimator::JointHarmonicGls(gls) => gls.clone(),
                 LockinEstimator::BoxcarLegacy => bail!(
                     "comparison method {} needs a joint estimator: the base config is boxcar_legacy \
                      and carries no calibration bindings",
                     method.name
                 ),
             };
-            if calibrations.is_empty() {
+            if base.calibrations.is_empty() {
                 bail!(
                     "comparison method {} needs calibration bindings, none configured",
                     method.name
                 );
             }
+            // Methods share the base signal model and differ only in the
+            // estimator/noise fields the method explicitly requests: the
+            // fit design (nuisance constraints, Nyquist/rank behavior,
+            // covariance) is cloned, never rebuilt with a default list.
             cfg.lockin.estimator =
                 LockinEstimator::JointHarmonicGls(crate::config::JointHarmonicGlsConfig {
-                    fit_harmonics: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-                    output_harmonics: vec![1, 2, 3, 4, 5, 6],
-                    envelope_degree: 0,
+                    fit_harmonics: base.fit_harmonics,
+                    output_harmonics: base.output_harmonics,
+                    envelope_degree: base.envelope_degree,
                     noise_mode: *noise_mode,
                     covariance_output: *covariance_output,
-                    failure_policy: crate::config::GlsFailurePolicy::Error,
-                    calibrations,
+                    failure_policy: base.failure_policy,
+                    calibrations: base.calibrations,
                 });
             Ok(())
         }
@@ -298,17 +302,107 @@ fn leg_grid_fingerprint(manifest: &toml::Value) -> Result<(String, f64)> {
     ))
 }
 
-/// Fingerprint of the frozen source input: the base acquisition manifest
-/// bytes when present. Legs must never mix generations (code
-/// `source_changed`).
-fn frozen_source_fingerprint(base_cfg: &Config) -> Result<Option<String>> {
-    let manifest = base_cfg.resolver().acquisition_manifest();
-    if !manifest.is_file() {
-        return Ok(None);
+/// Staging directory name (under the comparison destination) holding the
+/// frozen source tree every leg is seeded from.
+const FROZEN_SOURCE_DIR_NAME: &str = "_frozen_source";
+
+/// Canonical source-input listing as (key, live path) pairs: every file
+/// under the acquisition tree keyed by relative path, plus the resolved
+/// waveform CSV keyed at its canonical position when a legacy layout keeps
+/// it outside that tree. Keys are canonical positions, so a frozen staging
+/// copy hashes exactly like the live source it was copied from.
+fn source_entries(base_cfg: &Config) -> Result<Vec<(String, PathBuf)>> {
+    let mut entries = Vec::new();
+    let acquisition = base_cfg.paths().acquisition_dir();
+    if acquisition.is_dir() {
+        collect_tree_entries(&acquisition, &acquisition, &mut entries)?;
     }
-    let bytes = std::fs::read(&manifest)
-        .with_context(|| format!("cannot fingerprint {}", manifest.display()))?;
-    Ok(Some(crate::utils::checksum::sha256_hex(&bytes)))
+    let csv = base_cfg.resolver().waveform_csv();
+    if csv.is_file() && !csv.starts_with(&acquisition) {
+        entries.push(("waveforms/waveform.csv".to_string(), csv));
+    }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(entries)
+}
+
+/// Collects `(relative key, path)` for every file under a tree root.
+fn collect_tree_entries(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<()> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| format!("cannot list {}", dir.display()))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<_>>()
+        .with_context(|| format!("cannot list {}", dir.display()))?;
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            collect_tree_entries(root, &path, out)?;
+        } else if path.is_file() {
+            let key = path
+                .strip_prefix(root)
+                .context("failed to relativize source input")?
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push((key, path));
+        }
+    }
+    Ok(())
+}
+
+/// Streaming canonical hash over sorted (key, length, bytes) entries.
+/// Every consumed input byte shapes the print: a waveform mutation with an
+/// unchanged manifest still changes it.
+pub(crate) fn hash_source_entries(entries: &[(String, PathBuf)]) -> Result<String> {
+    let mut ordered: Vec<&(String, PathBuf)> = entries.iter().collect();
+    ordered.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut canonical = Vec::new();
+    for (key, path) in ordered {
+        let digest = crate::utils::checksum::file_sha256(path)
+            .with_context(|| format!("cannot hash {}", path.display()))?;
+        canonical.extend_from_slice(key.as_bytes());
+        canonical.push(0u8);
+        canonical.extend_from_slice(digest.as_bytes());
+        canonical.push(0u8);
+    }
+    Ok(crate::utils::checksum::sha256_hex(&canonical))
+}
+
+/// Copies live source entries into staging canonical positions.
+fn freeze_source_entries(entries: &[(String, PathBuf)], staging_acquisition: &Path) -> Result<()> {
+    for (key, path) in entries {
+        let target = staging_acquisition.join(key);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("cannot stage frozen source: {}", parent.display()))?;
+        }
+        std::fs::copy(path, &target).with_context(|| {
+            format!(
+                "cannot freeze source input: {} -> {}",
+                path.display(),
+                target.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Verifies a directory tree still matches its fingerprint (code
+/// `source_changed` on mismatch).
+pub(crate) fn verify_source_tree(dir: &Path, expected: &str) -> Result<()> {
+    let actual = fingerprint_tree(dir)?;
+    if actual != expected {
+        anyhow::bail!("comparison source changed during execution (code=source_changed)");
+    }
+    Ok(())
+}
+
+/// Fingerprint of a directory tree in canonical source form (stable for
+/// missing or empty trees).
+pub(crate) fn fingerprint_tree(dir: &Path) -> Result<String> {
+    let mut entries = Vec::new();
+    if dir.is_dir() {
+        collect_tree_entries(dir, dir, &mut entries)?;
+    }
+    hash_source_entries(&entries)
 }
 
 /// Pure summary over leg reports: shared grid/reference equality and
@@ -331,17 +425,28 @@ pub(crate) fn summarize_legs(legs: &[LegReport]) -> (bool, bool, bool) {
 
 /// Runs estimator legs for one base config and already-loaded data.
 /// Testable without fetch storage; the CLI wrapper adds request I/O.
+/// `frozen_acquisition` is the destination-owned frozen source tree: legs
+/// are seeded from these exact bytes, never re-read from the live source.
 pub(crate) fn run_legs(
     base_cfg: &Config,
     data: &crate::utils::waveform::WaveformData,
     methods: &[CompareMethod],
     output: &Path,
+    frozen_acquisition: &Path,
 ) -> Result<Vec<LegReport>> {
     crate::commands::analyze::validate_waveform_data(data)?;
+    let frozen = fingerprint_tree(frozen_acquisition)?;
     let mut legs = Vec::with_capacity(methods.len());
     for method in methods {
         let leg_dir = output.join(&method.name);
-        let report = run_single_leg(base_cfg, data, method, &leg_dir);
+        let report = run_single_leg(
+            base_cfg,
+            data,
+            method,
+            &leg_dir,
+            frozen_acquisition,
+            &frozen,
+        );
         legs.push(report);
     }
     Ok(legs)
@@ -352,6 +457,8 @@ fn run_single_leg(
     data: &crate::utils::waveform::WaveformData,
     method: &CompareMethod,
     leg_dir: &Path,
+    frozen_acquisition: &Path,
+    frozen_fingerprint: &str,
 ) -> LegReport {
     let failed = |message: String| LegReport {
         name: method.name.clone(),
@@ -368,11 +475,11 @@ fn run_single_leg(
         return failed(format!("{error:#}"));
     }
     leg_cfg.set_artifact_root(leg_dir.to_path_buf());
-    // Freeze the shared input into the leg: copy the base acquisition tree
-    // (manifest plus waveforms) so LI validation sees fetched inputs, the
-    // leg stays traceable to its exact input bytes, and the source is only
-    // ever read. Estimation still uses the single shared read.
-    if let Err(error) = seed_leg_acquisition(base_cfg, &leg_cfg) {
+    // Freeze the frozen input into the leg: copy the destination-owned
+    // frozen tree (never the live source) so LI validation sees the exact
+    // bytes estimation parsed, and verify the copy matches. Estimation
+    // still uses the single shared frozen read.
+    if let Err(error) = seed_leg_acquisition(frozen_acquisition, frozen_fingerprint, &leg_cfg) {
         return failed(format!("{error:#}"));
     }
     // Reuse the LI-only entrypoint per leg (FR-037): same staging,
@@ -413,22 +520,32 @@ fn run_single_leg(
     }
 }
 
-/// Copies the base acquisition tree into a leg directory (read-only
-/// source, new destination). Missing base acquisition is not an error here:
-/// LI validation reports the absent input explicitly per leg.
-fn seed_leg_acquisition(base_cfg: &Config, leg_cfg: &Config) -> Result<()> {
-    let source = base_cfg.paths().acquisition_dir();
-    if !source.exists() {
-        return Ok(());
-    }
+/// Copies the frozen source tree into a leg directory (frozen source, new
+/// destination) and verifies the copy matches the frozen fingerprint.
+/// Missing frozen input is not an error here: LI validation reports the
+/// absent input explicitly per leg.
+fn seed_leg_acquisition(
+    frozen_acquisition: &Path,
+    frozen_fingerprint: &str,
+    leg_cfg: &Config,
+) -> Result<()> {
     let destination = leg_cfg.paths().acquisition_dir();
-    copy_dir_recursive(&source, &destination).with_context(|| {
-        format!(
-            "cannot freeze shared input into leg: {} -> {}",
-            source.display(),
-            destination.display()
-        )
-    })
+    if frozen_acquisition.is_dir() {
+        copy_dir_recursive(frozen_acquisition, &destination).with_context(|| {
+            format!(
+                "cannot freeze shared input into leg: {} -> {}",
+                frozen_acquisition.display(),
+                destination.display()
+            )
+        })?;
+        verify_source_tree(&destination, frozen_fingerprint).with_context(|| {
+            format!(
+                "leg input copy diverged from the frozen source: {}",
+                destination.display()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
@@ -463,6 +580,15 @@ fn run_leg_li(cfg: &Config, data: &crate::utils::waveform::WaveformData) -> Resu
     result
 }
 
+/// Digest of the exact parsed config bytes (kept as source text by the
+/// loader): reporting never re-reads the config file.
+pub(crate) fn config_source_digest(cfg: &Config) -> Result<String> {
+    cfg.source_text
+        .as_ref()
+        .map(|text| crate::utils::checksum::sha256_hex(text.as_bytes()))
+        .ok_or_else(|| anyhow::anyhow!("comparison base config lost its parsed source text"))
+}
+
 /// CLI entrypoint: `pmoke compare-lockin --request REQ.toml [--output DIR]`.
 /// Prints only the declared JSON report to stdout; progress goes to stderr.
 pub fn run_compare(request_path: &Path, output_override: Option<&Path>) -> Result<()> {
@@ -475,27 +601,67 @@ pub fn run_compare(request_path: &Path, output_override: Option<&Path>) -> Resul
             base_path.display()
         )
     })?;
-    let base_bytes = std::fs::read(&base_path)
-        .with_context(|| format!("cannot re-read base config: {}", base_path.display()))?;
-    let base_config_sha256 = crate::utils::checksum::sha256_hex(&base_bytes);
+    // The digest covers the exact bytes parsed above (kept as source
+    // text by the loader): the config is never re-read for reporting.
+    let base_config_sha256 = config_source_digest(&base_cfg)?;
     let output = match output_override {
         Some(path) => path.to_path_buf(),
         None => resolve_request_path(&request_dir, &request.output)?,
     };
     ensure_new_destination(&output, &base_cfg.paths().run_dir)?;
-    let data = crate::utils::waveform::read_all_fetched_waveforms(&base_cfg)?;
     std::fs::create_dir(&output)
         .with_context(|| format!("cannot create comparison output: {}", output.display()))?;
-    // Destination-only lock: the source experiment is never locked,
-    // staged, or written.
+    // Destination-only lock before any source input is touched: the source
+    // experiment is never locked, staged, or written.
     let _lock = crate::commands::run_dir::RunMutationLock::acquire(&output, "compare-lockin")
         .context("cannot lock the comparison destination")?;
-    let source_before = frozen_source_fingerprint(&base_cfg)?;
-    let legs = run_legs(&base_cfg, &data, &request.methods, &output)?;
+    // Freeze first: copy the live source entries into destination-owned
+    // staging, then fingerprint the staging copy. Everything downstream —
+    // waveform parsing, leg seeding, leg validation, estimation — reads
+    // these exact bytes; the live source is only hashed afterwards.
+    let staging_acquisition = output.join(FROZEN_SOURCE_DIR_NAME).join("acquisition");
+    std::fs::create_dir_all(&staging_acquisition).with_context(|| {
+        format!(
+            "cannot stage frozen source: {}",
+            staging_acquisition.display()
+        )
+    })?;
+    let live_entries = source_entries(&base_cfg)?;
+    let live_before = hash_source_entries(&live_entries)?;
+    freeze_source_entries(&live_entries, &staging_acquisition)?;
+    let frozen = fingerprint_tree(&staging_acquisition)?;
+    if frozen != live_before || hash_source_entries(&source_entries(&base_cfg)?)? != live_before {
+        anyhow::bail!(
+            "comparison source changed while freezing (code=source_changed); refusing to mix generations"
+        );
+    }
+    // Parse from the frozen copy through a config rooted at staging, so
+    // the shared arrays and the leg inputs describe identical bytes.
+    let mut frozen_cfg = base_cfg.clone();
+    frozen_cfg.set_artifact_root(
+        staging_acquisition
+            .parent()
+            .context("frozen staging has no parent")?
+            .to_path_buf(),
+    );
+    let data = crate::utils::waveform::read_all_fetched_waveforms(&frozen_cfg)?;
+    verify_source_tree(&staging_acquisition, &frozen).with_context(|| {
+        format!(
+            "frozen source changed during reading: {}",
+            staging_acquisition.display()
+        )
+    })?;
+    let legs = run_legs(
+        &base_cfg,
+        &data,
+        &request.methods,
+        &output,
+        &staging_acquisition,
+    )?;
     // Nonmutating source consistency: fail before claiming a complete
     // publication rather than mixing generations (code `source_changed`).
     // The report below still publishes the truthful partial status.
-    let source_stable = frozen_source_fingerprint(&base_cfg)? == source_before;
+    let source_stable = hash_source_entries(&source_entries(&base_cfg)?)? == live_before;
     let (shared_grid_equal, shared_reference_equal, legs_complete) = summarize_legs(&legs);
     let completed = legs
         .iter()

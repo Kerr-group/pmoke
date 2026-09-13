@@ -151,9 +151,9 @@ fn artifact_json() -> String {
     "blocks": [],
     "exclusions": [],
     "seed": 7,
-    "per_bin_counts": [],
-    "per_bin_cycles": [],
-    "contributing_blocks": 0
+    "per_bin_counts": [4, 4, 4, 4],
+    "per_bin_cycles": [2, 2, 2, 2],
+    "contributing_blocks": 1
   },
   "validation": {
     "heldout_blocks": 0,
@@ -269,7 +269,9 @@ fn legs_share_grid_and_never_touch_the_source() {
     ];
     let output = dir.join("comparison");
     std::fs::create_dir(&output).unwrap();
-    let legs = run_legs(&base_cfg, &data, &methods, &output).unwrap();
+    // Test data is already frozen: legs seed from the base acquisition tree.
+    let frozen = base_cfg.paths().acquisition_dir();
+    let legs = run_legs(&base_cfg, &data, &methods, &output, &frozen).unwrap();
     assert_eq!(legs.len(), 2);
     for leg in &legs {
         assert_eq!(leg.status, LegStatus::Complete, "{leg:?}");
@@ -455,7 +457,9 @@ fn joint_leg_without_bindings_fails_without_fallback() {
     ];
     let output = dir.join("comparison");
     std::fs::create_dir(&output).unwrap();
-    let legs = run_legs(&base_cfg, &data, &methods, &output).unwrap();
+    // Test data is already frozen: legs seed from the base acquisition tree.
+    let frozen = base_cfg.paths().acquisition_dir();
+    let legs = run_legs(&base_cfg, &data, &methods, &output, &frozen).unwrap();
     assert_eq!(legs[0].status, LegStatus::Complete);
     // The joint leg fails explicitly on missing bindings; nothing falls
     // back to boxcar (no quality artifact appears under its directory).
@@ -472,5 +476,131 @@ fn joint_leg_without_bindings_fails_without_fallback() {
             .join("joint_identity/analysis/lockin/ch3_xy.csv")
             .exists()
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn method_preserves_base_signal_model() {
+    use crate::test_support::test_config;
+    // A six-harmonic base model stays six harmonics after applying a
+    // joint method: only the requested estimator/noise fields change.
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(JointHarmonicGlsConfig {
+        fit_harmonics: (1..=6).collect(),
+        output_harmonics: (1..=6).collect(),
+        envelope_degree: 0,
+        noise_mode: GlsNoiseMode::PhaseDiagonal,
+        covariance_output: GlsCovarianceOutput::Full,
+        failure_policy: crate::config::GlsFailurePolicy::Error,
+        calibrations: vec![crate::config::EstimatorCalibration {
+            channel: 3,
+            path: "ch3.json".to_string(),
+            sha256: "0".repeat(64),
+        }],
+    });
+    let method = CompareMethod {
+        name: "identity".to_string(),
+        estimator: CompareEstimator::Joint {
+            noise_mode: GlsNoiseMode::Identity,
+            covariance_output: GlsCovarianceOutput::Diagonal,
+        },
+    };
+    apply_method_estimator(&mut cfg, &method).unwrap();
+    match &cfg.lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => {
+            assert_eq!(gls.fit_harmonics, (1..=6).collect::<Vec<_>>());
+            assert_eq!(gls.output_harmonics, (1..=6).collect::<Vec<_>>());
+            assert_eq!(gls.envelope_degree, 0);
+            assert_eq!(gls.noise_mode, GlsNoiseMode::Identity);
+            assert_eq!(gls.covariance_output, GlsCovarianceOutput::Diagonal);
+            assert_eq!(gls.failure_policy, crate::config::GlsFailurePolicy::Error);
+            assert_eq!(gls.calibrations.len(), 1);
+        }
+        LockinEstimator::BoxcarLegacy => panic!("method must stay joint"),
+    }
+}
+
+#[test]
+fn source_fingerprint_covers_waveform_bytes() {
+    use crate::test_support::test_config;
+    // The review repro: mutate the waveform CSV with an unchanged
+    // manifest; the fingerprint must change.
+    let dir = temp_dir("fingerprint");
+    let acquisition = dir.join("acquisition");
+    std::fs::create_dir_all(acquisition.join("waveforms")).unwrap();
+    std::fs::write(acquisition.join("manifest.toml"), "schema_version = 1\n").unwrap();
+    std::fs::write(
+        acquisition.join("waveforms/waveform.csv"),
+        "time (s),ch3\n0,0\n",
+    )
+    .unwrap();
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.source_path = dir.join("config.toml");
+    cfg.set_artifact_root(dir.clone());
+    let before = hash_source_entries(&source_entries(&cfg).unwrap()).unwrap();
+    // Waveform-only mutation changes the print.
+    std::fs::write(
+        acquisition.join("waveforms/waveform.csv"),
+        "time (s),ch3\n0,1\n",
+    )
+    .unwrap();
+    let mutated = hash_source_entries(&source_entries(&cfg).unwrap()).unwrap();
+    assert_ne!(before, mutated);
+    // Manifest-only mutation also changes it.
+    std::fs::write(acquisition.join("manifest.toml"), "schema_version = 2\n").unwrap();
+    let mutated_manifest = hash_source_entries(&source_entries(&cfg).unwrap()).unwrap();
+    assert_ne!(mutated, mutated_manifest);
+    // Untouched trees verify; mutated trees fail with source_changed.
+    assert!(verify_source_tree(&acquisition, &mutated_manifest).is_ok());
+    std::fs::write(
+        acquisition.join("waveforms/waveform.csv"),
+        "time (s),ch3\n0,2\n",
+    )
+    .unwrap();
+    let error = verify_source_tree(&acquisition, &mutated_manifest)
+        .err()
+        .unwrap();
+    assert!(format!("{error:#}").contains("source_changed"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn frozen_copy_reads_identical_waveforms() {
+    use crate::test_support::test_config;
+    // Parsing from a frozen staging copy yields the same arrays as the
+    // live read: legs and estimation share one frozen byte source.
+    let dir = temp_dir("frozencopy");
+    let live = dir.join("live/acquisition");
+    std::fs::create_dir_all(live.join("waveforms")).unwrap();
+    std::fs::write(live.join("manifest.toml"), "schema_version = 1\n").unwrap();
+    let csv = "time (s),ch1,ch2,ch3\n0,0.1,0.2,0.3\n1e-05,0.4,0.5,0.6\n";
+    std::fs::write(live.join("waveforms/waveform.csv"), csv).unwrap();
+    let mut live_cfg = test_config(vec![1], vec![3]);
+    live_cfg.roles.reference_ch = 2;
+    live_cfg.source_path = dir.join("config.toml");
+    live_cfg.set_artifact_root(dir.join("live"));
+    let staging = dir.join("staging/acquisition");
+    std::fs::create_dir_all(&staging).unwrap();
+    let entries = source_entries(&live_cfg).unwrap();
+    assert!(!entries.is_empty());
+    freeze_source_entries(&entries, &staging).unwrap();
+    assert_eq!(
+        hash_source_entries(&entries).unwrap(),
+        fingerprint_tree(&staging).unwrap()
+    );
+    let mut frozen_cfg = live_cfg.clone();
+    frozen_cfg.set_artifact_root(dir.join("staging"));
+    let live_data = crate::utils::waveform::read_all_fetched_waveforms(&live_cfg).unwrap();
+    let frozen_data = crate::utils::waveform::read_all_fetched_waveforms(&frozen_cfg).unwrap();
+    assert_eq!(frozen_data.channels, live_data.channels);
+    // The config digest covers the parsed bytes, never a re-read.
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.source_text = Some("version = 3\n".to_string());
+    assert_eq!(
+        config_source_digest(&cfg).unwrap(),
+        crate::utils::checksum::sha256_hex(b"version = 3\n")
+    );
+    cfg.source_text = None;
+    assert!(config_source_digest(&cfg).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }
