@@ -13,6 +13,10 @@
 //! back-substitution on the upper-trapezoidal `R`. Rank and conditioning
 //! come from an SVD diagnostic on the same whitened design; the independent
 //! cross-check is the SciPy oracle, not a second nalgebra path.
+//!
+//! Scaling policy: the solver factors the supplied whitened design as-is,
+//! with no internal column equilibration. Callers provide already-scaled
+//! (whitened) input; reported conditions refer to that supplied matrix.
 
 use crate::{AnalysisError, Result};
 use nalgebra::{DMatrix, DVector};
@@ -25,6 +29,11 @@ pub const MAX_MODEL_PARAMETERS: usize = 25;
 pub const DEFAULT_RANK_TOL: f64 = 1e-10;
 /// Default scaled-design condition rejection threshold (TOL-06).
 pub const DEFAULT_MAX_CONDITION: f64 = 1e8;
+/// Default realized-noise-covariance condition cap (TOL-07).
+pub const DEFAULT_MAX_NOISE_CONDITION: f64 = 1e10;
+/// Relative step tolerance for timebase uniformity, mirroring the recorded
+/// waveform preflight convention.
+pub const TIMEBASE_RELATIVE_TOLERANCE: f64 = 1e-6;
 
 /// Executable noise-model selector. Correlated variants are accepted types
 /// with explicit unsupported errors until the WP-3 calibration slice lands.
@@ -58,13 +67,15 @@ pub struct NoiseModel {
     pub variance_bins: Option<Vec<f64>>,
 }
 
-/// Solver tolerances (TOL-06 policy carriers).
+/// Solver tolerances (TOL-06/07 policy carriers).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct JointSolverTolerances {
     /// Relative singular-value floor for rank decisions.
     pub rank_tol: f64,
     /// Scaled-design condition rejection threshold.
     pub max_condition: f64,
+    /// Realized noise-covariance condition cap.
+    pub max_noise_condition: f64,
 }
 
 /// Bundled estimator settings (INTERFACES section 1).
@@ -80,8 +91,64 @@ impl Default for JointSolverTolerances {
         Self {
             rank_tol: DEFAULT_RANK_TOL,
             max_condition: DEFAULT_MAX_CONDITION,
+            max_noise_condition: DEFAULT_MAX_NOISE_CONDITION,
         }
     }
+}
+
+/// Validate a coherent monotonic uniform timebase and return the effective
+/// interval, mirroring the recorded waveform preflight: strict increase,
+/// per-step uniformity within relative tolerance plus serialization
+/// roundoff, and consistency with the declared sample rate
+/// (INTERFACES `invalid_timebase`).
+pub fn validate_timebase(times: &[f64], sample_rate_hz: f64) -> Result<f64> {
+    if times.len() < 2 {
+        return Err(AnalysisError::new(
+            "empty_input",
+            "timebase needs at least two samples",
+        ));
+    }
+    for (index, time) in times.iter().enumerate() {
+        if !time.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                format!("time axis is non-finite at sample {index}"),
+            ));
+        }
+    }
+    if !(sample_rate_hz.is_finite() && sample_rate_hz > 0.0) {
+        return Err(AnalysisError::new(
+            "non_finite_input",
+            "sample_rate_hz must be finite and positive",
+        ));
+    }
+    let interval = times[1] - times[0];
+    if !interval.is_finite() || interval <= 0.0 {
+        return Err(AnalysisError::new(
+            "invalid_timebase",
+            format!("timebase must start with a positive step (got {interval})"),
+        ));
+    }
+    for index in 2..times.len() {
+        let step = times[index] - times[index - 1];
+        let roundoff = times[index].abs().max(times[index - 1].abs()) * f64::EPSILON * 16.0;
+        let tolerance = (interval.abs() * TIMEBASE_RELATIVE_TOLERANCE).max(roundoff);
+        if !step.is_finite() || (step - interval).abs() > tolerance {
+            return Err(AnalysisError::new(
+                "invalid_timebase",
+                format!("timebase step changes at sample {index}: {step}, expected {interval}"),
+            ));
+        }
+    }
+    let declared = 1.0 / sample_rate_hz;
+    let tolerance = declared.abs() * TIMEBASE_RELATIVE_TOLERANCE;
+    if (interval - declared).abs() > tolerance {
+        return Err(AnalysisError::new(
+            "invalid_timebase",
+            format!("timebase interval {interval} disagrees with sample rate {sample_rate_hz}"),
+        ));
+    }
+    Ok(interval)
 }
 
 /// Direct-solver result on one finite window.
@@ -216,27 +283,16 @@ pub fn validate_noise_model(model: &NoiseModel) -> Result<()> {
 }
 
 /// Build the design matrix in `[DC, cos(k phi), sin(k phi), ...]` order with
-/// `phi = 2 pi f t - phase` (NUMERICS section 2).
+/// `phi = 2 pi f t - phase` (NUMERICS section 2). The timebase is validated
+/// for monotonic uniform spacing consistent with the declared sample rate.
 pub fn design_matrix(
     times: &[f64],
     reference_frequency_hz: f64,
     reference_phase_rad: f64,
     model: &HarmonicSignalModel,
+    sample_rate_hz: f64,
 ) -> Result<DMatrix<f64>> {
-    if times.len() < 2 {
-        return Err(AnalysisError::new(
-            "empty_input",
-            "design needs at least two samples",
-        ));
-    }
-    for (index, time) in times.iter().enumerate() {
-        if !time.is_finite() {
-            return Err(AnalysisError::new(
-                "non_finite_input",
-                format!("time axis is non-finite at index {index}"),
-            ));
-        }
-    }
+    let interval = validate_timebase(times, sample_rate_hz)?;
     require_finite("reference_frequency_hz", reference_frequency_hz)?;
     require_finite("reference_phase_rad", reference_phase_rad)?;
     if reference_frequency_hz <= 0.0 {
@@ -245,11 +301,7 @@ pub fn design_matrix(
             "reference_frequency_hz must be positive",
         ));
     }
-    let nyquist = 0.5
-        / times.windows(2).fold(f64::INFINITY, |dt, pair| {
-            let step = pair[1] - pair[0];
-            if step > 0.0 && step < dt { step } else { dt }
-        });
+    let nyquist = 0.5 / interval;
     let mut columns: Vec<Vec<f64>> = Vec::with_capacity(1 + 2 * model.fit_harmonics.len());
     columns.push(vec![1.0; times.len()]);
     for harmonic in &model.fit_harmonics {
@@ -289,6 +341,20 @@ pub fn interpolate_variance(phases: &[f64], bins: &[f64]) -> Result<Vec<f64>> {
             "variance interpolation needs at least two bins",
         ));
     }
+    for (index, bin) in bins.iter().enumerate() {
+        if !bin.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                format!("variance bin {index} is non-finite"),
+            ));
+        }
+        if *bin <= 0.0 {
+            return Err(AnalysisError::new(
+                "invalid_noise_model",
+                format!("variance bin {index} must stay positive (no concealed zeros)"),
+            ));
+        }
+    }
     let count = bins.len() as f64;
     let step = TAU / count;
     let mut out = Vec::with_capacity(phases.len());
@@ -307,6 +373,10 @@ pub fn interpolate_variance(phases: &[f64], bins: &[f64]) -> Result<Vec<f64>> {
 
 /// Whiten design and response together. Returns `(Dw, yw, variance_scale)`
 /// where the design-model covariance is `variance_scale * (Dw^T Dw)^-1`.
+/// For phase-diagonal mode the variance-table condition is gated against
+/// the TOL-07 policy, independently of design conditioning. Interpolated
+/// sample variances are convex combinations of table entries, so gating
+/// the table bounds the realized covariance.
 pub fn whiten(
     design: &DMatrix<f64>,
     signal: &[f64],
@@ -314,12 +384,21 @@ pub fn whiten(
     reference_frequency_hz: f64,
     times: &[f64],
     noise: &NoiseModel,
+    tolerances: JointSolverTolerances,
 ) -> Result<(DMatrix<f64>, DVector<f64>, f64)> {
     if signal.len() != design.nrows() || times.len() != design.nrows() {
         return Err(AnalysisError::new(
             "dimension_mismatch",
             "signal/time length must match design rows",
         ));
+    }
+    for value in design.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "design matrix must be finite",
+            ));
+        }
     }
     for (index, value) in signal.iter().enumerate() {
         if !value.is_finite() {
@@ -328,6 +407,22 @@ pub fn whiten(
                 format!("signal is non-finite at index {index}"),
             ));
         }
+    }
+    for (index, time) in times.iter().enumerate() {
+        if !time.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                format!("time axis is non-finite at sample {index}"),
+            ));
+        }
+    }
+    require_finite("reference_phase_rad", reference_phase_rad)?;
+    require_finite("reference_frequency_hz", reference_frequency_hz)?;
+    if !(tolerances.max_noise_condition.is_finite() && tolerances.max_noise_condition > 0.0) {
+        return Err(AnalysisError::new(
+            "non_finite_input",
+            "max_noise_condition must be positive finite",
+        ));
     }
     let response = DVector::from_vec(signal.to_vec());
     match noise.mode {
@@ -339,11 +434,48 @@ pub fn whiten(
                     "phase_diagonal mode needs variance bins",
                 )
             })?;
+            for bin in bins.iter() {
+                if !bin.is_finite() {
+                    return Err(AnalysisError::new(
+                        "non_finite_input",
+                        "variance bins must be finite",
+                    ));
+                }
+                if *bin <= 0.0 {
+                    return Err(AnalysisError::new(
+                        "invalid_noise_model",
+                        "variance bins must be positive",
+                    ));
+                }
+            }
+            let mut smallest = f64::INFINITY;
+            let mut largest = 0.0_f64;
+            for bin in bins.iter() {
+                smallest = smallest.min(*bin);
+                largest = largest.max(*bin);
+            }
+            if largest > tolerances.max_noise_condition * smallest {
+                return Err(AnalysisError::new(
+                    "ill_conditioned_noise_model",
+                    format!(
+                        "noise variance table condition {largest:.6e}/{smallest:.6e} exceeds cap {:.6e}",
+                        tolerances.max_noise_condition
+                    ),
+                ));
+            }
             let phases: Vec<f64> = times
                 .iter()
                 .map(|time| TAU * reference_frequency_hz * time - reference_phase_rad)
                 .collect();
             let variances = interpolate_variance(&phases, bins)?;
+            for variance in variances.iter() {
+                if !variance.is_finite() || *variance <= 0.0 {
+                    return Err(AnalysisError::new(
+                        "invalid_noise_model",
+                        "realized sample variances must be positive finite",
+                    ));
+                }
+            }
             let mut whitened = design.clone();
             let mut whitened_response = response;
             for (row, variance) in variances.iter().enumerate() {
@@ -363,7 +495,8 @@ pub fn whiten(
 }
 
 /// Thin-QR least squares with explicit rank/condition gates (NUMERICS 5.1).
-/// Returns `(beta, residual_rms, rank, condition)`.
+/// Returns `(beta, residual_rms, rank, condition)` with strictly finite
+/// outputs; arithmetic overflow reports `non_finite_output`.
 pub fn solve_direct(
     whitened_design: &DMatrix<f64>,
     whitened_signal: &DVector<f64>,
@@ -381,6 +514,14 @@ pub fn solve_direct(
             "dimension_mismatch",
             "whitened design needs at least as many rows as columns",
         ));
+    }
+    for value in whitened_design.iter().chain(whitened_signal.iter()) {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "whitened design and signal must be finite before factorization",
+            ));
+        }
     }
     if tolerances.rank_tol <= 0.0 || !tolerances.rank_tol.is_finite() {
         return Err(AnalysisError::new(
@@ -444,17 +585,76 @@ pub fn solve_direct(
         beta[column] = accumulator / diagonal;
     }
     let residual = whitened_signal - whitened_design * &beta;
-    let residual_rms = (residual.norm_squared() / rows as f64).sqrt();
+    // Scale-safe RMS: normalize by the largest magnitude first so a
+    // representable RMS never overflows through norm_squared.
+    let mut scale = 0.0_f64;
+    for value in residual.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                "solver residual is non-finite",
+            ));
+        }
+        scale = scale.max(value.abs());
+    }
+    for value in beta.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                "solver coefficients are non-finite",
+            ));
+        }
+    }
+    let residual_rms = if scale == 0.0 {
+        0.0
+    } else {
+        let scaled: f64 = residual.iter().map(|value| (value / scale).powi(2)).sum();
+        if !scaled.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                "residual sum of squares is non-finite",
+            ));
+        }
+        scale * (scaled / rows as f64).sqrt()
+    };
+    if !residual_rms.is_finite() {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "residual RMS is non-finite",
+        ));
+    }
     Ok((beta, residual_rms, rank, condition))
 }
 
-/// Design-model covariance `(Dw^T Dw)^-1` from the whitened thin R factor
-/// via triangular substitution (never an explicit inverse).
+/// Design-model covariance `(Dw^T Dw)^-1` from the whitened thin R factor.
+/// The triangular factor is applied through substitution against identity
+/// (never a general inverse call); the result is still an inverse-derived
+/// quantity and is labeled as such. All inputs and outputs are validated.
 pub fn covariance_from_qr(
     whitened_design: &DMatrix<f64>,
     variance_scale: f64,
 ) -> Result<DMatrix<f64>> {
-    let columns = whitened_design.ncols();
+    let (rows, columns) = (whitened_design.nrows(), whitened_design.ncols());
+    if rows < columns || columns == 0 {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            "covariance needs at least as many rows as columns",
+        ));
+    }
+    for value in whitened_design.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "whitened design must be finite",
+            ));
+        }
+    }
+    if !variance_scale.is_finite() || variance_scale <= 0.0 {
+        return Err(AnalysisError::new(
+            "invalid_noise_model",
+            "covariance variance scale must be positive finite",
+        ));
+    }
     let upper = whitened_design.clone().qr().r();
     // Solve R1^T Z = I for Z, then C = Z^T Z, scaled.
     let mut inverse_transpose = DMatrix::zeros(columns, columns);
@@ -475,7 +675,15 @@ pub fn covariance_from_qr(
             inverse_transpose[(row, column)] = accumulator / diagonal;
         }
     }
-    Ok(variance_scale * (&inverse_transpose.transpose() * &inverse_transpose))
+    let covariance = variance_scale * (&inverse_transpose.transpose() * &inverse_transpose);
+    if covariance.iter().all(|value| value.is_finite()) {
+        Ok(covariance)
+    } else {
+        Err(AnalysisError::new(
+            "non_finite_output",
+            "design-model covariance is non-finite",
+        ))
+    }
 }
 
 /// Legacy half-amplitude map `Xk = b/2`, `Yk = a/2` in `[X1,Y1,...]` order.
@@ -485,6 +693,14 @@ pub fn map_to_xy(beta: &[f64], model: &HarmonicSignalModel) -> Result<Vec<f64>> 
             "dimension_mismatch",
             "beta length must match the design columns",
         ));
+    }
+    for (index, value) in beta.iter().enumerate() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                format!("coefficients are non-finite at index {index}"),
+            ));
+        }
     }
     let mut xy = Vec::with_capacity(2 * model.output_harmonics.len());
     for output in &model.output_harmonics {
@@ -515,6 +731,14 @@ pub fn map_covariance_to_xy(
             "dimension_mismatch",
             "beta covariance shape must match the design columns",
         ));
+    }
+    for value in covariance_beta.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "beta covariance must be finite",
+            ));
+        }
     }
     let mut rows = Vec::with_capacity(2 * model.output_harmonics.len());
     for output in &model.output_harmonics {
@@ -554,6 +778,17 @@ pub fn rotate_xy_covariance(
             "dimension_mismatch",
             "XY covariance rotation needs the 12 quadrature entries",
         ));
+    }
+    for delta in deltas_rad.iter() {
+        require_finite("rotation delta", *delta)?;
+    }
+    for value in covariance_xy.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "XY covariance must be finite",
+            ));
+        }
     }
     let mut rotated = DMatrix::zeros(12, 12);
     for (ka, delta_a) in deltas_rad.iter().enumerate() {
@@ -611,6 +846,17 @@ pub fn pack_upper_triangle(covariance: &DMatrix<f64>) -> Result<Vec<f64>> {
 }
 
 /// Full direct estimate on one window: validate, build, whiten, solve, map.
+///
+/// `residual_rms` is standardized per-unit-noise: the whitened RMS divided
+/// by the square root of the variance scale, so identity and diagonal modes
+/// report identical values for identical covariances.
+///
+/// This entry point is the uncapped numerical reference used by tests and
+/// comparisons. Bounded production preflight (support caps, workspace and
+/// model-byte budgets) belongs to the plan/application layer, not here.
+/// All joint items are provisional WP-2 interfaces; the backend-private
+/// typed-API boundary (NFR-014) is decided before WP-3/WP-5 consumers
+/// depend on them.
 pub fn estimate_joint(
     times: &[f64],
     signal: &[f64],
@@ -624,7 +870,13 @@ pub fn estimate_joint(
     let tolerances = settings.tolerances;
     validate_signal_model(model, sample_rate_hz)?;
     validate_noise_model(noise)?;
-    let design = design_matrix(times, reference_frequency_hz, reference_phase_rad, model)?;
+    let design = design_matrix(
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        sample_rate_hz,
+    )?;
     let (whitened_design, whitened_signal, variance_scale) = whiten(
         &design,
         signal,
@@ -632,13 +884,27 @@ pub fn estimate_joint(
         reference_frequency_hz,
         times,
         noise,
+        tolerances,
     )?;
-    let (beta, residual_rms, rank, condition) =
+    let (beta, whitened_rms, rank, condition) =
         solve_direct(&whitened_design, &whitened_signal, tolerances)?;
+    if variance_scale <= 0.0 {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "variance scale is non-positive",
+        ));
+    }
+    let residual_rms = whitened_rms / variance_scale.sqrt();
     let beta_vec = beta.as_slice().to_vec();
     let covariance_beta = covariance_from_qr(&whitened_design, variance_scale)?;
     let covariance_xy = map_covariance_to_xy(&covariance_beta, model)?;
     let xy = map_to_xy(&beta_vec, model)?;
+    if !residual_rms.is_finite() {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "standardized residual RMS is non-finite",
+        ));
+    }
     Ok(JointEstimate {
         beta: beta_vec,
         xy,

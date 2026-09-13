@@ -20,6 +20,10 @@
    "sha256": "eff9aa8dcb6405f91b2e8d8015d5620d18b3599adfec923c16adeabf6f7bd95d",
    "bytes": 4009
   },
+  "weighted-golden.json": {
+   "sha256": "327b2a740eba1a7945711dffe01c91deb09ee3966fbb8c8c7a903340f61ea205",
+   "bytes": 94394
+  },
   "legacy-golden.json": {
    "sha256": "ba5e3276cd104435c9f71978d953a45fa71b04e5c9d30d614a1063fb23605898",
    "bytes": 309288

@@ -20,7 +20,12 @@ from pathlib import Path
 import numpy as np
 import scipy
 
-from joint_gls_oracle import solve_case
+from joint_gls_oracle import (
+    covariance_pinv_reference,
+    design_matrix as oracle_design_matrix,
+    solve_case,
+    whiten_diagonal,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = REPO_ROOT / "crates" / "pmoke-analysis-core" / "tests" / "fixtures" / "joint-gls"
@@ -285,6 +290,47 @@ def build_noise_families():
     return families
 
 
+def build_weighted_golden():
+    """Heteroscedastic nonzero-residual case with committed diagonal oracle
+    solution and covariance (F6/F7 differential ground truth)."""
+    rng = np.random.RandomState(20260917)
+    params = {"f_ref": 100000.0, "dt": 1e-7, "t_start": 2.3e-6,
+              "phase_rad": 0.9, "samples": 1024,
+              "fit_harmonics": list(range(1, 13)),
+              "output_harmonics": list(range(1, 7))}
+    times = params["t_start"] + np.arange(params["samples"]) * params["dt"]
+    phi = 2.0 * math.pi * params["f_ref"] * times - params["phase_rad"]
+    true_beta = [0.5] + [v for k in range(1, 13) for v in (0.4 / k, -0.3 / k)]
+    clean = np.full(params["samples"], true_beta[0])
+    for k in range(1, 13):
+        clean += true_beta[2 * k - 1] * np.cos(k * phi) + true_beta[2 * k] * np.sin(k * phi)
+    bins = 16
+    centers = 2.0 * math.pi * (np.arange(bins) + 0.5) / bins
+    profile = 1.0 + 0.3 * np.sin(2.0 * math.pi * (np.arange(bins) + 0.5) / bins)
+    v0 = 4.0
+    sample_phases = np.mod(phi, 2.0 * math.pi)
+    variances = v0 * periodic_interp(sample_phases, centers, profile)
+    signal = clean + np.sqrt(variances) * rng.normal(0.0, 1.0, params["samples"])
+    design = oracle_design_matrix(times.tolist(), params["f_ref"], params["phase_rad"],
+                                  params["fit_harmonics"])
+    whitened, _, _ = whiten_diagonal(design, signal, variances)
+    solved = solve_case(times.tolist(), signal.tolist(), params["f_ref"],
+                        params["phase_rad"], params["fit_harmonics"],
+                        params["output_harmonics"],
+                        noise={"mode": "phase_diagonal", "variances": variances.tolist()})
+    covariance = covariance_pinv_reference(whitened)
+    return [{
+        "name": "heteroscedastic_nonzero_residual", **params,
+        "bins": bins, "v0": v0, "profile_kind": "dimensionless_multiplier",
+        "variance_profile": profile.tolist(),
+        "phases": sample_phases.tolist(), "variances": variances.tolist(),
+        "signal": signal.tolist(), "true_beta": true_beta,
+        "oracle": {"beta": solved["beta"], "xy": solved["xy"],
+                   "rank": solved["rank"], "residual_norm": solved["residual_norm"],
+                   "covariance_beta": covariance.tolist()},
+    }]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -348,6 +394,9 @@ def main():
         "numpy_version": np.__version__, "scipy_version": scipy.__version__,
         "cases": oracle_cases,
     }
+
+    weighted = build_weighted_golden()
+    files["weighted-golden.json"] = {"schema_version": 1, "cases": weighted}
 
     golden = []
     for name, params in [

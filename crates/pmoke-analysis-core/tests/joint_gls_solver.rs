@@ -6,9 +6,10 @@
 use nalgebra::{DMatrix, DVector};
 use pmoke_analysis_core::{
     DEFAULT_MAX_CONDITION, HarmonicSignalModel, JointHarmonicSettings, JointSolverTolerances,
-    NoiseMode, NoiseModel, covariance_from_qr, design_matrix, estimate_joint, map_covariance_to_xy,
-    pack_upper_triangle, rotate_phase, rotate_xy_covariance, solve_direct, validate_noise_model,
-    validate_signal_model, whiten,
+    NoiseMode, NoiseModel, TIMEBASE_RELATIVE_TOLERANCE, covariance_from_qr, design_matrix,
+    estimate_joint, interpolate_variance, map_covariance_to_xy, map_to_xy, pack_upper_triangle,
+    rotate_phase, rotate_xy_covariance, solve_direct, validate_noise_model, validate_signal_model,
+    validate_timebase, whiten,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -109,7 +110,7 @@ fn basis_columns_reproduce_and_mixtures_match_truth() {
     let case = convention_case("mixed_phases_fractional_t0");
     let model = model_1_to_12();
     let times = case_times(&case);
-    let design = design_matrix(&times, case.f_ref, case.phase_rad, &model).unwrap();
+    let design = design_matrix(&times, case.f_ref, case.phase_rad, &model, 1.0 / case.dt).unwrap();
     let (rows, columns) = (design.nrows(), design.ncols());
     assert_eq!(columns, 25);
     let noise = identity_noise();
@@ -166,7 +167,7 @@ fn joint_row_equals_constrained_target_blue() {
     let case = convention_case("large_even_weak_odd");
     let model = model_1_to_12();
     let times = case_times(&case);
-    let design = design_matrix(&times, case.f_ref, case.phase_rad, &model).unwrap();
+    let design = design_matrix(&times, case.f_ref, case.phase_rad, &model, 1.0 / case.dt).unwrap();
     let gram = design.transpose() * &design;
     let gram_inverse = gram.clone().try_inverse().unwrap();
     let estimate = estimate_joint(
@@ -215,7 +216,14 @@ fn joint_row_equals_constrained_target_blue() {
         output_harmonics: OUTPUTS_1_TO_6.to_vec(),
         envelope_degree: 0,
     };
-    let small_design = design_matrix(&times, case.f_ref, case.phase_rad, &small_model).unwrap();
+    let small_design = design_matrix(
+        &times,
+        case.f_ref,
+        case.phase_rad,
+        &small_model,
+        1.0 / case.dt,
+    )
+    .unwrap();
     let small_gram_inverse = (&small_design.transpose() * &small_design)
         .try_inverse()
         .unwrap();
@@ -318,7 +326,7 @@ fn validation_and_rank_gates_reject_bad_models() {
     // Aliased harmonic (12th at 1.2 MHz past 1 MHz Nyquist here).
     let aliased_times: Vec<f64> = (0..512).map(|i| i as f64 * 1e-6).collect();
     assert_eq!(
-        design_matrix(&aliased_times, 100_000.0, 0.0, &good)
+        design_matrix(&aliased_times, 100_000.0, 0.0, &good, 1e6)
             .unwrap_err()
             .code(),
         "aliased_harmonic"
@@ -447,7 +455,7 @@ fn covariance_contracts_hold() {
     let case = convention_case("large_even_weak_odd");
     let model = model_1_to_12();
     let times = case_times(&case);
-    let design = design_matrix(&times, case.f_ref, case.phase_rad, &model).unwrap();
+    let design = design_matrix(&times, case.f_ref, case.phase_rad, &model, 1.0 / case.dt).unwrap();
     let (whitened, _, scale) = whiten(
         &design,
         &case.signal,
@@ -455,6 +463,7 @@ fn covariance_contracts_hold() {
         case.f_ref,
         &times,
         &identity_noise(),
+        JointSolverTolerances::default(),
     )
     .unwrap();
     assert_eq!(scale, 1.0);
@@ -573,4 +582,457 @@ fn reference_variance_scales_covariance_only() {
             close(*b, 4.0 * a, 1.0e-12, "variance scale");
         }
     }
+}
+
+// F1: finite inputs that overflow arithmetic report non_finite_output;
+// factorization inputs are validated before use.
+#[test]
+fn non_finite_results_are_rejected() {
+    let case = convention_case("large_even_weak_odd");
+    let model = model_1_to_12();
+    let times = case_times(&case);
+    let rate = 1.0 / case.dt;
+    let settings = settings(&model, &identity_noise());
+    // All response samples at finite 1e308 overflow the coefficients.
+    let huge = vec![1.0e308; case.samples];
+    assert_eq!(
+        estimate_joint(&times, &huge, case.f_ref, case.phase_rad, rate, &settings)
+            .unwrap_err()
+            .code(),
+        "non_finite_output"
+    );
+    // Finite 1e155-scale response stays finite through scale-safe RMS.
+    let big: Vec<f64> = (0..case.samples)
+        .map(|i| 1.0e155 * (1.0 + 0.001 * (i as f64).sin()))
+        .collect();
+    let estimate =
+        estimate_joint(&times, &big, case.f_ref, case.phase_rad, rate, &settings).unwrap();
+    assert!(estimate.beta.iter().all(|v| v.is_finite()));
+    assert!(estimate.residual_rms.is_finite() && estimate.residual_rms > 0.0);
+    // NaN design or response never reaches factorization.
+    let design = design_matrix(&times, case.f_ref, case.phase_rad, &model, rate).unwrap();
+    let mut nan_design = design.clone();
+    nan_design[(0, 0)] = f64::NAN;
+    assert_eq!(
+        whiten(
+            &nan_design,
+            &case.signal,
+            case.phase_rad,
+            case.f_ref,
+            &times,
+            &identity_noise(),
+            JointSolverTolerances::default()
+        )
+        .unwrap_err()
+        .code(),
+        "non_finite_input"
+    );
+    let mut nan_signal = case.signal.clone();
+    nan_signal[7] = f64::INFINITY;
+    assert_eq!(
+        estimate_joint(
+            &times,
+            &nan_signal,
+            case.f_ref,
+            case.phase_rad,
+            rate,
+            &settings
+        )
+        .unwrap_err()
+        .code(),
+        "non_finite_input"
+    );
+    // Helper preconditions return errors, never panics or silent garbage.
+    assert_eq!(
+        covariance_from_qr(&DMatrix::from_row_slice(2, 3, &[1.0; 6]), 1.0)
+            .unwrap_err()
+            .code(),
+        "dimension_mismatch"
+    );
+    assert_eq!(
+        covariance_from_qr(&DMatrix::identity(2, 2), -1.0)
+            .unwrap_err()
+            .code(),
+        "invalid_noise_model"
+    );
+    assert_eq!(
+        interpolate_variance(&[0.1], &[1.0, -2.0])
+            .unwrap_err()
+            .code(),
+        "invalid_noise_model"
+    );
+    assert_eq!(
+        rotate_xy_covariance(&DMatrix::identity(12, 12), &[f64::NAN; 6])
+            .unwrap_err()
+            .code(),
+        "non_finite_input"
+    );
+    assert_eq!(
+        map_to_xy(&[f64::NAN; 25], &model).unwrap_err().code(),
+        "non_finite_input"
+    );
+}
+
+// F2: incoherent timebases are rejected before design construction.
+#[test]
+fn timebase_validation_rejects_incoherent_grids() {
+    let rate = 100_000.0;
+    let dt = 1.0 / rate;
+    let clean: Vec<f64> = (0..64).map(|i| i as f64 * dt).collect();
+    assert_eq!(validate_timebase(&clean, rate).unwrap(), dt);
+    // Duplicate timestamp.
+    let mut duplicated = clean.clone();
+    duplicated[10] = duplicated[9];
+    // Adjacent swap.
+    let mut swapped = clean.clone();
+    swapped.swap(20, 21);
+    // Quarter-step jitter on one sample.
+    let mut jittered = clean.clone();
+    jittered[30] += 0.25 * dt;
+    for grid in [&duplicated, &swapped, &jittered] {
+        assert_eq!(
+            validate_timebase(grid, rate).unwrap_err().code(),
+            "invalid_timebase"
+        );
+    }
+    // Declared rate disagrees with coordinates by orders of magnitude.
+    assert_eq!(
+        validate_timebase(&clean, 1.0).unwrap_err().code(),
+        "invalid_timebase"
+    );
+    // Serialization roundoff within the established allowance still passes,
+    // including a wobble at half the published tolerance.
+    let wobbled: Vec<f64> = clean
+        .iter()
+        .map(|t| t + t.abs() * (f64::EPSILON * 4.0 + TIMEBASE_RELATIVE_TOLERANCE * 0.5))
+        .collect();
+    assert!(validate_timebase(&wobbled, rate).is_ok());
+}
+
+// F3: identical covariances report identical residual RMS in every mode.
+#[test]
+fn residual_rms_matches_across_equivalent_modes() {
+    let case = convention_case("mixed_phases_fractional_t0");
+    let model = model_1_to_12();
+    let times = case_times(&case);
+    let rate = 1.0 / case.dt;
+    let perturbed: Vec<f64> = case
+        .signal
+        .iter()
+        .zip(times.iter())
+        .map(|(y, t)| y + 1.0e-3 * (2.0 * std::f64::consts::PI * 12345.0 * t).sin())
+        .collect();
+    let identity = estimate_joint(
+        &times,
+        &perturbed,
+        case.f_ref,
+        case.phase_rad,
+        rate,
+        &settings(
+            &model,
+            &NoiseModel {
+                mode: NoiseMode::Identity,
+                reference_variance_v2: 4.0,
+                variance_bins: None,
+            },
+        ),
+    )
+    .unwrap();
+    let diagonal = estimate_joint(
+        &times,
+        &perturbed,
+        case.f_ref,
+        case.phase_rad,
+        rate,
+        &settings(
+            &model,
+            &NoiseModel {
+                mode: NoiseMode::PhaseDiagonal,
+                reference_variance_v2: 1.0,
+                variance_bins: Some(vec![4.0; 8]),
+            },
+        ),
+    )
+    .unwrap();
+    for (a, b) in identity.beta.iter().zip(diagonal.beta.iter()) {
+        close(*a, *b, 1.0e-12, "R=4I beta");
+    }
+    for (row_a, row_b) in identity
+        .covariance_beta
+        .iter()
+        .zip(diagonal.covariance_beta.iter())
+    {
+        for (a, b) in row_a.iter().zip(row_b.iter()) {
+            close(*a, *b, 1.0e-12, "R=4I covariance");
+        }
+    }
+    close(
+        identity.residual_rms,
+        diagonal.residual_rms,
+        1.0e-12,
+        "R=4I residual RMS",
+    );
+}
+
+// F5: realized noise-covariance condition is gated independently (TOL-07).
+#[test]
+fn noise_condition_gate_rejects_extreme_heteroscedasticity() {
+    let case = convention_case("mixed_phases_fractional_t0");
+    let model = model_1_to_12();
+    let times = case_times(&case);
+    let rate = 1.0 / case.dt;
+    let extreme = NoiseModel {
+        mode: NoiseMode::PhaseDiagonal,
+        reference_variance_v2: 1.0,
+        variance_bins: Some(vec![1e-12, 1.0]),
+    };
+    assert_eq!(
+        estimate_joint(
+            &times,
+            &case.signal,
+            case.f_ref,
+            case.phase_rad,
+            rate,
+            &settings(&model, &extreme),
+        )
+        .unwrap_err()
+        .code(),
+        "ill_conditioned_noise_model"
+    );
+    let healthy = NoiseModel {
+        mode: NoiseMode::PhaseDiagonal,
+        reference_variance_v2: 1.0,
+        variance_bins: Some(vec![1.0, 4.0]),
+    };
+    estimate_joint(
+        &times,
+        &case.signal,
+        case.f_ref,
+        case.phase_rad,
+        rate,
+        &settings(&model, &healthy),
+    )
+    .unwrap();
+}
+
+#[derive(Deserialize)]
+struct WeightedGolden {
+    cases: Vec<WeightedCase>,
+}
+
+#[derive(Deserialize)]
+struct WeightedCase {
+    name: String,
+    f_ref: f64,
+    dt: f64,
+    t_start: f64,
+    samples: usize,
+    phase_rad: f64,
+    fit_harmonics: Vec<usize>,
+    output_harmonics: Vec<usize>,
+    bins: usize,
+    v0: f64,
+    variance_profile: Vec<f64>,
+    signal: Vec<f64>,
+    oracle: WeightedOracle,
+}
+
+#[derive(Deserialize)]
+struct WeightedOracle {
+    beta: Vec<f64>,
+    xy: BTreeMap<String, Xy>,
+    rank: usize,
+    residual_norm: f64,
+    covariance_beta: Vec<Vec<f64>>,
+}
+
+fn assert_cov_close(got: &[Vec<f64>], want: &[Vec<f64>], context: &str) {
+    // TOL-04: Frobenius relative error within 1e-7 with a per-entry 1e-12
+    // absolute floor near zero.
+    let mut numerator = 0.0;
+    let mut denominator = 0.0;
+    let mut entries = 0;
+    for (grow, wrow) in got.iter().zip(want.iter()) {
+        for (g, w) in grow.iter().zip(wrow.iter()) {
+            numerator += (g - w).powi(2);
+            denominator += w.powi(2);
+            entries += 1;
+        }
+    }
+    let floor = 1e-24 * entries as f64;
+    assert!(
+        (numerator / (denominator + floor)).sqrt() <= 1.0e-7,
+        "{context}: frob {numerator:.3e} / {denominator:.3e}"
+    );
+}
+
+// F6/F7: nonzero-residual diagonal estimation against committed oracle
+// coefficients, residuals, and absolute covariance.
+#[test]
+fn diagonal_mode_matches_oracle_with_nonzero_residual() {
+    let payload: WeightedGolden =
+        serde_json::from_str(include_str!("fixtures/joint-gls/weighted-golden.json")).unwrap();
+    assert_eq!(payload.cases.len(), 1);
+    let case = &payload.cases[0];
+    let model = HarmonicSignalModel {
+        fit_harmonics: case.fit_harmonics.clone(),
+        output_harmonics: case.output_harmonics.clone(),
+        envelope_degree: 0,
+    };
+    assert_eq!(case.bins, case.variance_profile.len());
+    let absolute_bins: Vec<f64> = case.variance_profile.iter().map(|v| case.v0 * v).collect();
+    let noise = NoiseModel {
+        mode: NoiseMode::PhaseDiagonal,
+        reference_variance_v2: case.v0,
+        variance_bins: Some(absolute_bins),
+    };
+    let times: Vec<f64> = (0..case.samples)
+        .map(|index| case.t_start + index as f64 * case.dt)
+        .collect();
+    let estimate = estimate_joint(
+        &times,
+        &case.signal,
+        case.f_ref,
+        case.phase_rad,
+        1.0 / case.dt,
+        &settings(&model, &noise),
+    )
+    .unwrap();
+    assert_eq!(estimate.rank, case.oracle.rank);
+    assert!(estimate.residual_rms > 0.0);
+    let scale = case
+        .oracle
+        .beta
+        .iter()
+        .fold(0.0_f64, |max, value| max.max(value.abs()))
+        .max(1.0);
+    for (got, want) in estimate.beta.iter().zip(case.oracle.beta.iter()) {
+        assert!(
+            (got - want).abs() <= 1.0e-10 + 1.0e-8 * scale,
+            "{} beta: {got} vs {want}",
+            case.name
+        );
+    }
+    for key in case.output_harmonics.iter().map(usize::to_string) {
+        let position = case
+            .output_harmonics
+            .iter()
+            .position(|h| h.to_string() == key)
+            .unwrap();
+        let want = case.oracle.xy.get(&key).unwrap();
+        assert!(
+            (estimate.xy[2 * position] - want.x).abs() <= 1.0e-10 + 1.0e-8 * scale,
+            "{} X{key}",
+            case.name
+        );
+        assert!(
+            (estimate.xy[2 * position + 1] - want.y).abs() <= 1.0e-10 + 1.0e-8 * scale,
+            "{} Y{key}",
+            case.name
+        );
+    }
+    assert_cov_close(
+        &estimate.covariance_beta,
+        &case.oracle.covariance_beta,
+        &case.name,
+    );
+    // Standardized RMS reproduces the oracle whitened norm per sample.
+    close(
+        estimate.residual_rms,
+        case.oracle.residual_norm / (case.samples as f64).sqrt(),
+        1.0e-9,
+        "standardized residual RMS",
+    );
+}
+
+// F6: constant-profile diagonal mode equals scaled identity inference.
+#[test]
+fn constant_profile_matches_identity() {
+    let case = convention_case("large_even_weak_odd");
+    let model = model_1_to_12();
+    let times = case_times(&case);
+    let rate = 1.0 / case.dt;
+    let perturbed: Vec<f64> = case
+        .signal
+        .iter()
+        .zip(times.iter())
+        .map(|(y, t)| y + 2.0e-4 * (2.0 * std::f64::consts::PI * 7777.0 * t).cos())
+        .collect();
+    let identity = estimate_joint(
+        &times,
+        &perturbed,
+        case.f_ref,
+        case.phase_rad,
+        rate,
+        &settings(
+            &model,
+            &NoiseModel {
+                mode: NoiseMode::Identity,
+                reference_variance_v2: 2.5,
+                variance_bins: None,
+            },
+        ),
+    )
+    .unwrap();
+    let diagonal = estimate_joint(
+        &times,
+        &perturbed,
+        case.f_ref,
+        case.phase_rad,
+        rate,
+        &settings(
+            &model,
+            &NoiseModel {
+                mode: NoiseMode::PhaseDiagonal,
+                reference_variance_v2: 1.0,
+                variance_bins: Some(vec![2.5; 4]),
+            },
+        ),
+    )
+    .unwrap();
+    for (a, b) in identity.beta.iter().zip(diagonal.beta.iter()) {
+        close(*a, *b, 1.0e-12, "constant-profile beta");
+    }
+    assert_cov_close(
+        &diagonal.covariance_beta,
+        &identity.covariance_beta,
+        "profile",
+    );
+    close(
+        identity.residual_rms,
+        diagonal.residual_rms,
+        1.0e-12,
+        "profile RMS",
+    );
+}
+
+// F7: reported target variance reproduces the theoretical prediction.
+#[test]
+fn reported_target_variance_matches_theory() {
+    let case = convention_case("large_even_weak_odd");
+    let model = model_1_to_12();
+    let times = case_times(&case);
+    let design = design_matrix(&times, case.f_ref, case.phase_rad, &model, 1.0 / case.dt).unwrap();
+    let gram_inverse = (&design.transpose() * &design).try_inverse().unwrap();
+    let estimate = estimate_joint(
+        &times,
+        &case.signal,
+        case.f_ref,
+        case.phase_rad,
+        1.0 / case.dt,
+        &settings(&model, &identity_noise()),
+    )
+    .unwrap();
+    // X3 selector in beta order with the 1/2 amplitude mapping.
+    let parameters = gram_inverse.nrows();
+    let mut selector = vec![0.0; parameters];
+    selector[2 + 2 * 2] = 0.5;
+    let mut theory = 0.0;
+    for (i, &ci) in selector.iter().enumerate() {
+        for (j, &cj) in selector.iter().enumerate() {
+            theory += ci * gram_inverse[(i, j)] * cj;
+        }
+    }
+    let reported = estimate.covariance_xy[4][4];
+    close(reported, theory, 1.0e-9, "X3 target variance");
 }
