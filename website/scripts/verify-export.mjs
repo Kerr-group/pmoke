@@ -13,12 +13,12 @@ const output = path.resolve('out');
 // CI; serde's internally-tagged deserialization dominates the delta, so the
 // budgets below carry headroom for toolchain variance instead of exact fit.
 // Joint-window WASM parity (shared core estimate_joint going live in the
-// bundle) measured 844157 B raw / 287182 B gzip locally and 801578 B raw on
-// CI against a 755966 B raw / 250294 B gzip main baseline; the delta is the
-// direct QR solver with all four whitening paths, so the raw budget below
-// carries ~6% headroom over the CI figure.
+// bundle) measured 844157 B raw / 287182 B gzip locally and 801578 B raw /
+// 286057 B gzip on CI against a 755966 B raw / 250294 B gzip main baseline;
+// the delta is the direct QR solver with all four whitening paths, so the
+// budgets below carry ~6% headroom over the CI figures.
 const M4_WASM_RAW_BUDGET_BYTES = 832 * 1024;
-const M4_WASM_GZIP_BUDGET_BYTES = 260 * 1024;
+const M4_WASM_GZIP_BUDGET_BYTES = 300 * 1024;
 // Warn at the former budget so growth is visible, then retain a hard 1 MiB
 // ceiling for the bilingual documentation search index.
 const M2_SEARCH_INDEX_WARNING_BYTES = 960 * 1024;
