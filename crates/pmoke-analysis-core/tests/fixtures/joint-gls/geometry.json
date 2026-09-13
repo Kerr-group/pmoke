@@ -1,0 +1,271 @@
+{
+ "schema_version": 1,
+ "cases": [
+  {
+   "name": "integral_window_stride20",
+   "length": 20000,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "half_window_s": 0.001,
+   "n_half": 100,
+   "integration_points": 1000,
+   "i_start": 7,
+   "i_end": 993,
+   "row_count": 987,
+   "first_center": 140,
+   "last_center": 19860,
+   "first_time": 0.0014000000000000002,
+   "last_time": 0.19860000000000003,
+   "first_support": [
+    39,
+    241
+   ],
+   "last_support": [
+    19759,
+    19961
+   ]
+  },
+  {
+   "name": "fractional_window_stride100",
+   "length": 20000,
+   "dt": 1e-05,
+   "stride": 100,
+   "f_ref": 999.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "half_window_s": 0.001001001001001001,
+   "n_half": 100,
+   "integration_points": 200,
+   "i_start": 3,
+   "i_end": 197,
+   "row_count": 195,
+   "first_center": 300,
+   "last_center": 19700,
+   "first_time": 0.003,
+   "last_time": 0.197,
+   "first_support": [
+    199,
+    401
+   ],
+   "last_support": [
+    19599,
+    19801
+   ]
+  },
+  {
+   "name": "stride1_fine",
+   "length": 3000,
+   "dt": 1e-05,
+   "stride": 1,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "half_window_s": 0.001,
+   "n_half": 100,
+   "integration_points": 3000,
+   "i_start": 103,
+   "i_end": 2897,
+   "row_count": 2795,
+   "first_center": 103,
+   "last_center": 2897,
+   "first_time": 0.00103,
+   "last_time": 0.028970000000000003,
+   "first_support": [
+    2,
+    204
+   ],
+   "last_support": [
+    2796,
+    2998
+   ]
+  },
+  {
+   "name": "nonzero_t_start",
+   "length": 20000,
+   "dt": 1e-05,
+   "stride": 100,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": -0.028,
+   "half_window_s": 0.001,
+   "n_half": 100,
+   "integration_points": 200,
+   "i_start": 3,
+   "i_end": 197,
+   "row_count": 195,
+   "first_center": 300,
+   "last_center": 19700,
+   "first_time": -0.025,
+   "last_time": 0.169,
+   "first_support": [
+    199,
+    401
+   ],
+   "last_support": [
+    19599,
+    19801
+   ]
+  },
+  {
+   "name": "wide_window",
+   "length": 20000,
+   "dt": 1e-05,
+   "stride": 50,
+   "f_ref": 1000.0,
+   "cycles": 2.5,
+   "t_start": 0.0,
+   "half_window_s": 0.0025,
+   "n_half": 249,
+   "integration_points": 400,
+   "i_start": 7,
+   "i_end": 393,
+   "row_count": 387,
+   "first_center": 350,
+   "last_center": 19650,
+   "first_time": 0.0035,
+   "last_time": 0.1965,
+   "first_support": [
+    100,
+    600
+   ],
+   "last_support": [
+    19400,
+    19900
+   ]
+  },
+  {
+   "name": "nine_rows_421",
+   "length": 421,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "half_window_s": 0.001,
+   "n_half": 100,
+   "integration_points": 22,
+   "i_start": 7,
+   "i_end": 15,
+   "row_count": 9,
+   "first_center": 140,
+   "last_center": 300,
+   "first_time": 0.0014000000000000002,
+   "last_time": 0.003,
+   "first_support": [
+    39,
+    241
+   ],
+   "last_support": [
+    199,
+    401
+   ]
+  },
+  {
+   "name": "short_two_rows",
+   "length": 300,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "half_window_s": 0.001,
+   "n_half": 100,
+   "integration_points": 15,
+   "i_start": 7,
+   "i_end": 8,
+   "row_count": 2,
+   "first_center": 140,
+   "last_center": 160,
+   "first_time": 0.0014000000000000002,
+   "last_time": 0.0016,
+   "first_support": [
+    39,
+    241
+   ],
+   "last_support": [
+    59,
+    261
+   ]
+  },
+  {
+   "name": "boundary_invalid_260",
+   "length": 260,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "expected_error": "signal_too_short"
+  },
+  {
+   "name": "boundary_single_row_261",
+   "length": 261,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "half_window_s": 0.001,
+   "n_half": 100,
+   "integration_points": 14,
+   "i_start": 7,
+   "i_end": 7,
+   "row_count": 1,
+   "first_center": 140,
+   "last_center": 140,
+   "first_time": 0.0014000000000000002,
+   "last_time": 0.0014000000000000002,
+   "first_support": [
+    39,
+    241
+   ],
+   "last_support": [
+    39,
+    241
+   ]
+  },
+  {
+   "name": "incomplete_window",
+   "length": 200,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "expected_error": "signal_too_short"
+  },
+  {
+   "name": "single_sample",
+   "length": 1,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "expected_error": "signal_too_short"
+  },
+  {
+   "name": "zero_stride",
+   "length": 20000,
+   "dt": 1e-05,
+   "stride": 0,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "expected_error": "invalid_stride"
+  },
+  {
+   "name": "subsample_window",
+   "length": 20000,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 2000000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "expected_error": "window_too_short"
+  }
+ ]
+}

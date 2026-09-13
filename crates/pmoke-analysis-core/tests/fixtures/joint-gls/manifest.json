@@ -1,0 +1,32 @@
+{
+ "schema_version": 1,
+ "license": "CC0-1.0",
+ "generator": "scripts/generate_joint_gls_fixtures.py",
+ "numpy_version": "2.5.1",
+ "files": {
+  "geometry.json": {
+   "sha256": "7d2187996cd497f7a7ef67cf4a463dd58626e1f60c720063bec05a7513e0b169",
+   "bytes": 4824
+  },
+  "conventions.json": {
+   "sha256": "62ea96791ef1b380b0f4af3eb8f2c3f78c583cb8bdc641945f1be14b8c7bee8b",
+   "bytes": 78420
+  },
+  "noise.json": {
+   "sha256": "940638a10a2a3a2d8d36007f84611eeefa129310b915b5d2e00fdc9165115b1b",
+   "bytes": 299692
+  },
+  "oracle-expected.json": {
+   "sha256": "eff9aa8dcb6405f91b2e8d8015d5620d18b3599adfec923c16adeabf6f7bd95d",
+   "bytes": 4009
+  },
+  "weighted-golden.json": {
+   "sha256": "327b2a740eba1a7945711dffe01c91deb09ee3966fbb8c8c7a903340f61ea205",
+   "bytes": 94394
+  },
+  "legacy-golden.json": {
+   "sha256": "ba5e3276cd104435c9f71978d953a45fa71b04e5c9d30d614a1063fb23605898",
+   "bytes": 309288
+  }
+ }
+}
