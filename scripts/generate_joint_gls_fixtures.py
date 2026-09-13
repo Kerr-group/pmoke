@@ -18,6 +18,9 @@ import math
 from pathlib import Path
 
 import numpy as np
+import scipy
+
+from joint_gls_oracle import solve_case
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = REPO_ROOT / "crates" / "pmoke-analysis-core" / "tests" / "fixtures" / "joint-gls"
@@ -329,6 +332,22 @@ def main():
     files["conventions.json"] = {"schema_version": 1, "cases": conventions}
 
     files["noise.json"] = {"schema_version": 1, "families": build_noise_families()}
+
+    oracle_cases = []
+    for case in [c for c in conventions if "t_start" in c]:
+        times = (case["t_start"] + np.arange(case["samples"]) * case["dt"]).tolist()
+        solved = solve_case(times, case["signal"], case["f_ref"], case["phase_rad"],
+                            case["fit_harmonics"], case["output_harmonics"])
+        oracle_cases.append({
+            "name": case["name"], "beta": solved["beta"], "xy": solved["xy"],
+            "rank": solved["rank"], "residual_norm": solved["residual_norm"],
+        })
+    files["oracle-expected.json"] = {
+        "schema_version": 1,
+        "solver": "scipy.linalg.lstsq gelsd on identity-whitened design",
+        "numpy_version": np.__version__, "scipy_version": scipy.__version__,
+        "cases": oracle_cases,
+    }
 
     golden = []
     for name, params in [

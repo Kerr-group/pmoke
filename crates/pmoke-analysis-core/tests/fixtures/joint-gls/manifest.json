@@ -16,6 +16,10 @@
    "sha256": "940638a10a2a3a2d8d36007f84611eeefa129310b915b5d2e00fdc9165115b1b",
    "bytes": 299692
   },
+  "oracle-expected.json": {
+   "sha256": "eff9aa8dcb6405f91b2e8d8015d5620d18b3599adfec923c16adeabf6f7bd95d",
+   "bytes": 4009
+  },
   "legacy-golden.json": {
    "sha256": "ba5e3276cd104435c9f71978d953a45fa71b04e5c9d30d614a1063fb23605898",
    "bytes": 309288

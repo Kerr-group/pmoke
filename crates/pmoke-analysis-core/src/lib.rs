@@ -1,10 +1,18 @@
 mod error;
+pub mod joint;
 mod lockin;
 mod moke;
 mod phase;
 mod synthetic;
 
 pub use error::{AnalysisError, Result};
+pub use joint::{
+    DEFAULT_MAX_CONDITION, DEFAULT_RANK_TOL, HarmonicSignalModel, JointEstimate,
+    JointHarmonicSettings, JointSolverTolerances, MAX_MODEL_PARAMETERS, NoiseMode, NoiseModel,
+    covariance_from_qr, design_matrix, estimate_joint, interpolate_variance, map_covariance_to_xy,
+    map_to_xy, pack_upper_triangle, rotate_xy_covariance, solve_direct, validate_noise_model,
+    validate_signal_model, whiten,
+};
 pub use lockin::{
     BoxcarLegacyOutput, BoxcarLegacyPairOutput, BoxcarLegacySettings, BoxcarMeanOutput,
     BoxcarMeanSettings, FiniteSignal, LockinMetadata, analyze_boxcar_legacy,
