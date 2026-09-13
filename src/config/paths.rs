@@ -113,6 +113,21 @@ impl ArtifactPaths {
             .join(format!("ch{channel}_quality.csv"))
     }
 
+    /// Conditional XY covariance artifact (CSV plus NPY mirror).
+    pub fn lockin_covariance_csv(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_covariance.csv"))
+    }
+
+    /// NPY mirror of [`ArtifactPaths::lockin_covariance_csv`] with identical
+    /// time-plus-covariance columns.
+    pub fn lockin_covariance_npy(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_covariance.npy"))
+    }
+
     pub fn lockin_xy_npy(&self, channel: u8) -> PathBuf {
         self.analysis_dir()
             .join("lockin")
@@ -355,6 +370,14 @@ impl ArtifactResolver {
 
     pub fn lockin_quality_csv(&self, channel: u8) -> PathBuf {
         self.paths.lockin_quality_csv(channel)
+    }
+
+    pub fn lockin_covariance_csv(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_covariance_csv(channel)
+    }
+
+    pub fn lockin_covariance_npy(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_covariance_npy(channel)
     }
 
     pub fn lockin_rotated_csv(&self, channel: u8) -> PathBuf {
