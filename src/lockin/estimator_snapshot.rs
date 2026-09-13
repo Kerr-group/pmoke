@@ -290,7 +290,7 @@ pub fn validate_estimator_snapshot(
         bail!("{}", here("negative solver max_jitter_v2"));
     }
     if snapshot.signal_model.fit_harmonics.is_empty()
-        || snapshot.signal_model.fit_harmonics.iter().any(|h| *h == 0)
+        || snapshot.signal_model.fit_harmonics.contains(&0)
     {
         bail!("{}", here("an empty or zero-containing fit harmonic list"));
     }
