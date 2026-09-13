@@ -4,7 +4,7 @@ pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
 
-    if !matches!(cfg.version, 3..=6) {
+    if !matches!(cfg.version, 3..=7) {
         errors.push(ConfigDiagnostic::new(
             DiagnosticKind::Validation,
             Some("version".to_string()),
@@ -80,6 +80,29 @@ pub(super) fn validate_common(cfg: &mut Config) -> ValidationSummary {
             ),
         ));
     }
+    // Legacy-compat mirrors must track the validated window contract.
+    if cfg.lockin.lpf_half_window_cycles != cfg.lockin.window.half_window_cycles {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.window.half_window_cycles".to_string()),
+            "internal error: legacy window mirror diverged from lockin.window",
+            None,
+        ));
+    }
+    if !cfg.lockin.window.half_window_cycles.is_finite()
+        || cfg.lockin.window.half_window_cycles <= 0.0
+    {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.window.half_window_cycles".to_string()),
+            format!(
+                "lockin.window.half_window_cycles must be positive (got {})",
+                cfg.lockin.window.half_window_cycles
+            ),
+            None,
+        ));
+    }
+    validate_estimator(&cfg.lockin, &cfg.roles.signal_ch, &mut errors);
     if let Some(label) = &cfg.lockin.lpf_debug_label
         && !is_safe_debug_label(label)
     {
@@ -489,6 +512,159 @@ fn validate_raw_csv_exists(cfg: &Config) -> Result<()> {
     let resolver = cfg.resolver();
     let path = resolver.waveform_csv();
     validate_file_exists(&path, &path.display().to_string())
+}
+
+/// Validates the `[lockin.estimator]` contract. A well-formed GLS
+/// configuration is accepted here; execution availability is decided at the
+/// lock-in entry point, never by validation.
+fn validate_estimator(lockin: &Lockin, signal_ch: &[u8], errors: &mut Vec<ConfigDiagnostic>) {
+    let config = match &lockin.estimator {
+        LockinEstimator::BoxcarLegacy => return,
+        LockinEstimator::JointHarmonicGls(config) => config,
+    };
+    if config.fit_harmonics.is_empty() {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.fit_harmonics".to_string()),
+            "lockin.estimator.fit_harmonics must not be empty",
+            None,
+        ));
+    }
+    let mut previous = 0usize;
+    for (idx, harmonic) in config.fit_harmonics.iter().enumerate() {
+        if *harmonic == 0 || *harmonic <= previous {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("lockin.estimator.fit_harmonics[{idx}]")),
+                format!(
+                    "lockin.estimator.fit_harmonics must be ascending unique positive harmonics (got {} at index {idx})",
+                    config
+                        .fit_harmonics
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                None,
+            ));
+            break;
+        }
+        previous = *harmonic;
+    }
+    let parameters = 1 + 2 * config.fit_harmonics.len();
+    if parameters > pmoke_analysis_core::MAX_MODEL_PARAMETERS {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.fit_harmonics".to_string()),
+            format!(
+                "lockin.estimator.fit_harmonics needs {parameters} model parameters, above the limit of {}",
+                pmoke_analysis_core::MAX_MODEL_PARAMETERS
+            ),
+            None,
+        ));
+    }
+    if config.output_harmonics.as_slice() != [1usize, 2, 3, 4, 5, 6] {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.output_harmonics".to_string()),
+            "lockin.estimator.output_harmonics must be exactly [1, 2, 3, 4, 5, 6]",
+            None,
+        ));
+    }
+    for harmonic in &config.output_harmonics {
+        if !config.fit_harmonics.contains(harmonic) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin.estimator.fit_harmonics".to_string()),
+                format!("lockin.estimator.fit_harmonics must contain output harmonic {harmonic}"),
+                None,
+            ));
+        }
+    }
+    if config.envelope_degree != 0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.envelope_degree".to_string()),
+            format!(
+                "lockin.estimator.envelope_degree must be exactly 0 in v1 (got {})",
+                config.envelope_degree
+            ),
+            None,
+        ));
+    }
+    validate_estimator_calibrations(config, signal_ch, errors);
+}
+
+fn validate_estimator_calibrations(
+    config: &JointHarmonicGlsConfig,
+    signal_ch: &[u8],
+    errors: &mut Vec<ConfigDiagnostic>,
+) {
+    const BASE: &str = "lockin.estimator.calibrations";
+    let mut seen: Vec<u8> = Vec::with_capacity(config.calibrations.len());
+    for (idx, calibration) in config.calibrations.iter().enumerate() {
+        if !signal_ch.contains(&calibration.channel) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("{BASE}[{idx}].channel")),
+                format!(
+                    "lockin.estimator.calibrations[{idx}].channel ({}) is not a configured lock-in channel",
+                    calibration.channel
+                ),
+                Some("use exactly one entry per lockin.channels value".to_string()),
+            ));
+        }
+        if seen.contains(&calibration.channel) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("{BASE}[{idx}].channel")),
+                format!(
+                    "duplicate lockin.estimator.calibrations entry for channel {}",
+                    calibration.channel
+                ),
+                None,
+            ));
+        }
+        seen.push(calibration.channel);
+        if !is_concrete_sha256(&calibration.sha256) {
+            let template_hint = if calibration.sha256.contains('$')
+                || calibration.sha256.contains('{')
+                || calibration.sha256.contains('}')
+            {
+                "expand the calibration template placeholder into the 64-character lowercase hex digest before running"
+            } else {
+                "use the 64-character lowercase hex digest recorded when the calibration artifact was created"
+            };
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(format!("{BASE}[{idx}].sha256")),
+                format!(
+                    "lockin.estimator.calibrations[{idx}].sha256 must be 64 lowercase hex characters (got {:?})",
+                    calibration.sha256
+                ),
+                Some(template_hint.to_string()),
+            ));
+        }
+    }
+    for channel in signal_ch {
+        if !seen.contains(channel) {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some(BASE.to_string()),
+                format!(
+                    "lockin.estimator.calibrations is missing an entry for lock-in channel {channel}"
+                ),
+                Some("use exactly one entry per lockin.channels value".to_string()),
+            ));
+        }
+    }
+}
+
+fn is_concrete_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn validate_raw_metadata_exists(cfg: &Config) -> Result<()> {

@@ -1,6 +1,6 @@
 use super::{
     Config, ConfigLoad, FetchAnalysisInput, Plot, load_from_path, load_from_str, render_config_v4,
-    render_config_v5, render_config_v6,
+    render_config_v5, render_config_v6, render_config_v7,
 };
 use crate::constants::{FETCHED_FNAME, RAW_METADATA_FNAME, RAW_WAVEFORM_DIR};
 use anyhow::{Context, Result, anyhow, bail};
@@ -9,7 +9,11 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const LATEST_CONFIG_VERSION: u32 = 6;
+pub const LATEST_CONFIG_VERSION: u32 = 7;
+
+/// Canonical config versions accepted by this pmoke (browser validation and
+/// migration targets). v6 stays accepted so existing configs keep working.
+pub const SUPPORTED_CONFIG_VERSIONS: &[u32] = &[6, 7];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MigrationLevel {
@@ -165,7 +169,7 @@ pub fn plan_migration(
 
     if !matches!(target_version, 2..=LATEST_CONFIG_VERSION) {
         bail!(
-            "unsupported migration target v{target_version}; this pmoke supports migration to v2, v3, v4, or v{LATEST_CONFIG_VERSION}"
+            "unsupported migration target v{target_version}; this pmoke supports migration to v2, v3, v4, v5, v6, or v{LATEST_CONFIG_VERSION}"
         );
     }
     if source_version > target_version {
@@ -265,11 +269,20 @@ pub fn plan_migration(
                 .context("source config cannot be represented by the v5 output schema")?,
             "generated v5 config",
         )
-    } else {
+    } else if target_version == 6 {
         (
             render_config_v6(&config)
                 .context("source config cannot be represented by the v6 output schema")?,
             "generated v6 config",
+        )
+    } else {
+        issues.push(MigrationIssue::notice(
+            "the migrated estimator is boxcar_legacy with a reference-cycles window: switching to joint_harmonic_gls is an explicit opt-in after reviewing the behavior change",
+        ));
+        (
+            render_config_v7(&config)
+                .context("source config cannot be represented by the v7 output schema")?,
+            "generated v7 config",
         )
     };
     let (target_config, target_warnings) = ready_config(load_from_str(&target_toml), target_label)?;

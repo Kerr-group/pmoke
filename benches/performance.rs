@@ -1,5 +1,5 @@
 use numpy::PyUntypedArrayMethods;
-use pmoke::config::{Lockin, LockinLpfKind, Plot, PlotDecimation};
+use pmoke::config::{Lockin, LockinEstimator, LockinLpfKind, LockinWindow, Plot, PlotDecimation};
 use pmoke::lockin::lockin_core::LockinProcessor;
 use pmoke::plot::decimate_xy_2d;
 use pmoke::python;
@@ -544,6 +544,8 @@ fn benchmark_lockin() -> Lockin {
         stride_samples: 100,
         lpf_kind: LockinLpfKind::BoxcarLegacy,
         lpf_half_window_cycles: 1.0,
+        window: LockinWindow::legacy_boxcar(1.0),
+        estimator: LockinEstimator::BoxcarLegacy,
         lpf_debug_output: false,
         lpf_debug_label: None,
         lpf_debug_overwrite: false,

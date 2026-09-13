@@ -1,4 +1,4 @@
-use crate::config::{Lockin, LockinLpfKind};
+use crate::config::Lockin;
 use crate::lockin::lockin_params::LockinParams;
 use crate::utils::time_axis::TimeAxisRef;
 use anyhow::{Result, anyhow, bail};
@@ -49,8 +49,14 @@ impl<'a> LockinProcessor<'a> {
         if !omega_tref.is_finite() {
             bail!("lock-in reference phase must be finite");
         }
-        if !matches!(lockin.lpf_kind, LockinLpfKind::BoxcarLegacy) {
-            bail!("the active runtime supports only the boxcar_legacy LPF");
+        if !matches!(
+            lockin.estimator,
+            crate::config::LockinEstimator::BoxcarLegacy
+        ) {
+            bail!(
+                "joint_harmonic_gls estimation is not implemented in this build (config selects estimator {}); refusing to fall back to boxcar_legacy",
+                lockin.estimator_name()
+            );
         }
         let finite_data = pmoke_analysis_core::FiniteSignal::new(data)?;
         let params = LockinParams::from_geometry(

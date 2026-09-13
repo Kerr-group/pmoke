@@ -143,7 +143,7 @@ fn v1_filter_length_is_migrated_with_explicit_lossy_warning() {
 }
 
 #[test]
-fn v2_raw_input_can_advance_to_v6_without_legacy_timebase() {
+fn v2_raw_input_can_advance_to_v7_without_legacy_timebase() {
     let v2 = v3_config()
         .replacen(
             "version = 3",
@@ -157,10 +157,12 @@ fn v2_raw_input_can_advance_to_v6_without_legacy_timebase() {
         );
     let fixture = TempConfig::new(&v2);
     let plan = plan_latest_executable_migration(&fixture.path, Some(&fixture.path)).unwrap();
-    assert_eq!(plan.target_version, 6);
+    assert_eq!(plan.target_version, 7);
     assert!(plan.changed);
     assert!(!plan.target_toml.contains("[timebase]"));
-    assert!(plan.target_toml.contains("version = 6"));
+    assert!(plan.target_toml.contains("version = 7"));
+    assert!(plan.target_toml.contains("[lockin.window]"));
+    assert!(plan.target_toml.contains("[lockin.estimator]"));
     assert!(plan.target_toml.contains("[moke]"));
 }
 
@@ -319,4 +321,65 @@ fn missing_scope_blocks_v4_migration() {
     let fixture = TempConfig::new(&config);
     let error = plan_migration(&fixture.path, Some(&fixture.path), 4).unwrap_err();
     assert!(format!("{error:#}").contains("no oscilloscope"));
+}
+
+fn v6_boxcar_config() -> String {
+    r#"version = 6
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+[data]
+output = "raw"
+input = "raw"
+[[sensors]]
+channel = 1
+scale = { factor = 1.0 }
+label = "field"
+unit = "T"
+[pulse]
+background_before = { start = -0.005, end = -0.001 }
+background_after = { start = 0.01, end = 0.02 }
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.005 }
+stride_samples = 100
+window_samples = 1000
+[lockin]
+channels = [3]
+workers = 2
+stride_samples = 100
+filter = { kind = "boxcar_legacy", half_window_cycles = 1.0 }
+[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+[moke]
+sensor = 1
+method = "harmonics"
+factor = -1.0
+"#
+    .to_string()
+}
+
+#[test]
+fn v6_plan_advances_to_v7_with_explicit_legacy_estimator() {
+    let fixture = TempConfig::new(&v6_boxcar_config());
+    let plan = plan_migration(&fixture.path, Some(&fixture.path), 7).unwrap();
+    assert_eq!(plan.source_version, 6);
+    assert_eq!(plan.target_version, 7);
+    assert!(plan.target_toml.contains("version = 7"));
+    assert!(plan.target_toml.contains("[lockin.window]"));
+    assert!(plan.target_toml.contains("kind = \"reference_cycles\""));
+    assert!(plan.target_toml.contains("kind = \"boxcar_legacy\""));
+    assert!(!plan.target_toml.contains("filter = "));
+    assert!(plan.issues.iter().any(|issue| {
+        issue.message.contains("boxcar_legacy") && issue.message.contains("explicit opt-in")
+    }));
+    match crate::config::load_from_str(&plan.target_toml) {
+        crate::config::ConfigLoad::Ready { config, .. } => {
+            assert_eq!(config.version, 7);
+            assert_eq!(config.lockin.estimator_name(), "boxcar_legacy");
+        }
+        crate::config::ConfigLoad::Diagnostics(diagnostics) => {
+            panic!("migrated config failed to load: {diagnostics:?}")
+        }
+    }
 }

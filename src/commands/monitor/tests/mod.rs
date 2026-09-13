@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{
-    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Lockin, LockinLpfKind, Moke, MokeType, Phase,
-    Plot, Pulse, Reference, Roles, Screenshot, Window,
+    Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Lockin, LockinEstimator, LockinLpfKind,
+    LockinWindow, Moke, MokeType, Phase, Plot, Pulse, Reference, Roles, Screenshot, Window,
 };
 
 fn test_app() -> MonitorApp {
@@ -67,6 +67,8 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
                     stride_samples: 1,
                     lpf_kind: LockinLpfKind::BoxcarLegacy,
                     lpf_half_window_cycles: 1.0,
+                    window: LockinWindow::legacy_boxcar(1.0),
+                    estimator: LockinEstimator::BoxcarLegacy,
                     lpf_debug_output: false,
                     lpf_debug_label: None,
                     lpf_debug_overwrite: false,

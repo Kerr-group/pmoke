@@ -9,6 +9,9 @@ pub fn render_normalized_config(config: &Config) -> Result<String> {
             "current-schema normalized config has no oscilloscope configuration"
         ));
     }
+    if config.version >= 7 && config.instruments.is_some() {
+        return render_config_v7(config);
+    }
     let can_render_v6 = config.instruments.is_some()
         && (config.version >= 4 || !legacy_timebase_is_required(config)?);
     if can_render_v6 {
@@ -42,6 +45,10 @@ pub(super) fn render_config_v5(config: &Config) -> Result<String> {
 
 pub(super) fn render_config_v6(config: &Config) -> Result<String> {
     toml::to_string_pretty(&normalized_config_v6(config)?).map_err(Into::into)
+}
+
+pub(super) fn render_config_v7(config: &Config) -> Result<String> {
+    toml::to_string_pretty(&normalized_config_v7(config)?).map_err(Into::into)
 }
 
 fn normalized_config_v4(config: &Config) -> Result<NormalizedConfigV4> {
@@ -320,6 +327,74 @@ fn lockin_output_v4(lockin: &Lockin, signal_channels: &[u8]) -> LockinOutputV4 {
     }
 }
 
+fn normalized_config_v7(config: &Config) -> Result<NormalizedConfigV7> {
+    let instruments = config
+        .instruments
+        .as_ref()
+        .ok_or_else(|| anyhow!("version 7 normalized config has no oscilloscope"))?;
+    let scope = ScopeOutputV4 {
+        model: instruments.oscilloscope.model.clone(),
+        connection: connection_uri(&instruments.oscilloscope.connection),
+    };
+    let generator = instruments
+        .function_generator
+        .as_ref()
+        .map(|generator| GeneratorOutputV4 {
+            model: generator.model.clone(),
+            connection: connection_uri(&generator.connection),
+        });
+    let sensors = config
+        .roles
+        .sensor_ch
+        .iter()
+        .map(|&channel| sensor_output_v4(config, channel))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(NormalizedConfigV7 {
+        version: 7,
+        scope,
+        generator,
+        data: DataOutputConfigV4 {
+            output: match config.fetch.output {
+                FetchOutput::Csv => DataOutputV4::Csv,
+                FetchOutput::Raw => DataOutputV4::Raw,
+                FetchOutput::CsvAndRaw => DataOutputV4::Both,
+            },
+            input: config.fetch.analysis_input,
+            screenshot: config.screenshot.enabled,
+        },
+        sensors,
+        pulse: PulseOutputV4 {
+            background_before: config.pulse.bg_window_before,
+            background_after: config.pulse.bg_window_after,
+        },
+        reference: ReferenceOutputV4 {
+            channel: config.roles.reference_ch,
+            fft_window: config.reference.fft_window,
+            stride_samples: config.reference.stride_samples,
+            window_samples: config.reference.window_samples,
+        },
+        lockin: lockin_output_v7(&config.lockin, &config.roles.signal_ch),
+        phase: PhaseOutputV4 {
+            offsets: config.phase.m_omega_t0_offset.clone(),
+        },
+        moke: MokeOutputV6 {
+            sensor: config.moke.use_sensor_ch,
+            method: config.moke.moke_type,
+            factor: config.moke.factor,
+        },
+        signals: config
+            .signals
+            .iter()
+            .map(|signal| SignalOutputV4 {
+                channel: signal.channel,
+                label: signal.label.clone(),
+                unit: signal.unit.clone(),
+            })
+            .collect(),
+        plot: plot_output_v4(&config.plot),
+    })
+}
 fn lockin_output_v5(lockin: &Lockin, signal_channels: &[u8]) -> LockinOutputV5 {
     let filter = match lockin.lpf_kind {
         LockinLpfKind::BoxcarLegacy => LockinFilterOutputV5::BoxcarLegacy {
@@ -405,5 +480,31 @@ fn plot_output_v4(plot: &Plot) -> PlotOutputV4 {
         } else {
             PlotErrorModeV4::Warn
         },
+    }
+}
+
+fn lockin_output_v7(lockin: &Lockin, signal_channels: &[u8]) -> LockinOutputV7 {
+    let estimator = match &lockin.estimator {
+        LockinEstimator::BoxcarLegacy => LockinEstimatorOutputV7::BoxcarLegacy {},
+        LockinEstimator::JointHarmonicGls(config) => {
+            LockinEstimatorOutputV7::JointHarmonicGls(config.clone())
+        }
+    };
+    LockinOutputV7 {
+        channels: signal_channels.to_vec(),
+        workers: lockin.workers,
+        stride_samples: lockin.stride_samples,
+        window: LockinWindowOutputV7 {
+            kind: lockin.window.kind,
+            half_window_cycles: lockin.window.half_window_cycles,
+            edge_policy: lockin.window.edge_policy,
+        },
+        estimator,
+        debug_output: lockin.lpf_debug_output,
+        debug_label: lockin.lpf_debug_label.clone(),
+        debug_overwrite: lockin.lpf_debug_overwrite,
+        snr_background_window: lockin.snr_background_window,
+        snr_signal_window: lockin.snr_signal_window,
+        save_npy: lockin.save_npy,
     }
 }

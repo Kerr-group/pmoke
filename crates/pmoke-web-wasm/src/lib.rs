@@ -337,6 +337,59 @@ factor = -1.0
     }
 
     #[test]
+    fn wasm_config_validation_accepts_v7_legacy_and_gls() {
+        let header = r#"version = 7
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+[data]
+output = "raw"
+input = "raw"
+[[sensors]]
+channel = 1
+scale = { factor = 1.0 }
+label = "field"
+unit = "T"
+[pulse]
+background_before = { start = -0.005, end = -0.001 }
+background_after = { start = 0.01, end = 0.02 }
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.005 }
+stride_samples = 100
+window_samples = 1000
+[lockin]
+channels = [3]
+workers = 2
+stride_samples = 100
+[lockin.window]
+kind = "reference_cycles"
+half_window_cycles = 1.0
+edge_policy = "legacy_trim"
+"#;
+        let footer = r#"[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+[moke]
+sensor = 1
+method = "harmonics"
+factor = -1.0
+"#;
+        let legacy = format!("{header}[lockin.estimator]\nkind = \"boxcar_legacy\"\n{footer}");
+        let report: pmoke_config_core::ValidationReport =
+            serde_json::from_str(&validate_config_toml(&legacy)).unwrap();
+        assert!(report.valid, "json: {}", validate_config_toml(&legacy));
+        assert_eq!(report.schema_version, Some(7));
+
+        let gls = format!(
+            "{header}[lockin.estimator]\nkind = \"joint_harmonic_gls\"\nfit_harmonics = [1, 2, 3, 4, 5, 6]\noutput_harmonics = [1, 2, 3, 4, 5, 6]\nnoise_mode = \"identity\"\n[[lockin.estimator.calibrations]]\nchannel = 3\npath = \"calibration/ch3.json\"\nsha256 = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n{footer}"
+        );
+        let report: pmoke_config_core::ValidationReport =
+            serde_json::from_str(&validate_config_toml(&gls)).unwrap();
+        assert!(report.valid, "json: {}", validate_config_toml(&gls));
+        assert_eq!(report.summary.unwrap().lockin_filter, "joint_harmonic_gls");
+    }
+
+    #[test]
     fn analysis_demo_and_wasm_adapter_match_shared_core() {
         let signal =
             generate_analysis_demo(20_000, 100_000.0, 1_000.0, 1.0, 0.2, 0.0, 0.01, 7).unwrap();
