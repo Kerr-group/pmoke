@@ -63,6 +63,19 @@ class PhaseVarianceTests(unittest.TestCase):
         self.assertAlmostEqual(out["smoothed"][0], 5.5 * 300.0 / 299.0, places=9)
         self.assertAlmostEqual(out["variances"][0], out["smoothed"][0], places=12)
 
+    def test_mean_offset_invariance(self):
+        # Exact sample variance 2 in both bins under offsets 0 and 1e8.
+        for offset in (0.0, 1e8):
+            samples = [
+                {"phase": center, "cycle": i, "block": i,
+                 "residual": (offset if b == 0 else -offset) + (-1.0 if i == 0 else 1.0)}
+                for b, center in enumerate([math.pi / 2, 3 * math.pi / 2])
+                for i in range(2)]
+            out = phase_variance(samples, 2, min_samples_per_bin=2,
+                                 min_cycles_per_bin=2, min_contributing_blocks=2,
+                                 shrinkage_alpha=0.1, floor_ratio=0.05)
+            self.assertEqual(out["raw"], [2.0, 2.0])
+
     def test_missing_bin_is_an_error(self):
         samples = [{"phase": 0.1, "cycle": i, "residual": 1.0, "block": 0}
                    for i in range(300)]

@@ -51,24 +51,33 @@ def phase_variance(samples, bins, min_samples_per_bin=256, min_cycles_per_bin=12
                    min_contributing_blocks=8, shrinkage_alpha=0.1, floor_ratio=0.05):
     counts = [0] * bins
     sums = [0.0] * bins
-    squares = [0.0] * bins
     cycles = [set() for _ in range(bins)]
     blocks = set()
     for sample in samples:
         b = int(math.floor(sample["phase"] / TAU * bins)) % bins
         counts[b] += 1
         sums[b] += sample["residual"]
-        squares[b] += sample["residual"] ** 2
         cycles[b].add(sample["cycle"])
         blocks.add(sample["block"])
     if len(blocks) < min_contributing_blocks:
         raise ValueError("insufficient contributing blocks")
+    # Centered two-pass moments: mean-offset invariant, unlike single-pass
+    # sum(x**2) - sum(x)**2/n, which cancels catastrophically when the bin
+    # mean dominates the residual variation.
+    means = [sums[b] / counts[b] if counts[b] else 0.0 for b in range(bins)]
+    deviations = [0.0] * bins
+    for sample in samples:
+        b = int(math.floor(sample["phase"] / TAU * bins)) % bins
+        deviation = sample["residual"] - means[b]
+        if not math.isfinite(deviation):
+            raise ValueError(f"non-finite centered residual in bin {b}")
+        deviations[b] += deviation ** 2
     raw = []
     for b in range(bins):
         if counts[b] < min_samples_per_bin or len(cycles[b]) < min_cycles_per_bin:
             raise ValueError(f"insufficient coverage in bin {b}")
         n = counts[b]
-        var = (squares[b] - sums[b] ** 2 / n) / (n - 1)
+        var = deviations[b] / (n - 1)
         if not var > 0.0 or not math.isfinite(var):
             raise ValueError(f"nonpositive raw variance in bin {b}")
         raw.append(var)
