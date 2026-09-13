@@ -13,7 +13,7 @@
 //! rejected explicitly with `unsupported_autotuning` (NUMERICS 6.5).
 
 use crate::error::{AnalysisError, Result};
-use crate::joint::{JointSolverTolerances, solve_direct};
+use crate::joint::{JointSolverTolerances, solve_direct, validate_timebase};
 use nalgebra::DMatrix;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -58,8 +58,8 @@ pub const DEFAULT_SHRINKAGE_ALPHA: f64 = 0.1;
 pub const DEFAULT_FLOOR_RATIO: f64 = 0.05;
 /// Default maximum correlation lag proposal (capped by runtime geometry).
 pub const DEFAULT_MAX_LAG: usize = 256;
-/// Default identity shrinkage on the tapered correlation.
-pub const DEFAULT_CORRELATION_ETA: f64 = 0.05;
+/// Default identity shrinkage on the tapered correlation (A-005).
+pub const DEFAULT_CORRELATION_ETA: f64 = 0.01;
 /// Nuisance harmonics 1..=12 plus DC and a scaled linear trend.
 pub const NUISANCE_HARMONICS: usize = 12;
 /// Nuisance parameter count: DC + trend + 2 coefficients per harmonic.
@@ -88,6 +88,8 @@ pub struct RoleInterval {
 }
 
 /// Realized calibration block, wholly inside its nominated role interval.
+/// `index_in_role` counts blocks within the single nominating interval
+/// (interval-local); the `(start, end)` pair is the unique identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlannedBlock {
     pub role: CalibrationRole,
@@ -200,13 +202,23 @@ pub fn plan_blocks(request: &BlockPlanRequest) -> Result<BlockPlan> {
     for interval in ordered.iter() {
         let mut role_index = 0;
         let mut cursor = interval.start;
-        while cursor + block_len <= interval.end {
+        loop {
+            // Checked bounds: a u64-near interval with an oversized block is
+            // a malformed request, never a wrap or a panic.
+            let block_end = cursor.checked_add(block_len).ok_or_else(|| {
+                invalid_request(format!(
+                    "block [{cursor}, {cursor}+{block_len}) overflows the index space"
+                ))
+            })?;
+            if block_end > interval.end {
+                break;
+            }
             let cycles =
                 block_len as f64 * request.sample_interval_s * request.reference_frequency_hz;
             if cycles < request.min_reference_cycles_per_block {
                 plan.exclusions.push(PlannedExclusion {
                     start: cursor,
-                    end: cursor + block_len,
+                    end: block_end,
                     reason: format!(
                         "only {cycles:.3} reference cycles below minimum {}",
                         request.min_reference_cycles_per_block
@@ -217,12 +229,12 @@ pub fn plan_blocks(request: &BlockPlanRequest) -> Result<BlockPlan> {
                     role: interval.role,
                     index_in_role: role_index,
                     start: cursor,
-                    end: cursor + block_len,
+                    end: block_end,
                     reference_cycles: cycles,
                 });
                 role_index += 1;
             }
-            cursor += block_len;
+            cursor = block_end;
         }
         if cursor < interval.end {
             plan.exclusions.push(PlannedExclusion {
@@ -247,9 +259,6 @@ pub fn plan_blocks(request: &BlockPlanRequest) -> Result<BlockPlan> {
             ),
         ));
     }
-    let mut contributing: Vec<u64> = training_blocks.iter().map(|block| block.start).collect();
-    contributing.sort_unstable();
-    contributing.dedup();
     // Distinct contributing training intervals, identified by block origin.
     let mut interval_hits = 0;
     for interval in ordered
@@ -292,11 +301,16 @@ pub struct NuisanceFit {
 }
 
 /// Nuisance design `[DC, trend, cos(k phi), sin(k phi) ...]` with the trend
-/// scaled to [-1, 1] over the block and `phi = 2 pi f t - phase`.
+/// scaled to [-1, 1] over the block and `phi = 2 pi f t - phase`. The
+/// timebase follows the shared validation convention (monotonic, uniform,
+/// consistent with the declared rate), and every fitted harmonic must sit
+/// below Nyquist: a full-rank aliased matrix is still a rejected calibration
+/// input.
 pub fn nuisance_design_matrix(
     times: &[f64],
     reference_frequency_hz: f64,
     reference_phase_rad: f64,
+    sample_rate_hz: f64,
 ) -> Result<DMatrix<f64>> {
     if times.len() < NUISANCE_PARAMETERS {
         return Err(AnalysisError::new(
@@ -307,17 +321,21 @@ pub fn nuisance_design_matrix(
             ),
         ));
     }
-    for time in times.iter() {
-        if !time.is_finite() {
-            return Err(AnalysisError::new(
-                "non_finite_input",
-                "nuisance fit times must be finite",
-            ));
-        }
-    }
+    let effective_dt = validate_timebase(times, sample_rate_hz)?;
     if !is_positive_finite(reference_frequency_hz) {
         return Err(invalid_request(
             "nuisance fit needs a positive finite reference frequency",
+        ));
+    }
+    if NUISANCE_HARMONICS as f64 * reference_frequency_hz >= 0.5 / effective_dt {
+        return Err(AnalysisError::new(
+            "aliased_harmonic",
+            format!(
+                "nuisance harmonic {} at {:.6e} Hz reaches the {:.6e} Hz Nyquist limit",
+                NUISANCE_HARMONICS,
+                NUISANCE_HARMONICS as f64 * reference_frequency_hz,
+                0.5 / effective_dt
+            ),
         ));
     }
     if !reference_phase_rad.is_finite() {
@@ -356,6 +374,7 @@ pub fn fit_nuisance(
     signal: &[f64],
     reference_frequency_hz: f64,
     reference_phase_rad: f64,
+    sample_rate_hz: f64,
     tolerances: JointSolverTolerances,
 ) -> Result<NuisanceFit> {
     if signal.len() != times.len() {
@@ -372,7 +391,12 @@ pub fn fit_nuisance(
             ));
         }
     }
-    let design = nuisance_design_matrix(times, reference_frequency_hz, reference_phase_rad)?;
+    let design = nuisance_design_matrix(
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        sample_rate_hz,
+    )?;
     let response = nalgebra::DVector::from_column_slice(signal);
     let (beta, _, rank, condition) = solve_direct(&design, &response, tolerances)?;
     let fitted = &design * &beta;
@@ -744,6 +768,9 @@ pub fn estimate_correlation(
         ));
     }
     let lags = recipe.max_lag + 1;
+    // Pool raw biased autocovariances first, then normalize once by pooled
+    // lag zero (NUMERICS 6.4). Normalizing each block first would silently
+    // reweight blocks by their measured power.
     let mut pooled = vec![0.0_f64; lags];
     for (block, weight) in blocks.iter().zip(weights.iter()) {
         for value in block.iter() {
@@ -756,28 +783,25 @@ pub fn estimate_correlation(
         }
         let mean = block.iter().sum::<f64>() / block.len() as f64;
         // Biased autocovariance: numerator divided by n, not n-lag.
-        let mut auto = vec![0.0_f64; lags];
         for lag in 0..lags {
             let mut numerator = 0.0;
             for i in 0..(block.len() - lag) {
                 numerator += (block[i] - mean) * (block[i + lag] - mean);
             }
-            auto[lag] = numerator / block.len() as f64;
-        }
-        if !is_positive_finite(auto[0]) {
-            return Err(AnalysisError::new(
-                "insufficient_calibration",
-                "correlation block has no lag-zero power",
-            ));
-        }
-        for lag in 0..lags {
-            pooled[lag] += weight * auto[lag] / auto[0];
+            pooled[lag] += weight * numerator / block.len() as f64;
         }
     }
+    if !is_positive_finite(pooled[0]) {
+        return Err(AnalysisError::new(
+            "insufficient_calibration",
+            "pooled correlation has no lag-zero power",
+        ));
+    }
+    let normalized: Vec<f64> = pooled.iter().map(|value| value / pooled[0]).collect();
     let mut tapered = vec![0.0_f64; lags];
     for lag in 0..lags {
         let taper = 1.0 - lag as f64 / (recipe.max_lag + 1) as f64;
-        let shrunk = (1.0 - recipe.shrinkage_eta) * pooled[lag] * taper
+        let shrunk = (1.0 - recipe.shrinkage_eta) * normalized[lag] * taper
             + recipe.shrinkage_eta * f64::from(lag == 0);
         if !shrunk.is_finite() {
             return Err(AnalysisError::new(
@@ -801,12 +825,14 @@ pub fn estimate_correlation(
             "tapered correlation Toeplitz factor is not positive definite",
         ));
     }
-    // Evidence of correlation beyond J stays a reported limitation.
+    // Evidence of correlation beyond J stays a reported limitation. Tail
+    // pooling follows the same pool-then-normalize order as the main lags.
     let tail_lags = (recipe.max_lag + 1)..=(2 * recipe.max_lag).min(shortest - 1);
     let mut tail_energy: Option<f64> = None;
     let mut max_tail_lag = recipe.max_lag;
     for lag in tail_lags {
-        let mut pooled_tail = 0.0;
+        let mut tail_num = 0.0;
+        let mut tail_den = 0.0;
         for (block, weight) in blocks.iter().zip(weights.iter()) {
             let mean = block.iter().sum::<f64>() / block.len() as f64;
             let mut numerator = 0.0;
@@ -817,12 +843,12 @@ pub fn estimate_correlation(
             for value in block.iter() {
                 zero += (value - mean) * (value - mean);
             }
-            if zero > 0.0 {
-                pooled_tail +=
-                    weight * (numerator / block.len() as f64) / (zero / block.len() as f64);
-            }
+            tail_num += weight * numerator / block.len() as f64;
+            tail_den += weight * zero / block.len() as f64;
         }
-        tail_energy = Some(tail_energy.unwrap_or(0.0).max(pooled_tail.abs()));
+        if is_positive_finite(tail_den) {
+            tail_energy = Some(tail_energy.unwrap_or(0.0).max((tail_num / tail_den).abs()));
+        }
         max_tail_lag = lag;
     }
     Ok(CorrelationOutput {
@@ -930,7 +956,10 @@ pub struct ValidationRecord {
     pub limits: Vec<String>,
 }
 
-/// Advertised capabilities and geometry restrictions.
+/// Advertised capabilities and geometry restrictions. `phase_correlated`
+/// advertises that the artifact carries a validated correlation table as
+/// model data; it does not promise executable correlated runtime inference
+/// (WP-4 owns that mode).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityRecord {
     pub modes: Vec<String>,
@@ -1052,6 +1081,87 @@ fn validate_binding(binding: &ModelBinding) -> Result<()> {
     Ok(())
 }
 
+/// Independently validate a correlation output against its recipe before it
+/// may enter an artifact. A writable `spd_validated` flag is not
+/// factorization evidence: the Toeplitz factor is refactorized here, and a
+/// single authoritative eta is enforced (output and recipe must agree).
+fn validate_correlation_output(
+    output: &CorrelationOutput,
+    recipe: &CorrelationRecipe,
+) -> Result<()> {
+    if output.lags.len() != recipe.max_lag + 1 {
+        return Err(invalid_request("correlation lags and recipe disagree"));
+    }
+    if output.support_samples != output.lags.len() {
+        return Err(invalid_request(
+            "correlation support_samples and lags disagree",
+        ));
+    }
+    if output.taper_id != CORRELATION_TAPER_ID {
+        return Err(invalid_request(
+            "correlation taper is not the accepted recipe",
+        ));
+    }
+    if output.eta != recipe.shrinkage_eta {
+        return Err(invalid_request(
+            "correlation output eta and recipe eta disagree; one authoritative record required",
+        ));
+    }
+    if !is_positive_finite(output.lag_step_s) {
+        return Err(invalid_request(
+            "correlation lag_step_s must be positive finite",
+        ));
+    }
+    let expected_duration = recipe.max_lag as f64 * output.lag_step_s;
+    if (output.physical_duration_s - expected_duration).abs() > 1e-12 * expected_duration.max(1.0) {
+        return Err(invalid_request(
+            "correlation physical duration disagrees with lag support",
+        ));
+    }
+    for (lag, value) in output.lags.iter().enumerate() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                format!("correlation lag {lag} must be finite"),
+            ));
+        }
+    }
+    if (output.lags[0] - 1.0).abs() > 1e-9 {
+        return Err(AnalysisError::new(
+            "invalid_noise_model",
+            "correlation lag zero must normalize to one",
+        ));
+    }
+    if let Some(tail) = output.tail_energy
+        && (!tail.is_finite() || tail < 0.0)
+    {
+        return Err(AnalysisError::new(
+            "non_finite_input",
+            "correlation tail energy must be finite non-negative",
+        ));
+    }
+    if output.max_tail_lag < recipe.max_lag {
+        return Err(invalid_request(
+            "correlation max_tail_lag precedes the taper support",
+        ));
+    }
+    // Refactorize: trust the mathematics, not the flag.
+    let lags = output.lags.len();
+    let mut toeplitz = DMatrix::zeros(lags, lags);
+    for row in 0..lags {
+        for column in 0..lags {
+            toeplitz[(row, column)] = output.lags[row.abs_diff(column)];
+        }
+    }
+    if toeplitz.cholesky().is_none() {
+        return Err(AnalysisError::new(
+            "covariance_not_spd",
+            "artifact correlation Toeplitz factor is not positive definite",
+        ));
+    }
+    Ok(())
+}
+
 /// Build the immutable artifact: validate, serialize to canonical bytes
 /// (struct field order, Ryu floats), enforce the byte cap, and identify by
 /// SHA-256 of exactly those bytes.
@@ -1075,21 +1185,37 @@ pub fn build_artifact(request: ArtifactRequest) -> Result<ArtifactWithHash> {
             ));
         }
     }
-    if request.variance.counts.len() != request.variance.variances.len() {
-        return Err(invalid_request("variance counts and values must align"));
+    if request.variance.counts.len() != request.variance.variances.len()
+        || request.variance.distinct_cycles.len() != request.variance.variances.len()
+        || request.variance.raw.len() != request.variance.variances.len()
+        || request.variance.smoothed.len() != request.variance.variances.len()
+    {
+        return Err(invalid_request(
+            "variance values, counts, cycles, raw, and smoothed must align",
+        ));
+    }
+    if request.variance.variances.is_empty() {
+        return Err(AnalysisError::new(
+            "insufficient_calibration",
+            "artifact needs a nonempty phase table",
+        ));
+    }
+    if request.recipe.bins != request.variance.variances.len() {
+        return Err(invalid_request(
+            "variance recipe bins and estimated table disagree",
+        ));
+    }
+    for activation in request.variance.floor_activations.iter() {
+        if *activation >= request.variance.variances.len() {
+            return Err(invalid_request(
+                "floor activation index lies outside the phase table",
+            ));
+        }
     }
     let mut modes = vec!["identity".to_string(), "phase_diagonal".to_string()];
     let correlation = match (&request.correlation, &request.correlation_recipe) {
         (Some(output), Some(recipe)) => {
-            if output.lags.len() != recipe.max_lag + 1 {
-                return Err(invalid_request("correlation lags and recipe disagree"));
-            }
-            if !output.spd_validated {
-                return Err(AnalysisError::new(
-                    "covariance_not_spd",
-                    "artifact correlation must carry SPD validation",
-                ));
-            }
+            validate_correlation_output(output, recipe)?;
             modes.push("phase_correlated".to_string());
             Some(CorrelationTable {
                 lags: output.lags.clone(),
@@ -1218,6 +1344,8 @@ pub fn build_artifact(request: ArtifactRequest) -> Result<ArtifactWithHash> {
 // ---------------------------------------------------------------------------
 
 /// Inference-time conditions to check against a frozen model binding.
+/// Acquisition values are compared field by field: known-but-different is
+/// a hard mismatch, unknown on either side stays explicitly unverified.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApplicabilityRequest {
     pub channel: u32,
@@ -1225,7 +1353,8 @@ pub struct ApplicabilityRequest {
     pub reference_frequency_hz: f64,
     pub voltage_unit: String,
     pub phase_convention: String,
-    pub acquisition_known: bool,
+    pub adc_scale_provenance: Option<String>,
+    pub acquisition: AcquisitionMeta,
 }
 
 /// One applicability failure with its contract code.
@@ -1293,11 +1422,60 @@ pub fn inspect_applicability(
             "phase convention does not match the calibrated convention",
         ));
     }
-    if model.binding.acquisition.device.is_none()
-        || model.binding.acquisition.gain.is_none()
-        || model.binding.acquisition.bandwidth_hz.is_none()
-        || !request.acquisition_known
-    {
+    // Acquisition/scale values: equal when both known, unverified otherwise.
+    // A changed gain can move the noise variance while every other field
+    // stays put, so known-but-different is a hard mismatch.
+    let mut unverified = false;
+    if model.binding.adc_scale_provenance.is_some() || request.adc_scale_provenance.is_some() {
+        match (
+            &model.binding.adc_scale_provenance,
+            &request.adc_scale_provenance,
+        ) {
+            (Some(model_value), Some(request_value)) if model_value == request_value => {}
+            (Some(_), Some(_)) => errors.push(binding_error(
+                "ADC scale provenance does not match the calibrated provenance",
+            )),
+            _ => unverified = true,
+        }
+    }
+    match (
+        &model.binding.acquisition.device,
+        &request.acquisition.device,
+    ) {
+        (Some(model_value), Some(request_value)) if model_value == request_value => {}
+        (Some(_), Some(_)) => {
+            errors.push(binding_error(
+                "acquisition device does not match calibrated device",
+            ));
+        }
+        (Some(_), None) | (None, Some(_)) => unverified = true,
+        (None, None) => {}
+    }
+    for (name, model_value, request_value) in [
+        (
+            "gain",
+            model.binding.acquisition.gain,
+            request.acquisition.gain,
+        ),
+        (
+            "bandwidth_hz",
+            model.binding.acquisition.bandwidth_hz,
+            request.acquisition.bandwidth_hz,
+        ),
+    ] {
+        match (model_value, request_value) {
+            (Some(model_number), Some(request_number)) => {
+                if model_number != request_number {
+                    errors.push(binding_error(format!(
+                        "acquisition {name} {request_number} does not match calibrated {model_number}"
+                    )));
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => unverified = true,
+            (None, None) => {}
+        }
+    }
+    if unverified {
         warnings.push("unverified_acquisition_conditions".to_string());
     }
     ApplicabilityReport {
@@ -1330,11 +1508,16 @@ pub struct AdequacyPolicy {
 /// SCS adequacy verdict. A nonseparable process yields a model-mismatch
 /// diagnostic (`adequate: false` with a reason), never a false adequacy
 /// claim. Missing power/coverage yields unverified applicability.
+///
+/// Threshold values are provisional recipe proposals: they pin regression
+/// behavior, not independent scientific qualification (see WP-8).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdequacyReport {
     pub adequate: bool,
     pub phase_spread: f64,
+    pub reserved_spread: f64,
     pub reserved_shift: f64,
+    pub pattern_shift: f64,
     pub reason: String,
     pub warnings: Vec<String>,
 }
@@ -1371,16 +1554,30 @@ fn lag_pairs(group: &AdequacyGroup, lag: usize) -> Result<Vec<(f64, f64, f64)>> 
         .collect())
 }
 
-/// Compare lag covariance across phase octants (training) and against
-/// reserved blocks. Time-varying structure that averages out within phase
-/// pooling is caught by the reserved comparison.
+/// Compare lag covariance across phase octants in both roles, plus pooled
+/// training-vs-reserved lag vectors. Phase-conditioned structure in either
+/// role rejects the SCS description; pooled-only agreement is not adequacy.
+/// Time-varying structure that averages out within phase pooling is caught
+/// by the reserved pattern comparison.
 pub fn scs_adequacy(
     training: &[AdequacyGroup],
     reserved: &[AdequacyGroup],
     policy: AdequacyPolicy,
 ) -> Result<AdequacyReport> {
-    if policy.lags == 0 {
-        return Err(invalid_request("adequacy policy needs positive lags"));
+    if policy.lags == 0 || policy.min_pairs_per_cell == 0 {
+        return Err(invalid_request(
+            "adequacy policy needs positive lags and minimum pairs",
+        ));
+    }
+    for (name, threshold) in [
+        ("max_phase_spread", policy.max_phase_spread),
+        ("max_reserved_shift", policy.max_reserved_shift),
+    ] {
+        if !threshold.is_finite() || threshold < 0.0 {
+            return Err(invalid_request(format!(
+                "adequacy policy {name} must be finite non-negative"
+            )));
+        }
     }
     if training.is_empty() || reserved.is_empty() {
         return Err(AnalysisError::new(
@@ -1388,98 +1585,148 @@ pub fn scs_adequacy(
             "adequacy needs training and reserved groups",
         ));
     }
+    // Lag-zero power first: silent groups carry no covariance evidence.
+    for (role, groups) in [("training", training), ("reserved", reserved)] {
+        for (index, group) in groups.iter().enumerate() {
+            if group.standardized.len() != group.phases.len() || group.standardized.is_empty() {
+                return Err(AnalysisError::new(
+                    "dimension_mismatch",
+                    format!("{role} group {index} residuals and phases must align non-empty"),
+                ));
+            }
+            let mean = group.standardized.iter().sum::<f64>() / group.standardized.len() as f64;
+            let power = group
+                .standardized
+                .iter()
+                .map(|value| (value - mean) * (value - mean))
+                .sum::<f64>()
+                / group.standardized.len() as f64;
+            if !power.is_finite() {
+                return Err(AnalysisError::new(
+                    "non_finite_input",
+                    format!("{role} group {index} power is non-finite"),
+                ));
+            }
+            if power <= 0.0 {
+                return Err(AnalysisError::new(
+                    "insufficient_calibration",
+                    format!("{role} group {index} has no lag-zero power"),
+                ));
+            }
+        }
+    }
     const OCTANTS: usize = 8;
-    // Per-lag, per-octant correlations on training pairs grouped by the
-    // first sample's phase, plus pooled lag vectors for both roles.
-    let mut train_pooled = vec![0.0_f64; policy.lags];
-    let mut reserved_pooled = vec![0.0_f64; policy.lags];
-    let mut train_counts = vec![0_usize; policy.lags];
-    let mut reserved_counts = vec![0_usize; policy.lags];
-    let mut octant_num = vec![vec![0.0_f64; OCTANTS]; policy.lags];
-    let mut octant_den = vec![vec![0_usize; OCTANTS]; policy.lags];
+    // Per-role, per-lag, per-octant lag products plus pooled lag vectors.
+    // roles: 0 = training, 1 = reserved.
+    let mut pooled = vec![vec![0.0_f64; policy.lags]; 2];
+    let mut pooled_counts = vec![vec![0_usize; policy.lags]; 2];
+    let mut octant_num = vec![vec![vec![0.0_f64; OCTANTS]; policy.lags]; 2];
+    let mut octant_den = vec![vec![vec![0_usize; OCTANTS]; policy.lags]; 2];
     for (role_index, groups) in [training, reserved].iter().enumerate() {
         for group in groups.iter() {
             for lag in 1..=policy.lags {
                 for (first, second, phase) in lag_pairs(group, lag)?.into_iter() {
                     let octant = ((phase.rem_euclid(TAU) / TAU * OCTANTS as f64).floor() as usize)
                         .min(OCTANTS - 1);
-                    if role_index == 0 {
-                        train_pooled[lag - 1] += first * second;
-                        train_counts[lag - 1] += 1;
-                        octant_num[lag - 1][octant] += first * second;
-                        octant_den[lag - 1][octant] += 1;
-                    } else {
-                        reserved_pooled[lag - 1] += first * second;
-                        reserved_counts[lag - 1] += 1;
-                    }
+                    pooled[role_index][lag - 1] += first * second;
+                    pooled_counts[role_index][lag - 1] += 1;
+                    octant_num[role_index][lag - 1][octant] += first * second;
+                    octant_den[role_index][lag - 1][octant] += 1;
                 }
             }
         }
     }
-    for lag in 0..policy.lags {
-        if train_counts[lag] == 0 || reserved_counts[lag] == 0 {
-            return Err(AnalysisError::new(
-                "insufficient_calibration",
-                format!("adequacy lag {} has no pairs", lag + 1),
-            ));
-        }
-        train_pooled[lag] /= train_counts[lag] as f64;
-        reserved_pooled[lag] /= reserved_counts[lag] as f64;
-    }
-    let mut phase_spread: f64 = 0.0;
-    for lag in 0..policy.lags {
-        let mut low = f64::INFINITY;
-        let mut high = f64::NEG_INFINITY;
-        for octant in 0..OCTANTS {
-            if octant_den[lag][octant] < policy.min_pairs_per_cell {
+    let role_name = ["training", "reserved"];
+    let mut cells = vec![vec![vec![0.0_f64; OCTANTS]; policy.lags]; 2];
+    for role in 0..2 {
+        for lag in 0..policy.lags {
+            if pooled_counts[role][lag] == 0 {
                 return Err(AnalysisError::new(
                     "insufficient_calibration",
-                    format!(
-                        "octant {octant} lag {} holds {} pairs below minimum {}",
-                        lag + 1,
-                        octant_den[lag][octant],
-                        policy.min_pairs_per_cell
-                    ),
+                    format!("{} lag {} has no pairs", role_name[role], lag + 1),
                 ));
             }
-            let value = octant_num[lag][octant] / octant_den[lag][octant] as f64;
-            low = low.min(value);
-            high = high.max(value);
+            pooled[role][lag] /= pooled_counts[role][lag] as f64;
+            for octant in 0..OCTANTS {
+                if octant_den[role][lag][octant] < policy.min_pairs_per_cell {
+                    return Err(AnalysisError::new(
+                        "insufficient_calibration",
+                        format!(
+                            "{} octant {octant} lag {} holds {} pairs below minimum {}",
+                            role_name[role],
+                            lag + 1,
+                            octant_den[role][lag][octant],
+                            policy.min_pairs_per_cell
+                        ),
+                    ));
+                }
+                cells[role][lag][octant] =
+                    octant_num[role][lag][octant] / octant_den[role][lag][octant] as f64;
+            }
         }
-        phase_spread = phase_spread.max(high - low);
     }
-    let reserved_shift: f64 = train_pooled
+    let spread_of = |role: usize| {
+        (0..policy.lags)
+            .map(|lag| {
+                let low = cells[role][lag]
+                    .iter()
+                    .fold(f64::INFINITY, |a, b| a.min(*b));
+                let high = cells[role][lag]
+                    .iter()
+                    .fold(f64::NEG_INFINITY, |a, b| a.max(*b));
+                high - low
+            })
+            .fold(0.0, f64::max)
+    };
+    let phase_spread = spread_of(0);
+    let reserved_spread = spread_of(1);
+    let reserved_shift: f64 = pooled[0]
         .iter()
-        .zip(reserved_pooled.iter())
+        .zip(pooled[1].iter())
         .map(|(train, reserved)| (train - reserved).abs())
         .fold(0.0, f64::max);
+    let mut pattern_shift: f64 = 0.0;
+    for (train_lag, reserved_lag) in cells[0].iter().zip(cells[1].iter()) {
+        for (train_cell, reserved_cell) in train_lag.iter().zip(reserved_lag.iter()) {
+            pattern_shift = pattern_shift.max((train_cell - reserved_cell).abs());
+        }
+    }
     let mut warnings = Vec::new();
+    let mut reject = |reason: String| {
+        warnings.push("insufficient_scs_adequacy".to_string());
+        (false, reason)
+    };
     let (adequate, reason) = if phase_spread > policy.max_phase_spread {
-        warnings.push("insufficient_scs_adequacy".to_string());
-        (
-            false,
-            format!(
-                "phase spread {phase_spread:.6} across octants exceeds {:.6}: \
-                 lag structure depends on phase beyond an SCS description",
-                policy.max_phase_spread
-            ),
-        )
+        reject(format!(
+            "training phase spread {phase_spread:.6} exceeds {:.6}: \
+             lag structure depends on phase beyond an SCS description",
+            policy.max_phase_spread
+        ))
+    } else if reserved_spread > policy.max_phase_spread {
+        reject(format!(
+            "reserved phase spread {reserved_spread:.6} exceeds {:.6}: \
+             held-out lag structure depends on phase beyond an SCS description",
+            policy.max_phase_spread
+        ))
+    } else if pattern_shift > policy.max_reserved_shift {
+        reject(format!(
+            "reserved pattern shift {pattern_shift:.6} exceeds {:.6}: \
+             held-out phase-conditioned lags disagree with training",
+            policy.max_reserved_shift
+        ))
     } else if reserved_shift > policy.max_reserved_shift {
-        warnings.push("insufficient_scs_adequacy".to_string());
-        (
-            false,
-            format!(
-                "reserved shift {reserved_shift:.6} exceeds {:.6}: \
-                 lag structure drifts between training and reserved blocks, \
-                 inconsistent with one stationary SCS model",
-                policy.max_reserved_shift
-            ),
-        )
+        reject(format!(
+            "reserved shift {reserved_shift:.6} exceeds {:.6}: \
+             lag structure drifts between training and reserved blocks, \
+             inconsistent with one stationary SCS model",
+            policy.max_reserved_shift
+        ))
     } else {
         (
             true,
             format!(
-                "phase spread {phase_spread:.6} and reserved shift {reserved_shift:.6} \
+                "phase spread {phase_spread:.6}, reserved spread {reserved_spread:.6}, \
+                 pattern shift {pattern_shift:.6}, pooled shift {reserved_shift:.6} \
                  within policy; SCS description adequate at this evidence level"
             ),
         )
@@ -1487,7 +1734,9 @@ pub fn scs_adequacy(
     Ok(AdequacyReport {
         adequate,
         phase_spread,
+        reserved_spread,
         reserved_shift,
+        pattern_shift,
         reason,
         warnings,
     })

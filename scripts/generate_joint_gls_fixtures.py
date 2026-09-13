@@ -498,6 +498,38 @@ def build_calibration_golden():
                             "max_phase_spread": 0.2, "max_reserved_shift": 0.2},
         "oracle": {"adequacy": e_adequacy},
     })
+
+    # F: white training but phase-dependent pair correlation on reserved
+    # data only. The pooled reserved lag average cancels to ~0 (matching
+    # training), while per-octant lag-1 correlations swing +/-0.9: a
+    # pooled-only diagnostic would falsely affirm adequacy.
+    rng = np.random.RandomState(20260925)
+    f_train = [(rng.normal(0.0, 1.0, block_len)).tolist() for _ in range(4)]
+    f_phases = np.mod(2.0 * math.pi * f_ref * block_times(0) - phase, 2.0 * math.pi)
+    f_reserved = []
+    for _ in range(2):
+        series = np.empty(block_len)
+        for pair in range(block_len // 2):
+            sign = 1.0 if f_phases[2 * pair] < math.pi else -1.0
+            first = rng.normal()
+            series[2 * pair] = first
+            series[2 * pair + 1] = (sign * 0.9 * first
+                                    + math.sqrt(1.0 - 0.81) * rng.normal())
+        f_reserved.append((series / series.std()).tolist())
+    f_adequacy = oracle_adequacy(
+        [{"standardized": b, "phases": f_phases.tolist()} for b in f_train],
+        [{"standardized": b, "phases": f_phases.tolist()} for b in f_reserved],
+        8, 30, 0.2, 0.2)
+    cases.append({
+        "name": "periodic_reserved_only", "f_ref": f_ref, "dt": dt,
+        "phase_rad": phase, "block_len": block_len,
+        "truth": {"kind": "reserved_periodic_pairs", "pair_correlation": 0.9},
+        "train_blocks": f_train, "reserved_blocks": f_reserved,
+        "phases": f_phases.tolist(),
+        "adequacy_policy": {"lags": 8, "min_pairs_per_cell": 30,
+                            "max_phase_spread": 0.2, "max_reserved_shift": 0.2},
+        "oracle": {"adequacy": f_adequacy},
+    })
     return cases
 
 

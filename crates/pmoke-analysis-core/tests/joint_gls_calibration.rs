@@ -12,11 +12,12 @@
 use pmoke_analysis_core::{
     AcquisitionMeta, AdequacyGroup, AdequacyPolicy, ApplicabilityRequest, ArtifactRequest,
     BlockPlanRequest, CALIBRATION_ALGORITHM_VERSION, CALIBRATION_ARTIFACT_SCHEMA_VERSION,
-    CALIBRATION_PHASE_CONVENTION, CalSample, CalibrationRole, CorrelationRecipe,
-    DEFAULT_DT_REL_TOL, DEFAULT_FREQ_REL_TOL, HeldoutReport, JointSolverTolerances, ModelBinding,
-    NUISANCE_PARAMETERS, PhaseVarianceRecipe, RoleInterval, SearchSpace, TuningMode,
-    assemble_samples, build_artifact, ensure_fixed_tuning, estimate_correlation,
-    estimate_phase_variance, fit_nuisance, inspect_applicability, plan_blocks, scs_adequacy,
+    CALIBRATION_PHASE_CONVENTION, CalSample, CalibrationArtifact, CalibrationRole,
+    CorrelationRecipe, DEFAULT_CORRELATION_ETA, DEFAULT_DT_REL_TOL, DEFAULT_FREQ_REL_TOL,
+    HeldoutReport, JointSolverTolerances, ModelBinding, NUISANCE_PARAMETERS, PhaseVarianceRecipe,
+    RoleInterval, SearchSpace, TuningMode, assemble_samples, build_artifact, ensure_fixed_tuning,
+    estimate_correlation, estimate_phase_variance, fit_nuisance, inspect_applicability,
+    plan_blocks, scs_adequacy,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -138,6 +139,7 @@ fn train_residuals(case: &CalCase) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
             &case.signals[block],
             case.f_ref,
             case.phase_rad,
+            1.0 / case.dt,
             tolerances,
         )
         .unwrap();
@@ -339,6 +341,7 @@ fn known_noise_bias_and_uncertainty() {
         &case.signals[0],
         case.f_ref,
         case.phase_rad,
+        1.0 / case.dt,
         tolerances,
     )
     .unwrap();
@@ -521,8 +524,15 @@ fn artifact_bytes_bind_training_only() {
     for (block, signal) in eval_mutated.iter().enumerate().take(8) {
         let start = block as u64 * case.block_len as u64;
         let block_times = block_times(start, case.block_len, case.dt);
-        let fit =
-            fit_nuisance(&block_times, signal, case.f_ref, case.phase_rad, tolerances).unwrap();
+        let fit = fit_nuisance(
+            &block_times,
+            signal,
+            case.f_ref,
+            case.phase_rad,
+            1.0 / case.dt,
+            tolerances,
+        )
+        .unwrap();
         mutated_times.push(block_times);
         mutated_residuals.push(fit.residual);
     }
@@ -545,6 +555,7 @@ fn artifact_bytes_bind_training_only() {
         &train_mutated[0],
         case.f_ref,
         case.phase_rad,
+        1.0 / case.dt,
         tolerances,
     )
     .unwrap();
@@ -559,8 +570,14 @@ fn artifact_bytes_bind_training_only() {
     let mut huge_variance = variance.clone();
     huge_variance.variances = vec![1.0; 200_000];
     huge_variance.counts = vec![1; 200_000];
+    huge_variance.distinct_cycles = vec![1; 200_000];
+    huge_variance.raw = vec![1.0; 200_000];
+    huge_variance.smoothed = vec![1.0; 200_000];
+    let mut huge_recipe = variance_recipe(&case);
+    huge_recipe.bins = 200_000;
     let mut huge_request = request.clone();
     huge_request.variance = huge_variance;
+    huge_request.recipe = huge_recipe;
     assert_eq!(
         build_artifact(huge_request).unwrap_err().code(),
         "resource_limit_exceeded"
@@ -595,7 +612,7 @@ fn applicability_binding() {
         binding: ModelBinding {
             channel: 3,
             voltage_unit: "V".to_string(),
-            adc_scale_provenance: None,
+            adc_scale_provenance: Some("synthetic-scale".to_string()),
             sample_interval_s: case.dt,
             recorded_original_dt_s: None,
             sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
@@ -603,9 +620,9 @@ fn applicability_binding() {
             frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
-                device: None,
-                gain: None,
-                bandwidth_hz: None,
+                device: Some("synthetic".to_string()),
+                gain: Some(2.0),
+                bandwidth_hz: Some(50_000.0),
             },
         },
         variance,
@@ -630,10 +647,27 @@ fn applicability_binding() {
         reference_frequency_hz: case.f_ref,
         voltage_unit: "V".to_string(),
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
-        acquisition_known: true,
+        adc_scale_provenance: Some("synthetic-scale".to_string()),
+        acquisition: AcquisitionMeta {
+            device: Some("synthetic".to_string()),
+            gain: Some(2.0),
+            bandwidth_hz: Some(50_000.0),
+        },
     };
     let report = inspect_applicability(&built.artifact, &good);
-    // Acquisition metadata is explicitly unknown in this artifact.
+    // Fully matching acquisition: compatible with no warnings.
+    assert!(report.compatible);
+    assert!(report.warnings.is_empty());
+    // A changed gain is a hard mismatch even though every other field holds.
+    let mut changed_gain = good.clone();
+    changed_gain.acquisition.gain = Some(4.0);
+    let report = inspect_applicability(&built.artifact, &changed_gain);
+    assert!(!report.compatible);
+    assert_eq!(report.errors[0].code, "model_binding_mismatch");
+    // Unknown request-side gain stays explicitly unverified, not an error.
+    let mut unknown_gain = good.clone();
+    unknown_gain.acquisition.gain = None;
+    let report = inspect_applicability(&built.artifact, &unknown_gain);
     assert!(report.compatible);
     assert_eq!(
         report.warnings,
@@ -689,18 +723,24 @@ fn scs_adequacy_diagnostic() {
         report.adequate,
         oracle.get("adequate").unwrap().as_bool().unwrap()
     );
-    close(
-        report.phase_spread,
-        oracle.get("phase_spread").unwrap().as_f64().unwrap(),
-        1e-9,
-        "adequate spread",
-    );
-    close(
-        report.reserved_shift,
-        oracle.get("reserved_shift").unwrap().as_f64().unwrap(),
-        1e-9,
-        "adequate shift",
-    );
+    for key in [
+        "phase_spread",
+        "reserved_spread",
+        "reserved_shift",
+        "pattern_shift",
+    ] {
+        close(
+            match key {
+                "phase_spread" => report.phase_spread,
+                "reserved_spread" => report.reserved_spread,
+                "reserved_shift" => report.reserved_shift,
+                _ => report.pattern_shift,
+            },
+            oracle.get(key).unwrap().as_f64().unwrap(),
+            1e-9,
+            &format!("adequate {key}"),
+        );
+    }
     assert!(report.adequate);
     assert!(report.warnings.is_empty());
     let drift_case = case("nonseparable_drift");
@@ -736,5 +776,435 @@ fn scs_adequacy_diagnostic() {
         report.warnings,
         vec!["insufficient_scs_adequacy".to_string()]
     );
-    assert!(report.reason.contains("reserved shift"));
+    assert!(report.reason.contains("pattern"));
+}
+
+// F1: held-out phase-dependent correlation with a canceling pooled average.
+// White training plus sign-flipping reserved pairs: pooled shift stays near
+// zero while reserved octants swing, so only reserved phase statistics can
+// reject. A pooled-only diagnostic would affirm adequacy here.
+#[test]
+fn reserved_periodic_structure_is_rejected() {
+    let periodic = case("periodic_reserved_only");
+    let policy = adequacy_policy(&periodic);
+    let train: Vec<AdequacyGroup> = periodic
+        .train_blocks
+        .iter()
+        .map(|block| AdequacyGroup {
+            standardized: block.clone(),
+            phases: periodic.phases.clone(),
+        })
+        .collect();
+    let reserved: Vec<AdequacyGroup> = periodic
+        .reserved_blocks
+        .iter()
+        .map(|block| AdequacyGroup {
+            standardized: block.clone(),
+            phases: periodic.phases.clone(),
+        })
+        .collect();
+    let report = scs_adequacy(&train, &reserved, policy).unwrap();
+    let oracle = periodic.oracle.get("adequacy").unwrap();
+    assert_eq!(
+        report.adequate,
+        oracle.get("adequate").unwrap().as_bool().unwrap()
+    );
+    assert!(!report.adequate);
+    // The pooled averages agree: this is the blind spot of pooled-only checks.
+    assert!(report.reserved_shift < policy.max_reserved_shift);
+    assert!(report.reserved_spread > policy.max_phase_spread);
+    close(
+        report.reserved_spread,
+        oracle.get("reserved_spread").unwrap().as_f64().unwrap(),
+        1e-9,
+        "reserved spread",
+    );
+    assert!(report.reason.contains("reserved phase spread"));
+}
+
+// F2: missing power, missing coverage, and non-finite policy never affirm.
+#[test]
+fn adequacy_gates_reject_unverifiable_inputs() {
+    let policy = AdequacyPolicy {
+        lags: 4,
+        min_pairs_per_cell: 10,
+        max_phase_spread: 0.5,
+        max_reserved_shift: 0.5,
+    };
+    let phases: Vec<f64> = (0..256)
+        .map(|i| i as f64 / 256.0 * std::f64::consts::TAU)
+        .collect();
+    let white = AdequacyGroup {
+        standardized: (0..256).map(|i| ((i * 37) as f64 / 256.0).sin()).collect(),
+        phases: phases.clone(),
+    };
+    // All-zero residuals carry no lag-zero power.
+    let zero = AdequacyGroup {
+        standardized: vec![0.0; 256],
+        phases: phases.clone(),
+    };
+    assert_eq!(
+        scs_adequacy(
+            std::slice::from_ref(&zero),
+            std::slice::from_ref(&white),
+            policy
+        )
+        .unwrap_err()
+        .code(),
+        "insufficient_calibration"
+    );
+    // Reserved phases at a single label miss every other octant.
+    let single_phase = AdequacyGroup {
+        standardized: white.standardized.clone(),
+        phases: vec![0.0; 256],
+    };
+    assert_eq!(
+        scs_adequacy(std::slice::from_ref(&white), &[single_phase], policy)
+            .unwrap_err()
+            .code(),
+        "insufficient_calibration"
+    );
+    // NaN thresholds cannot compare; zero lags/pairs are malformed policy.
+    let nan_policy = AdequacyPolicy {
+        max_phase_spread: f64::NAN,
+        ..policy
+    };
+    assert_eq!(
+        scs_adequacy(
+            std::slice::from_ref(&white),
+            std::slice::from_ref(&white),
+            nan_policy
+        )
+        .unwrap_err()
+        .code(),
+        "invalid_calibration_request"
+    );
+    let zero_lag = AdequacyPolicy { lags: 0, ..policy };
+    assert_eq!(
+        scs_adequacy(
+            std::slice::from_ref(&white),
+            std::slice::from_ref(&white),
+            zero_lag
+        )
+        .unwrap_err()
+        .code(),
+        "invalid_calibration_request"
+    );
+}
+
+// F3: pool-then-normalize analytical anchor with unequal block power.
+#[test]
+fn correlation_pool_order_anchor() {
+    let recipe = CorrelationRecipe {
+        max_lag: 1,
+        shrinkage_eta: 0.0,
+    };
+    let output = estimate_correlation(
+        &[vec![1.0, 1.0, -1.0, -1.0], vec![3.0, -3.0, 3.0, -3.0]],
+        None,
+        1e-5,
+        recipe,
+    )
+    .unwrap();
+    // Pooled auto0 = 5, pooled auto1 = -3.25, normalized -0.65, taper 1/2.
+    close(output.lags[0], 1.0, 1e-12, "anchor lag0");
+    close(output.lags[1], -0.325, 1e-12, "anchor lag1");
+}
+
+// F4: the accepted A-005 correlation shrinkage default is 0.01.
+#[test]
+fn correlation_default_eta_matches_accepted_recipe() {
+    assert_eq!(DEFAULT_CORRELATION_ETA, 0.01);
+    assert_eq!(CorrelationRecipe::default().shrinkage_eta, 0.01);
+}
+
+// F5: the constructor rejects internally invalid models before hashing.
+#[test]
+fn artifact_constructor_rejects_invalid_models() {
+    use pmoke_analysis_core::{BlockPlan, PhaseVarianceOutput};
+    let case = case("white_stationary");
+    let plan = plan_blocks(&plan_request(&case)).unwrap();
+    let (times, residuals) = train_residuals(&case);
+    let samples = assemble_samples(&times, &residuals, case.f_ref, case.phase_rad).unwrap();
+    let variance = estimate_phase_variance(&samples, variance_recipe(&case)).unwrap();
+    let recipe = CorrelationRecipe {
+        max_lag: 64,
+        shrinkage_eta: 0.05,
+    };
+    let standardized: Vec<Vec<f64>> = residuals
+        .iter()
+        .map(|block| block.iter().map(|value| value / 2.0).collect())
+        .collect();
+    let correlation = estimate_correlation(&standardized, None, case.dt, recipe).unwrap();
+    let binding = ModelBinding {
+        channel: 3,
+        voltage_unit: "V".to_string(),
+        adc_scale_provenance: None,
+        sample_interval_s: case.dt,
+        recorded_original_dt_s: None,
+        sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
+        reference_frequency_hz: case.f_ref,
+        frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+        phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
+        acquisition: AcquisitionMeta {
+            device: None,
+            gain: None,
+            bandwidth_hz: None,
+        },
+    };
+    let base = ArtifactRequest {
+        model_id: "wp3-test-forge".to_string(),
+        pmoke_version: "0.0.0-test".to_string(),
+        backend_versions: BTreeMap::new(),
+        binding,
+        variance: variance.clone(),
+        correlation: Some(correlation.clone()),
+        recipe: variance_recipe(&case),
+        correlation_recipe: Some(recipe),
+        plan: BlockPlan {
+            intervals: plan.intervals.clone(),
+            blocks: plan.blocks.clone(),
+            exclusions: plan.exclusions.clone(),
+        },
+        source_digests: Vec::new(),
+        seed: 0,
+        tuning: TuningMode::Fixed,
+        heldout: HeldoutReport {
+            blocks: 0,
+            profile_rmse_v2: None,
+            standardized_lag1: None,
+        },
+    };
+    // Empty phase table advertises no bins: rejected, not hashed.
+    let mut empty = base.clone();
+    empty.variance = PhaseVarianceOutput {
+        variances: Vec::new(),
+        v0: 1.0,
+        counts: Vec::new(),
+        distinct_cycles: Vec::new(),
+        contributing_blocks: 8,
+        raw: Vec::new(),
+        smoothed: Vec::new(),
+        floor_activations: Vec::new(),
+    };
+    assert_eq!(
+        build_artifact(empty).unwrap_err().code(),
+        "insufficient_calibration"
+    );
+    // Forged SPD flag with an indefinite leading block: refactorization fails.
+    let mut forged = correlation.clone();
+    forged.lags = vec![1.0, 2.0].into_iter().chain(vec![0.0; 63]).collect();
+    let mut forged_request = base.clone();
+    forged_request.correlation = Some(forged);
+    assert_eq!(
+        build_artifact(forged_request).unwrap_err().code(),
+        "covariance_not_spd"
+    );
+    // NaN lag: rejected before serialization (serde_json would emit null,
+    // which cannot deserialize back into the model type).
+    let mut nonfinite = correlation.clone();
+    nonfinite.lags[3] = f64::NAN;
+    let mut nonfinite_request = base.clone();
+    nonfinite_request.correlation = Some(nonfinite);
+    assert_eq!(
+        build_artifact(nonfinite_request).unwrap_err().code(),
+        "non_finite_input"
+    );
+    // Conflicting eta between output and recipe: one authoritative record.
+    let mut conflict_recipe = recipe;
+    conflict_recipe.shrinkage_eta = 0.25;
+    let mut conflict_request = base.clone();
+    conflict_request.correlation_recipe = Some(conflict_recipe);
+    assert_eq!(
+        build_artifact(conflict_request).unwrap_err().code(),
+        "invalid_calibration_request"
+    );
+}
+
+// F7: hash tests that rebuild the artifact after each mutation and compare
+// digests, plus a real-type round trip of the generated bytes.
+#[test]
+fn rebuilt_artifact_hashes_track_data_mutations() {
+    let case = case("white_stationary");
+    let plan = plan_blocks(&plan_request(&case)).unwrap();
+    let binding = ModelBinding {
+        channel: 3,
+        voltage_unit: "V".to_string(),
+        adc_scale_provenance: None,
+        sample_interval_s: case.dt,
+        recorded_original_dt_s: None,
+        sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
+        reference_frequency_hz: case.f_ref,
+        frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+        phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
+        acquisition: AcquisitionMeta {
+            device: None,
+            gain: None,
+            bandwidth_hz: None,
+        },
+    };
+    let recipe = CorrelationRecipe {
+        max_lag: 64,
+        shrinkage_eta: 0.05,
+    };
+    let build_from_signals = |signals: &[Vec<f64>]| {
+        let tolerances = JointSolverTolerances::default();
+        let mut times = Vec::new();
+        let mut residuals = Vec::new();
+        for (block, signal) in signals.iter().enumerate().take(8) {
+            let block_times = block_times(
+                block as u64 * case.block_len as u64,
+                case.block_len,
+                case.dt,
+            );
+            let fit = fit_nuisance(
+                &block_times,
+                signal,
+                case.f_ref,
+                case.phase_rad,
+                1.0 / case.dt,
+                tolerances,
+            )
+            .unwrap();
+            times.push(block_times);
+            residuals.push(fit.residual);
+        }
+        let samples = assemble_samples(&times, &residuals, case.f_ref, case.phase_rad).unwrap();
+        let variance = estimate_phase_variance(&samples, variance_recipe(&case)).unwrap();
+        let standardized: Vec<Vec<f64>> = residuals
+            .iter()
+            .map(|block| block.iter().map(|value| value / 2.0).collect())
+            .collect();
+        let correlation = estimate_correlation(&standardized, None, case.dt, recipe).unwrap();
+        build_artifact(ArtifactRequest {
+            model_id: "wp3-test-rebuild".to_string(),
+            pmoke_version: "0.0.0-test".to_string(),
+            backend_versions: BTreeMap::new(),
+            binding: binding.clone(),
+            variance,
+            correlation: Some(correlation),
+            recipe: variance_recipe(&case),
+            correlation_recipe: Some(recipe),
+            plan: plan.clone(),
+            source_digests: vec!["synthetic".to_string()],
+            seed: 20260920,
+            tuning: TuningMode::Fixed,
+            heldout: HeldoutReport {
+                blocks: 2,
+                profile_rmse_v2: None,
+                standardized_lag1: None,
+            },
+        })
+        .unwrap()
+    };
+    let baseline = build_from_signals(&case.signals);
+    // Generated bytes deserialize into the real model type unchanged.
+    let round_trip: CalibrationArtifact = serde_json::from_slice(&baseline.json_bytes).unwrap();
+    assert_eq!(round_trip, baseline.artifact);
+    // Evaluation-only mutation rebuilds to identical bytes and digest.
+    let mut eval_mutated = case.signals.clone();
+    for block in eval_mutated.iter_mut().skip(10).take(2) {
+        *block = vec![0.0; case.block_len];
+    }
+    let rebuilt_eval = build_from_signals(&eval_mutated);
+    assert_eq!(rebuilt_eval.json_bytes, baseline.json_bytes);
+    assert_eq!(rebuilt_eval.sha256_hex, baseline.sha256_hex);
+    // Training-data mutation rebuilds to a different digest and content.
+    let mut train_mutated = case.signals.clone();
+    train_mutated[0][0] += 1.0;
+    let rebuilt_train = build_from_signals(&train_mutated);
+    assert_ne!(rebuilt_train.sha256_hex, baseline.sha256_hex);
+    assert_ne!(
+        rebuilt_train.artifact.phase.variances_v2,
+        baseline.artifact.phase.variances_v2
+    );
+}
+
+// F8: nuisance regression follows the shared timebase convention and the
+// Nyquist bound; plus a noiseless coefficient anchor on the Rust path.
+#[test]
+fn nuisance_timebase_and_nyquist_gates() {
+    let tolerances = JointSolverTolerances::default();
+    // Nonmonotonic times (swapped adjacent pair, endpoints kept): rejected.
+    let mut times: Vec<f64> = (0..64).map(|i| i as f64 * 1e-5).collect();
+    times.swap(20, 21);
+    let signal = vec![0.0; 64];
+    assert_eq!(
+        fit_nuisance(&times, &signal, 1000.0, 0.0, 100_000.0, tolerances)
+            .unwrap_err()
+            .code(),
+        "invalid_timebase"
+    );
+    // 12th harmonic past Nyquist (6 kHz reference at 100 kHz sampling):
+    // full rank would still succeed, so the bound is explicit.
+    let nyquist_times: Vec<f64> = (0..256).map(|i| i as f64 * 1e-5).collect();
+    assert_eq!(
+        fit_nuisance(
+            &nyquist_times,
+            &vec![0.0; 256],
+            6000.0,
+            0.0,
+            100_000.0,
+            tolerances
+        )
+        .unwrap_err()
+        .code(),
+        "aliased_harmonic"
+    );
+    // Noiseless anchor: DC, scaled trend, and h1 recover exactly.
+    let anchor_times: Vec<f64> = (0..512).map(|i| i as f64 * 1e-5).collect();
+    let phi: Vec<f64> = anchor_times
+        .iter()
+        .map(|time| std::f64::consts::TAU * 1000.0 * time - 0.7)
+        .collect();
+    let first = anchor_times[0];
+    let last = anchor_times[511];
+    let signal: Vec<f64> = anchor_times
+        .iter()
+        .zip(phi.iter())
+        .map(|(time, phase)| {
+            0.5 + 0.25 * (2.0 * (time - first) / (last - first) - 1.0) + 1.5 * phase.cos()
+                - 0.5 * phase.sin()
+        })
+        .collect();
+    let fit = fit_nuisance(&anchor_times, &signal, 1000.0, 0.7, 100_000.0, tolerances).unwrap();
+    assert_eq!(fit.rank, NUISANCE_PARAMETERS);
+    close(fit.coefficients[0], 0.5, 1e-9, "anchor DC");
+    close(fit.coefficients[1], 0.25, 1e-9, "anchor trend");
+    close(fit.coefficients[2], 1.5, 1e-9, "anchor a1");
+    close(fit.coefficients[3], -0.5, 1e-9, "anchor b1");
+    for coefficient in fit.coefficients.iter().skip(4) {
+        close(*coefficient, 0.0, 1e-9, "anchor null");
+    }
+}
+
+// F9: block planning near the u64 index ceiling returns a typed error,
+// never a debug panic or a release wrap.
+#[test]
+fn block_plan_checked_arithmetic() {
+    let request = BlockPlanRequest {
+        intervals: vec![
+            RoleInterval {
+                role: CalibrationRole::Training,
+                start: u64::MAX - 10,
+                end: u64::MAX,
+            },
+            RoleInterval {
+                role: CalibrationRole::Training,
+                start: 0,
+                end: 100,
+            },
+        ],
+        block_len: 64,
+        total_samples: u64::MAX,
+        reference_frequency_hz: 1000.0,
+        sample_interval_s: 1e-5,
+        min_reference_cycles_per_block: 0.0,
+        min_training_blocks: 1,
+        min_training_intervals: 1,
+    };
+    assert_eq!(
+        plan_blocks(&request).unwrap_err().code(),
+        "invalid_calibration_request"
+    );
 }

@@ -25,8 +25,8 @@
    "bytes": 94394
   },
   "calibration-golden.json": {
-   "sha256": "b8cf5e41c355f7191883978dc4431292541b5aed87939090beaaf579a64b2d92",
-   "bytes": 2369782
+   "sha256": "2fa8dbef2d81fd2a71dcf56c8619770b522021d1f070c259b2d2d8e6aa9cdb07",
+   "bytes": 2733866
   },
   "legacy-golden.json": {
    "sha256": "ba5e3276cd104435c9f71978d953a45fa71b04e5c9d30d614a1063fb23605898",

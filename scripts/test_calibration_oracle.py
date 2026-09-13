@@ -79,6 +79,16 @@ class CorrelationTests(unittest.TestCase):
         self.assertAlmostEqual(out["lags"][1], 0.0, places=12)
         self.assertAlmostEqual(out["lags"][2], -0.5 * (1.0 - 2.0 / 4.0), places=12)
 
+    def test_pool_then_normalize_order(self):
+        # Unequal-power blocks: pool raw autocovariances first, normalize
+        # once by pooled lag zero. A=[1,1,-1,-1], B=[3,-3,3,-3], J=1.
+        out = correlation([[1.0, 1.0, -1.0, -1.0], [3.0, -3.0, 3.0, -3.0]],
+                          None, 1e-5, 1, eta=0.0)
+        # Pooled auto0 = (1+9)/2 = 5; pooled auto1 = (0.25-6.75)/2 = -3.25;
+        # normalized -0.65; taper (1-1/2) gives -0.325.
+        self.assertAlmostEqual(out["lags"][0], 1.0, places=12)
+        self.assertAlmostEqual(out["lags"][1], -0.325, places=12)
+
     def test_taper_shrink_order(self):
         # Constant block has no lag-zero power after DC removal.
         with self.assertRaises(ValueError):
@@ -95,10 +105,44 @@ class AdequacyTests(unittest.TestCase):
     def test_identical_groups_are_adequate(self):
         rng = np.random.RandomState(7)
         groups = [{"standardized": rng.normal(0, 1, 2048).tolist(),
-                   "phases": (rng.uniform(0, TAU, 2048)).tolist()} for _ in range(3)]
+                   "phases": (rng.uniform(0, TAU, 2048)).tolist()} for _ in range(4)]
         out = scs_adequacy(groups[:2], groups[2:], 4, 10, 0.2, 0.2)
         self.assertTrue(out["adequate"])
         self.assertLess(out["reserved_shift"], 0.2)
+
+    def test_reserved_periodic_structure_is_rejected(self):
+        # White training, sign-flipping pair correlation on reserved data:
+        # pooled averages cancel, per-octant structure must still reject.
+        rng = np.random.RandomState(11)
+        phases = (np.arange(512) / 512 * TAU).tolist()
+        train = [{"standardized": rng.normal(0, 1, 512).tolist(), "phases": phases}]
+        reserved = []
+        for _ in range(2):
+            series = np.empty(512)
+            for pair in range(256):
+                sign = 1.0 if phases[2 * pair] < math.pi else -1.0
+                first = rng.normal()
+                series[2 * pair] = first
+                series[2 * pair + 1] = sign * 0.9 * first + math.sqrt(0.19) * rng.normal()
+            reserved.append({"standardized": (series / series.std()).tolist(),
+                             "phases": phases})
+        out = scs_adequacy(train, reserved, 4, 10, 0.5, 0.5)
+        self.assertFalse(out["adequate"])
+        self.assertIn(out["reason"], ("reserved_spread", "pattern_shift"))
+
+    def test_zero_power_single_phase_nan_policy_are_rejected(self):
+        phases = (np.arange(256) / 256 * TAU).tolist()
+        white = {"standardized": np.random.RandomState(3).normal(0, 1, 256).tolist(),
+                 "phases": phases}
+        zero = {"standardized": [0.0] * 256, "phases": phases}
+        with self.assertRaises(ValueError):
+            scs_adequacy([zero], [white], 4, 10, 0.5, 0.5)
+        single_phase = {"standardized": white["standardized"],
+                        "phases": [0.0] * 256}
+        with self.assertRaises(ValueError):
+            scs_adequacy([white], [single_phase], 4, 10, 0.5, 0.5)
+        with self.assertRaises(ValueError):
+            scs_adequacy([white], [white], 4, 10, float("nan"), 0.5)
 
 
 if __name__ == "__main__":
