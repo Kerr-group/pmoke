@@ -134,7 +134,10 @@ impl Default for JointSolverTolerances {
 /// interval, mirroring the recorded waveform preflight: strict increase,
 /// per-step uniformity within relative tolerance plus serialization
 /// roundoff, and consistency with the declared sample rate
-/// (INTERFACES `invalid_timebase`).
+/// (INTERFACES `invalid_timebase`). The effective interval is the first
+/// sample interval, by definition shared with correlated inference: a
+/// kernel built from the returned value always satisfies the correlation
+/// lag-step binding on the validated grid.
 pub fn validate_timebase(times: &[f64], sample_rate_hz: f64) -> Result<f64> {
     if times.len() < 2 {
         return Err(AnalysisError::new(
@@ -165,9 +168,18 @@ pub fn validate_timebase(times: &[f64], sample_rate_hz: f64) -> Result<f64> {
     }
     for index in 2..times.len() {
         let step = times[index] - times[index - 1];
+        // Strict increase is independent of the uniformity allowance: at
+        // large time origins the roundoff allowance can exceed a sample
+        // step, so positivity is checked before the interval comparison.
+        if !step.is_finite() || step <= 0.0 {
+            return Err(AnalysisError::new(
+                "invalid_timebase",
+                format!("timebase step is not strictly increasing at sample {index}: {step}"),
+            ));
+        }
         let roundoff = times[index].abs().max(times[index - 1].abs()) * f64::EPSILON * 16.0;
         let tolerance = (interval.abs() * TIMEBASE_RELATIVE_TOLERANCE).max(roundoff);
-        if !step.is_finite() || (step - interval).abs() > tolerance {
+        if (step - interval).abs() > tolerance {
             return Err(AnalysisError::new(
                 "invalid_timebase",
                 format!("timebase step changes at sample {index}: {step}, expected {interval}"),
@@ -471,6 +483,88 @@ pub fn cholesky_factor(toeplitz: &DMatrix<f64>, max_jitter_v2: f64) -> Result<(D
     ))
 }
 
+/// TOL-07 gate on the executed noise covariance `R = S (T + j I) S`, where
+/// `T` is the recorded-lag Toeplitz factor, `j` the actually applied
+/// jitter, and `S = diag(sqrt_variance)` (uniform for stationary modes).
+/// Cholesky success only proves positive definiteness, and the whitened
+/// design condition only constrains the equation scaling: neither bounds
+/// the noise-covariance condition, so it is measured here exactly with a
+/// symmetric eigendecomposition of the executed matrix. An unmeasurable or
+/// non-positive-definite realization fails closed; iterative probes are
+/// deliberately avoided because clustered correlation spectra (for example
+/// AR(1) factors) converge too slowly to certify a cap verdict.
+fn gate_realized_noise_condition(
+    toeplitz: &DMatrix<f64>,
+    jitter_v2: f64,
+    sqrt_variance: &[f64],
+    max_noise_condition: f64,
+) -> Result<()> {
+    let rows = sqrt_variance.len();
+    if toeplitz.nrows() != rows || toeplitz.ncols() != rows || rows < 2 {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            "noise-condition gate needs the executed factor matching every sample scale",
+        ));
+    }
+    for scale in sqrt_variance.iter() {
+        if !scale.is_finite() || *scale <= 0.0 {
+            return Err(AnalysisError::new(
+                "invalid_noise_model",
+                "realized noise scales must be positive finite",
+            ));
+        }
+    }
+    if !jitter_v2.is_finite() || jitter_v2 < 0.0 {
+        return Err(AnalysisError::new(
+            "non_finite_input",
+            "executed jitter must be finite non-negative",
+        ));
+    }
+    // Executed covariance R = S (T + jI) S, formed explicitly.
+    let mut realized = DMatrix::zeros(rows, rows);
+    for row in 0..rows {
+        for column in 0..rows {
+            let mut value = toeplitz[(row, column)];
+            if row == column {
+                value += jitter_v2;
+            }
+            let entry = sqrt_variance[row] * value * sqrt_variance[column];
+            if !entry.is_finite() {
+                return Err(AnalysisError::new(
+                    "ill_conditioned_noise_model",
+                    "realized noise covariance overflows representation; \
+                     refusing the condition verdict",
+                ));
+            }
+            realized[(row, column)] = entry;
+        }
+    }
+    let eigenvalues = realized.symmetric_eigen().eigenvalues;
+    let mut smallest = f64::INFINITY;
+    let mut largest = f64::NEG_INFINITY;
+    for value in eigenvalues.iter() {
+        smallest = smallest.min(*value);
+        largest = largest.max(*value);
+    }
+    if !(smallest.is_finite() && largest.is_finite()) || smallest <= 0.0 {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            "realized noise covariance is not numerically positive definite; \
+             refusing the condition verdict",
+        ));
+    }
+    let condition = largest / smallest;
+    if !condition.is_finite() || condition > max_noise_condition {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            format!(
+                "realized noise covariance condition {condition:.6e} exceeds cap {max_noise_condition:.6e}",
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Whitened linear system with its variance scale and executed jitter.
 #[derive(Debug, Clone)]
 pub struct WhitenedSystem {
@@ -574,12 +668,49 @@ pub fn interpolate_variance(phases: &[f64], bins: &[f64]) -> Result<Vec<f64>> {
     Ok(out)
 }
 
+/// TOL-07 source-table variance guard shared by both phase modes: the
+/// table max/min ratio is gated against the realized-noise-covariance cap
+/// before interpolation. Interpolated sample variances are convex
+/// combinations of table entries, so gating the table bounds the diagonal
+/// part of the realized covariance in both modes.
+fn table_condition_guard(bins: &[f64], max_noise_condition: f64) -> Result<()> {
+    let mut smallest = f64::INFINITY;
+    let mut largest = 0.0_f64;
+    for bin in bins.iter() {
+        if !bin.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "variance bins must be finite",
+            ));
+        }
+        if *bin <= 0.0 {
+            return Err(AnalysisError::new(
+                "invalid_noise_model",
+                "variance bins must be positive",
+            ));
+        }
+        smallest = smallest.min(*bin);
+        largest = largest.max(*bin);
+    }
+    if largest > max_noise_condition * smallest {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            format!(
+                "noise variance table condition {largest:.6e}/{smallest:.6e} exceeds cap {max_noise_condition:.6e}",
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Whiten design and response together. Returns `(Dw, yw, variance_scale)`
 /// where the design-model covariance is `variance_scale * (Dw^T Dw)^-1`.
-/// For phase-diagonal mode the variance-table condition is gated against
+/// For both phase modes the variance-table condition is gated against
 /// the TOL-07 policy, independently of design conditioning. Interpolated
 /// sample variances are convex combinations of table entries, so gating
-/// the table bounds the realized covariance.
+/// the table bounds the diagonal part of the realized covariance. The
+/// correlated arms additionally gate the full executed `R = S C S` against
+/// the same cap (see `gate_realized_noise_condition`).
 pub fn whiten(
     design: &DMatrix<f64>,
     signal: &[f64],
@@ -648,35 +779,7 @@ pub fn whiten(
                     "phase_diagonal mode needs variance bins",
                 )
             })?;
-            for bin in bins.iter() {
-                if !bin.is_finite() {
-                    return Err(AnalysisError::new(
-                        "non_finite_input",
-                        "variance bins must be finite",
-                    ));
-                }
-                if *bin <= 0.0 {
-                    return Err(AnalysisError::new(
-                        "invalid_noise_model",
-                        "variance bins must be positive",
-                    ));
-                }
-            }
-            let mut smallest = f64::INFINITY;
-            let mut largest = 0.0_f64;
-            for bin in bins.iter() {
-                smallest = smallest.min(*bin);
-                largest = largest.max(*bin);
-            }
-            if largest > tolerances.max_noise_condition * smallest {
-                return Err(AnalysisError::new(
-                    "ill_conditioned_noise_model",
-                    format!(
-                        "noise variance table condition {largest:.6e}/{smallest:.6e} exceeds cap {:.6e}",
-                        tolerances.max_noise_condition
-                    ),
-                ));
-            }
+            table_condition_guard(bins, tolerances.max_noise_condition)?;
             let phases: Vec<f64> = times
                 .iter()
                 .map(|time| TAU * reference_frequency_hz * time - reference_phase_rad)
@@ -716,7 +819,9 @@ pub fn whiten(
             // (Dw^T Dw)^-1 with unit scale (same convention as the
             // phase-diagonal path, where S scaling also precedes the solve).
             let scaled = scale_rows(design, &response, noise.reference_variance_v2.sqrt())?;
-            let system = whiten_correlated(&scaled.0, &scaled.1, times, kernel, tolerances)?;
+            let uniform = vec![noise.reference_variance_v2.sqrt(); scaled.0.nrows()];
+            let system =
+                whiten_correlated(&scaled.0, &scaled.1, times, kernel, tolerances, &uniform)?;
             Ok(system)
         }
         NoiseMode::PhaseCorrelated => {
@@ -734,6 +839,9 @@ pub fn whiten(
             })?;
             // Re-validate contents for direct callers (see stationary arm).
             validate_correlation_kernel(kernel)?;
+            // Same source-table TOL-07 guard as the diagonal path: an
+            // identity kernel must accept exactly when diagonal accepts.
+            table_condition_guard(bins, tolerances.max_noise_condition)?;
             // R = S_N C_N S_N with S_ii = sqrt(v(phi_i)): the variance
             // scaling precedes the C triangular solve; reversing the order
             // is a different (wrong) factorization.
@@ -744,6 +852,7 @@ pub fn whiten(
             let variances = interpolate_variance(&phases, bins)?;
             let mut scaled_design = design.clone();
             let mut scaled_response = response;
+            let mut sqrt_variance = Vec::with_capacity(variances.len());
             for (row, variance) in variances.iter().enumerate() {
                 if !variance.is_finite() || *variance <= 0.0 {
                     return Err(AnalysisError::new(
@@ -751,13 +860,21 @@ pub fn whiten(
                         "realized sample variances must be positive finite",
                     ));
                 }
+                sqrt_variance.push(variance.sqrt());
                 let weight = 1.0 / variance.sqrt();
                 for column in 0..scaled_design.ncols() {
                     scaled_design[(row, column)] *= weight;
                 }
                 scaled_response[row] *= weight;
             }
-            whiten_correlated(&scaled_design, &scaled_response, times, kernel, tolerances)
+            whiten_correlated(
+                &scaled_design,
+                &scaled_response,
+                times,
+                kernel,
+                tolerances,
+                &sqrt_variance,
+            )
         }
     }
 }
@@ -780,14 +897,16 @@ fn scale_rows(
 /// Correlated whitening shared by both correlated modes (NUMERICS 4.2):
 /// form the finite Toeplitz factor from recorded lags (zeros beyond the
 /// support), SPD-validate it for this exact window with the bounded jitter
-/// policy, and triangular-solve the already variance-scaled system. The
-/// solve stays inside the current window; no state crosses windows.
+/// policy, gate the executed `R = S C S` covariance against the TOL-07 cap,
+/// and triangular-solve the already variance-scaled system. The solve stays
+/// inside the current window; no state crosses windows.
 fn whiten_correlated(
     scaled_design: &DMatrix<f64>,
     scaled_response: &DVector<f64>,
     times: &[f64],
     kernel: &CorrelationKernel,
     tolerances: JointSolverTolerances,
+    sqrt_variance: &[f64],
 ) -> Result<WhitenedSystem> {
     let rows = scaled_design.nrows();
     if rows < 2 {
@@ -805,16 +924,18 @@ fn whiten_correlated(
             ),
         ));
     }
-    // Effective interval from the window span (uniform grids guaranteed
-    // upstream by design_matrix validation); the kernel lag step must agree.
-    let span = times[rows - 1] - times[0];
-    if span <= 0.0 || !span.is_finite() {
+    // Effective interval is the validated first sample interval (the same
+    // value validate_timebase returns): one convention shared by
+    // validation, calibration binding, and inference, so a kernel built
+    // from the validator output always binds on the validated grid.
+    // An endpoint average would be a second, incompatible convention.
+    let effective_dt = times[1] - times[0];
+    if !effective_dt.is_finite() || effective_dt <= 0.0 {
         return Err(AnalysisError::new(
             "invalid_timebase",
-            "correlated whitening needs a positive finite window span",
+            "correlated whitening needs a positive finite first sample interval",
         ));
     }
-    let effective_dt = span / (rows - 1) as f64;
     let drift = (kernel.lag_step_s - effective_dt).abs() / effective_dt;
     if !drift.is_finite() || drift > CORRELATION_DT_REL_TOL {
         return Err(AnalysisError::new(
@@ -828,6 +949,14 @@ fn whiten_correlated(
     }
     let toeplitz = toeplitz_from_lags(&kernel.lags, rows);
     let (lower, jitter) = cholesky_factor(&toeplitz, tolerances.max_jitter_v2)?;
+    // TOL-07 on the executed covariance, not just its factors: Cholesky
+    // success and whitened-design conditioning do not bound cond(R).
+    gate_realized_noise_condition(
+        &toeplitz,
+        jitter,
+        sqrt_variance,
+        tolerances.max_noise_condition,
+    )?;
     let mut rhs = DMatrix::zeros(rows, scaled_design.ncols() + 1);
     for row in 0..rows {
         for column in 0..scaled_design.ncols() {

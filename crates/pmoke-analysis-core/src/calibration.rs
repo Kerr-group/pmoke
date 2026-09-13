@@ -13,7 +13,9 @@
 //! rejected explicitly with `unsupported_autotuning` (NUMERICS 6.5).
 
 use crate::error::{AnalysisError, Result};
-use crate::joint::{JointSolverTolerances, solve_direct, validate_timebase};
+use crate::joint::{
+    CORRELATION_DT_REL_TOL, JointSolverTolerances, solve_direct, validate_timebase,
+};
 use nalgebra::DMatrix;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -516,13 +518,18 @@ pub struct PhaseVarianceOutput {
     pub floor_activations: Vec<usize>,
 }
 
-/// Pooled within-bin variance after mean removal, then one cyclic smoothing
-/// pass, shrinkage toward the coverage-weighted mean, and a ratio floor.
-/// Missing coverage is an error; bins are never silently filled.
-pub fn estimate_phase_variance(
-    samples: &[CalSample],
-    recipe: PhaseVarianceRecipe,
-) -> Result<PhaseVarianceOutput> {
+/// Phase bin for a residual sample under the estimator convention
+/// `floor(phase / TAU * bins)` with last-to-first wrap.
+fn phase_bin(phase_rad: f64, bins: usize) -> usize {
+    let bin = (phase_rad / TAU * bins as f64).floor() as isize;
+    bin.rem_euclid(bins as isize) as usize
+}
+
+/// Shared phase-recipe domain rules (FR-027/028/030): the estimator and
+/// the artifact constructor apply the same validation, so a constructed
+/// artifact always carries a recipe the estimator would execute. Agreement
+/// between two illegal values is not validation.
+fn validate_phase_recipe(recipe: PhaseVarianceRecipe) -> Result<()> {
     if recipe.bins < 2 {
         return Err(invalid_request("phase variance needs at least two bins"));
     }
@@ -532,6 +539,29 @@ pub fn estimate_phase_variance(
     if !is_positive_finite(recipe.floor_ratio) {
         return Err(invalid_request("floor_ratio must be positive finite"));
     }
+    Ok(())
+}
+
+/// Shared correlation-recipe domain rules: the estimator and the artifact
+/// constructor apply the same validation (see `validate_phase_recipe`).
+fn validate_correlation_recipe(recipe: CorrelationRecipe) -> Result<()> {
+    if recipe.max_lag == 0 {
+        return Err(invalid_request("max_lag must be positive"));
+    }
+    if !(0.0..=1.0).contains(&recipe.shrinkage_eta) || !recipe.shrinkage_eta.is_finite() {
+        return Err(invalid_request("shrinkage_eta must lie in [0, 1]"));
+    }
+    Ok(())
+}
+
+/// Pooled within-bin variance after mean removal, then one cyclic smoothing
+/// pass, shrinkage toward the coverage-weighted mean, and a ratio floor.
+/// Missing coverage is an error; bins are never silently filled.
+pub fn estimate_phase_variance(
+    samples: &[CalSample],
+    recipe: PhaseVarianceRecipe,
+) -> Result<PhaseVarianceOutput> {
+    validate_phase_recipe(recipe)?;
     if samples.is_empty() {
         return Err(AnalysisError::new(
             "insufficient_calibration",
@@ -541,7 +571,6 @@ pub fn estimate_phase_variance(
     let bins = recipe.bins;
     let mut counts = vec![0_usize; bins];
     let mut sums = vec![0.0_f64; bins];
-    let mut square_sums = vec![0.0_f64; bins];
     let mut cycles: Vec<Vec<i64>> = vec![Vec::new(); bins];
     let mut blocks: Vec<usize> = Vec::new();
     for sample in samples.iter() {
@@ -551,12 +580,9 @@ pub fn estimate_phase_variance(
                 "calibration samples must carry finite phase and residual",
             ));
         }
-        let mut bin = (sample.phase_rad / TAU * bins as f64).floor() as isize;
-        bin = bin.rem_euclid(bins as isize);
-        let bin = bin as usize;
+        let bin = phase_bin(sample.phase_rad, bins);
         counts[bin] += 1;
         sums[bin] += sample.residual;
-        square_sums[bin] += sample.residual * sample.residual;
         cycles[bin].push(sample.cycle);
         blocks.push(sample.block);
     }
@@ -574,6 +600,35 @@ pub fn estimate_phase_variance(
     }
     let mut raw = vec![0.0_f64; bins];
     let mut distinct_cycles = vec![0_usize; bins];
+    // Bin means first; the centered second pass below is mean-offset
+    // invariant, unlike single-pass sum(x^2) - sum(x)^2/n, which cancels
+    // catastrophically when the bin mean dominates the residual variation.
+    let mut means = vec![0.0_f64; bins];
+    for bin in 0..bins {
+        means[bin] = if counts[bin] == 0 {
+            0.0
+        } else {
+            sums[bin] / counts[bin] as f64
+        };
+        if !means[bin].is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                format!("bin {bin} mean overflows representation"),
+            ));
+        }
+    }
+    let mut deviations = vec![0.0_f64; bins];
+    for sample in samples.iter() {
+        let bin = phase_bin(sample.phase_rad, bins);
+        let deviation = sample.residual - means[bin];
+        if !deviation.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                format!("bin {bin} centered residual is non-finite"),
+            ));
+        }
+        deviations[bin] += deviation * deviation;
+    }
     for bin in 0..bins {
         if counts[bin] < recipe.min_samples_per_bin {
             return Err(AnalysisError::new(
@@ -600,7 +655,7 @@ pub fn estimate_phase_variance(
         }
         // Pooled variance with denominator count-1 after mean removal.
         let count = counts[bin] as f64;
-        let variance = (square_sums[bin] - sums[bin] * sums[bin] / count) / (count - 1.0);
+        let variance = deviations[bin] / (count - 1.0);
         if !is_positive_finite(variance) {
             return Err(AnalysisError::new(
                 "insufficient_calibration",
@@ -616,17 +671,35 @@ pub fn estimate_phase_variance(
         .map(|(count, variance)| *count as f64 * variance)
         .sum::<f64>()
         / total as f64;
+    if !is_positive_finite(v0) {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "coverage-weighted mean variance is nonpositive or non-finite",
+        ));
+    }
     let mut smoothed = vec![0.0_f64; bins];
     for bin in 0..bins {
         let prev = raw[(bin + bins - 1) % bins];
         let next = raw[(bin + 1) % bins];
         smoothed[bin] = (prev + 2.0 * raw[bin] + next) / 4.0;
+        if !smoothed[bin].is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                format!("bin {bin} smoothed variance is non-finite"),
+            ));
+        }
     }
     let floor = recipe.floor_ratio * v0;
     let mut variances = vec![0.0_f64; bins];
     let mut floor_activations = Vec::new();
     for bin in 0..bins {
         let shrunk = (1.0 - recipe.shrinkage_alpha) * smoothed[bin] + recipe.shrinkage_alpha * v0;
+        if !shrunk.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                format!("bin {bin} shrunk variance is non-finite"),
+            ));
+        }
         if shrunk < floor {
             variances[bin] = floor;
             floor_activations.push(bin);
@@ -710,12 +783,7 @@ pub fn estimate_correlation(
             "correlation needs at least one block",
         ));
     }
-    if recipe.max_lag == 0 {
-        return Err(invalid_request("max_lag must be positive"));
-    }
-    if !(0.0..=1.0).contains(&recipe.shrinkage_eta) || !recipe.shrinkage_eta.is_finite() {
-        return Err(invalid_request("shrinkage_eta must lie in [0, 1]"));
-    }
+    validate_correlation_recipe(recipe)?;
     if !is_positive_finite(lag_step_s) {
         return Err(invalid_request("lag_step_s must be positive finite"));
     }
@@ -1205,6 +1273,11 @@ pub fn build_artifact(request: ArtifactRequest) -> Result<ArtifactWithHash> {
             "variance recipe bins and estimated table disagree",
         ));
     }
+    // The constructor applies the same recipe-domain rules as the
+    // estimators: an artifact must never bless a recipe (one-bin tables,
+    // out-of-range shrinkage, negative floors or etas) that estimation
+    // would refuse to execute. Output/recipe agreement alone is insufficient.
+    validate_phase_recipe(request.recipe)?;
     for activation in request.variance.floor_activations.iter() {
         if *activation >= request.variance.variances.len() {
             return Err(invalid_request(
@@ -1215,7 +1288,22 @@ pub fn build_artifact(request: ArtifactRequest) -> Result<ArtifactWithHash> {
     let mut modes = vec!["identity".to_string(), "phase_diagonal".to_string()];
     let correlation = match (&request.correlation, &request.correlation_recipe) {
         (Some(output), Some(recipe)) => {
+            validate_correlation_recipe(*recipe)?;
             validate_correlation_output(output, recipe)?;
+            // The correlation clock must match the canonical bound analysis
+            // interval under the shared inference policy: runtime binding
+            // rejects lag-step drift beyond CORRELATION_DT_REL_TOL, so the
+            // constructor cannot bless a contradicting clock. Internal
+            // duration/step agreement does not establish acquisition-clock
+            // agreement, and no resampling is inferred here.
+            let clock_drift = (output.lag_step_s - request.binding.sample_interval_s).abs()
+                / request.binding.sample_interval_s;
+            if !clock_drift.is_finite() || clock_drift > CORRELATION_DT_REL_TOL {
+                return Err(invalid_request(
+                    "correlation lag_step_s disagrees with the binding sample interval; \
+                     re-taper at the bound interval instead of reusing this clock",
+                ));
+            }
             modes.push("phase_correlated".to_string());
             Some(CorrelationTable {
                 lags: output.lags.clone(),
@@ -1424,19 +1512,19 @@ pub fn inspect_applicability(
     }
     // Acquisition/scale values: equal when both known, unverified otherwise.
     // A changed gain can move the noise variance while every other field
-    // stays put, so known-but-different is a hard mismatch.
+    // stays put, so known-but-different is a hard mismatch. Unknown on both
+    // sides is absence of evidence, not evidence of a match, so it also
+    // raises the unverified warning.
     let mut unverified = false;
-    if model.binding.adc_scale_provenance.is_some() || request.adc_scale_provenance.is_some() {
-        match (
-            &model.binding.adc_scale_provenance,
-            &request.adc_scale_provenance,
-        ) {
-            (Some(model_value), Some(request_value)) if model_value == request_value => {}
-            (Some(_), Some(_)) => errors.push(binding_error(
-                "ADC scale provenance does not match the calibrated provenance",
-            )),
-            _ => unverified = true,
-        }
+    match (
+        &model.binding.adc_scale_provenance,
+        &request.adc_scale_provenance,
+    ) {
+        (Some(model_value), Some(request_value)) if model_value == request_value => {}
+        (Some(_), Some(_)) => errors.push(binding_error(
+            "ADC scale provenance does not match the calibrated provenance",
+        )),
+        _ => unverified = true,
     }
     match (
         &model.binding.acquisition.device,
@@ -1448,8 +1536,7 @@ pub fn inspect_applicability(
                 "acquisition device does not match calibrated device",
             ));
         }
-        (Some(_), None) | (None, Some(_)) => unverified = true,
-        (None, None) => {}
+        _ => unverified = true,
     }
     for (name, model_value, request_value) in [
         (
@@ -1471,8 +1558,7 @@ pub fn inspect_applicability(
                     )));
                 }
             }
-            (Some(_), None) | (None, Some(_)) => unverified = true,
-            (None, None) => {}
+            _ => unverified = true,
         }
     }
     if unverified {
@@ -1637,6 +1723,37 @@ pub fn scs_adequacy(
         }
     }
     let role_name = ["training", "reserved"];
+    // Fail closed on overflow: lag-product accumulators can exceed f64
+    // range on extreme inputs while the centered-power preflight stays
+    // finite. Non-finite accumulators must never flow into min/max
+    // reductions (which silently discard NaN) and emerge as affirmative
+    // adequacy with zeroed statistics.
+    for role in 0..2 {
+        for lag in 0..policy.lags {
+            if !pooled[role][lag].is_finite() {
+                return Err(AnalysisError::new(
+                    "non_finite_output",
+                    format!(
+                        "{} lag {} product accumulator is non-finite; refusing adequacy",
+                        role_name[role],
+                        lag + 1
+                    ),
+                ));
+            }
+            for (octant, accumulator) in octant_num[role][lag].iter().enumerate() {
+                if !accumulator.is_finite() {
+                    return Err(AnalysisError::new(
+                        "non_finite_output",
+                        format!(
+                            "{} octant {octant} lag {} accumulator is non-finite; refusing adequacy",
+                            role_name[role],
+                            lag + 1
+                        ),
+                    ));
+                }
+            }
+        }
+    }
     let mut cells = vec![vec![vec![0.0_f64; OCTANTS]; policy.lags]; 2];
     for role in 0..2 {
         for lag in 0..policy.lags {
@@ -1689,6 +1806,22 @@ pub fn scs_adequacy(
     for (train_lag, reserved_lag) in cells[0].iter().zip(cells[1].iter()) {
         for (train_cell, reserved_cell) in train_lag.iter().zip(reserved_lag.iter()) {
             pattern_shift = pattern_shift.max((train_cell - reserved_cell).abs());
+        }
+    }
+    // The accumulator checks above keep every cell finite on arrival, but
+    // the reductions themselves are re-checked: a non-finite diagnostic
+    // must be a typed failure, never affirmative adequacy.
+    for (name, statistic) in [
+        ("phase_spread", phase_spread),
+        ("reserved_spread", reserved_spread),
+        ("reserved_shift", reserved_shift),
+        ("pattern_shift", pattern_shift),
+    ] {
+        if !statistic.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                format!("adequacy {name} is non-finite; refusing adequacy"),
+            ));
         }
     }
     let mut warnings = Vec::new();

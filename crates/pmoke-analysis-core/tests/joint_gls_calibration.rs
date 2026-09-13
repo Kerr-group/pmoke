@@ -1208,3 +1208,359 @@ fn block_plan_checked_arithmetic() {
         "invalid_calibration_request"
     );
 }
+
+// M3 review F3: the constructor applies the estimators' recipe-domain
+// rules, so invalid recipes fail even when output and recipe agree.
+#[test]
+fn artifact_constructor_rejects_invalid_recipes() {
+    use pmoke_analysis_core::{BlockPlan, CorrelationOutput, PhaseVarianceOutput};
+    let case = case("white_stationary");
+    let plan = plan_blocks(&plan_request(&case)).unwrap();
+    let (times, residuals) = train_residuals(&case);
+    let samples = assemble_samples(&times, &residuals, case.f_ref, case.phase_rad).unwrap();
+    let variance = estimate_phase_variance(&samples, variance_recipe(&case)).unwrap();
+    let recipe = CorrelationRecipe {
+        max_lag: 64,
+        shrinkage_eta: 0.05,
+    };
+    let standardized: Vec<Vec<f64>> = residuals
+        .iter()
+        .map(|block| block.iter().map(|value| value / 2.0).collect())
+        .collect();
+    let correlation = estimate_correlation(&standardized, None, case.dt, recipe).unwrap();
+    let base = ArtifactRequest {
+        model_id: "wp3-test-recipe-domains".to_string(),
+        pmoke_version: "0.0.0-test".to_string(),
+        backend_versions: BTreeMap::new(),
+        binding: ModelBinding {
+            channel: 3,
+            voltage_unit: "V".to_string(),
+            adc_scale_provenance: None,
+            sample_interval_s: case.dt,
+            recorded_original_dt_s: None,
+            sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
+            reference_frequency_hz: case.f_ref,
+            frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+            phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
+            acquisition: AcquisitionMeta {
+                device: None,
+                gain: None,
+                bandwidth_hz: None,
+            },
+        },
+        variance: variance.clone(),
+        correlation: Some(correlation.clone()),
+        recipe: variance_recipe(&case),
+        correlation_recipe: Some(recipe),
+        plan: BlockPlan {
+            intervals: plan.intervals.clone(),
+            blocks: plan.blocks.clone(),
+            exclusions: plan.exclusions.clone(),
+        },
+        source_digests: Vec::new(),
+        seed: 0,
+        tuning: TuningMode::Fixed,
+        heldout: HeldoutReport {
+            blocks: 0,
+            profile_rmse_v2: None,
+            standardized_lag1: None,
+        },
+    };
+    // Positive control: the valid request still builds.
+    build_artifact(base.clone()).unwrap();
+    // One-bin phase table with a matching recipe: phase estimation needs at
+    // least two bins, so agreement on bins=1 is not validation.
+    let mut one_bin = base.clone();
+    one_bin.variance = PhaseVarianceOutput {
+        variances: variance.variances[..1].to_vec(),
+        v0: variance.v0,
+        counts: variance.counts[..1].to_vec(),
+        distinct_cycles: variance.distinct_cycles[..1].to_vec(),
+        contributing_blocks: variance.contributing_blocks,
+        raw: variance.raw[..1].to_vec(),
+        smoothed: variance.smoothed[..1].to_vec(),
+        floor_activations: Vec::new(),
+    };
+    one_bin.recipe = PhaseVarianceRecipe {
+        bins: 1,
+        ..variance_recipe(&case)
+    };
+    assert_eq!(
+        build_artifact(one_bin).unwrap_err().code(),
+        "invalid_calibration_request"
+    );
+    // Out-of-range shrinkage and negative floor, each agreed by construction.
+    let mut bad_alpha = base.clone();
+    bad_alpha.recipe.shrinkage_alpha = 2.0;
+    assert_eq!(
+        build_artifact(bad_alpha).unwrap_err().code(),
+        "invalid_calibration_request"
+    );
+    let mut bad_floor = base.clone();
+    bad_floor.recipe.floor_ratio = -0.05;
+    assert_eq!(
+        build_artifact(bad_floor).unwrap_err().code(),
+        "invalid_calibration_request"
+    );
+    // Negative correlation eta agreed by both output and recipe records.
+    let mut bad_eta = base.clone();
+    bad_eta.correlation = Some(CorrelationOutput {
+        eta: -0.1,
+        ..correlation.clone()
+    });
+    bad_eta.correlation_recipe = Some(CorrelationRecipe {
+        max_lag: 64,
+        shrinkage_eta: -0.1,
+    });
+    assert_eq!(
+        build_artifact(bad_eta).unwrap_err().code(),
+        "invalid_calibration_request"
+    );
+}
+
+// M3 review F4: the correlation clock must match the bound acquisition
+// interval; doubling lag step and duration together fails construction,
+// and the valid artifact carries an exactly agreeing clock.
+#[test]
+fn artifact_constructor_rejects_inconsistent_lag_clock() {
+    use pmoke_analysis_core::{BlockPlan, CorrelationOutput};
+    let case = case("white_stationary");
+    let plan = plan_blocks(&plan_request(&case)).unwrap();
+    let (times, residuals) = train_residuals(&case);
+    let samples = assemble_samples(&times, &residuals, case.f_ref, case.phase_rad).unwrap();
+    let variance = estimate_phase_variance(&samples, variance_recipe(&case)).unwrap();
+    let recipe = CorrelationRecipe {
+        max_lag: 64,
+        shrinkage_eta: 0.05,
+    };
+    let standardized: Vec<Vec<f64>> = residuals
+        .iter()
+        .map(|block| block.iter().map(|value| value / 2.0).collect())
+        .collect();
+    let correlation = estimate_correlation(&standardized, None, case.dt, recipe).unwrap();
+    let base = ArtifactRequest {
+        model_id: "wp3-test-lag-clock".to_string(),
+        pmoke_version: "0.0.0-test".to_string(),
+        backend_versions: BTreeMap::new(),
+        binding: ModelBinding {
+            channel: 3,
+            voltage_unit: "V".to_string(),
+            adc_scale_provenance: None,
+            sample_interval_s: case.dt,
+            recorded_original_dt_s: None,
+            sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
+            reference_frequency_hz: case.f_ref,
+            frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+            phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
+            acquisition: AcquisitionMeta {
+                device: None,
+                gain: None,
+                bandwidth_hz: None,
+            },
+        },
+        variance,
+        correlation: Some(correlation.clone()),
+        recipe: variance_recipe(&case),
+        correlation_recipe: Some(recipe),
+        plan: BlockPlan {
+            intervals: plan.intervals.clone(),
+            blocks: plan.blocks.clone(),
+            exclusions: plan.exclusions.clone(),
+        },
+        source_digests: Vec::new(),
+        seed: 0,
+        tuning: TuningMode::Fixed,
+        heldout: HeldoutReport {
+            blocks: 0,
+            profile_rmse_v2: None,
+            standardized_lag1: None,
+        },
+    };
+    let built = build_artifact(base.clone()).unwrap();
+    let stored = built.artifact.correlation.unwrap();
+    assert_eq!(stored.lag_step_s, case.dt);
+    // Doubled lag step with a consistently doubled duration still
+    // contradicts the bound acquisition clock: rejected at construction.
+    let mut skewed = base.clone();
+    skewed.correlation = Some(CorrelationOutput {
+        lag_step_s: 2.0 * case.dt,
+        physical_duration_s: 2.0 * correlation.physical_duration_s,
+        ..correlation
+    });
+    assert_eq!(
+        build_artifact(skewed).unwrap_err().code(),
+        "invalid_calibration_request"
+    );
+}
+
+// M3 review F5: unknown acquisition conditions stay explicitly unverified,
+// including when both sides are unknown. Absence of evidence is not
+// evidence of a match.
+#[test]
+fn applicability_unknown_state_matrix() {
+    let case = case("white_stationary");
+    let plan = plan_blocks(&plan_request(&case)).unwrap();
+    let (times, residuals) = train_residuals(&case);
+    let samples = assemble_samples(&times, &residuals, case.f_ref, case.phase_rad).unwrap();
+    let variance = estimate_phase_variance(&samples, variance_recipe(&case)).unwrap();
+    let known_acquisition = AcquisitionMeta {
+        device: Some("synthetic".to_string()),
+        gain: Some(2.0),
+        bandwidth_hz: Some(50_000.0),
+    };
+    let unknown_acquisition = AcquisitionMeta {
+        device: None,
+        gain: None,
+        bandwidth_hz: None,
+    };
+    let build = |acquisition: AcquisitionMeta, adc: Option<String>| {
+        build_artifact(ArtifactRequest {
+            model_id: "wp3-test-unknown-matrix".to_string(),
+            pmoke_version: "0.0.0-test".to_string(),
+            backend_versions: BTreeMap::new(),
+            binding: ModelBinding {
+                channel: 3,
+                voltage_unit: "V".to_string(),
+                adc_scale_provenance: adc,
+                sample_interval_s: case.dt,
+                recorded_original_dt_s: None,
+                sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
+                reference_frequency_hz: case.f_ref,
+                frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+                phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
+                acquisition,
+            },
+            variance: variance.clone(),
+            correlation: None,
+            recipe: variance_recipe(&case),
+            correlation_recipe: None,
+            plan: plan.clone(),
+            source_digests: Vec::new(),
+            seed: 0,
+            tuning: TuningMode::Fixed,
+            heldout: HeldoutReport {
+                blocks: 0,
+                profile_rmse_v2: None,
+                standardized_lag1: None,
+            },
+        })
+        .unwrap()
+        .artifact
+    };
+    let context = |acquisition: AcquisitionMeta, adc: Option<String>| ApplicabilityRequest {
+        channel: 3,
+        sample_interval_s: case.dt,
+        reference_frequency_hz: case.f_ref,
+        voltage_unit: "V".to_string(),
+        phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
+        adc_scale_provenance: adc,
+        acquisition,
+    };
+    let verified: Vec<String> = vec![];
+    // Equal known states: compatible with no warnings.
+    let model = build(known_acquisition.clone(), Some("scale-a".to_string()));
+    let report = inspect_applicability(
+        &model,
+        &context(known_acquisition.clone(), Some("scale-a".to_string())),
+    );
+    assert!(report.compatible);
+    assert_eq!(report.warnings, verified);
+    // Unequal known states: hard errors (device as well as gain).
+    let report = inspect_applicability(
+        &model,
+        &context(
+            AcquisitionMeta {
+                device: Some("other".to_string()),
+                ..known_acquisition.clone()
+            },
+            Some("scale-a".to_string()),
+        ),
+    );
+    assert!(!report.compatible);
+    assert_eq!(report.errors[0].code, "model_binding_mismatch");
+    // One-sided absence: compatible with the unverified warning.
+    let report = inspect_applicability(
+        &model,
+        &context(unknown_acquisition.clone(), Some("scale-a".to_string())),
+    );
+    assert!(report.compatible);
+    assert_eq!(
+        report.warnings,
+        vec!["unverified_acquisition_conditions".to_string()]
+    );
+    // Both sides unknown: still compatible, but the warning must fire.
+    let unknown_model = build(unknown_acquisition.clone(), None);
+    let report = inspect_applicability(&unknown_model, &context(unknown_acquisition, None));
+    assert!(report.compatible);
+    assert!(report.errors.is_empty());
+    assert_eq!(
+        report.warnings,
+        vec!["unverified_acquisition_conditions".to_string()]
+    );
+}
+
+// M3 review F6: within-bin variance is mean-offset invariant. Both bins
+// carry exact sample variance 2 under offsets 0 and 1e8; the centered
+// two-pass computation returns [2, 2] in both cases.
+#[test]
+fn phase_variance_is_mean_offset_invariant() {
+    use pmoke_analysis_core::PhaseVarianceRecipe;
+    use std::f64::consts::FRAC_PI_2;
+    let recipe = PhaseVarianceRecipe {
+        bins: 2,
+        min_samples_per_bin: 2,
+        min_cycles_per_bin: 2,
+        min_contributing_blocks: 2,
+        shrinkage_alpha: 0.1,
+        floor_ratio: 0.05,
+    };
+    for offset in [0.0, 1e8] {
+        let mut samples = Vec::new();
+        for (bin, center) in [FRAC_PI_2, 3.0 * FRAC_PI_2].iter().enumerate() {
+            let mean = if bin == 0 { offset } else { -offset };
+            for i in 0..2 {
+                samples.push(CalSample {
+                    phase_rad: *center,
+                    cycle: i as i64,
+                    residual: mean + if i == 0 { -1.0 } else { 1.0 },
+                    block: i as usize,
+                });
+            }
+        }
+        let output = estimate_phase_variance(&samples, recipe).unwrap();
+        assert_eq!(output.raw, vec![2.0, 2.0], "offset={offset}");
+    }
+}
+
+// M3 review F7: overflowing lag-product accumulators are a typed failure,
+// never affirmative adequacy with zeroed statistics.
+#[test]
+fn adequacy_accumulator_overflow_is_rejected() {
+    use std::f64::consts::TAU;
+    let values: Vec<f64> = (0..256)
+        .map(|i| 1e154 + if i % 2 == 0 { -1e140 } else { 1e140 })
+        .collect();
+    let phases: Vec<f64> = (0..256)
+        .map(|i| TAU * ((i % 8) as f64 + 0.5) / 8.0)
+        .collect();
+    let group = AdequacyGroup {
+        standardized: values,
+        phases,
+    };
+    let policy = AdequacyPolicy {
+        lags: 4,
+        min_pairs_per_cell: 10,
+        max_phase_spread: 0.2,
+        max_reserved_shift: 0.2,
+    };
+    assert_eq!(
+        scs_adequacy(
+            std::slice::from_ref(&group),
+            std::slice::from_ref(&group),
+            policy
+        )
+        .unwrap_err()
+        .code(),
+        "non_finite_output"
+    );
+}
