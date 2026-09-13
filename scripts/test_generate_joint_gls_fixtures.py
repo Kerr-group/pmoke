@@ -23,7 +23,10 @@ FIXTURE_DIR = REPO_ROOT / "crates" / "pmoke-analysis-core" / "tests" / "fixtures
 # by test_regeneration_is_byte_identical. A 1% legacy-output mutation
 # (≈1e-2 relative) is orders of magnitude above these floors.
 FLOAT_REL_TOL = 1.0e-12
-FLOAT_ABS_FLOOR = 1.0e-15
+# Absolute floor: gelsd solution noise is ~eps*cond*||beta|| ≈ 1e-15, and
+# cross-version LAPACK rounding flips signs at that level. 1e-14 keeps 10x
+# headroom while catching 1% mutations on every entry above 1e-12.
+FLOAT_ABS_FLOOR = 1.0e-14
 # Recorded generating-environment metadata, not numerical ground truth:
 # regenerating under a newer SciPy must not fail the binding.
 EXEMPT_VALUE_KEYS = {"numpy_version", "scipy_version"}
