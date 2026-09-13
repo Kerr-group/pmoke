@@ -385,7 +385,10 @@ pub fn toeplitz_from_lags(lags: &[f64], samples: usize) -> DMatrix<f64> {
 }
 
 /// Forward substitution `L X = B` for lower-triangular `L` with any number
-/// of right-hand sides. Zero diagonals fail instead of dividing.
+/// of right-hand sides. Intended for Cholesky factors of covariance models,
+/// hence the `covariance_not_spd` code on zero diagonals: a zero diagonal
+/// means the purported factor was not positive definite. Zero diagonals
+/// fail instead of dividing.
 pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DMatrix<f64>> {
     let dimension = lower.nrows();
     if lower.ncols() != dimension || rhs.nrows() != dimension {
@@ -439,9 +442,10 @@ pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DM
 }
 
 /// Cholesky factor of the normalized Toeplitz matrix with the bounded
-/// jitter policy (FR-017): try plain first; on failure apply at most
+/// jitter policy (FR-017): try plain first; on failure add exactly
 /// `max_jitter_v2` to the diagonal once and record it; otherwise fail with
-/// `covariance_not_spd`. No escalation beyond the stated ceiling.
+/// `covariance_not_spd`. No search for smaller workable jitter and no
+/// escalation beyond the stated ceiling.
 pub fn cholesky_factor(toeplitz: &DMatrix<f64>, max_jitter_v2: f64) -> Result<(DMatrix<f64>, f64)> {
     if max_jitter_v2 < 0.0 || !max_jitter_v2.is_finite() {
         return Err(AnalysisError::new(
@@ -704,6 +708,9 @@ pub fn whiten(
                     "stationary_correlated mode needs a correlation kernel",
                 )
             })?;
+            // Re-validate contents for direct callers; estimate_joint
+            // pre-validates, but this entry point stands on its own.
+            validate_correlation_kernel(kernel)?;
             // R = v0 * C_N: variance scaling first, then the C factor. The
             // scale is absorbed into Dw, so the design-model covariance is
             // (Dw^T Dw)^-1 with unit scale (same convention as the
@@ -725,6 +732,8 @@ pub fn whiten(
                     "phase_correlated mode needs a correlation kernel",
                 )
             })?;
+            // Re-validate contents for direct callers (see stationary arm).
+            validate_correlation_kernel(kernel)?;
             // R = S_N C_N S_N with S_ii = sqrt(v(phi_i)): the variance
             // scaling precedes the C triangular solve; reversing the order
             // is a different (wrong) factorization.
@@ -1203,12 +1212,13 @@ pub fn pack_upper_triangle(covariance: &DMatrix<f64>) -> Result<Vec<f64>> {
 /// by the square root of the variance scale, so identity and diagonal modes
 /// report identical values for identical covariances.
 ///
-/// This entry point is the uncapped numerical reference used by tests and
-/// comparisons. Bounded production preflight (support caps, workspace and
-/// model-byte budgets) belongs to the plan/application layer, not here.
-/// All joint items are provisional WP-2 interfaces; the backend-private
-/// typed-API boundary (NFR-014) is decided before WP-3/WP-5 consumers
-/// depend on them.
+/// This entry point is the direct numerical reference used by tests and
+/// comparisons. Production preflight (workspace and model-byte budgets)
+/// belongs to the plan/application layer, not here; the correlated arms
+/// additionally refuse windows above MAX_WINDOW_SAMPLES before allocating
+/// the quadratic factor. All joint items are provisional WP-2/WP-4
+/// interfaces; the backend-private typed-API boundary (NFR-014) is decided
+/// before WP-3/WP-5 consumers depend on them.
 pub fn estimate_joint(
     times: &[f64],
     signal: &[f64],

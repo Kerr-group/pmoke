@@ -427,6 +427,25 @@ fn jitter_policy_is_bounded_and_recorded() {
     let estimate = estimate_joint(&times, &signal, 1000.0, 0.0, 100_000.0, &settings).unwrap();
     assert_eq!(estimate.jitter_applied_v2, 0.01);
     assert_eq!(estimate.rank, 13);
+    // Unneeded jitter is never applied: a PD kernel with a positive ceiling
+    // records zero and reproduces the no-jitter estimate bit-for-bit.
+    let mut generous = settings.clone();
+    if let NoiseModel {
+        correlation: Some(kernel),
+        ..
+    } = &mut generous.noise
+    {
+        *kernel = CorrelationKernel {
+            lags: vec![1.0, 0.5],
+            lag_step_s: 1e-5,
+        };
+    }
+    generous.tolerances.max_jitter_v2 = 0.1;
+    let unjittered = estimate_joint(&times, &signal, 1000.0, 0.0, 100_000.0, &generous).unwrap();
+    assert_eq!(unjittered.jitter_applied_v2, 0.0);
+    generous.tolerances.max_jitter_v2 = 0.0;
+    let plain = estimate_joint(&times, &signal, 1000.0, 0.0, 100_000.0, &generous).unwrap();
+    assert_eq!(unjittered.beta, plain.beta);
 }
 
 // Constant-profile phase-correlated equals scaled stationary inference:
