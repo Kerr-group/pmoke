@@ -20,6 +20,21 @@ from pathlib import Path
 import numpy as np
 import scipy
 
+from calibration_oracle import (
+    assemble_samples as oracle_samples,
+)
+from calibration_oracle import (
+    correlation as oracle_correlation,
+)
+from calibration_oracle import (
+    nuisance_fit as oracle_nuisance,
+)
+from calibration_oracle import (
+    phase_variance as oracle_variance,
+)
+from calibration_oracle import (
+    scs_adequacy as oracle_adequacy,
+)
 from joint_gls_oracle import (
     covariance_pinv_reference,
     design_matrix as oracle_design_matrix,
@@ -333,6 +348,193 @@ def build_weighted_golden():
     }]
 
 
+def build_calibration_golden():
+    """Synthetic calibration cases with committed oracle recipe outputs.
+
+    Geometries are small enough for unit tests but honor recipe coverage
+    gates (samples/cycles per bin, contributing blocks, two training
+    intervals). All randomness owns an explicit seed.
+    """
+    f_ref, dt, phase = 1000.0, 1e-5, 0.7
+    block_len = 2048
+    bins = 32
+
+    def block_times(start):
+        return (start + np.arange(block_len)) * dt
+
+    def carriers(times):
+        phi = 2.0 * math.pi * f_ref * times - phase
+        return (0.5 + 0.01 * (times - times[0])
+                + 1.5 * np.cos(phi) - 0.5 * np.sin(phi)
+                + 0.3 * np.cos(2 * phi) + 0.2 * np.sin(2 * phi)
+                + 0.1 * np.sin(3 * phi))
+
+    def train_intervals():
+        # Two nominated training intervals of four blocks each, then tuning
+        # and evaluation intervals of two blocks each (original indices).
+        return [(0, 4 * block_len), (4 * block_len, 8 * block_len),
+                (8 * block_len, 10 * block_len), (10 * block_len, 12 * block_len)]
+
+    def run_nuisance(signals, starts):
+        fits = []
+        residuals = []
+        times_list = []
+        for signal, start in zip(signals, starts):
+            times = block_times(start)
+            fit = oracle_nuisance(times.tolist(), signal, f_ref, phase)
+            fits.append({key: fit[key] for key in ("coefficients", "rank", "condition")})
+            residuals.append(fit["residual"])
+            times_list.append(times.tolist())
+        return fits, residuals, times_list
+
+    cases = []
+
+    # A: stationary white noise plus DC; flat profile truth v=4.
+    rng = np.random.RandomState(20260920)
+    a_signals = [0.5 + 2.0 * rng.normal(0.0, 1.0, block_len)
+                 for _ in range(12)]
+    a_starts = [b * block_len for b in range(12)]
+    a_fits, a_residuals, a_times = run_nuisance(a_signals, a_starts)
+    a_samples = oracle_samples(a_times[:8], a_residuals[:8], f_ref, phase)
+    a_variance = oracle_variance(a_samples, bins)
+    a_corr = oracle_correlation(a_residuals[:8], None, dt, 64)
+    cases.append({
+        "name": "white_stationary", "f_ref": f_ref, "dt": dt, "phase_rad": phase,
+        "block_len": block_len, "bins": bins, "intervals": train_intervals(),
+        "truth": {"kind": "white", "sigma": 2.0, "dc": 0.5},
+        "signals": [np.asarray(s).tolist() for s in a_signals],
+        "oracle": {"nuisance": a_fits, "variance": a_variance, "correlation": a_corr},
+    })
+
+    # B: known carriers over heteroscedastic noise; profile truth committed.
+    rng = np.random.RandomState(20260921)
+    b_centers = 2.0 * math.pi * (np.arange(bins) + 0.5) / bins
+    b_profile = (1.0 + 0.4 * np.sin(2.0 * math.pi * (np.arange(bins) + 0.5) / bins)).tolist()
+    b_v0 = 2.25
+    b_signals = []
+    for block in range(12):
+        times = block_times(block * block_len)
+        phases = np.mod(2.0 * math.pi * f_ref * times - phase, 2.0 * math.pi)
+        variances = b_v0 * np.array(periodic_interp(phases, b_centers, np.array(b_profile)))
+        b_signals.append(carriers(times) + np.sqrt(variances) * rng.normal(0.0, 1.0, block_len))
+    b_starts = [b * block_len for b in range(12)]
+    b_fits, b_residuals, b_times = run_nuisance(
+        [np.asarray(s).tolist() for s in b_signals], b_starts)
+    b_samples = oracle_samples(b_times[:8], b_residuals[:8], f_ref, phase)
+    b_variance = oracle_variance(b_samples, bins)
+    cases.append({
+        "name": "heteroscedastic_carriers", "f_ref": f_ref, "dt": dt,
+        "phase_rad": phase, "block_len": block_len, "bins": bins,
+        "intervals": train_intervals(),
+        "truth": {"kind": "heteroscedastic", "v0": b_v0,
+                  "variance_profile": b_profile,
+                  "carriers": {"dc": 0.5, "trend_per_s": 0.01,
+                               "a": {1: 1.5, 2: 0.3}, "b": {1: -0.5, 2: 0.2, 3: 0.1}}},
+        "signals": [np.asarray(s).tolist() for s in b_signals],
+        "oracle": {"nuisance": b_fits, "variance": b_variance},
+    })
+
+    # C: standardized AR(1) blocks for the correlation recipe.
+    rng = np.random.RandomState(20260922)
+    rho = 0.7
+    c_blocks = []
+    for _ in range(4):
+        block = np.empty(block_len)
+        block[0] = rng.normal()
+        for i in range(1, block_len):
+            block[i] = rho * block[i - 1] + math.sqrt(1.0 - rho * rho) * rng.normal()
+        c_blocks.append((block / block.std()).tolist())
+    c_corr = oracle_correlation(c_blocks, None, dt, 64)
+    cases.append({
+        "name": "ar1_correlated", "f_ref": f_ref, "dt": dt, "phase_rad": phase,
+        "block_len": block_len,
+        "truth": {"kind": "ar1", "rho": rho},
+        "standardized_blocks": c_blocks,
+        "oracle": {"correlation": c_corr},
+    })
+
+    # D: time-drifting correlation (not SCS); reserved blocks disagree.
+    rng = np.random.RandomState(20260923)
+    d_train, d_reserved = [], []
+    for _ in range(6):
+        block = np.empty(block_len)
+        block[0] = rng.normal()
+        for i in range(1, block_len):
+            block[i] = 0.7 * block[i - 1] + math.sqrt(1.0 - 0.49) * rng.normal()
+        d_train.append((block / block.std()).tolist())
+    for _ in range(3):
+        block = rng.normal(0.0, 1.0, block_len)
+        d_reserved.append((block / block.std()).tolist())
+    d_phases = (np.mod(2.0 * math.pi * f_ref * block_times(0) - phase,
+                       2.0 * math.pi)).tolist()
+    d_adequacy = oracle_adequacy(
+        [{"standardized": b, "phases": d_phases} for b in d_train],
+        [{"standardized": b, "phases": d_phases} for b in d_reserved],
+        8, 30, 0.2, 0.2)
+    cases.append({
+        "name": "nonseparable_drift", "f_ref": f_ref, "dt": dt,
+        "phase_rad": phase, "block_len": block_len,
+        "truth": {"kind": "drift", "train_rho": 0.7, "reserved_rho": 0.0},
+        "train_blocks": d_train, "reserved_blocks": d_reserved,
+        "phases": d_phases,
+        "adequacy_policy": {"lags": 8, "min_pairs_per_cell": 30,
+                            "max_phase_spread": 0.2, "max_reserved_shift": 0.2},
+        "oracle": {"adequacy": d_adequacy},
+    })
+
+    # E: stationary white standardized blocks; adequacy must hold.
+    rng = np.random.RandomState(20260924)
+    e_train = [(rng.normal(0.0, 1.0, block_len)).tolist() for _ in range(4)]
+    e_reserved = [(rng.normal(0.0, 1.0, block_len)).tolist() for _ in range(2)]
+    e_adequacy = oracle_adequacy(
+        [{"standardized": b, "phases": d_phases} for b in e_train],
+        [{"standardized": b, "phases": d_phases} for b in e_reserved],
+        8, 30, 0.2, 0.2)
+    cases.append({
+        "name": "scs_adequate_white", "f_ref": f_ref, "dt": dt,
+        "phase_rad": phase, "block_len": block_len,
+        "truth": {"kind": "white_standardized"},
+        "train_blocks": e_train, "reserved_blocks": e_reserved,
+        "phases": d_phases,
+        "adequacy_policy": {"lags": 8, "min_pairs_per_cell": 30,
+                            "max_phase_spread": 0.2, "max_reserved_shift": 0.2},
+        "oracle": {"adequacy": e_adequacy},
+    })
+
+    # F: white training but phase-dependent pair correlation on reserved
+    # data only. The pooled reserved lag average cancels to ~0 (matching
+    # training), while per-octant lag-1 correlations swing +/-0.9: a
+    # pooled-only diagnostic would falsely affirm adequacy.
+    rng = np.random.RandomState(20260925)
+    f_train = [(rng.normal(0.0, 1.0, block_len)).tolist() for _ in range(4)]
+    f_phases = np.mod(2.0 * math.pi * f_ref * block_times(0) - phase, 2.0 * math.pi)
+    f_reserved = []
+    for _ in range(2):
+        series = np.empty(block_len)
+        for pair in range(block_len // 2):
+            sign = 1.0 if f_phases[2 * pair] < math.pi else -1.0
+            first = rng.normal()
+            series[2 * pair] = first
+            series[2 * pair + 1] = (sign * 0.9 * first
+                                    + math.sqrt(1.0 - 0.81) * rng.normal())
+        f_reserved.append((series / series.std()).tolist())
+    f_adequacy = oracle_adequacy(
+        [{"standardized": b, "phases": f_phases.tolist()} for b in f_train],
+        [{"standardized": b, "phases": f_phases.tolist()} for b in f_reserved],
+        8, 30, 0.2, 0.2)
+    cases.append({
+        "name": "periodic_reserved_only", "f_ref": f_ref, "dt": dt,
+        "phase_rad": phase, "block_len": block_len,
+        "truth": {"kind": "reserved_periodic_pairs", "pair_correlation": 0.9},
+        "train_blocks": f_train, "reserved_blocks": f_reserved,
+        "phases": f_phases.tolist(),
+        "adequacy_policy": {"lags": 8, "min_pairs_per_cell": 30,
+                            "max_phase_spread": 0.2, "max_reserved_shift": 0.2},
+        "oracle": {"adequacy": f_adequacy},
+    })
+    return cases
+
+
 def build_correlated_golden():
     """Stationary/phase-correlated cases with committed oracle solutions.
 
@@ -478,6 +680,8 @@ def main():
     weighted = build_weighted_golden()
     files["weighted-golden.json"] = {"schema_version": 1, "cases": weighted}
 
+    calibration = build_calibration_golden()
+    files["calibration-golden.json"] = {"schema_version": 1, "cases": calibration}
     correlated = build_correlated_golden()
     files["correlated-golden.json"] = {"schema_version": 1, "cases": correlated}
 

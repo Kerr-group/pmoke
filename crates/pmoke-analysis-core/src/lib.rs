@@ -1,10 +1,28 @@
-mod error;
+pub mod calibration;
+pub mod error;
 pub mod joint;
 mod lockin;
 mod moke;
 mod phase;
 mod synthetic;
 
+pub use calibration::{
+    AcquisitionMeta, AdequacyGroup, AdequacyPolicy, AdequacyReport, ApplicabilityError,
+    ApplicabilityReport, ApplicabilityRequest, ArtifactRequest, ArtifactWithHash, BlockPlan,
+    BlockPlanRequest, BuilderInfo, CALIBRATION_ALGORITHM_VERSION,
+    CALIBRATION_ARTIFACT_SCHEMA_VERSION, CALIBRATION_PHASE_CONVENTION, CORRELATION_TAPER_ID,
+    CalSample, CalibrationArtifact, CalibrationRole, CapabilityRecord, CorrelationOutput,
+    CorrelationRecipe, CorrelationTable, DEFAULT_BLOCK_LEN, DEFAULT_CORRELATION_ETA,
+    DEFAULT_DT_REL_TOL, DEFAULT_FLOOR_RATIO, DEFAULT_FREQ_REL_TOL, DEFAULT_MAX_LAG,
+    DEFAULT_MIN_CYCLES_PER_BIN, DEFAULT_MIN_CYCLES_PER_BLOCK, DEFAULT_MIN_SAMPLES_PER_BIN,
+    DEFAULT_MIN_TRAINING_BLOCKS, DEFAULT_MIN_TRAINING_INTERVALS, DEFAULT_SHRINKAGE_ALPHA,
+    HeldoutReport, MAX_CALIBRATION_ARTIFACT_BYTES, ModelBinding, NUISANCE_HARMONICS,
+    NUISANCE_PARAMETERS, NuisanceFit, PhaseTable, PhaseVarianceOutput, PhaseVarianceRecipe,
+    PlannedBlock, PlannedExclusion, RegularizationRecord, RoleInterval, SearchSpace,
+    TrainingRecord, TuningMode, VARIANCE_INTERP_ID, ValidationRecord, assemble_samples,
+    build_artifact, ensure_fixed_tuning, estimate_correlation, estimate_phase_variance,
+    fit_nuisance, inspect_applicability, nuisance_design_matrix, plan_blocks, scs_adequacy,
+};
 pub use error::{AnalysisError, Result};
 pub use joint::{
     CORRELATION_DT_REL_TOL, CorrelationKernel, DEFAULT_MAX_CONDITION, DEFAULT_MAX_JITTER,

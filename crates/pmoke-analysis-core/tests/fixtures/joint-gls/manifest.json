@@ -24,6 +24,10 @@
    "sha256": "327b2a740eba1a7945711dffe01c91deb09ee3966fbb8c8c7a903340f61ea205",
    "bytes": 94394
   },
+  "calibration-golden.json": {
+   "sha256": "2fa8dbef2d81fd2a71dcf56c8619770b522021d1f070c259b2d2d8e6aa9cdb07",
+   "bytes": 2733866
+  },
   "correlated-golden.json": {
    "sha256": "34bbfdda9227f6c9a1896c64110b2d1d3de62ad76ff735abdd98a21a18c75322",
    "bytes": 80910
