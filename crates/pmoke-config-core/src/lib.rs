@@ -1,16 +1,24 @@
-//! Deterministic, platform-independent validation for canonical pmoke config v5.
+//! Deterministic, platform-independent validation for canonical pmoke configs v6 and v7.
 
 pub mod connection;
 mod model;
 
 use connection::{ConnectionDefaults, ConnectionUri};
-use model::{ConfigV6, SensorScale, Window};
+use model::{
+    ConfigV6, ConfigV7, Filter, Generator, JointHarmonicGlsConfigV7, LockinEstimatorV7, LockinV7,
+    Moke, Phase, Plot, Pulse, Reference, Scope, Sensor, SensorScale, Signal, Window,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 pub const REPORT_FORMAT_VERSION: u32 = 1;
 pub const CONFIG_SCHEMA_VERSION: u32 = 6;
+/// Canonical config versions accepted by browser validation.
+pub const SUPPORTED_SCHEMA_VERSIONS: [u32; 2] = [6, 7];
+/// Maximum GLS model parameters (NUMERICS shared-core cap, mirrored here so
+/// the browser core stays dependency-light).
+const MAX_GLS_MODEL_PARAMETERS: usize = 25;
 pub const MAX_CONFIG_BYTES: usize = 1_048_576;
 pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CORE_COMMIT: &str = env!("PMOKE_SOURCE_COMMIT");
@@ -198,7 +206,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
         },
     };
 
-    if version != CONFIG_SCHEMA_VERSION {
+    if !SUPPORTED_SCHEMA_VERSIONS.contains(&version) {
         let mut report = ValidationReport::new(Some(version));
         push(
             &mut report,
@@ -207,7 +215,7 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
             Some("version".to_string()),
             None,
             format!(
-                "browser validation supports canonical config version {CONFIG_SCHEMA_VERSION} (got {version})"
+                "browser validation supports canonical config versions 6 and 7 (got {version})"
             ),
             Some("use `pmoke config migrate` for legacy configuration versions".to_string()),
         );
@@ -231,30 +239,33 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
             return report;
         }
     };
-    let mut config = match serde_path_to_error::deserialize::<_, ConfigV6>(deserializer) {
-        Ok(config) => config,
-        Err(error) => {
-            let mut report = ValidationReport::new(Some(version));
-            let span = error.inner().span().map(|span| source_span(input, span));
-            push(
-                &mut report,
-                DiagnosticCode::SchemaMismatch,
-                DiagnosticSeverity::Error,
-                Some(error.path().to_string()),
-                span,
-                error.inner().to_string(),
-                Some("compare this field with the generated config reference".to_string()),
-            );
-            return report;
-        }
+    let mut config = match version {
+        6 => match serde_path_to_error::deserialize::<_, ConfigV6>(deserializer) {
+            Ok(config) => VersionedConfig::V6(config),
+            Err(error) => return schema_mismatch(input, version, error),
+        },
+        _ => match serde_path_to_error::deserialize::<_, ConfigV7>(deserializer) {
+            Ok(config) => VersionedConfig::V7(config),
+            Err(error) => return schema_mismatch(input, version, error),
+        },
     };
 
     let mut report = ValidationReport::new(Some(version));
-    validate_v6(&mut config, &mut report);
+    match &mut config {
+        VersionedConfig::V6(config) => validate_v6(config, &mut report),
+        VersionedConfig::V7(config) => validate_v7(config, &mut report),
+    }
     report.valid = report.error_count() == 0;
     if report.valid {
-        report.summary = Some(summary(&config));
-        match toml::to_string_pretty(&config) {
+        report.summary = Some(match &config {
+            VersionedConfig::V6(config) => summary(config),
+            VersionedConfig::V7(config) => summary_v7(config),
+        });
+        let rendered = match &config {
+            VersionedConfig::V6(config) => toml::to_string_pretty(config),
+            VersionedConfig::V7(config) => toml::to_string_pretty(config),
+        };
+        match rendered {
             Ok(normalized) => report.normalized_toml = Some(normalized),
             Err(error) => push(
                 &mut report,
@@ -271,6 +282,49 @@ pub fn validate_config_toml(input: &str) -> ValidationReport {
     report
 }
 
+enum VersionedConfig {
+    V6(ConfigV6),
+    V7(ConfigV7),
+}
+
+fn schema_mismatch(
+    input: &str,
+    version: u32,
+    error: serde_path_to_error::Error<toml::de::Error>,
+) -> ValidationReport {
+    let mut report = ValidationReport::new(Some(version));
+    let span = error.inner().span().map(|span| source_span(input, span));
+    push(
+        &mut report,
+        DiagnosticCode::SchemaMismatch,
+        DiagnosticSeverity::Error,
+        Some(error.path().to_string()),
+        span,
+        error.inner().to_string(),
+        Some("compare this field with the generated config reference".to_string()),
+    );
+    report
+}
+
+/// Borrowed view of the sections shared by every supported canonical version.
+struct Shared<'a> {
+    scope: &'a mut Scope,
+    generator: &'a mut Option<Generator>,
+    sensors: &'a [Sensor],
+    signals: &'a [Signal],
+    pulse: &'a Pulse,
+    reference: &'a Reference,
+    lockin_channels: &'a [u8],
+    lockin_snr_background_window: Option<Window>,
+    lockin_snr_signal_window: Option<Window>,
+    lockin_workers: usize,
+    lockin_stride_samples: usize,
+    lockin_debug_label: &'a Option<String>,
+    phase: &'a Phase,
+    moke: &'a Moke,
+    plot: &'a Plot,
+}
+
 fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
     if config.version != CONFIG_SCHEMA_VERSION {
         error(
@@ -283,15 +337,77 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
             ),
         );
     }
-    if config.scope.model != "DHO5108" {
+    validate_shared(
+        Shared {
+            scope: &mut config.scope,
+            generator: &mut config.generator,
+            sensors: &config.sensors,
+            signals: &config.signals,
+            pulse: &config.pulse,
+            reference: &config.reference,
+            lockin_channels: &config.lockin.channels,
+            lockin_snr_background_window: config.lockin.snr_background_window,
+            lockin_snr_signal_window: config.lockin.snr_signal_window,
+            lockin_workers: config.lockin.workers,
+            lockin_stride_samples: config.lockin.stride_samples,
+            lockin_debug_label: &config.lockin.debug_label,
+            phase: &config.phase,
+            moke: &config.moke,
+            plot: &config.plot,
+        },
+        report,
+    );
+    validate_filter(&config.lockin.filter, report);
+}
+
+fn validate_v7(config: &mut ConfigV7, report: &mut ValidationReport) {
+    if config.version != 7 {
+        error(
+            report,
+            DiagnosticCode::InvalidVersion,
+            "version",
+            format!(
+                "version 7 schema must declare version = 7 (got {})",
+                config.version
+            ),
+        );
+    }
+    validate_shared(
+        Shared {
+            scope: &mut config.scope,
+            generator: &mut config.generator,
+            sensors: &config.sensors,
+            signals: &config.signals,
+            pulse: &config.pulse,
+            reference: &config.reference,
+            lockin_channels: &config.lockin.channels,
+            lockin_snr_background_window: config.lockin.snr_background_window,
+            lockin_snr_signal_window: config.lockin.snr_signal_window,
+            lockin_workers: config.lockin.workers,
+            lockin_stride_samples: config.lockin.stride_samples,
+            lockin_debug_label: &config.lockin.debug_label,
+            phase: &config.phase,
+            moke: &config.moke,
+            plot: &config.plot,
+        },
+        report,
+    );
+    validate_window_estimator(&config.lockin, report);
+}
+
+fn validate_shared(shared: Shared<'_>, report: &mut ValidationReport) {
+    let Shared {
+        scope, generator, ..
+    } = shared;
+    if scope.model != "DHO5108" {
         error(
             report,
             DiagnosticCode::UnsupportedModel,
             "scope.model",
-            format!("unsupported oscilloscope model: {}", config.scope.model),
+            format!("unsupported oscilloscope model: {}", scope.model),
         );
     }
-    match ConnectionUri::parse(&config.scope.connection, ConnectionDefaults::default()) {
+    match ConnectionUri::parse(&scope.connection, ConnectionDefaults::default()) {
         Ok(connection @ (ConnectionUri::Tcp { .. } | ConnectionUri::Visa { .. })) => {
             if matches!(connection, ConnectionUri::Visa { .. }) {
                 warning(
@@ -301,7 +417,7 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
                     "VISA driver and Cargo feature availability are not checked in the browser",
                 );
             }
-            config.scope.connection = connection.to_string();
+            scope.connection = connection.to_string();
         }
         Ok(_) => error(
             report,
@@ -317,7 +433,7 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
         ),
     }
 
-    if let Some(generator) = &mut config.generator {
+    if let Some(generator) = generator {
         if generator.model != "WF1946B" {
             error(
                 report,
@@ -355,29 +471,40 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
         }
     }
 
-    validate_channels(config, report);
-    validate_windows(config, report);
-    validate_filter(config, report);
+    validate_channels(
+        shared.sensors,
+        shared.reference.channel,
+        shared.lockin_channels,
+        shared.signals,
+        report,
+    );
+    validate_windows(
+        shared.pulse,
+        shared.reference.fft_window,
+        shared.lockin_snr_background_window,
+        shared.lockin_snr_signal_window,
+        report,
+    );
 
     positive_usize(
         report,
         "reference.stride_samples",
-        config.reference.stride_samples,
+        shared.reference.stride_samples,
     );
     positive_usize(
         report,
         "reference.window_samples",
-        config.reference.window_samples,
+        shared.reference.window_samples,
     );
-    positive_usize(report, "lockin.workers", config.lockin.workers);
+    positive_usize(report, "lockin.workers", shared.lockin_workers);
     positive_usize(
         report,
         "lockin.stride_samples",
-        config.lockin.stride_samples,
+        shared.lockin_stride_samples,
     );
-    positive_usize(report, "plot.max_points", config.plot.max_points);
+    positive_usize(report, "plot.max_points", shared.plot.max_points);
 
-    if let Some(label) = &config.lockin.debug_label
+    if let Some(label) = shared.lockin_debug_label
         && !safe_debug_label(label)
     {
         error(
@@ -388,18 +515,18 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
         );
     }
 
-    if config.phase.offsets.len() != 6 {
+    if shared.phase.offsets.len() != 6 {
         error(
             report,
             DiagnosticCode::InvalidCount,
             "phase.offsets",
             format!(
                 "phase.offsets must have length 6 (got {})",
-                config.phase.offsets.len()
+                shared.phase.offsets.len()
             ),
         );
     }
-    for (index, offset) in config.phase.offsets.iter().enumerate() {
+    for (index, offset) in shared.phase.offsets.iter().enumerate() {
         match offset.evaluate() {
             Ok(value) if value.is_finite() => {}
             Ok(value) => error(
@@ -416,7 +543,7 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
             ),
         }
     }
-    if !config.moke.factor.is_finite() {
+    if !shared.moke.factor.is_finite() {
         error(
             report,
             DiagnosticCode::InvalidRange,
@@ -424,10 +551,10 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
             "moke.factor must be finite",
         );
     }
-    if !config
+    if !shared
         .sensors
         .iter()
-        .any(|sensor| sensor.channel == config.moke.sensor)
+        .any(|sensor| sensor.channel == shared.moke.sensor)
     {
         error(
             report,
@@ -435,11 +562,11 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
             "moke.sensor",
             format!(
                 "moke.sensor ({}) is not defined in sensors",
-                config.moke.sensor
+                shared.moke.sensor
             ),
         );
     }
-    if config.plot.output_dir.is_some() {
+    if shared.plot.output_dir.is_some() {
         warning(
             report,
             DiagnosticCode::DeprecatedField,
@@ -449,7 +576,13 @@ fn validate_v6(config: &mut ConfigV6, report: &mut ValidationReport) {
     }
 }
 
-fn validate_channels(config: &ConfigV6, report: &mut ValidationReport) {
+fn validate_channels(
+    sensors: &[Sensor],
+    reference_channel: u8,
+    lockin_channels: &[u8],
+    signals: &[Signal],
+    report: &mut ValidationReport,
+) {
     let mut assignments = BTreeMap::<u8, String>::new();
     let mut assign = |channel: u8, path: String, report: &mut ValidationReport| {
         if !(1..=8).contains(&channel) {
@@ -472,7 +605,7 @@ fn validate_channels(config: &ConfigV6, report: &mut ValidationReport) {
         }
     };
 
-    for (index, sensor) in config.sensors.iter().enumerate() {
+    for (index, sensor) in sensors.iter().enumerate() {
         let base = format!("sensors[{index}]");
         assign(sensor.channel, format!("{base}.channel"), report);
         if sensor.label.trim().is_empty() {
@@ -523,17 +656,13 @@ fn validate_channels(config: &ConfigV6, report: &mut ValidationReport) {
     }
     // A zero reference channel is the unspecified sentinel: it assigns no
     // hardware channel and is rejected later by reference-gated targets.
-    if config.reference.channel != 0 {
-        assign(
-            config.reference.channel,
-            "reference.channel".to_string(),
-            report,
-        );
+    if reference_channel != 0 {
+        assign(reference_channel, "reference.channel".to_string(), report);
     }
-    for (index, channel) in config.lockin.channels.iter().copied().enumerate() {
+    for (index, channel) in lockin_channels.iter().copied().enumerate() {
         assign(channel, format!("lockin.channels[{index}]"), report);
     }
-    for (index, signal) in config.signals.iter().enumerate() {
+    for (index, signal) in signals.iter().enumerate() {
         let base = format!("signals[{index}]");
         assign(signal.channel, format!("{base}.channel"), report);
         if signal.label.trim().is_empty() {
@@ -555,26 +684,24 @@ fn validate_channels(config: &ConfigV6, report: &mut ValidationReport) {
     }
 }
 
-fn validate_windows(config: &ConfigV6, report: &mut ValidationReport) {
-    check_window(
-        report,
-        "pulse.background_before",
-        config.pulse.background_before,
-    );
-    check_window(
-        report,
-        "pulse.background_after",
-        config.pulse.background_after,
-    );
-    check_window(report, "reference.fft_window", config.reference.fft_window);
-    if let Some(window) = config.lockin.snr_background_window {
+fn validate_windows(
+    pulse: &Pulse,
+    reference_fft_window: Window,
+    lockin_snr_background_window: Option<Window>,
+    lockin_snr_signal_window: Option<Window>,
+    report: &mut ValidationReport,
+) {
+    check_window(report, "pulse.background_before", pulse.background_before);
+    check_window(report, "pulse.background_after", pulse.background_after);
+    check_window(report, "reference.fft_window", reference_fft_window);
+    if let Some(window) = lockin_snr_background_window {
         check_window(report, "lockin.snr_background_window", window);
     }
-    if let Some(window) = config.lockin.snr_signal_window {
+    if let Some(window) = lockin_snr_signal_window {
         check_window(report, "lockin.snr_signal_window", window);
     }
-    let before = config.pulse.background_before;
-    let after = config.pulse.background_after;
+    let before = pulse.background_before;
+    let after = pulse.background_after;
     if before.start <= after.end && after.start <= before.end {
         error(
             report,
@@ -585,13 +712,153 @@ fn validate_windows(config: &ConfigV6, report: &mut ValidationReport) {
     }
 }
 
-fn validate_filter(config: &ConfigV6, report: &mut ValidationReport) {
-    let filter = &config.lockin.filter;
+fn validate_filter(filter: &Filter, report: &mut ValidationReport) {
     positive_f64(
         report,
         "lockin.filter.half_window_cycles",
         filter.half_window_cycles(),
     );
+}
+
+fn validate_window_estimator(lockin: &LockinV7, report: &mut ValidationReport) {
+    positive_f64(
+        report,
+        "lockin.window.half_window_cycles",
+        lockin.window.half_window_cycles,
+    );
+    let config = match &lockin.estimator {
+        LockinEstimatorV7::BoxcarLegacy {} => return,
+        LockinEstimatorV7::JointHarmonicGls(config) => config,
+    };
+    if config.fit_harmonics.is_empty() {
+        error(
+            report,
+            DiagnosticCode::InvalidCount,
+            "lockin.estimator.fit_harmonics",
+            "lockin.estimator.fit_harmonics must not be empty",
+        );
+    }
+    let mut previous = 0usize;
+    let mut ordered = true;
+    for harmonic in &config.fit_harmonics {
+        if *harmonic == 0 || *harmonic <= previous {
+            ordered = false;
+            break;
+        }
+        previous = *harmonic;
+    }
+    if !ordered {
+        error(
+            report,
+            DiagnosticCode::InvalidRange,
+            "lockin.estimator.fit_harmonics",
+            "lockin.estimator.fit_harmonics must be ascending unique positive harmonics",
+        );
+    }
+    if 1 + 2 * config.fit_harmonics.len() > MAX_GLS_MODEL_PARAMETERS {
+        error(
+            report,
+            DiagnosticCode::InvalidCount,
+            "lockin.estimator.fit_harmonics",
+            format!(
+                "lockin.estimator.fit_harmonics needs {} model parameters, above the limit of {MAX_GLS_MODEL_PARAMETERS}",
+                1 + 2 * config.fit_harmonics.len()
+            ),
+        );
+    }
+    if config.output_harmonics.as_slice() != [1usize, 2, 3, 4, 5, 6] {
+        error(
+            report,
+            DiagnosticCode::InvalidCount,
+            "lockin.estimator.output_harmonics",
+            "lockin.estimator.output_harmonics must be exactly [1, 2, 3, 4, 5, 6]",
+        );
+    }
+    for harmonic in &config.output_harmonics {
+        if !config.fit_harmonics.contains(harmonic) {
+            error(
+                report,
+                DiagnosticCode::InvalidRange,
+                "lockin.estimator.fit_harmonics",
+                format!("lockin.estimator.fit_harmonics must contain output harmonic {harmonic}"),
+            );
+        }
+    }
+    if config.envelope_degree != 0 {
+        error(
+            report,
+            DiagnosticCode::InvalidRange,
+            "lockin.estimator.envelope_degree",
+            format!(
+                "lockin.estimator.envelope_degree must be exactly 0 in v1 (got {})",
+                config.envelope_degree
+            ),
+        );
+    }
+    validate_estimator_calibrations(config, &lockin.channels, report);
+}
+
+fn validate_estimator_calibrations(
+    config: &JointHarmonicGlsConfigV7,
+    lockin_channels: &[u8],
+    report: &mut ValidationReport,
+) {
+    let mut seen: Vec<u8> = Vec::with_capacity(config.calibrations.len());
+    for (index, calibration) in config.calibrations.iter().enumerate() {
+        if !lockin_channels.contains(&calibration.channel) {
+            error(
+                report,
+                DiagnosticCode::InvalidRange,
+                format!("lockin.estimator.calibrations[{index}].channel"),
+                format!(
+                    "lockin.estimator.calibrations[{index}].channel ({}) is not a configured lock-in channel",
+                    calibration.channel
+                ),
+            );
+        }
+        if seen.contains(&calibration.channel) {
+            error(
+                report,
+                DiagnosticCode::DuplicateChannel,
+                format!("lockin.estimator.calibrations[{index}].channel"),
+                format!(
+                    "duplicate lockin.estimator.calibrations entry for channel {}",
+                    calibration.channel
+                ),
+            );
+        }
+        seen.push(calibration.channel);
+        if !is_concrete_sha256(&calibration.sha256) {
+            error(
+                report,
+                DiagnosticCode::InvalidRange,
+                format!("lockin.estimator.calibrations[{index}].sha256"),
+                format!(
+                    "lockin.estimator.calibrations[{index}].sha256 must be 64 lowercase hex characters (got {:?})",
+                    calibration.sha256
+                ),
+            );
+        }
+    }
+    for channel in lockin_channels {
+        if !seen.contains(channel) {
+            error(
+                report,
+                DiagnosticCode::InvalidCount,
+                "lockin.estimator.calibrations",
+                format!(
+                    "lockin.estimator.calibrations is missing an entry for lock-in channel {channel}"
+                ),
+            );
+        }
+    }
+}
+
+fn is_concrete_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn check_window(report: &mut ValidationReport, path: &str, window: Window) {
@@ -648,6 +915,28 @@ fn safe_debug_label(label: &str) -> bool {
         && label
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn summary_v7(config: &ConfigV7) -> ConfigSummary {
+    ConfigSummary {
+        version: config.version,
+        scope_model: config.scope.model.clone(),
+        scope_connection: config.scope.connection.clone(),
+        generator_model: config
+            .generator
+            .as_ref()
+            .map(|generator| generator.model.clone()),
+        generator_connection: config
+            .generator
+            .as_ref()
+            .map(|generator| generator.connection.clone()),
+        sensor_channels: config.sensors.iter().map(|sensor| sensor.channel).collect(),
+        reference_channel: config.reference.channel,
+        signal_channels: config.lockin.channels.clone(),
+        lockin_filter: config.lockin.estimator.name().to_string(),
+        lockin_workers: config.lockin.workers,
+        plot_mode: config.plot.mode.as_str().to_string(),
+    }
 }
 
 fn summary(config: &ConfigV6) -> ConfigSummary {
@@ -785,6 +1074,135 @@ factor = -1.0
         assert_eq!(summary.reference_channel, 2);
         assert_eq!(summary.signal_channels, vec![3]);
         assert!(report.normalized_toml.unwrap().contains("channel = 2"));
+    }
+
+    const VALID_V7_LEGACY: &str = r#"version = 7
+[scope]
+model = "DHO5108"
+connection = "tcp://192.0.2.10:55255"
+[data]
+output = "raw"
+input = "raw"
+[[sensors]]
+channel = 1
+scale = { factor = -2.0 }
+label = "field"
+unit = "T"
+[pulse]
+background_before = { start = -0.005, end = -0.001 }
+background_after = { start = 0.01, end = 0.02 }
+[reference]
+channel = 2
+fft_window = { start = 0.0, end = 0.005 }
+stride_samples = 100
+window_samples = 1000
+[lockin]
+channels = [3]
+workers = 2
+stride_samples = 100
+[lockin.window]
+kind = "reference_cycles"
+half_window_cycles = 1.0
+edge_policy = "legacy_trim"
+[lockin.estimator]
+kind = "boxcar_legacy"
+[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+[moke]
+sensor = 1
+method = "harmonics"
+factor = -1.0
+"#;
+
+    const SHA_A: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn valid_v7_gls() -> String {
+        VALID_V7_LEGACY.replace(
+            "[lockin.estimator]\nkind = \"boxcar_legacy\"",
+            &format!(
+                "[lockin.estimator]\nkind = \"joint_harmonic_gls\"\nfit_harmonics = [1, 2, 3, 4, 5, 6]\noutput_harmonics = [1, 2, 3, 4, 5, 6]\nnoise_mode = \"identity\"\n[[lockin.estimator.calibrations]]\nchannel = 3\npath = \"calibration/ch3.json\"\nsha256 = \"{SHA_A}\""
+            ),
+        )
+    }
+
+    #[test]
+    fn valid_v7_legacy_reports_version_7_and_round_trips() {
+        let report = validate_config_toml(VALID_V7_LEGACY);
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        assert_eq!(report.schema_version, Some(7));
+        let summary = report.summary.unwrap();
+        assert_eq!(summary.lockin_filter, "boxcar_legacy");
+        let normalized = report.normalized_toml.unwrap();
+        let reparsed = validate_config_toml(&normalized);
+        assert!(reparsed.valid, "{:#?}", reparsed.diagnostics);
+    }
+
+    #[test]
+    fn valid_v7_gls_names_the_estimator_and_round_trips() {
+        let input = valid_v7_gls();
+        let report = validate_config_toml(&input);
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        assert_eq!(report.summary.unwrap().lockin_filter, "joint_harmonic_gls");
+        let normalized = report.normalized_toml.unwrap();
+        assert!(normalized.contains("joint_harmonic_gls"));
+        let reparsed = validate_config_toml(&normalized);
+        assert!(reparsed.valid, "{:#?}", reparsed.diagnostics);
+    }
+
+    #[test]
+    fn v7_rejects_filter_tables_gls_keys_under_legacy_and_bad_digests() {
+        // v6 filter table is rejected in v7 with a schema mismatch.
+        let with_filter = VALID_V7_LEGACY.replace(
+            "[lockin.window]",
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }\n[lockin.window]",
+        );
+        let report = validate_config_toml(&with_filter);
+        assert!(!report.valid);
+        assert_eq!(report.diagnostics[0].code, DiagnosticCode::SchemaMismatch);
+
+        // GLS-only settings are rejected under boxcar_legacy.
+        let gls_under_legacy = VALID_V7_LEGACY.replace(
+            "kind = \"boxcar_legacy\"",
+            "kind = \"boxcar_legacy\"\nfit_harmonics = [1, 2]",
+        );
+        let report = validate_config_toml(&gls_under_legacy);
+        assert!(!report.valid);
+        assert_eq!(report.diagnostics[0].code, DiagnosticCode::SchemaMismatch);
+
+        // Unexpanded template digests are rejected.
+        let template = valid_v7_gls().replace(SHA_A, "${CALIBRATION_SHA256}");
+        let report = validate_config_toml(&template);
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|item| {
+            item.path
+                .as_deref()
+                .unwrap_or_default()
+                .ends_with(".sha256")
+        }));
+
+        // Missing per-channel bindings are rejected.
+        let missing = valid_v7_gls().replace(
+            &format!(
+                "[[lockin.estimator.calibrations]]\nchannel = 3\npath = \"calibration/ch3.json\"\nsha256 = \"{SHA_A}\"\n"
+            ),
+            "",
+        );
+        let report = validate_config_toml(&missing);
+        assert!(!report.valid);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|item| item.path.as_deref() == Some("lockin.estimator.calibrations"))
+        );
+
+        // Wrong output harmonics are rejected.
+        let output = valid_v7_gls().replace(
+            "output_harmonics = [1, 2, 3, 4, 5, 6]",
+            "output_harmonics = [1, 2, 3]",
+        );
+        let report = validate_config_toml(&output);
+        assert!(!report.valid);
     }
 
     #[test]

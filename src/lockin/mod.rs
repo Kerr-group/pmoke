@@ -1,4 +1,5 @@
 pub mod debug;
+pub mod joint;
 pub mod lockin_core;
 pub mod lockin_params;
 pub mod lockin_plot;
@@ -176,6 +177,26 @@ pub fn run_li<'a>(
 }
 
 pub fn li_process<'a>(
+    cfg: &Config,
+    t: impl Into<TimeAxisRef<'a>>,
+    signal_ch: &[u8],
+    signal_data: &[&[f64]],
+    ref_fit_params: RefFitParams,
+) -> Result<LockinProcessOutput> {
+    match &cfg.lockin.estimator {
+        crate::config::LockinEstimator::BoxcarLegacy => {
+            li_process_boxcar(cfg, t, signal_ch, signal_data, ref_fit_params)
+        }
+        // The engine (crate::lockin::joint) is complete and tested, but
+        // execution needs calibration-backed model loading (WP-5B). Running
+        // boxcar here would be a silent fallback (FR-048), so refuse.
+        crate::config::LockinEstimator::JointHarmonicGls(_) => bail!(
+            "joint_harmonic_gls execution needs calibration-backed model loading, which arrives in WP-5B; refusing to fall back to boxcar_legacy"
+        ),
+    }
+}
+
+pub fn li_process_boxcar<'a>(
     cfg: &Config,
     t: impl Into<TimeAxisRef<'a>>,
     signal_ch: &[u8],

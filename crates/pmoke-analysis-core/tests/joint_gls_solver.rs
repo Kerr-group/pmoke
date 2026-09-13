@@ -30,6 +30,7 @@ fn identity_noise() -> NoiseModel {
         mode: NoiseMode::Identity,
         reference_variance_v2: 1.0,
         variance_bins: None,
+        correlation: None,
     }
 }
 
@@ -358,32 +359,18 @@ fn validation_and_rank_gates_reject_bad_models() {
         solve_direct(&borderline, &DVector::from_vec(vec![1.0, 1.0]), tolerances).unwrap();
     assert_eq!(rank, 2);
     assert!(condition < DEFAULT_MAX_CONDITION);
-    // Correlated modes are explicit errors, not silent OLS.
+    // Correlated modes need their kernel: without it the preflight fails
+    // before any factorization (executable paths live in the correlated
+    // test target).
     let correlated = NoiseModel {
         mode: NoiseMode::StationaryCorrelated,
         reference_variance_v2: 1.0,
         variance_bins: None,
+        correlation: None,
     };
-    validate_noise_model(&correlated).unwrap();
-    // Full v1 model on enough rows that design succeeds and whitening is
-    // reached, where the correlated mode is explicitly rejected.
-    let times: Vec<f64> = (0..32).map(|i| i as f64 * 0.01).collect();
-    let signal: Vec<f64> = times
-        .iter()
-        .map(|t| (2.0 * std::f64::consts::PI * t).sin())
-        .collect();
     assert_eq!(
-        estimate_joint(
-            &times,
-            &signal,
-            1.0,
-            0.0,
-            100.0,
-            &settings(&model_1_to_12(), &correlated),
-        )
-        .unwrap_err()
-        .code(),
-        "unsupported_noise_mode"
+        validate_noise_model(&correlated).unwrap_err().code(),
+        "missing_noise_component"
     );
 }
 
@@ -456,7 +443,7 @@ fn covariance_contracts_hold() {
     let model = model_1_to_12();
     let times = case_times(&case);
     let design = design_matrix(&times, case.f_ref, case.phase_rad, &model, 1.0 / case.dt).unwrap();
-    let (whitened, _, scale) = whiten(
+    let system = whiten(
         &design,
         &case.signal,
         case.phase_rad,
@@ -466,8 +453,9 @@ fn covariance_contracts_hold() {
         JointSolverTolerances::default(),
     )
     .unwrap();
-    assert_eq!(scale, 1.0);
-    let covariance = covariance_from_qr(&whitened, scale).unwrap();
+    assert_eq!(system.variance_scale, 1.0);
+    assert_eq!(system.jitter_applied_v2, 0.0);
+    let covariance = covariance_from_qr(&system.design, system.variance_scale).unwrap();
     // Symmetry and 1/4 XY scaling against the mapped blocks.
     for i in 0..covariance.nrows() {
         for j in 0..covariance.ncols() {
@@ -562,6 +550,7 @@ fn reference_variance_scales_covariance_only() {
         mode: NoiseMode::Identity,
         reference_variance_v2: 4.0,
         variance_bins: None,
+        correlation: None,
     };
     let scaled = estimate_joint(
         &times,
@@ -734,6 +723,7 @@ fn residual_rms_matches_across_equivalent_modes() {
                 mode: NoiseMode::Identity,
                 reference_variance_v2: 4.0,
                 variance_bins: None,
+                correlation: None,
             },
         ),
     )
@@ -750,6 +740,7 @@ fn residual_rms_matches_across_equivalent_modes() {
                 mode: NoiseMode::PhaseDiagonal,
                 reference_variance_v2: 1.0,
                 variance_bins: Some(vec![4.0; 8]),
+                correlation: None,
             },
         ),
     )
@@ -785,6 +776,7 @@ fn noise_condition_gate_rejects_extreme_heteroscedasticity() {
         mode: NoiseMode::PhaseDiagonal,
         reference_variance_v2: 1.0,
         variance_bins: Some(vec![1e-12, 1.0]),
+        correlation: None,
     };
     assert_eq!(
         estimate_joint(
@@ -803,6 +795,7 @@ fn noise_condition_gate_rejects_extreme_heteroscedasticity() {
         mode: NoiseMode::PhaseDiagonal,
         reference_variance_v2: 1.0,
         variance_bins: Some(vec![1.0, 4.0]),
+        correlation: None,
     };
     estimate_joint(
         &times,
@@ -885,6 +878,7 @@ fn diagonal_mode_matches_oracle_with_nonzero_residual() {
         mode: NoiseMode::PhaseDiagonal,
         reference_variance_v2: case.v0,
         variance_bins: Some(absolute_bins),
+        correlation: None,
     };
     let times: Vec<f64> = (0..case.samples)
         .map(|index| case.t_start + index as f64 * case.dt)
@@ -970,6 +964,7 @@ fn constant_profile_matches_identity() {
                 mode: NoiseMode::Identity,
                 reference_variance_v2: 2.5,
                 variance_bins: None,
+                correlation: None,
             },
         ),
     )
@@ -986,6 +981,7 @@ fn constant_profile_matches_identity() {
                 mode: NoiseMode::PhaseDiagonal,
                 reference_variance_v2: 1.0,
                 variance_bins: Some(vec![2.5; 4]),
+                correlation: None,
             },
         ),
     )

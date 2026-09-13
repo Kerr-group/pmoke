@@ -25,12 +25,14 @@ pub use calibration::{
 };
 pub use error::{AnalysisError, Result};
 pub use joint::{
-    DEFAULT_MAX_CONDITION, DEFAULT_MAX_NOISE_CONDITION, DEFAULT_RANK_TOL, HarmonicSignalModel,
-    JointEstimate, JointHarmonicSettings, JointSolverTolerances, MAX_MODEL_PARAMETERS, NoiseMode,
-    NoiseModel, TIMEBASE_RELATIVE_TOLERANCE, covariance_from_qr, design_matrix, estimate_joint,
+    CORRELATION_DT_REL_TOL, CorrelationKernel, DEFAULT_MAX_CONDITION, DEFAULT_MAX_JITTER,
+    DEFAULT_MAX_NOISE_CONDITION, DEFAULT_RANK_TOL, HarmonicSignalModel, JointEstimate,
+    JointHarmonicSettings, JointSolverTolerances, LAG_ZERO_TOL, MAX_MODEL_PARAMETERS,
+    MAX_WINDOW_SAMPLES, NoiseMode, NoiseModel, TIMEBASE_RELATIVE_TOLERANCE, WhitenedSystem,
+    cholesky_factor, covariance_from_qr, design_matrix, estimate_joint, forward_substitute,
     interpolate_variance, map_covariance_to_xy, map_to_xy, pack_upper_triangle,
-    rotate_xy_covariance, solve_direct, validate_noise_model, validate_signal_model,
-    validate_timebase, whiten,
+    rotate_xy_covariance, solve_direct, toeplitz_from_lags, validate_correlation_kernel,
+    validate_noise_model, validate_signal_model, validate_timebase, whiten,
 };
 pub use lockin::{
     BoxcarLegacyOutput, BoxcarLegacyPairOutput, BoxcarLegacySettings, BoxcarMeanOutput,

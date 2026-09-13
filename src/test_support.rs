@@ -1,6 +1,6 @@
 use crate::config::{
-    Channel, Config, Fetch, Lockin, LockinLpfKind, Moke, MokeType, Phase, Plot, Pulse, Reference,
-    Roles, Screenshot, Window,
+    Channel, Config, Fetch, Lockin, LockinEstimator, LockinLpfKind, LockinWindow, Moke, MokeType,
+    Phase, Plot, Pulse, Reference, Roles, Screenshot, Window,
 };
 
 pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
@@ -60,6 +60,8 @@ pub fn test_config(sensor_ch: Vec<u8>, signal_ch: Vec<u8>) -> Config {
             stride_samples: 1,
             lpf_kind: LockinLpfKind::BoxcarLegacy,
             lpf_half_window_cycles: 1.0,
+            window: LockinWindow::legacy_boxcar(1.0),
+            estimator: LockinEstimator::BoxcarLegacy,
             lpf_debug_output: false,
             lpf_debug_label: None,
             lpf_debug_overwrite: false,

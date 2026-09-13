@@ -1,4 +1,8 @@
 use super::*;
+use crate::config::{
+    GlsCovarianceOutput, GlsFailurePolicy, GlsNoiseMode, JointHarmonicGlsConfig, LockinEstimator,
+    LockinLpfKind, LockinWindow,
+};
 use std::f64::consts::PI;
 
 fn test_lockin() -> Lockin {
@@ -7,6 +11,8 @@ fn test_lockin() -> Lockin {
         stride_samples: 10,
         lpf_kind: LockinLpfKind::BoxcarLegacy,
         lpf_half_window_cycles: 1.0,
+        window: LockinWindow::legacy_boxcar(1.0),
+        estimator: LockinEstimator::BoxcarLegacy,
         lpf_debug_output: false,
         lpf_debug_label: None,
         lpf_debug_overwrite: false,
@@ -86,4 +92,25 @@ fn legacy_boxcar_response_is_unity_at_zero_frequency() {
     assert!((legacy_boxcar_response_abs(params, 0.0) - 1.0).abs() < 1.0e-12);
     assert!(legacy_boxcar_enbw_hz(params).is_finite());
     assert!(legacy_boxcar_enbw_hz(params) > 0.0);
+}
+
+#[test]
+fn gls_estimator_is_rejected_without_fallback() {
+    let (time, signal) = test_waveform();
+    let mut lockin = test_lockin();
+    lockin.estimator = LockinEstimator::JointHarmonicGls(JointHarmonicGlsConfig {
+        fit_harmonics: vec![1, 2, 3, 4, 5, 6],
+        output_harmonics: vec![1, 2, 3, 4, 5, 6],
+        envelope_degree: 0,
+        noise_mode: GlsNoiseMode::Identity,
+        covariance_output: GlsCovarianceOutput::Diagonal,
+        failure_policy: GlsFailurePolicy::Error,
+        calibrations: Vec::new(),
+    });
+    let error = LockinProcessor::new(&time, &signal, 1_000.0, 0.0, &lockin)
+        .err()
+        .unwrap();
+    let message = error.to_string();
+    assert!(message.contains("joint_harmonic_gls"), "{message}");
+    assert!(message.contains("refusing to fall back"), "{message}");
 }

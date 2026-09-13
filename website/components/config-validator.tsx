@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { basePath } from '@/lib/shared';
-import { configSchemaVersion, sourceCommit } from '@/lib/version';
+import { sourceCommit, supportedSchemaVersions } from '@/lib/version';
 
 type Diagnostic = {
   code: string;
@@ -233,7 +233,8 @@ export function ConfigValidator({ locale = 'en' }: { locale?: 'en' | 'ja' }) {
   const buildMismatch =
     report !== undefined &&
     (report.format_version !== REPORT_FORMAT_VERSION ||
-      report.schema_version !== configSchemaVersion ||
+      report.schema_version === null ||
+      !supportedSchemaVersions.includes(report.schema_version) ||
       (sourceCommit !== 'development' &&
         report.core_commit !== 'development' &&
         report.core_commit !== sourceCommit));

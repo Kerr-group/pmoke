@@ -161,6 +161,139 @@ impl Filter {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ConfigV7 {
+    pub version: u32,
+    pub scope: Scope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generator: Option<Generator>,
+    pub data: Data,
+    #[serde(default)]
+    pub sensors: Vec<Sensor>,
+    pub pulse: Pulse,
+    pub reference: Reference,
+    pub lockin: LockinV7,
+    pub phase: Phase,
+    pub moke: Moke,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signals: Vec<Signal>,
+    #[serde(default)]
+    pub plot: Plot,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LockinV7 {
+    #[serde(alias = "signal_channels")]
+    pub channels: Vec<u8>,
+    pub workers: usize,
+    pub stride_samples: usize,
+    pub window: LockinWindowV7,
+    pub estimator: LockinEstimatorV7,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub debug_output: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_label: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub debug_overwrite: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snr_background_window: Option<Window>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snr_signal_window: Option<Window>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub save_npy: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LockinWindowV7 {
+    pub kind: LockinWindowKindV7,
+    pub half_window_cycles: f64,
+    pub edge_policy: LockinEdgePolicyV7,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LockinWindowKindV7 {
+    ReferenceCycles,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LockinEdgePolicyV7 {
+    LegacyTrim,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum LockinEstimatorV7 {
+    BoxcarLegacy {},
+    JointHarmonicGls(JointHarmonicGlsConfigV7),
+}
+
+impl LockinEstimatorV7 {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::BoxcarLegacy {} => "boxcar_legacy",
+            Self::JointHarmonicGls(_) => "joint_harmonic_gls",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct JointHarmonicGlsConfigV7 {
+    pub fit_harmonics: Vec<usize>,
+    pub output_harmonics: Vec<usize>,
+    #[serde(default)]
+    pub envelope_degree: u8,
+    pub noise_mode: GlsNoiseModeV7,
+    #[serde(default = "default_gls_covariance_output")]
+    pub covariance_output: GlsCovarianceOutputV7,
+    #[serde(default)]
+    pub failure_policy: GlsFailurePolicyV7,
+    #[serde(default)]
+    pub calibrations: Vec<EstimatorCalibrationV7>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GlsNoiseModeV7 {
+    Identity,
+    PhaseDiagonal,
+    StationaryCorrelated,
+    PhaseCorrelated,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GlsCovarianceOutputV7 {
+    None,
+    #[default]
+    Diagonal,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GlsFailurePolicyV7 {
+    #[default]
+    Error,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EstimatorCalibrationV7 {
+    pub channel: u8,
+    pub path: String,
+    pub sha256: String,
+}
+
+fn default_gls_covariance_output() -> GlsCovarianceOutputV7 {
+    GlsCovarianceOutputV7::Diagonal
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Phase {

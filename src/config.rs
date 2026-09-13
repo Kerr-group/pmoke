@@ -21,7 +21,8 @@ pub use docs::{
 };
 pub use load::{load_from_path, load_from_str};
 pub use migration::{
-    LATEST_CONFIG_VERSION, MigrationPlan, plan_latest_executable_migration, plan_migration,
+    LATEST_CONFIG_VERSION, MigrationPlan, SUPPORTED_CONFIG_VERSIONS,
+    plan_latest_executable_migration, plan_migration,
 };
 pub use paths::{ArtifactPaths, ArtifactResolver};
 pub use pmoke_config_core::{
@@ -31,7 +32,7 @@ pub use pmoke_config_core::{
 };
 pub(crate) use render::connection_uri;
 pub use render::render_normalized_config;
-use render::{render_config_v4, render_config_v5, render_config_v6};
+use render::{render_config_v4, render_config_v5, render_config_v6, render_config_v7};
 use schema::*;
 use validation::validate_common;
 pub use validation::validate_for_target;
@@ -418,12 +419,121 @@ pub struct Lockin {
     pub stride_samples: usize,
     pub lpf_kind: LockinLpfKind,
     pub lpf_half_window_cycles: f64,
+    /// Validated window contract. Mirrors the legacy `lpf_half_window_cycles`
+    /// for boxcar execution; execution dispatch reads `estimator`, never the
+    /// legacy mirrors. Skipped by legacy serializers (v1-3 know no windows).
+    #[serde(skip_serializing)]
+    pub window: LockinWindow,
+    /// Validated estimator contract (FR-032: never an LPF kind).
+    #[serde(skip_serializing)]
+    pub estimator: LockinEstimator,
     pub lpf_debug_output: bool,
     pub lpf_debug_label: Option<String>,
     pub lpf_debug_overwrite: bool,
     pub snr_background_window: Option<Window>,
     pub snr_signal_window: Option<Window>,
     pub save_npy: bool,
+}
+
+impl Lockin {
+    /// Display name of the selected estimator (never a legacy LPF label for
+    /// GLS configurations).
+    pub fn estimator_name(&self) -> &'static str {
+        match &self.estimator {
+            LockinEstimator::BoxcarLegacy => "boxcar_legacy",
+            LockinEstimator::JointHarmonicGls(_) => "joint_harmonic_gls",
+        }
+    }
+}
+
+impl LockinWindow {
+    /// Legacy boxcar window mirror used by v1-6 normalization and test
+    /// fixtures: reference cycles with the legacy trim edge policy.
+    pub fn legacy_boxcar(half_window_cycles: f64) -> Self {
+        Self {
+            kind: LockinWindowKind::ReferenceCycles,
+            half_window_cycles,
+            edge_policy: LockinEdgePolicy::LegacyTrim,
+        }
+    }
+}
+
+/// Validated lock-in window contract (`[lockin.window]` in v7).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct LockinWindow {
+    pub kind: LockinWindowKind,
+    pub half_window_cycles: f64,
+    pub edge_policy: LockinEdgePolicy,
+}
+
+/// Validated estimator contract (`[lockin.estimator]` in v7). GLS is a
+/// sibling of the legacy estimator, never an LPF kind (FR-032).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum LockinEstimator {
+    BoxcarLegacy,
+    JointHarmonicGls(JointHarmonicGlsConfig),
+}
+
+/// Validated joint-harmonic GLS configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JointHarmonicGlsConfig {
+    pub fit_harmonics: Vec<usize>,
+    pub output_harmonics: Vec<usize>,
+    pub envelope_degree: u8,
+    pub noise_mode: GlsNoiseMode,
+    pub covariance_output: GlsCovarianceOutput,
+    pub failure_policy: GlsFailurePolicy,
+    pub calibrations: Vec<EstimatorCalibration>,
+}
+
+/// GLS noise mode (NUMERICS section 4 names).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GlsNoiseMode {
+    Identity,
+    PhaseDiagonal,
+    StationaryCorrelated,
+    PhaseCorrelated,
+}
+
+/// XY covariance serialization mode (FR-041).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GlsCovarianceOutput {
+    None,
+    #[default]
+    Diagonal,
+    Full,
+}
+
+/// Estimator failure policy (exactly error in v1).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GlsFailurePolicy {
+    #[default]
+    Error,
+}
+
+/// One immutable calibration binding per lock-in channel.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EstimatorCalibration {
+    pub channel: u8,
+    pub path: String,
+    pub sha256: String,
+}
+
+/// Lock-in window kind (only reference cycles in v1).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LockinWindowKind {
+    ReferenceCycles,
+}
+
+/// Lock-in edge policy (only legacy trim in v1).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LockinEdgePolicy {
+    LegacyTrim,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -568,8 +678,8 @@ impl ConfigLoad {
 }
 
 struct ValidationSummary {
-    warnings: Vec<ConfigWarning>,
-    errors: Vec<ConfigDiagnostic>,
+    pub(super) warnings: Vec<ConfigWarning>,
+    pub(super) errors: Vec<ConfigDiagnostic>,
 }
 
 fn normalize_reference_ch_v1(reference_ch: &[u8]) -> std::result::Result<u8, ConfigDiagnostic> {
@@ -695,6 +805,8 @@ impl TryFrom<LockinV4> for Lockin {
             stride_samples: value.stride_samples,
             lpf_kind,
             lpf_half_window_cycles,
+            window: LockinWindow::legacy_boxcar(lpf_half_window_cycles),
+            estimator: LockinEstimator::BoxcarLegacy,
             lpf_debug_output: value.debug_output,
             lpf_debug_label: value.debug_label,
             lpf_debug_overwrite: value.debug_overwrite,
@@ -713,12 +825,102 @@ impl From<LockinV5> for Lockin {
             stride_samples: value.stride_samples,
             lpf_kind: LockinLpfKind::BoxcarLegacy,
             lpf_half_window_cycles: half_window_cycles,
+            window: LockinWindow::legacy_boxcar(half_window_cycles),
+            estimator: LockinEstimator::BoxcarLegacy,
             lpf_debug_output: value.debug_output,
             lpf_debug_label: value.debug_label,
             lpf_debug_overwrite: value.debug_overwrite,
             snr_background_window: value.snr_background_window,
             snr_signal_window: value.snr_signal_window,
             save_npy: value.save_npy,
+        }
+    }
+}
+
+impl From<LockinWindowKindV7> for LockinWindowKind {
+    fn from(value: LockinWindowKindV7) -> Self {
+        match value {
+            LockinWindowKindV7::ReferenceCycles => Self::ReferenceCycles,
+        }
+    }
+}
+
+impl From<LockinEdgePolicyV7> for LockinEdgePolicy {
+    fn from(value: LockinEdgePolicyV7) -> Self {
+        match value {
+            LockinEdgePolicyV7::LegacyTrim => Self::LegacyTrim,
+        }
+    }
+}
+
+impl From<LockinWindowV7> for LockinWindow {
+    fn from(value: LockinWindowV7) -> Self {
+        Self {
+            kind: value.kind.into(),
+            half_window_cycles: value.half_window_cycles,
+            edge_policy: value.edge_policy.into(),
+        }
+    }
+}
+
+impl From<GlsNoiseModeV7> for GlsNoiseMode {
+    fn from(value: GlsNoiseModeV7) -> Self {
+        match value {
+            GlsNoiseModeV7::Identity => Self::Identity,
+            GlsNoiseModeV7::PhaseDiagonal => Self::PhaseDiagonal,
+            GlsNoiseModeV7::StationaryCorrelated => Self::StationaryCorrelated,
+            GlsNoiseModeV7::PhaseCorrelated => Self::PhaseCorrelated,
+        }
+    }
+}
+
+impl From<GlsCovarianceOutputV7> for GlsCovarianceOutput {
+    fn from(value: GlsCovarianceOutputV7) -> Self {
+        match value {
+            GlsCovarianceOutputV7::None => Self::None,
+            GlsCovarianceOutputV7::Diagonal => Self::Diagonal,
+            GlsCovarianceOutputV7::Full => Self::Full,
+        }
+    }
+}
+
+impl From<GlsFailurePolicyV7> for GlsFailurePolicy {
+    fn from(value: GlsFailurePolicyV7) -> Self {
+        match value {
+            GlsFailurePolicyV7::Error => Self::Error,
+        }
+    }
+}
+
+impl From<EstimatorCalibrationV7> for EstimatorCalibration {
+    fn from(value: EstimatorCalibrationV7) -> Self {
+        Self {
+            channel: value.channel,
+            path: value.path,
+            sha256: value.sha256,
+        }
+    }
+}
+
+impl From<JointHarmonicGlsConfigV7> for JointHarmonicGlsConfig {
+    fn from(value: JointHarmonicGlsConfigV7) -> Self {
+        Self {
+            fit_harmonics: value.fit_harmonics,
+            output_harmonics: value.output_harmonics,
+            envelope_degree: value.envelope_degree,
+            noise_mode: value.noise_mode.into(),
+            covariance_output: value.covariance_output.into(),
+            failure_policy: value.failure_policy.into(),
+            calibrations: value.calibrations.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<LockinEstimatorV7> for LockinEstimator {
+    fn from(value: LockinEstimatorV7) -> Self {
+        match value {
+            LockinEstimatorV7::BoxcarLegacy {} => Self::BoxcarLegacy,
+            LockinEstimatorV7::JointHarmonicGls(config) => Self::JointHarmonicGls(config.into()),
         }
     }
 }

@@ -246,6 +246,134 @@ pub(super) struct LockinV5 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ConfigV7 {
+    pub(super) version: u32,
+    pub(super) scope: ScopeV4,
+    #[serde(default)]
+    pub(super) generator: Option<GeneratorV4>,
+    pub(super) data: DataV4,
+    #[serde(default)]
+    pub(super) sensors: Vec<SensorV4>,
+    pub(super) pulse: PulseV4,
+    pub(super) reference: ReferenceV4,
+    pub(super) lockin: LockinV7,
+    pub(super) phase: PhaseV4,
+    pub(super) moke: MokeV6,
+    #[serde(default)]
+    pub(super) signals: Vec<SignalV4>,
+    #[serde(default)]
+    pub(super) plot: PlotV4,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LockinV7 {
+    #[serde(alias = "signal_channels")]
+    pub(super) channels: Vec<u8>,
+    pub(super) workers: usize,
+    pub(super) stride_samples: usize,
+    pub(super) window: LockinWindowV7,
+    pub(super) estimator: LockinEstimatorV7,
+    #[serde(default)]
+    pub(super) debug_output: bool,
+    #[serde(default)]
+    pub(super) debug_label: Option<String>,
+    #[serde(default)]
+    pub(super) debug_overwrite: bool,
+    #[serde(default)]
+    pub(super) snr_background_window: Option<Window>,
+    #[serde(default)]
+    pub(super) snr_signal_window: Option<Window>,
+    #[serde(default)]
+    pub(super) save_npy: bool,
+}
+
+/// Raw v7 window contract. Unknown keys (including the removed
+/// `lockin.filter` table) are rejected by `deny_unknown_fields`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LockinWindowV7 {
+    pub(super) kind: LockinWindowKindV7,
+    pub(super) half_window_cycles: f64,
+    pub(super) edge_policy: LockinEdgePolicyV7,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LockinWindowKindV7 {
+    ReferenceCycles,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LockinEdgePolicyV7 {
+    LegacyTrim,
+}
+
+/// Raw v7 estimator contract. The legacy variant accepts no GLS-only
+/// settings; the GLS variant accepts no legacy filter keys.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum LockinEstimatorV7 {
+    BoxcarLegacy {},
+    JointHarmonicGls(JointHarmonicGlsConfigV7),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct JointHarmonicGlsConfigV7 {
+    pub(super) fit_harmonics: Vec<usize>,
+    pub(super) output_harmonics: Vec<usize>,
+    #[serde(default)]
+    pub(super) envelope_degree: u8,
+    pub(super) noise_mode: GlsNoiseModeV7,
+    #[serde(default = "default_gls_covariance_output")]
+    pub(super) covariance_output: GlsCovarianceOutputV7,
+    #[serde(default)]
+    pub(super) failure_policy: GlsFailurePolicyV7,
+    #[serde(default)]
+    pub(super) calibrations: Vec<EstimatorCalibrationV7>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum GlsNoiseModeV7 {
+    Identity,
+    PhaseDiagonal,
+    StationaryCorrelated,
+    PhaseCorrelated,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum GlsCovarianceOutputV7 {
+    None,
+    #[default]
+    Diagonal,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum GlsFailurePolicyV7 {
+    #[default]
+    Error,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct EstimatorCalibrationV7 {
+    pub(super) channel: u8,
+    pub(super) path: String,
+    pub(super) sha256: String,
+}
+
+fn default_gls_covariance_output() -> GlsCovarianceOutputV7 {
+    GlsCovarianceOutputV7::Diagonal
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[allow(dead_code)]
 pub(super) enum LockinFilterV4 {
@@ -522,6 +650,59 @@ pub(super) enum LockinFilterOutputV4 {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum LockinFilterOutputV5 {
     BoxcarLegacy { half_window_cycles: f64 },
+}
+
+#[derive(Serialize)]
+pub(super) struct NormalizedConfigV7 {
+    pub(super) version: u32,
+    pub(super) scope: ScopeOutputV4,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) generator: Option<GeneratorOutputV4>,
+    pub(super) data: DataOutputConfigV4,
+    pub(super) sensors: Vec<SensorOutputV4>,
+    pub(super) pulse: PulseOutputV4,
+    pub(super) reference: ReferenceOutputV4,
+    pub(super) lockin: LockinOutputV7,
+    pub(super) phase: PhaseOutputV4,
+    pub(super) moke: MokeOutputV6,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) signals: Vec<SignalOutputV4>,
+    pub(super) plot: PlotOutputV4,
+}
+
+#[derive(Serialize)]
+pub(super) struct LockinOutputV7 {
+    pub(super) channels: Vec<u8>,
+    pub(super) workers: usize,
+    pub(super) stride_samples: usize,
+    pub(super) window: LockinWindowOutputV7,
+    pub(super) estimator: LockinEstimatorOutputV7,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(super) debug_output: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) debug_label: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(super) debug_overwrite: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) snr_background_window: Option<Window>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) snr_signal_window: Option<Window>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(super) save_npy: bool,
+}
+
+#[derive(Serialize)]
+pub(super) struct LockinWindowOutputV7 {
+    pub(super) kind: LockinWindowKind,
+    pub(super) half_window_cycles: f64,
+    pub(super) edge_policy: LockinEdgePolicy,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(super) enum LockinEstimatorOutputV7 {
+    BoxcarLegacy {},
+    JointHarmonicGls(JointHarmonicGlsConfig),
 }
 
 #[derive(Serialize)]
