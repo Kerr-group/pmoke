@@ -1,4 +1,5 @@
 use std::f64::consts::TAU;
+use std::mem::{size_of, size_of_val};
 use wasm_bindgen::prelude::*;
 
 const MIN_SAMPLES: usize = 64;
@@ -8,6 +9,10 @@ const LOCKIN_HEADER_VALUES: usize = 8;
 /// design parameters (1 + 2 * fit harmonics) per call.
 pub const MAX_JOINT_WINDOW_SAMPLES: usize = 2_047;
 pub const MAX_JOINT_PARAMETERS: usize = 25;
+/// WASM joint-model byte cap per channel (NFR-008/AT-029): 1 MiB across
+/// all supplied model components (variance table, correlation lags,
+/// harmonic lists), enforced before any cloning or solving.
+pub const MAX_JOINT_MODEL_BYTES: usize = 1_048_576;
 
 /// Compute raw channel values at continuous time t in [0, 1].
 pub fn sample_channels(t: f64, phase: f64) -> (f64, f64, f64) {
@@ -199,7 +204,7 @@ pub fn boxcar_response_interleaved(
 #[wasm_bindgen]
 pub fn analysis_limits_json() -> String {
     format!(
-        r#"{{"max_demo_samples":{},"max_upload_samples":{},"max_upload_bytes":{},"max_total_harmonic_points":{},"lockin_header_values":{},"max_joint_window_samples":{},"max_joint_parameters":{}}}"#,
+        r#"{{"max_demo_samples":{},"max_upload_samples":{},"max_upload_bytes":{},"max_total_harmonic_points":{},"lockin_header_values":{},"max_joint_window_samples":{},"max_joint_parameters":{},"max_joint_model_bytes":{}}}"#,
         pmoke_analysis_core::DEFAULT_MAX_DEMO_SAMPLES,
         pmoke_analysis_core::MAX_UPLOAD_SAMPLES,
         pmoke_analysis_core::MAX_UPLOAD_BYTES,
@@ -207,6 +212,7 @@ pub fn analysis_limits_json() -> String {
         LOCKIN_HEADER_VALUES,
         MAX_JOINT_WINDOW_SAMPLES,
         MAX_JOINT_PARAMETERS,
+        MAX_JOINT_MODEL_BYTES,
     )
 }
 
@@ -260,6 +266,17 @@ fn joint_window_inner(
     }
     if signal.len() < 3 {
         return Err("insufficient_support: joint window needs at least 3 samples".to_string());
+    }
+    // Model-byte preflight before any cloning or solving: a sample-count
+    // cap is not a model-size cap, and unused oversized components must
+    // not reach the solver either.
+    let model_bytes = size_of_val(variance_bins)
+        + size_of_val(correlation_lags)
+        + (fit_harmonics.len() + output_harmonics.len()) * size_of::<u32>();
+    if model_bytes > MAX_JOINT_MODEL_BYTES {
+        return Err(format!(
+            "resource_limit_exceeded: joint model holds {model_bytes} bytes above cap {MAX_JOINT_MODEL_BYTES}",
+        ));
     }
     let fit: Vec<usize> = fit_harmonics
         .iter()
@@ -801,5 +818,86 @@ mod joint_window_tests {
         let limits = analysis_limits_json();
         assert!(limits.contains("\"max_joint_window_samples\":2047"));
         assert!(limits.contains("\"max_joint_parameters\":25"));
+        assert!(limits.contains("\"max_joint_model_bytes\":1048576"));
+    }
+
+    #[test]
+    fn joint_window_enforces_model_byte_cap() {
+        let (signal, dt, f_ref) = tone_window();
+        let harmonic_bytes = (FIT.len() + OUTPUTS.len()) * size_of::<u32>();
+        // Exactly at the 1 MiB cap: variance table sized so the total of
+        // all components equals the cap.
+        let at_cap = vec![1.0; (MAX_JOINT_MODEL_BYTES - harmonic_bytes) / size_of::<f64>()];
+        // Exactly at the cap succeeds: the cap is inclusive.
+        let packed = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "phase_diagonal",
+            0.01,
+            &at_cap,
+            &[],
+            dt,
+        )
+        .unwrap();
+        assert!(!packed.is_empty());
+        // One entry over the cap.
+        let over_cap = vec![1.0; (MAX_JOINT_MODEL_BYTES - harmonic_bytes) / size_of::<f64>() + 1];
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "phase_diagonal",
+            0.01,
+            &over_cap,
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("resource_limit_exceeded"), "{error}");
+        // The review repro: 150,000 f64 entries (1.2 MB) rejected.
+        let review_case = vec![1.0; 150_000];
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "phase_diagonal",
+            0.01,
+            &review_case,
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("resource_limit_exceeded"), "{error}");
+        // Oversized components are rejected even when the mode ignores
+        // them: identity mode with a huge unused variance table.
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "identity",
+            0.01,
+            &over_cap,
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("resource_limit_exceeded"), "{error}");
     }
 }
