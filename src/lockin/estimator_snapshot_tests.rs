@@ -246,3 +246,76 @@ fn corrupt_snapshot_fails_refresh() {
 fn pipeline_unit_is_documented() {
     assert_eq!(PIPELINE_VOLTAGE_UNIT, "V");
 }
+
+/// Structural snapshot validation (M4/M5 review F3): valid JSON that is
+/// not a valid snapshot must fail refresh. Each case mutates one aspect
+/// of a builder-produced valid snapshot.
+#[test]
+fn corrupt_value_snapshot_fails_refresh() {
+    fn refresh_with(text: &str) -> anyhow::Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "pmoke_estimator_snapshot_value_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("analysis/lockin")).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
+        cfg.set_artifact_root(dir.clone());
+        let paths = cfg.paths();
+        std::fs::write(paths.lockin_estimator_json(3), text).unwrap();
+        std::fs::write(paths.analysis_manifest(), "schema_version = 3\n").unwrap();
+        std::fs::write(paths.analysis_source_config(), b"version = 3\n").unwrap();
+        std::fs::write(paths.analysis_resolved_config(), b"version = 3\n").unwrap();
+        let result = crate::lockin::provenance::refresh_analysis_manifest_outputs(&cfg, "li");
+        std::fs::remove_dir_all(&dir).unwrap();
+        result
+    }
+
+    // JSON null is syntactically valid but carries no snapshot.
+    assert!(refresh_with("null").is_err());
+    // A wrong-type JSON document is not a snapshot either.
+    assert!(refresh_with("[1, 2, 3]").is_err());
+
+    let gls = test_gls();
+    let params = test_params();
+    let rows: Vec<QualityRow> = (12..=138).map(|center| quality_row(center, 0.0)).collect();
+    let snapshot = build_estimator_snapshot(
+        3,
+        &gls,
+        &test_noise(),
+        &JointSolverTolerances::default(),
+        crate::lockin::joint::JOINT_SOLVER_ID,
+        1_000.0,
+        0.0,
+        1.0e-5,
+        &params,
+        &test_binding(),
+        &rows,
+    )
+    .unwrap();
+    // The builder-produced snapshot registers cleanly (control).
+    let mut valid = serde_json::to_value(&snapshot).expect("snapshot serializes to a JSON value");
+    assert!(
+        refresh_with(&serde_json::to_string_pretty(&valid).unwrap()).is_ok(),
+        "builder snapshot must validate"
+    );
+    // Wrong channel for the filename.
+    valid["channel"] = serde_json::json!(5);
+    assert!(refresh_with(&serde_json::to_string_pretty(&valid).unwrap()).is_err());
+    // Missing geometry record.
+    let mut missing = serde_json::to_value(&snapshot).unwrap();
+    missing.as_object_mut().unwrap().remove("geometry");
+    assert!(refresh_with(&serde_json::to_string_pretty(&missing).unwrap()).is_err());
+    // Malformed model receipt digest.
+    let mut receipt = serde_json::to_value(&snapshot).unwrap();
+    receipt["model"]["sha256"] = serde_json::json!("not-a-digest");
+    assert!(refresh_with(&serde_json::to_string_pretty(&receipt).unwrap()).is_err());
+    // Unknown top-level field.
+    let mut extra = serde_json::to_value(&snapshot).unwrap();
+    extra["future_field"] = serde_json::json!(true);
+    assert!(refresh_with(&serde_json::to_string_pretty(&extra).unwrap()).is_err());
+    // Carried errors are never registrable.
+    let mut errors = serde_json::to_value(&snapshot).unwrap();
+    errors["errors"] = serde_json::json!(["window 4 failed"]);
+    assert!(refresh_with(&serde_json::to_string_pretty(&errors).unwrap()).is_err());
+}

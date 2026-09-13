@@ -13,12 +13,13 @@ use crate::lockin::joint::{ModelBinding, QualityRow, WindowStatus, gls_noise_mod
 use crate::lockin::lockin_params::LockinParams;
 use anyhow::{Context, Result, bail};
 use pmoke_analysis_core::joint::{JointSolverTolerances, NoiseModel};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Estimator snapshot schema version.
 pub const ESTIMATOR_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SolverPolicy {
     pub id: String,
     pub rank_tol: f64,
@@ -27,14 +28,16 @@ pub struct SolverPolicy {
     pub max_jitter_v2: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SignalModelSnapshot {
     pub fit_harmonics: Vec<usize>,
     pub output_harmonics: Vec<usize>,
     pub envelope_degree: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NoiseModelSnapshot {
     pub mode: String,
     pub reference_variance_v2: f64,
@@ -43,19 +46,22 @@ pub struct NoiseModelSnapshot {
     pub correlation_lag_step_s: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelReceipt {
     pub path: String,
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReferenceSnapshot {
     pub frequency_hz: f64,
     pub phase_rad: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeometrySnapshot {
     pub sample_interval_s: f64,
     pub half_window_taps: usize,
@@ -69,7 +75,8 @@ pub struct GeometrySnapshot {
     pub last_time_s: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QualitySummary {
     pub windows: usize,
     pub ok: usize,
@@ -79,14 +86,16 @@ pub struct QualitySummary {
     pub max_scaled_design_condition: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CovarianceInterpretation {
     pub covariance_mode: String,
     pub serialization: String,
     pub conditioning: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EstimatorSnapshot {
     pub schema_version: u32,
     pub channel: u8,
@@ -232,6 +241,197 @@ pub fn build_estimator_snapshot(
         },
         errors: Vec::new(),
     })
+}
+
+/// Validates a parsed estimator snapshot before manifest registration
+/// (AT-025): JSON syntax is not enough — the snapshot must carry the
+/// expected schema version and channel, complete solver/signal/noise
+/// geometry records with finite in-domain values, a well-formed model
+/// receipt, and internally consistent quality/covariance summaries.
+/// Checksum verification stays a separate manifest concern; this decides
+/// structural validity. A snapshot carrying errors is never registrable:
+/// publication aborts on fatal windows, so errors must be empty here.
+pub fn validate_estimator_snapshot(
+    snapshot: &EstimatorSnapshot,
+    expected_channel: u8,
+) -> Result<()> {
+    let here = |what: &str| format!("estimator snapshot for channel {expected_channel} has {what}");
+    if snapshot.schema_version != ESTIMATOR_SNAPSHOT_SCHEMA_VERSION {
+        bail!(
+            "{}",
+            here(&format!(
+                "unsupported schema_version {} (expected {ESTIMATOR_SNAPSHOT_SCHEMA_VERSION})",
+                snapshot.schema_version
+            ))
+        );
+    }
+    if snapshot.channel != expected_channel {
+        bail!(
+            "{}",
+            here(&format!(
+                "channel {} disagrees with the snapshot filename",
+                snapshot.channel
+            ))
+        );
+    }
+    if snapshot.solver.id.is_empty() {
+        bail!("{}", here("an empty solver id"));
+    }
+    for (name, value) in [
+        ("rank_tol", snapshot.solver.rank_tol),
+        ("max_condition", snapshot.solver.max_condition),
+        ("max_noise_condition", snapshot.solver.max_noise_condition),
+    ] {
+        if !value.is_finite() || value <= 0.0 {
+            bail!("{}", here(&format!("non-positive solver {name}")));
+        }
+    }
+    if !snapshot.solver.max_jitter_v2.is_finite() || snapshot.solver.max_jitter_v2 < 0.0 {
+        bail!("{}", here("negative solver max_jitter_v2"));
+    }
+    if snapshot.signal_model.fit_harmonics.is_empty()
+        || snapshot.signal_model.fit_harmonics.iter().any(|h| *h == 0)
+    {
+        bail!("{}", here("an empty or zero-containing fit harmonic list"));
+    }
+    for output in snapshot.signal_model.output_harmonics.iter() {
+        if !snapshot.signal_model.fit_harmonics.contains(output) {
+            bail!(
+                "{}",
+                here(&format!("output harmonic {output} outside the fit list"))
+            );
+        }
+    }
+    if snapshot.signal_model.envelope_degree != 0 {
+        bail!("{}", here("a nonzero envelope degree"));
+    }
+    const MODES: [&str; 4] = [
+        "identity",
+        "phase_diagonal",
+        "stationary_correlated",
+        "phase_correlated",
+    ];
+    if !MODES.contains(&snapshot.noise_model.mode.as_str()) {
+        bail!(
+            "{}",
+            here(&format!(
+                "unknown noise mode {:?}",
+                snapshot.noise_model.mode
+            ))
+        );
+    }
+    if !snapshot.noise_model.reference_variance_v2.is_finite()
+        || snapshot.noise_model.reference_variance_v2 <= 0.0
+    {
+        bail!("{}", here("a non-positive reference variance"));
+    }
+    let needs_bins = matches!(
+        snapshot.noise_model.mode.as_str(),
+        "phase_diagonal" | "phase_correlated"
+    );
+    match (&snapshot.noise_model.variance_bins_v2, needs_bins) {
+        (Some(bins), true) => {
+            if bins.len() < 2 || bins.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+                bail!("{}", here("an invalid phase variance table"));
+            }
+        }
+        (None, false) => {}
+        _ => bail!(
+            "{}",
+            here("a variance table inconsistent with the noise mode")
+        ),
+    }
+    let needs_kernel = matches!(
+        snapshot.noise_model.mode.as_str(),
+        "stationary_correlated" | "phase_correlated"
+    );
+    match (
+        &snapshot.noise_model.correlation_lags,
+        &snapshot.noise_model.correlation_lag_step_s,
+        needs_kernel,
+    ) {
+        (Some(lags), Some(step), true) => {
+            if lags.is_empty()
+                || lags.iter().any(|v| !v.is_finite())
+                || (lags[0] - 1.0).abs() > 1e-9
+                || !step.is_finite()
+                || *step <= 0.0
+            {
+                bail!("{}", here("an invalid correlation kernel"));
+            }
+        }
+        (None, None, false) => {}
+        _ => bail!(
+            "{}",
+            here("a correlation kernel inconsistent with the noise mode")
+        ),
+    }
+    if snapshot.model.path.is_empty() {
+        bail!("{}", here("an empty model path"));
+    }
+    if snapshot.model.sha256.len() != 64
+        || !snapshot
+            .model
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        bail!("{}", here("a malformed model digest"));
+    }
+    if !snapshot.reference.frequency_hz.is_finite() || snapshot.reference.frequency_hz <= 0.0 {
+        bail!("{}", here("a non-positive reference frequency"));
+    }
+    if !snapshot.reference.phase_rad.is_finite() {
+        bail!("{}", here("a non-finite reference phase"));
+    }
+    let geometry = &snapshot.geometry;
+    if !geometry.sample_interval_s.is_finite() || geometry.sample_interval_s <= 0.0 {
+        bail!("{}", here("a non-positive sample interval"));
+    }
+    if geometry.stride_samples == 0 || geometry.half_window_taps == 0 {
+        bail!("{}", here("a zero stride or window tap count"));
+    }
+    if geometry.base_index_end < geometry.base_index_start
+        || geometry.output_index_end < geometry.output_index_start
+    {
+        bail!("{}", here("an inverted index range"));
+    }
+    if geometry.output_count == 0
+        || geometry.output_count != geometry.output_index_end - geometry.output_index_start + 1
+    {
+        bail!(
+            "{}",
+            here("an output count inconsistent with the output range")
+        );
+    }
+    if !geometry.first_time_s.is_finite()
+        || !geometry.last_time_s.is_finite()
+        || geometry.last_time_s < geometry.first_time_s
+    {
+        bail!("{}", here("a non-monotonic time span"));
+    }
+    let quality = &snapshot.quality_summary;
+    if quality.windows == 0 || quality.ok + quality.warnings != quality.windows {
+        bail!(
+            "{}",
+            here("a quality summary inconsistent with its window count")
+        );
+    }
+    if !quality.max_jitter_applied_v2.is_finite()
+        || !quality.max_scaled_design_condition.is_finite()
+    {
+        bail!("{}", here("non-finite quality maxima"));
+    }
+    if snapshot.covariance.covariance_mode.is_empty()
+        || snapshot.covariance.serialization.is_empty()
+        || snapshot.covariance.conditioning.is_empty()
+    {
+        bail!("{}", here("an empty covariance interpretation"));
+    }
+    if !snapshot.errors.is_empty() {
+        bail!("{}", here("carried errors; only clean snapshots register"));
+    }
+    Ok(())
 }
 
 /// Writes one snapshot as pretty JSON. Existing files are never

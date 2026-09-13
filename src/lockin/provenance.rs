@@ -449,7 +449,9 @@ fn describe_analysis_artifacts(
 
 /// Registers frozen estimator snapshots (`lockin/ch{N}_estimator.json`,
 /// kind `lockin_estimator`, AT-025: every JSON artifact registered
-/// explicitly). Snapshots must parse as JSON; a corrupt snapshot fails
+/// explicitly). Snapshots must parse as the versioned snapshot type and
+/// pass structural validation (schema, channel/filename agreement, model
+/// receipt, geometry, quality consistency); a corrupt snapshot fails
 /// refresh instead of registering silently. Covariance is listed as a
 /// dependency only when the artifact exists (serialization `none` omits it).
 fn describe_estimator_snapshots(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
@@ -472,8 +474,6 @@ fn describe_estimator_snapshots(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
     for path in paths {
         let text = fs::read_to_string(&path)
             .with_context(|| format!("failed to read estimator snapshot: {}", path.display()))?;
-        let _: serde_json::Value = serde_json::from_str(&text)
-            .with_context(|| format!("estimator snapshot is not valid JSON: {}", path.display()))?;
         let stem = path
             .file_stem()
             .and_then(|stem| stem.to_str())
@@ -482,21 +482,39 @@ fn describe_estimator_snapshots(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
             .strip_prefix("ch")
             .and_then(|value| value.split('_').next())
             .and_then(|value| value.parse::<u8>().ok());
+        let Some(channel) = channel else {
+            bail!(
+                "estimator snapshot filename does not carry a channel: {}",
+                path.display()
+            );
+        };
+        let snapshot: crate::lockin::estimator_snapshot::EstimatorSnapshot =
+            serde_json::from_str(&text).with_context(|| {
+                format!(
+                    "estimator snapshot is not a valid versioned snapshot: {}",
+                    path.display()
+                )
+            })?;
+        crate::lockin::estimator_snapshot::validate_estimator_snapshot(&snapshot, channel)
+            .with_context(|| {
+                format!(
+                    "estimator snapshot fails structural validation: {}",
+                    path.display()
+                )
+            })?;
         let relative = path
             .strip_prefix(dir)
             .context("failed to relativize estimator snapshot")?;
         let file = relative.to_string_lossy().replace('\\', "/");
         let mut depends_on = Vec::new();
-        if let Some(channel) = channel {
-            depends_on.push(format!("lockin/ch{channel}_quality.csv"));
-            let covariance = lockin.join(format!("ch{channel}_covariance.csv"));
-            if covariance.exists() {
-                depends_on.push(format!("lockin/ch{channel}_covariance.csv"));
-            }
+        depends_on.push(format!("lockin/ch{channel}_quality.csv"));
+        let covariance = lockin.join(format!("ch{channel}_covariance.csv"));
+        if covariance.exists() {
+            depends_on.push(format!("lockin/ch{channel}_covariance.csv"));
         }
         artifacts.push(AnalysisArtifact {
             kind: "lockin_estimator".to_string(),
-            channel,
+            channel: Some(channel),
             csv: None,
             file: Some(file),
             npy: None,
