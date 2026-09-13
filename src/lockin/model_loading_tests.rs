@@ -1,0 +1,431 @@
+use super::*;
+use crate::config::{EstimatorCalibration, GlsNoiseMode};
+use crate::lockin::joint::NoiseModelSource;
+
+const CHANNEL: u8 = 3;
+const DT: f64 = 1.0e-5;
+const F_REF: f64 = 1_000.0;
+
+/// Minimal valid v1 artifact JSON for channel 3, dt 1e-5, f_ref 1 kHz.
+fn artifact_json() -> String {
+    r#"{
+
+  "schema_version": 1,
+  "algorithm_version": "pmoke-calibration-v1",
+  "model_id": "test-model-ch3",
+  "builder": {
+    "pmoke_version": "0.4.1",
+    "backend_versions": {},
+    "recipe_settings": {}
+  },
+  "binding": {
+    "channel": 3,
+    "voltage_unit": "V",
+    "adc_scale_provenance": null,
+    "sample_interval_s": 0.00001,
+    "recorded_original_dt_s": null,
+    "sample_interval_rel_tol": 1e-9,
+    "reference_frequency_hz": 1000.0,
+    "frequency_rel_tol": 1e-9,
+    "phase_convention": "phi=2*pi*f*t-reference_phase_rad",
+    "acquisition": {"device": null, "gain": null, "bandwidth_hz": null}
+  },
+  "reference_variance_v2": 0.01,
+  "phase": {
+    "bins": 4,
+    "center_convention": "bin_centers_at_2pi*(i+0.5)/bins",
+    "variances_v2": [0.01, 0.012, 0.011, 0.009],
+    "interpolation": "periodic_linear_variance_v1"
+  },
+  "correlation": {
+    "lags": [1.0, 0.5, 0.25],
+    "lag_step_s": 0.00001,
+    "support_samples": 3,
+    "taper": "bartlett_v1",
+    "shrinkage_eta": 0.01,
+    "spd_validated": true,
+    "tail_energy": null,
+    "max_tail_lag": 2
+  },
+  "regularization": {
+    "smoothing": "none",
+    "shrinkage_alpha_v": 0.0,
+    "variance_floor_ratio": 0.0,
+    "floor_activations": [],
+    "correlation_taper": "bartlett_v1",
+    "correlation_eta": 0.01
+  },
+  "training": {
+    "source_digests": [],
+    "intervals": [],
+    "blocks": [],
+    "exclusions": [],
+    "seed": 7,
+    "per_bin_counts": [],
+    "per_bin_cycles": [],
+    "contributing_blocks": 0
+  },
+  "validation": {
+    "heldout_blocks": 0,
+    "profile_rmse_v2": null,
+    "standardized_lag1": null,
+    "dof_treatment": "none",
+    "nuisance_params_per_block": 0,
+    "limits": []
+  },
+  "capabilities": {
+    "modes": ["identity", "phase_diagonal", "phase_correlated"],
+    "geometry_restrictions": []
+  }
+}"#
+    .to_string()
+}
+
+fn write_case(dir: &std::path::Path, name: &str, bytes: &[u8]) -> (PathBuf, String) {
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).unwrap();
+    let digest = crate::utils::checksum::sha256_hex(bytes);
+    (path, digest)
+}
+
+fn source_for(dir: &std::path::Path, digest: &str, bytes_name: &str) -> FileNoiseModelSource {
+    FileNoiseModelSource::new(
+        dir.to_path_buf(),
+        &[EstimatorCalibration {
+            channel: CHANNEL,
+            path: bytes_name.to_string(),
+            sha256: digest.to_string(),
+        }],
+        PIPELINE_VOLTAGE_UNIT.to_string(),
+        DT,
+        F_REF,
+    )
+    .unwrap()
+}
+
+fn temp_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("pmoke_model_loading_{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn file_source_loads_identity_and_phase_diagonal() {
+    let dir = temp_dir("ok");
+    let json = artifact_json();
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3.json");
+    let (model, binding) = source.load(CHANNEL, GlsNoiseMode::Identity).unwrap();
+    assert_eq!(model.reference_variance_v2, 0.01);
+    assert!(model.variance_bins.is_none());
+    assert!(model.correlation.is_none());
+    assert_eq!(binding.channel, CHANNEL);
+    assert_eq!(binding.sha256, digest);
+    let (model, _) = source.load(CHANNEL, GlsNoiseMode::PhaseDiagonal).unwrap();
+    assert_eq!(
+        model.variance_bins.unwrap(),
+        vec![0.01, 0.012, 0.011, 0.009]
+    );
+    let (model, _) = source.load(CHANNEL, GlsNoiseMode::PhaseCorrelated).unwrap();
+    assert!(model.correlation.is_some());
+    // Stationary bridges on the SPD-validated tapered table.
+    let (model, _) = source
+        .load(CHANNEL, GlsNoiseMode::StationaryCorrelated)
+        .unwrap();
+    assert!(model.variance_bins.is_none());
+    assert!(model.correlation.is_some());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn malformed_expected_digest_fails_before_file_access() {
+    let dir = temp_dir("digest");
+    let result = FileNoiseModelSource::new(
+        dir.clone(),
+        &[EstimatorCalibration {
+            channel: CHANNEL,
+            path: "missing.json".to_string(),
+            sha256: "${CALIBRATION_SHA256}".to_string(),
+        }],
+        PIPELINE_VOLTAGE_UNIT.to_string(),
+        DT,
+        F_REF,
+    );
+    assert!(result.is_err());
+    for bad in ["abc", &"A".repeat(64), &"g".repeat(64), ""] {
+        assert!(expect_digest_format(bad).is_err(), "{bad}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn changed_bytes_after_binding_are_a_hard_mismatch() {
+    let dir = temp_dir("changed");
+    let json = artifact_json();
+    let (path, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3.json");
+    source.load(CHANNEL, GlsNoiseMode::Identity).unwrap();
+    // Flip one byte in place: the frozen buffer hashes differently.
+    let mut bytes = std::fs::read(&path).unwrap();
+    let position = bytes.iter().position(|byte| *byte == b'7').unwrap();
+    bytes[position] = b'8';
+    std::fs::write(&path, &bytes).unwrap();
+    let error = source.load(CHANNEL, GlsNoiseMode::Identity).err().unwrap();
+    assert!(
+        format!("{error:#}").contains("digest mismatch"),
+        "{error:#}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn duplicate_keys_are_rejected() {
+    let dir = temp_dir("dupkeys");
+    let mut json = artifact_json();
+    json = json.replacen(
+        "\"reference_variance_v2\": 0.01,",
+        "\"reference_variance_v2\": 0.01,\n  \"reference_variance_v2\": 0.02,",
+        1,
+    );
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3.json");
+    let error = source.load(CHANNEL, GlsNoiseMode::Identity).err().unwrap();
+    assert!(
+        format!("{error:#}").contains("duplicate object key"),
+        "{error:#}"
+    );
+    // Nested duplicates are caught too.
+    let nested = r#"{"a": {"b": 1, "b": 2}}"#;
+    assert!(reject_duplicate_keys(nested.as_bytes()).is_err());
+    assert!(reject_duplicate_keys(br#"{"a": [1, {"b": 1}]}"#).is_ok());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn oversized_artifacts_are_rejected_before_parsing() {
+    let dir = temp_dir("oversized");
+    let big = vec![b' '; MAX_CALIBRATION_ARTIFACT_BYTES + 1];
+    let path = dir.join("big.json");
+    std::fs::write(&path, &big).unwrap();
+    assert!(read_frozen_artifact(&path).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn wrong_binding_fields_fail() {
+    let dir = temp_dir("binding");
+    // Wrong channel.
+    let json = artifact_json().replacen("\"channel\": 3,", "\"channel\": 4,", 1);
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3.json");
+    let error = source.load(CHANNEL, GlsNoiseMode::Identity).err().unwrap();
+    assert!(format!("{error:#}").contains("not applicable"), "{error:#}");
+    // Wrong reference frequency.
+    let json = artifact_json().replacen(
+        "\"reference_frequency_hz\": 1000.0,",
+        "\"reference_frequency_hz\": 2000.0,",
+        1,
+    );
+    let (_, digest) = write_case(&dir, "ch3b.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3b.json");
+    assert!(
+        format!(
+            "{:?}",
+            source.load(CHANNEL, GlsNoiseMode::Identity).err().unwrap()
+        )
+        .contains("not applicable")
+    );
+    // Wrong units.
+    let json = artifact_json().replacen("\"voltage_unit\": \"V\",", "\"voltage_unit\": \"mV\",", 1);
+    let (_, digest) = write_case(&dir, "ch3c.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3c.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::Identity).is_err());
+    // Wrong dt via source construction (run at 2x rate).
+    let json = artifact_json();
+    let (_, digest) = write_case(&dir, "ch3d.json", json.as_bytes());
+    let source = FileNoiseModelSource::new(
+        dir.clone(),
+        &[EstimatorCalibration {
+            channel: CHANNEL,
+            path: "ch3d.json".to_string(),
+            sha256: digest,
+        }],
+        PIPELINE_VOLTAGE_UNIT.to_string(),
+        2.0 * DT,
+        F_REF,
+    )
+    .unwrap();
+    assert!(source.load(CHANNEL, GlsNoiseMode::Identity).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn unknown_schema_and_conventions_fail() {
+    let dir = temp_dir("schema");
+    // Unknown schema version.
+    let json = artifact_json().replacen("\"schema_version\": 1,", "\"schema_version\": 2,", 1);
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3.json");
+    assert!(
+        format!(
+            "{error:#}",
+            error = source.load(CHANNEL, GlsNoiseMode::Identity).err().unwrap()
+        )
+        .contains("unsupported schema_version")
+    );
+    // Unknown top-level field (deny_unknown_fields).
+    let json = artifact_json().replacen(
+        "\"model_id\": \"test-model-ch3\",",
+        "\"model_id\": \"test-model-ch3\",\n  \"future_field\": true,",
+        1,
+    );
+    let (_, digest) = write_case(&dir, "ch3b.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3b.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::Identity).is_err());
+    // Unknown phase convention.
+    let json = artifact_json().replacen(
+        "\"phase_convention\": \"phi=2*pi*f*t-reference_phase_rad\",",
+        "\"phase_convention\": \"other\",",
+        1,
+    );
+    let (_, digest) = write_case(&dir, "ch3c.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3c.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::Identity).is_err());
+    // Unknown interpolation.
+    let json = artifact_json().replacen(
+        "\"interpolation\": \"periodic_linear_variance_v1\"",
+        "\"interpolation\": \"spline\"",
+        1,
+    );
+    let (_, digest) = write_case(&dir, "ch3d.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3d.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::PhaseDiagonal).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn missing_components_and_scaled_channels_fail() {
+    let dir = temp_dir("components");
+    let json = artifact_json();
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+    // Corrupted variances (negative bin).
+    let bad = json.replacen("0.012", "-0.5", 1);
+    let (_, bad_digest) = write_case(&dir, "bad.json", bad.as_bytes());
+    let source = source_for(&dir, &bad_digest, "bad.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::PhaseDiagonal).is_err());
+    // Missing channel binding.
+    let source = source_for(&dir, &digest, "ch3.json");
+    assert!(source.load(9, GlsNoiseMode::Identity).is_err());
+    // Duplicate bindings rejected at construction.
+    assert!(
+        FileNoiseModelSource::new(
+            dir.clone(),
+            &[
+                EstimatorCalibration {
+                    channel: CHANNEL,
+                    path: "ch3.json".to_string(),
+                    sha256: "0".repeat(64),
+                },
+                EstimatorCalibration {
+                    channel: CHANNEL,
+                    path: "ch3.json".to_string(),
+                    sha256: "0".repeat(64),
+                },
+            ],
+            PIPELINE_VOLTAGE_UNIT.to_string(),
+            DT,
+            F_REF,
+        )
+        .is_err()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn unvalidated_correlation_is_rejected_for_correlated_modes() {
+    let dir = temp_dir("spd");
+    let json = artifact_json().replacen("\"spd_validated\": true,", "\"spd_validated\": false,", 1);
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3.json");
+    // Identity still loads (no correlation needed); correlated modes refuse.
+    source.load(CHANNEL, GlsNoiseMode::Identity).unwrap();
+    assert!(source.load(CHANNEL, GlsNoiseMode::PhaseCorrelated).is_err());
+    assert!(
+        source
+            .load(CHANNEL, GlsNoiseMode::StationaryCorrelated)
+            .is_err()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn joint_end_to_end_through_run_li() {
+    use crate::config::{
+        GlsCovarianceOutput, GlsFailurePolicy, GlsNoiseMode, JointHarmonicGlsConfig,
+    };
+    use crate::config::{LockinEstimator, LockinWindow};
+    use crate::lockin::run_li;
+    use crate::test_support::test_config;
+    use crate::utils::time_axis::TimeAxisRef;
+    use std::f64::consts::PI;
+
+    let dir = temp_dir("e2e");
+    let json = artifact_json();
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.roles.reference_ch = 2;
+    cfg.source_path = dir.join("config.toml");
+    cfg.set_artifact_root(dir.clone());
+    cfg.lockin.workers = 1;
+    cfg.lockin.stride_samples = 10;
+    cfg.lockin.lpf_half_window_cycles = 1.0;
+    cfg.lockin.window = LockinWindow::legacy_boxcar(1.0);
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(JointHarmonicGlsConfig {
+        fit_harmonics: (1..=12).collect(),
+        output_harmonics: (1..=6).collect(),
+        envelope_degree: 0,
+        noise_mode: GlsNoiseMode::Identity,
+        covariance_output: GlsCovarianceOutput::Diagonal,
+        failure_policy: GlsFailurePolicy::Error,
+        calibrations: vec![EstimatorCalibration {
+            channel: CHANNEL,
+            path: "ch3.json".to_string(),
+            sha256: digest,
+        }],
+    });
+
+    let dt = DT;
+    let samples = 3_000usize;
+    let time: Vec<f64> = (0..samples).map(|index| index as f64 * dt).collect();
+    let sensor: Vec<f64> = time.iter().map(|t| 0.001 * t).collect();
+    let reference: Vec<f64> = time.iter().map(|t| (2.0 * PI * F_REF * t).sin()).collect();
+    let signal: Vec<f64> = time
+        .iter()
+        .map(|t| (2.0 * PI * F_REF * t + 0.3).sin() + 0.2 * (2.0 * PI * 3.0 * F_REF * t).sin())
+        .collect();
+    let data = vec![sensor, reference, signal];
+
+    let (_, _, _, li_results, _, provenance) =
+        run_li(&cfg, TimeAxisRef::Explicit(&time), &data).unwrap();
+    assert_eq!(li_results.len(), 1);
+    assert_eq!(li_results[0].len(), 12);
+    let encoded = serde_json::to_value(&provenance).unwrap();
+    assert_eq!(encoded["kind"], "joint_harmonic_gls");
+
+    let paths = cfg.paths();
+    let quality = std::fs::read_to_string(paths.lockin_quality_csv(3)).unwrap();
+    assert!(
+        quality.starts_with("original_center_index,time_s,"),
+        "{quality}"
+    );
+    let covariance = std::fs::read_to_string(paths.lockin_covariance_csv(3)).unwrap();
+    assert!(
+        covariance.starts_with("time_s,cov_x1_x1_v2,"),
+        "{covariance}"
+    );
+    assert!(paths.lockin_covariance_npy(3).is_file());
+    assert!(paths.lockin_xy_csv(3).is_file());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

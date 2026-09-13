@@ -3,9 +3,8 @@
 //! This module runs the joint estimator over the same support grid as the
 //! legacy boxcar path and returns boxcar-shaped outputs so downstream
 //! phase/MOKE stages work unchanged. Noise models arrive through a
-//! [`NoiseModelSource`]; only synthetic sources exist in this slice, so the
-//! file-backed calibration loader (WP-5B) plugs in without touching the
-//! engine.
+//! [`NoiseModelSource`]; production uses the file-backed calibration loader
+//! ([`crate::lockin::model_loading`]), tests use synthetic sources.
 
 use crate::config::{GlsCovarianceOutput, GlsNoiseMode, JointHarmonicGlsConfig, Lockin};
 use crate::lockin::lockin_params::LockinParams;
