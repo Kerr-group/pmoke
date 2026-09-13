@@ -106,6 +106,13 @@ impl ArtifactPaths {
             .join(format!("ch{channel}_xy.csv"))
     }
 
+    /// Per-window GLS quality diagnostics (CSV only, never NPY).
+    pub fn lockin_quality_csv(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_quality.csv"))
+    }
+
     pub fn lockin_xy_npy(&self, channel: u8) -> PathBuf {
         self.analysis_dir()
             .join("lockin")
@@ -344,6 +351,10 @@ impl ArtifactResolver {
             return legacy_path;
         }
         new_path
+    }
+
+    pub fn lockin_quality_csv(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_quality_csv(channel)
     }
 
     pub fn lockin_rotated_csv(&self, channel: u8) -> PathBuf {

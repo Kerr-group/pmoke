@@ -1,6 +1,7 @@
-use crate::config::{ArtifactPaths, ArtifactResolver, Config, LockinLpfKind};
-
+use crate::config::{ArtifactPaths, ArtifactResolver, Config};
+use crate::lockin::joint::{ModelBinding, gls_noise_mode_name};
 use crate::lockin::lockin_core::{LockinProcessor, legacy_boxcar_enbw_hz};
+use crate::lockin::lockin_params::LockinParams;
 use crate::lockin::reference::ref_analysis::RefFitParams;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
@@ -13,12 +14,16 @@ pub(crate) const ANALYSIS_MANIFEST_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LockinProvenance {
-    kind: LockinLpfKind,
+    /// Estimator identity: "boxcar_legacy" or "joint_harmonic_gls" (FR-045:
+    /// GLS outputs must never be labeled boxcar_legacy).
+    kind: String,
     stride_samples: usize,
     input_sample_rate_hz: f64,
     output_sample_rate_hz: f64,
     reference_frequency_hz: f64,
     effective_window_seconds: f64,
+    /// Single-ENBW estimate for the legacy boxcar; NaN for GLS estimators,
+    /// which admit no single boxcar ENBW (FR-043).
     estimated_enbw_hz: f64,
     edge_policy: &'static str,
     base_index_start: usize,
@@ -29,6 +34,26 @@ pub struct LockinProvenance {
     cutoff_hz: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     filter_settling_samples: Option<usize>,
+    /// GLS-only: estimator settings summary (absent for boxcar, so boxcar
+    /// manifests keep their exact bytes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    estimator: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    noise_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    solver: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_digests: Option<Vec<ModelDigest>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_note: Option<String>,
+}
+
+/// One immutable model binding recorded in GLS provenance (FR-045/046).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ModelDigest {
+    pub channel: u8,
+    pub path: String,
+    pub sha256: String,
 }
 
 impl LockinProvenance {
@@ -37,7 +62,7 @@ impl LockinProvenance {
         let (base_index_start, base_index_end) = processor.base_index_range();
         let (output_index_start, output_index_end) = processor.output_index_range();
         Self {
-            kind: params.lpf_kind,
+            kind: "boxcar_legacy".to_string(),
             stride_samples: params.stride,
             input_sample_rate_hz: params.sample_rate,
             output_sample_rate_hz: params.output_rate,
@@ -51,6 +76,53 @@ impl LockinProvenance {
             output_index_end,
             cutoff_hz: None,
             filter_settling_samples: None,
+            estimator: None,
+            noise_mode: None,
+            solver: None,
+            model_digests: None,
+            response_note: None,
+        }
+    }
+
+    /// Provenance for a joint-harmonic GLS execution over shared geometry.
+    pub fn from_joint(
+        params: LockinParams,
+        noise_mode: crate::config::GlsNoiseMode,
+        bindings: &[ModelBinding],
+        solver: &str,
+    ) -> Self {
+        Self {
+            kind: "joint_harmonic_gls".to_string(),
+            stride_samples: params.stride,
+            input_sample_rate_hz: params.sample_rate,
+            output_sample_rate_hz: params.output_rate,
+            reference_frequency_hz: params.f_ref,
+            effective_window_seconds: 2.0 * params.t_half,
+            estimated_enbw_hz: f64::NAN,
+            edge_policy: "trim",
+            base_index_start: params.i_start,
+            base_index_end: params.i_end,
+            output_index_start: params.i_start,
+            output_index_end: params.i_end,
+            cutoff_hz: None,
+            filter_settling_samples: None,
+            estimator: Some("joint_harmonic_gls".to_string()),
+            noise_mode: Some(gls_noise_mode_name(noise_mode).to_string()),
+            solver: Some(solver.to_string()),
+            model_digests: Some(
+                bindings
+                    .iter()
+                    .map(|binding| ModelDigest {
+                        channel: binding.channel,
+                        path: binding.path.clone(),
+                        sha256: binding.sha256.clone(),
+                    })
+                    .collect(),
+            ),
+            response_note: Some(
+                "single-ENBW undefined for the time-varying joint estimator; see per-window quality diagnostics (FR-043)"
+                    .to_string(),
+            ),
         }
     }
 }
@@ -334,6 +406,12 @@ fn describe_analysis_artifacts(
             } else {
                 None
             };
+            // Quality diagnostics are heterogeneous typed CSVs (AT-025): they
+            // must not claim the homogeneous-f64 dtype. The "<f8" spelling
+            // (no closing bracket) matches the repository-wide convention
+            // also used by the NPY exporter and pinned by the analyze
+            // manifest tests; do not "fix" it here alone.
+            let homogeneous_f64 = kind != "lockin_quality";
             artifacts.push(AnalysisArtifact {
                 kind: kind.clone(),
                 channel,
@@ -343,8 +421,8 @@ fn describe_analysis_artifacts(
                 column_set: Some(kind),
                 rows: Some(rows),
                 columns: Some(columns),
-                dtype: Some("<f8"),
-                order: Some("C"),
+                dtype: homogeneous_f64.then_some("<f8"),
+                order: homogeneous_f64.then_some("C"),
                 depends_on: None,
                 format: None,
             });
@@ -512,6 +590,8 @@ fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
         "lockin_xy"
     } else if stem.ends_with("_rotated") {
         "lockin_rotated"
+    } else if stem.ends_with("_quality") {
+        "lockin_quality"
     } else {
         return Err(anyhow::anyhow!(
             "unknown analysis artifact name: {}",
@@ -544,51 +624,97 @@ fn inspect_csv_shape(path: &Path) -> Result<(Vec<String>, usize)> {
 pub fn stage_config_fingerprint(cfg: &Config, stage: &str) -> Result<String> {
     let channels = analysis_channels(cfg);
     let encoded = match stage {
-        "li" => serde_json::to_vec(&(
-            &cfg.roles,
-            &channels,
-            &cfg.pulse,
-            &cfg.reference,
+        "li" => encode_locked_stage(
+            (
+                &cfg.roles,
+                &channels,
+                &cfg.pulse,
+                &cfg.reference,
+                &cfg.lockin,
+            ),
             &cfg.lockin,
-        )),
-        "phase" => serde_json::to_vec(&(
-            &cfg.roles,
-            &channels,
-            &cfg.pulse,
-            &cfg.reference,
+        )?,
+        "phase" => encode_locked_stage(
+            (
+                &cfg.roles,
+                &channels,
+                &cfg.pulse,
+                &cfg.reference,
+                &cfg.lockin,
+                &cfg.phase,
+            ),
             &cfg.lockin,
-            &cfg.phase,
-        )),
-        "kerr" => serde_json::to_vec(&(
-            &cfg.roles,
-            &channels,
-            &cfg.pulse,
-            &cfg.reference,
+        )?,
+        "kerr" => encode_locked_stage(
+            (
+                &cfg.roles,
+                &channels,
+                &cfg.pulse,
+                &cfg.reference,
+                &cfg.lockin,
+                &cfg.phase,
+                &cfg.moke,
+            ),
             &cfg.lockin,
-            &cfg.phase,
-            &cfg.moke,
-        )),
-        "moke" => serde_json::to_vec(&(
-            &cfg.roles,
-            &channels,
-            &cfg.pulse,
-            &cfg.reference,
+        )?,
+        "moke" => encode_locked_stage(
+            (
+                &cfg.roles,
+                &channels,
+                &cfg.pulse,
+                &cfg.reference,
+                &cfg.lockin,
+                &cfg.phase,
+                &cfg.moke,
+            ),
             &cfg.lockin,
-            &cfg.phase,
-            &cfg.moke,
-        )),
-        "signal" => serde_json::to_vec(&(
-            &cfg.roles,
-            &channels,
-            &cfg.pulse,
-            &cfg.reference,
+        )?,
+        "signal" => encode_locked_stage(
+            (
+                &cfg.roles,
+                &channels,
+                &cfg.pulse,
+                &cfg.reference,
+                &cfg.lockin,
+                &cfg.signals,
+            ),
             &cfg.lockin,
-            &cfg.signals,
-        )),
+        )?,
         _ => bail!("unknown analysis stage fingerprint: {stage}"),
-    }
-    .context("failed to serialize analysis stage config")?;
+    };
     Ok(crate::utils::checksum::sha256_hex(&encoded))
+}
+
+/// Serializes a stage fingerprint, appending the window/estimator contract
+/// for GLS configurations (FR-046: estimator, model, and digest changes must
+/// invalidate LI and downstream stages). Boxcar fingerprints keep their exact
+/// historical bytes so existing run directories are not invalidated.
+///
+/// Same-path model byte changes need no fingerprint slot: WP-5B loading
+/// aborts unless artifact bytes match the expected digest, so any executed
+/// state already has bytes == expected == fingerprinted.
+fn encode_locked_stage<T: serde::Serialize>(
+    base: T,
+    lockin: &crate::config::Lockin,
+) -> Result<Vec<u8>> {
+    use crate::config::LockinEstimator;
+    match &lockin.estimator {
+        LockinEstimator::BoxcarLegacy => {
+            serde_json::to_vec(&base).context("failed to serialize analysis stage config")
+        }
+        LockinEstimator::JointHarmonicGls(gls) => {
+            let mut value =
+                serde_json::to_value(&base).context("failed to serialize analysis stage config")?;
+            value
+                .as_array_mut()
+                .ok_or_else(|| anyhow::anyhow!("stage fingerprint base is not an array"))?
+                .push(
+                    serde_json::to_value((&lockin.window, gls))
+                        .context("failed to serialize estimator fingerprint")?,
+                );
+            serde_json::to_vec(&value).context("failed to serialize analysis stage config")
+        }
+    }
 }
 
 fn analysis_channels(cfg: &Config) -> Vec<&crate::config::Channel> {
@@ -1113,14 +1239,12 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::LockinLpfKind;
     use std::f64::consts::PI;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn records_resolved_legacy_filter_values() {
         let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
-        cfg.lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
         cfg.lockin.stride_samples = 10;
         cfg.lockin.lpf_half_window_cycles = 1.0;
         cfg.lockin.window = crate::config::LockinWindow::legacy_boxcar(1.0);
@@ -1138,7 +1262,7 @@ mod tests {
 
         let provenance = LockinProvenance::from_processor(&processor);
 
-        assert_eq!(provenance.kind, LockinLpfKind::BoxcarLegacy);
+        assert_eq!(provenance.kind, "boxcar_legacy");
         assert_eq!(provenance.stride_samples, 10);
         assert!((provenance.input_sample_rate_hz - 100_000.0).abs() < 1.0e-8);
         assert!((provenance.output_sample_rate_hz - 10_000.0).abs() < 1.0e-8);
