@@ -270,6 +270,30 @@ fn main() {
     }
     if options.case.runs(BenchmarkCase::JointGls) {
         let (times, signal) = time_and_signal.as_ref().expect("signal is available");
+        // Preparation (config/source/input assembly) is timed separately
+        // from application (the estimator run), so the engine cost is
+        // visible on its own (AT-037 stage separation).
+        results.push(measure(
+            "joint_gls_prepare",
+            options.samples,
+            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
+            options.iterations,
+            || {
+                black_box(joint_gls_setup());
+                std::mem::size_of::<JointGlsSetup>()
+            },
+        ));
+        // Repeated measurements even in smoke mode: a single iteration is
+        // not a distributional qualification.
+        let apply_iterations = options.iterations.max(3);
+        let setup = joint_gls_setup();
+        results.push(measure(
+            "joint_gls_apply",
+            options.samples,
+            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
+            apply_iterations,
+            || run_joint_gls_apply(&setup, black_box(times), black_box(signal)),
+        ));
         results.push(measure(
             "joint_harmonic_gls_identity",
             options.samples,
@@ -556,12 +580,19 @@ fn run_lockin_harmonics(times: &[f64], signal: &[f64], workers: usize) -> usize 
         })
 }
 
-fn run_joint_gls(times: &[f64], signal: &[f64]) -> usize {
+struct JointGlsSetup {
+    lockin: pmoke::config::Lockin,
+    gls: pmoke::config::JointHarmonicGlsConfig,
+    source: pmoke::lockin::joint::SyntheticNoiseModelSource,
+}
+
+/// Preparation stage (AT-037): config, noise source, and estimator
+/// binding assembly, timed separately from application.
+fn joint_gls_setup() -> JointGlsSetup {
     use pmoke::config::{
         GlsCovarianceOutput, GlsFailurePolicy, GlsNoiseMode, JointHarmonicGlsConfig,
-        LockinEstimator,
     };
-    use pmoke::lockin::joint::{JointRunInputs, SyntheticNoiseModelSource, run_joint_li};
+    use pmoke::lockin::joint::SyntheticNoiseModelSource;
 
     let mut lockin = benchmark_lockin();
     lockin.workers = 1;
@@ -575,23 +606,39 @@ fn run_joint_gls(times: &[f64], signal: &[f64]) -> usize {
         failure_policy: GlsFailurePolicy::Error,
         calibrations: Vec::new(),
     };
-    lockin.estimator = LockinEstimator::JointHarmonicGls(gls.clone());
-    let source = SyntheticNoiseModelSource::identity(1.0);
+    lockin.estimator = pmoke::config::LockinEstimator::JointHarmonicGls(gls.clone());
+    JointGlsSetup {
+        lockin,
+        gls,
+        source: SyntheticNoiseModelSource::identity(1.0),
+    }
+}
+
+/// Application stage (AT-037): the estimator run on prepared inputs.
+fn run_joint_gls_apply(setup: &JointGlsSetup, times: &[f64], signal: &[f64]) -> usize {
+    use pmoke::lockin::joint::{JointRunInputs, run_joint_li};
+
     let output = run_joint_li(
         &JointRunInputs {
-            lockin: &lockin,
-            gls: &gls,
+            lockin: &setup.lockin,
+            gls: &setup.gls,
             t: pmoke::utils::time_axis::TimeAxisRef::Explicit(times),
             f_ref: 10_000.0,
             omega_tref: 0.2,
             sample_rate: 1.0 / (times[1] - times[0]),
+            tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
         },
         &[3],
         &[signal],
-        &source,
+        &setup.source,
     )
     .expect("valid joint benchmark configuration");
     output.result[0].iter().map(Vec::len).sum::<usize>() + output.covariance[0].len() * 144
+}
+
+fn run_joint_gls(times: &[f64], signal: &[f64]) -> usize {
+    let setup = joint_gls_setup();
+    run_joint_gls_apply(&setup, times, signal)
 }
 
 fn benchmark_lockin() -> Lockin {
