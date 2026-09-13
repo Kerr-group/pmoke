@@ -137,7 +137,7 @@
    ]
   },
   {
-   "name": "shortest_valid",
+   "name": "nine_rows_421",
    "length": 421,
    "dt": 1e-05,
    "stride": 20,
@@ -188,6 +188,43 @@
    "last_support": [
     59,
     261
+   ]
+  },
+  {
+   "name": "boundary_invalid_260",
+   "length": 260,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "expected_error": "signal_too_short"
+  },
+  {
+   "name": "boundary_single_row_261",
+   "length": 261,
+   "dt": 1e-05,
+   "stride": 20,
+   "f_ref": 1000.0,
+   "cycles": 1.0,
+   "t_start": 0.0,
+   "half_window_s": 0.001,
+   "n_half": 100,
+   "integration_points": 14,
+   "i_start": 7,
+   "i_end": 7,
+   "row_count": 1,
+   "first_center": 140,
+   "last_center": 140,
+   "first_time": 0.0014000000000000002,
+   "last_time": 0.0014000000000000002,
+   "first_support": [
+    39,
+    241
+   ],
+   "last_support": [
+    39,
+    241
    ]
   },
   {

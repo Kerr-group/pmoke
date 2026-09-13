@@ -61,6 +61,9 @@ struct NoiseFamily {
     values: Vec<f64>,
     sample_mean: f64,
     sample_var: f64,
+    phases: Option<Vec<f64>>,
+    variances: Option<Vec<f64>>,
+    variance_mean: Option<f64>,
 }
 
 fn close(a: f64, b: f64, tolerance: f64, context: &str) {
@@ -158,5 +161,21 @@ fn noise_families_match_recorded_moments() {
             / family.values.len() as f64;
         close(mean, family.sample_mean, 1.0e-12, name);
         close(var, family.sample_var, 1.0e-12, name);
+        // Phase-diagonal families additionally carry per-sample truth used
+        // to build the exact known covariance without RNG replay.
+        if let (Some(phases), Some(variances), Some(variance_mean)) =
+            (&family.phases, &family.variances, family.variance_mean)
+        {
+            use std::f64::consts::TAU;
+            assert_eq!(phases.len(), family.samples, "{name}");
+            assert_eq!(variances.len(), family.samples, "{name}");
+            assert!(
+                phases.iter().all(|p| *p >= 0.0 && *p < TAU)
+                    && variances.iter().all(|v| v.is_finite() && *v > 0.0),
+                "{name}"
+            );
+            let mean_var = variances.iter().sum::<f64>() / variances.len() as f64;
+            close(mean_var, variance_mean, 1.0e-12, name);
+        }
     }
 }

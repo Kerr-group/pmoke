@@ -27,12 +27,19 @@ def design_matrix(times, f_ref, phase_rad, fit_harmonics):
 
 
 def whiten_identity(design, signal):
-    return design.copy(), np.asarray(signal, dtype=float).copy(), {"mode": "identity"}
+    return (np.asarray(design, dtype=float), np.asarray(signal, dtype=float).copy(),
+            {"mode": "identity"})
 
 
 def whiten_diagonal(design, signal, variances):
     w = 1.0 / np.sqrt(np.asarray(variances, dtype=float))
-    return design * w[:, None], np.asarray(signal, dtype=float) * w, {"mode": "phase_diagonal"}
+    dw = design * w[:, None]
+    y = np.asarray(signal, dtype=float)
+    if y.ndim == 1:
+        return dw, y * w, {"mode": "phase_diagonal"}
+    if y.ndim == 2 and y.shape[0] == design.shape[0]:
+        return dw, y * w[:, None], {"mode": "phase_diagonal"}
+    raise ValueError(f"response shape {y.shape} mismatches design rows {design.shape[0]}")
 
 
 def whiten_known_cholesky(design, signal, chol):
@@ -44,36 +51,73 @@ def whiten_known_cholesky(design, signal, chol):
 
 
 def solve_whitened(design_w, signal_w, driver="gelsd"):
-    """Least squares via LAPACK driver (default gelsd: SVD-based)."""
+    """Least squares via LAPACK driver (gelsd SVD-based; gelsy QR-based).
+
+    Returns beta as a flat list for vector responses, or a list of rows for
+    matrix (batched) responses. gelsy reports no singular values; they are
+    serialized as None so callers cannot mistake absence for zeros.
+    """
+    y = np.asarray(signal_w, dtype=float)
+    if y.ndim not in (1, 2):
+        raise ValueError(f"response must be a vector or matrix, got shape {y.shape}")
     beta, residuals, rank, singular = scipy.linalg.lstsq(
-        design_w, signal_w, lapack_driver=driver
+        design_w, y, lapack_driver=driver
     )
+    if y.ndim == 1:
+        beta_out: object = [float(v) for v in beta]
+        resid = float(np.linalg.norm(y - design_w @ beta))
+    else:
+        # Outer index is the response column: beta_out[k] holds the
+        # parameter vector for response column k.
+        beta_out = [[float(v) for v in col] for col in beta.T]
+        resid = float(np.linalg.norm(y - design_w @ beta))
     return {
-        "beta": beta,
-        "residual_norm": float(np.linalg.norm(signal_w - design_w @ beta)),
+        "beta": beta_out,
+        "residual_norm": resid,
         "rank": int(rank),
-        "singular_values": singular,
+        "singular_values": None if singular is None else [float(v) for v in singular],
         "driver": driver,
     }
 
 
-def map_to_xy(beta, output_harmonics):
-    """Legacy half-amplitude mapping: Xk = b_k / 2, Yk = a_k / 2."""
+def map_to_xy(beta, fit_harmonics, output_harmonics):
+    """Legacy half-amplitude mapping: Xk = b_k / 2, Yk = a_k / 2.
+
+    Coefficients are selected by fitting-list position, not harmonic number,
+    so sparse lists like [1, 3, 5] resolve correctly. Every output must be a
+    member of the fitting list.
+    """
+    beta = list(beta)
     xy = {}
     for k in output_harmonics:
-        a, b = beta[2 * k - 1], beta[2 * k]
+        try:
+            position = list(fit_harmonics).index(k)
+        except ValueError:
+            raise ValueError(f"output harmonic {k} is not in the fitting list") from None
+        a, b = beta[1 + 2 * position], beta[2 + 2 * position]
         xy[str(k)] = {"x": float(b / 2.0), "y": float(a / 2.0)}
     return xy
 
 
 def covariance_pinv_reference(design_w, sigma2=1.0):
-    """Reference covariance sigma2 * pinv(Dw) pinv(Dw)^T via SVD. Oracle only."""
+    """Reference covariance sigma2 * pinv(Dw) pinv(Dw)^T via SVD. Oracle only.
+
+    Estimation (gelsd/gelsy truncation) and this pinv helper may apply
+    different rank policies on ill-conditioned designs; reconcile one policy
+    before using the oracle on M2 rank/conditioning fixtures. A truncated
+    zero covariance entry is not precise knowledge of an unidentifiable
+    coefficient.
+    """
     pinv = np.linalg.pinv(design_w)
     return sigma2 * pinv @ pinv.T
 
 
 def solve_case(times, signal, f_ref, phase_rad, fit_harmonics, output_harmonics,
                noise=None, driver="gelsd"):
+    """Vector-response convenience wrapper. Matrix responses are rejected:
+    use whiten_* plus solve_whitened directly for batched solves."""
+    if np.ndim(signal) != 1:
+        raise ValueError("solve_case accepts a single response vector; use solve_whitened for batches")
     design = design_matrix(times, f_ref, phase_rad, fit_harmonics)
     if noise is None:
         dw, yw, info = whiten_identity(design, signal)
@@ -84,10 +128,8 @@ def solve_case(times, signal, f_ref, phase_rad, fit_harmonics, output_harmonics,
     else:
         raise ValueError(f"unknown noise mode: {noise['mode']}")
     result = solve_whitened(dw, yw, driver=driver)
-    result["xy"] = map_to_xy(result["beta"], output_harmonics)
+    result["xy"] = map_to_xy(result["beta"], fit_harmonics, output_harmonics)
     result["whitening"] = info
-    result["beta"] = [float(v) for v in result["beta"]]
-    result["singular_values"] = [float(v) for v in result["singular_values"]]
     return result
 
 

@@ -24,6 +24,22 @@ DEFAULT_OUTPUT = REPO_ROOT / "crates" / "pmoke-analysis-core" / "tests" / "fixtu
 RESYNC_INTERVAL = 4096
 
 
+def periodic_interp(phases, centers, values):
+    """Periodic piecewise-linear interpolation at declared bin centers.
+
+    NUMERICS section 4.1: uniform centers phi_b = 2 pi (b + 0.5) / B with
+    last-to-first wrap. Interpolates variance, never standard deviation.
+    """
+    period = 2.0 * math.pi
+    count = len(centers)
+    step = period / count
+    u = (np.asarray(phases, dtype=float) % period) / step - 0.5
+    below = np.floor(u).astype(int) % count
+    frac = u - np.floor(u)
+    table = np.asarray(values, dtype=float)
+    return (1.0 - frac) * table[below] + frac * table[(below + 1) % count]
+
+
 def legacy_geometry(length, dt, stride, f_ref, cycles):
     """NUMERICS section 1 grid. Returns dict or {'expected_error': code}.
 
@@ -168,9 +184,13 @@ def build_geometry_cases():
          "stride": 100, "f_ref": 1000.0, "cycles": 1.0, "t_start": -0.028},
         {"name": "wide_window", "length": 20000, "dt": 1e-5,
          "stride": 50, "f_ref": 1000.0, "cycles": 2.5, "t_start": 0.0},
-        {"name": "shortest_valid", "length": 421, "dt": 1e-5,
+        {"name": "nine_rows_421", "length": 421, "dt": 1e-5,
          "stride": 20, "f_ref": 1000.0, "cycles": 1.0, "t_start": 0.0},
         {"name": "short_two_rows", "length": 300, "dt": 1e-5,
+         "stride": 20, "f_ref": 1000.0, "cycles": 1.0, "t_start": 0.0},
+        {"name": "boundary_invalid_260", "length": 260, "dt": 1e-5,
+         "stride": 20, "f_ref": 1000.0, "cycles": 1.0, "t_start": 0.0},
+        {"name": "boundary_single_row_261", "length": 261, "dt": 1e-5,
          "stride": 20, "f_ref": 1000.0, "cycles": 1.0, "t_start": 0.0},
         {"name": "incomplete_window", "length": 200, "dt": 1e-5,
          "stride": 20, "f_ref": 1000.0, "cycles": 1.0, "t_start": 0.0},
@@ -187,7 +207,7 @@ def build_convention_cases():
     base = {"f_ref": 100000.0, "dt": 1e-7, "samples": 1024,
             "fit_harmonics": list(range(1, 13)), "output_harmonics": list(range(1, 7))}
     cases = []
-    cases.append(dict(base, name="mixed_phases_nonzero_t0", t_start=0.0035,
+    cases.append(dict(base, name="mixed_phases_fractional_t0", t_start=3.7e-6,
                       phase_rad=0.7, dc=0.05,
                       coeffs={1: (0.0, 1.0), 2: (0.5, 0.0), 3: (0.0, 0.02),
                               4: (-2.0, 1.5), 7: (0.3, -0.2), 12: (0.0, 0.1)}))
@@ -195,7 +215,7 @@ def build_convention_cases():
                       phase_rad=-1.3, dc=-3.0,
                       coeffs={1: (0.0, 0.001), 2: (4.0, -3.0), 5: (0.002, 0.0),
                               6: (1.0, 1.0), 8: (-0.5, 0.4), 11: (0.05, -0.05)}))
-    cases.append(dict(base, name="negative_start_phase", t_start=-0.001,
+    cases.append(dict(base, name="negative_fractional_t0", t_start=-1.3e-6,
                       phase_rad=2.6, dc=0.0,
                       coeffs={1: (0.7, -0.7), 3: (-0.1, 0.0), 6: (0.0, 0.4),
                               9: (0.2, 0.2), 12: (-0.15, 0.0)}))
@@ -211,21 +231,25 @@ def expected_beta(dc, coeffs, fit_harmonics):
 
 
 def build_noise_families():
+    """Each family owns its declared RandomState seed: regenerating one
+    family from its seed reproduces its arrays independent of the others."""
     families = {}
-    rng = np.random.RandomState(20260913)
     n = 2048
+    rng = np.random.RandomState(20260913)
     g = rng.normal(0.0, 2.0, n)
     families["iid_gaussian"] = {
         "kind": "iid_gaussian", "seed": 20260913, "samples": n,
         "sigma": 2.0, "values": g.tolist(),
         "sample_mean": float(np.mean(g)), "sample_var": float(np.var(g)),
     }
+    rng = np.random.RandomState(20260914)
     u = rng.uniform(-1.0, 1.0, n) * math.sqrt(3.0)
     families["iid_uniform"] = {
         "kind": "iid_uniform", "seed": 20260914, "samples": n,
         "values": u.tolist(),
         "sample_mean": float(np.mean(u)), "sample_var": float(np.var(u)),
     }
+    rng = np.random.RandomState(20260915)
     rho = 0.7
     ar = np.empty(n)
     ar[0] = rng.normal()
@@ -236,16 +260,24 @@ def build_noise_families():
         "values": ar.tolist(), "sample_mean": float(np.mean(ar)),
         "sample_var": float(np.var(ar)), "lag1_corr": float(np.corrcoef(ar[:-1], ar[1:])[0, 1]),
     }
+    rng = np.random.RandomState(20260916)
     bins = 64
-    profile = 1.0 + 0.5 * np.sin(2.0 * np.pi * (np.arange(bins) + 0.5) / bins)
+    centers = 2.0 * math.pi * (np.arange(bins) + 0.5) / bins
+    # Dimensionless multiplier profile; absolute variance is v0 * profile.
+    profile = 1.0 + 0.5 * np.sin(2.0 * math.pi * (np.arange(bins) + 0.5) / bins)
+    v0 = 2.25
     phases = rng.uniform(0.0, 2.0 * math.pi, n)
-    hetero = np.sqrt(np.interp(phases, np.linspace(0, 2 * math.pi, bins + 1),
-                               np.append(profile, profile[0]))) * rng.normal(0.0, 1.5, n)
+    variances = v0 * periodic_interp(phases, centers, profile)
+    hetero = np.sqrt(variances) * rng.normal(0.0, 1.0, n)
     families["phase_heteroscedastic"] = {
         "kind": "phase_diagonal", "seed": 20260916, "samples": n,
-        "bins": bins, "v0": 2.25, "variance_profile": profile.tolist(),
+        "bins": bins, "v0": v0,
+        "profile_kind": "dimensionless_multiplier",
+        "variance_profile": profile.tolist(),
+        "phases": phases.tolist(), "variances": variances.tolist(),
         "values": hetero.tolist(), "sample_mean": float(np.mean(hetero)),
         "sample_var": float(np.var(hetero)),
+        "variance_mean": float(np.mean(variances)),
     }
     return families
 
@@ -303,9 +335,13 @@ def main():
         ("harmonic_mixture_h1", {"f_ref": 1000.0, "dt": 1e-5, "t0": 0.0,
                                  "phase": 0.2, "cycles": 1.0, "stride": 50,
                                  "harmonic": 1, "samples": 3000}),
-        ("harmonic_mixture_h2_offset", {"f_ref": 1000.0, "dt": 1e-5, "t0": 0.001,
-                                        "phase": -0.9, "cycles": 1.0, "stride": 50,
-                                        "harmonic": 2, "samples": 3000}),
+        ("harmonic_mixture_h2_fractional_t0", {"f_ref": 1000.0, "dt": 1e-5,
+                                               "t0": 0.00137, "phase": -0.9,
+                                               "cycles": 1.0, "stride": 50,
+                                               "harmonic": 2, "samples": 3000}),
+        ("fractional_edge_window", {"f_ref": 999.0, "dt": 1e-5, "t0": 0.00137,
+                                    "phase": 0.5, "cycles": 1.0, "stride": 50,
+                                    "harmonic": 1, "samples": 6000}),
     ]:
         t = params["t0"] + np.arange(params["samples"]) * params["dt"]
         phi = 2.0 * math.pi * params["f_ref"] * t - params["phase"]

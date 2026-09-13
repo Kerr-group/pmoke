@@ -41,6 +41,27 @@ class GeneratorDeterminismTests(unittest.TestCase):
             digest = hashlib.sha256((FIXTURE_DIR / name).read_bytes()).hexdigest()
             self.assertEqual(digest, entry["sha256"], name)
 
+    def test_regeneration_matches_committed_fixtures(self):
+        # Binds the current generator to the committed payloads: a stale
+        # golden survives neither a generator change nor a manual fixture edit.
+        manifest = json.loads((FIXTURE_DIR / "manifest.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            proc = subprocess.run(
+                ["python3", str(SCRIPTS / "generate_joint_gls_fixtures.py"),
+                 "--output", directory],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            fresh = sorted(p.name for p in Path(directory).iterdir())
+            self.assertEqual(fresh, sorted(["manifest.json", *manifest["files"]]))
+            for name, entry in manifest["files"].items():
+                regenerated = (Path(directory) / name).read_bytes()
+                committed = (FIXTURE_DIR / name).read_bytes()
+                self.assertEqual(len(regenerated), entry["bytes"], name)
+                self.assertEqual(hashlib.sha256(regenerated).hexdigest(),
+                                 entry["sha256"], name)
+                self.assertEqual(regenerated, committed, name)
+
 
 class GeometryFormulaTests(unittest.TestCase):
     def test_hand_computed_shortest_valid_case(self):
@@ -53,6 +74,15 @@ class GeometryFormulaTests(unittest.TestCase):
         self.assertEqual(grid["row_count"], 9)
         self.assertEqual(grid["first_center"], 140)
         self.assertEqual(grid["last_center"], 300)
+
+    def test_adjacent_boundary_lengths(self):
+        # L=260 is invalid; L=261 emits exactly one row centered at 140.
+        self.assertEqual(legacy_geometry(260, 1e-5, 20, 1000.0, 1.0)["expected_error"],
+                         "signal_too_short")
+        grid = legacy_geometry(261, 1e-5, 20, 1000.0, 1.0)
+        self.assertEqual(grid["i_start"], grid["i_end"])
+        self.assertEqual(grid["first_center"], 140)
+        self.assertEqual(grid["last_center"], 140)
 
     def test_error_codes(self):
         self.assertEqual(legacy_geometry(200, 1e-5, 20, 1000.0, 1.0)["expected_error"],
@@ -95,6 +125,38 @@ class NoiseFamilyTests(unittest.TestCase):
         # N=2048 gives lag-1 standard error ~1/sqrt(N); 5 sigma is generous.
         self.assertAlmostEqual(family["lag1_corr"], family["rho"], delta=0.12)
 
+    def test_each_family_reproduces_from_its_declared_seed(self):
+        # Declared seeds are independent stream owners, not labels on one
+        # advancing stream: regenerating one family reproduces its arrays.
+        from generate_joint_gls_fixtures import build_noise_families
+        payload = json.loads((FIXTURE_DIR / "noise.json").read_text(encoding="utf-8"))
+        fresh = build_noise_families()
+        for name, family in payload["families"].items():
+            self.assertEqual(fresh[name]["values"], family["values"], name)
+
+    def test_phase_family_carries_samplewise_truth(self):
+        from generate_joint_gls_fixtures import periodic_interp
+        payload = json.loads((FIXTURE_DIR / "noise.json").read_text(encoding="utf-8"))
+        family = payload["families"]["phase_heteroscedastic"]
+        self.assertEqual(family["profile_kind"], "dimensionless_multiplier")
+        phases = np.array(family["phases"])
+        variances = np.array(family["variances"])
+        self.assertEqual(len(phases), family["samples"])
+        self.assertTrue(bool(np.all((phases >= 0.0) & (phases < 2.0 * math.pi))))
+        self.assertTrue(bool(np.all(variances > 0.0)))
+        # Knots sit at declared bin centers: interpolation there is exact.
+        bins = family["bins"]
+        centers = 2.0 * math.pi * (np.arange(bins) + 0.5) / bins
+        profile = np.array(family["variance_profile"])
+        at_centers = periodic_interp(centers, centers, profile)
+        np.testing.assert_allclose(at_centers, profile, rtol=0, atol=1e-12)
+        # Stored variances equal v0 times the center-based interpolation.
+        np.testing.assert_allclose(
+            variances, family["v0"] * periodic_interp(phases, centers, profile),
+            rtol=0, atol=0)
+        self.assertAlmostEqual(float(np.mean(variances)), family["variance_mean"],
+                               places=12)
+
 
 class LegacyBoxcarSmokeTests(unittest.TestCase):
     def test_pure_sine_recovers_half_amplitude(self):
@@ -107,6 +169,40 @@ class LegacyBoxcarSmokeTests(unittest.TestCase):
         self.assertTrue(xs)
         for value in xs:
             self.assertAlmostEqual(value, 1.0, delta=0.02)
+
+    def test_impulse_matches_closed_form_endpoint_weights(self):
+        # Unit impulse at the inner-negative edge sample isolates the
+        # half-weight plus fractional-edge correction. A mutant dropping the
+        # edge integrals changes this row by ~19% relative.
+        f_ref, dt, t0, phase = 999.0, 1e-5, 0.0, 0.3
+        n, stride, harmonic = 3000, 50, 1
+        omega = 2.0 * math.pi * f_ref
+        half_window_s = 1.0 / f_ref
+        n_half = 100
+        edge_dt = half_window_s - n_half * dt
+        self.assertGreater(edge_dt, 0.0)
+        center = 200
+        impulse = center - n_half
+        signal = [0.0] * n
+        signal[impulse] = 1.0
+        _, xs, ys, _ = legacy_boxcar(signal, t0, dt, f_ref, phase, 1.0,
+                                     stride, harmonic)
+        step = -harmonic * omega * dt
+        phase_zero = -harmonic * (omega * t0 - phase)
+        mix_re = math.cos(phase_zero + impulse * step)
+        mix_im = math.sin(phase_zero + impulse * step)
+        scale = 1.0 / (2.0 * half_window_s)
+
+        def edge(y0):
+            interp = y0 * (dt - edge_dt) / dt
+            return edge_dt * 0.5 * (y0 + interp)
+
+        want_y = (0.5 * mix_re * dt + edge(mix_re)) * scale
+        want_x = -(0.5 * mix_im * dt + edge(mix_im)) * scale
+        self.assertAlmostEqual(ys[0], want_y, delta=1e-9 * (1.0 + abs(want_y)))
+        self.assertAlmostEqual(xs[0], want_x, delta=1e-9 * (1.0 + abs(want_x)))
+        # The edge correction is load-bearing, not rounding noise.
+        self.assertGreater(abs(edge(mix_re) * scale), 1e-6)
 
 
 if __name__ == "__main__":

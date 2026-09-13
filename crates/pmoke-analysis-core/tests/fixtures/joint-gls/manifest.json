@@ -5,20 +5,20 @@
  "numpy_version": "2.5.1",
  "files": {
   "geometry.json": {
-   "sha256": "29e93cc64a97146f451fd93ac1b5879bcf098afc034778943182181e67c035f8",
-   "bytes": 4141
+   "sha256": "7d2187996cd497f7a7ef67cf4a463dd58626e1f60c720063bec05a7513e0b169",
+   "bytes": 4824
   },
   "conventions.json": {
-   "sha256": "9d030f9924a3bbfb13b08bd2e248c41fa9572bb9f2c41400678fc203dfcf77dc",
-   "bytes": 78352
+   "sha256": "62ea96791ef1b380b0f4af3eb8f2c3f78c583cb8bdc641945f1be14b8c7bee8b",
+   "bytes": 78420
   },
   "noise.json": {
-   "sha256": "17b45bc65a5dffba5c6d3f825f8e3408339c687807a56a3f410a7a6f2f9509fe",
-   "bytes": 203094
+   "sha256": "940638a10a2a3a2d8d36007f84611eeefa129310b915b5d2e00fdc9165115b1b",
+   "bytes": 299692
   },
   "legacy-golden.json": {
-   "sha256": "4857996974ac05e448ae27e3fb99b5890bcf523d22b5728c68327050c1afd150",
-   "bytes": 154539
+   "sha256": "ba5e3276cd104435c9f71978d953a45fa71b04e5c9d30d614a1063fb23605898",
+   "bytes": 309288
   }
  }
 }
