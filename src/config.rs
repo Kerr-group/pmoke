@@ -678,8 +678,8 @@ impl ConfigLoad {
 }
 
 struct ValidationSummary {
-    warnings: Vec<ConfigWarning>,
-    errors: Vec<ConfigDiagnostic>,
+    pub(super) warnings: Vec<ConfigWarning>,
+    pub(super) errors: Vec<ConfigDiagnostic>,
 }
 
 fn normalize_reference_ch_v1(reference_ch: &[u8]) -> std::result::Result<u8, ConfigDiagnostic> {

@@ -134,7 +134,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
             Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
                 version: Some(7),
                 warnings: Vec::new(),
-                diagnostics: vec![diag],
+                diagnostics: vec![with_v7_contract_hint(diag)],
                 normalized: None,
             }),
         },
@@ -143,7 +143,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
             Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
                 version: Some(6),
                 warnings: Vec::new(),
-                diagnostics: vec![diag],
+                diagnostics: vec![with_v6_contract_hint(diag)],
                 normalized: None,
             }),
         },
@@ -167,6 +167,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
 fn core_diagnostics(report: pmoke_config_core::ValidationReport) -> ConfigLoad {
     use pmoke_config_core::{DiagnosticCode, DiagnosticSeverity};
 
+    let schema_version = report.schema_version;
     let diagnostics = report
         .diagnostics
         .into_iter()
@@ -174,31 +175,43 @@ fn core_diagnostics(report: pmoke_config_core::ValidationReport) -> ConfigLoad {
         .map(|item| {
             let migration = item.code == DiagnosticCode::SchemaMismatch
                 && is_removed_lpf_input(item.path.as_deref(), &item.message);
-            ConfigDiagnostic {
-                kind: if migration {
-                    DiagnosticKind::Migration
-                } else {
-                    match item.code {
-                        DiagnosticCode::TomlSyntax | DiagnosticCode::InputTooLarge => {
-                            DiagnosticKind::Parse
-                        }
-                        DiagnosticCode::SchemaMismatch
-                        | DiagnosticCode::MissingVersion
-                        | DiagnosticCode::InvalidVersion
-                        | DiagnosticCode::UnsupportedVersion => DiagnosticKind::Deserialize,
-                        _ => DiagnosticKind::Validation,
-                    }
-                },
-                path: item.path,
-                message: item.message,
-                suggestion: if migration {
+            let item_path = item.path;
+            let item_message = item.message;
+            let item_suggestion = item.suggestion;
+            let contract_hint = contract_migration_hint(schema_version, &item_message);
+            let (kind, message, suggestion) = if migration {
+                (
+                    DiagnosticKind::Migration,
+                    item_message,
                     Some(
                         "use `kind = \"boxcar_legacy\"` only after reviewing the behavior change"
                             .to_string(),
-                    )
-                } else {
-                    item.suggestion
-                },
+                    ),
+                )
+            } else if let Some((hint_message, hint_suggestion)) = contract_hint {
+                (
+                    DiagnosticKind::Migration,
+                    hint_message.to_string(),
+                    Some(hint_suggestion.to_string()),
+                )
+            } else {
+                let kind = match item.code {
+                    DiagnosticCode::TomlSyntax | DiagnosticCode::InputTooLarge => {
+                        DiagnosticKind::Parse
+                    }
+                    DiagnosticCode::SchemaMismatch
+                    | DiagnosticCode::MissingVersion
+                    | DiagnosticCode::InvalidVersion
+                    | DiagnosticCode::UnsupportedVersion => DiagnosticKind::Deserialize,
+                    _ => DiagnosticKind::Validation,
+                };
+                (kind, item_message, item_suggestion)
+            };
+            ConfigDiagnostic {
+                kind,
+                path: item_path,
+                message,
+                suggestion,
             }
         })
         .collect();
@@ -238,6 +251,60 @@ fn is_removed_lpf_input(path: Option<&str>, message: &str) -> bool {
             || REMOVED_LPF_FIELDS
                 .iter()
                 .any(|field| message.contains(field)))
+}
+
+/// Migration hint for v6/v7 lock-in contract confusion (FR-035/036). Matches
+/// the serde unknown-field text produced on both the browser-core and native
+/// deserialization paths; returns the replacement message and suggestion.
+fn contract_migration_hint(
+    schema_version: Option<u32>,
+    message: &str,
+) -> Option<(&'static str, &'static str)> {
+    if schema_version == Some(7) && message.contains("unknown field `filter`") {
+        Some((
+            "lockin.filter was replaced in schema v7 by lockin.window and lockin.estimator",
+            "run `pmoke config migrate --to 7` on the v6 file, or move half_window_cycles to lockin.window and select lockin.estimator explicitly",
+        ))
+    } else if schema_version == Some(6)
+        && (message.contains("unknown field `window`")
+            || message.contains("unknown field `estimator`"))
+    {
+        Some((
+            "lockin.window and lockin.estimator are schema v7 sections and cannot be mixed into a v6 file",
+            "run `pmoke config migrate --to 7` to advance this config, or keep the v6 lockin.filter contract",
+        ))
+    } else {
+        None
+    }
+}
+
+/// Replaces a bare unknown-field error with a migration diagnostic when a v7
+/// file still carries the removed v6 `lockin.filter` contract (FR-035).
+fn with_v7_contract_hint(diag: ConfigDiagnostic) -> ConfigDiagnostic {
+    if let Some((message, suggestion)) = contract_migration_hint(Some(7), &diag.message) {
+        ConfigDiagnostic::new(
+            DiagnosticKind::Migration,
+            diag.path,
+            message.to_string(),
+            Some(suggestion.to_string()),
+        )
+    } else {
+        diag
+    }
+}
+
+/// Points v6 files that already use v7-only sections at the v7 migration.
+fn with_v6_contract_hint(diag: ConfigDiagnostic) -> ConfigDiagnostic {
+    if let Some((message, suggestion)) = contract_migration_hint(Some(6), &diag.message) {
+        ConfigDiagnostic::new(
+            DiagnosticKind::Migration,
+            diag.path,
+            message.to_string(),
+            Some(suggestion.to_string()),
+        )
+    } else {
+        diag
+    }
 }
 
 fn deserialize_versioned<T>(s: &str) -> std::result::Result<T, ConfigDiagnostic>

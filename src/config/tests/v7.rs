@@ -1,5 +1,9 @@
 use super::*;
-use crate::config::{GlsNoiseMode, LockinEdgePolicy, LockinEstimator, LockinWindowKind};
+use crate::config::{
+    GlsCovarianceOutput, GlsFailurePolicy, GlsNoiseMode, JointHarmonicGlsConfig, LockinEdgePolicy,
+    LockinEstimator, LockinWindowKind,
+};
+use crate::test_support::test_config;
 
 const V7_BASE: &str = r#"version = 7
 [scope]
@@ -125,18 +129,87 @@ fn v7_gls_loads_full_settings() {
 }
 
 #[test]
-fn v7_rejects_the_removed_filter_table() {
+fn v7_filter_table_reports_a_migration_diagnostic() {
     let text = V7_BASE.replace(
         "[lockin.window]",
         "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }\n[lockin.window]",
     );
-    let diagnostics = diagnostic_paths(&text);
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.contains("filter")),
-        "unexpected diagnostics: {diagnostics:?}"
-    );
+    match load_from_str(&text) {
+        ConfigLoad::Ready { .. } => panic!("expected diagnostics"),
+        ConfigLoad::Diagnostics(diagnostics) => {
+            assert_eq!(diagnostics.diagnostics.len(), 1);
+            let diagnostic = &diagnostics.diagnostics[0];
+            assert!(matches!(diagnostic.kind, DiagnosticKind::Migration));
+            assert!(diagnostic.message.contains("lockin.window"));
+            assert!(
+                diagnostic
+                    .suggestion
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("migrate --to 7")
+            );
+        }
+    }
+}
+
+#[test]
+fn v6_window_section_reports_a_migration_diagnostic() {
+    let text = V7_BASE
+        .replace("version = 7", "version = 6")
+        .replace("[lockin.window]\nkind = \"reference_cycles\"\nhalf_window_cycles = 1.0\nedge_policy = \"legacy_trim\"\n[lockin.estimator]\nkind = \"boxcar_legacy\"\n", "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }\n[lockin.window]\nkind = \"reference_cycles\"\n");
+    match load_from_str(&text) {
+        ConfigLoad::Ready { .. } => panic!("expected diagnostics"),
+        ConfigLoad::Diagnostics(diagnostics) => {
+            let diagnostic = &diagnostics.diagnostics[0];
+            assert!(matches!(diagnostic.kind, DiagnosticKind::Migration));
+            assert!(diagnostic.message.contains("v7"));
+        }
+    }
+}
+
+#[test]
+fn native_and_browser_core_agree_on_v7_contracts() {
+    let valid = [V7_BASE.to_string(), v7_gls_config()];
+    for text in &valid {
+        let native_ready = matches!(load_from_str(text), ConfigLoad::Ready { .. });
+        let core_valid = crate::config::validate_config_toml_core(text).valid;
+        assert!(native_ready, "native rejected a valid config");
+        assert!(core_valid, "core rejected a valid config");
+    }
+    let mutants: &[(&str, &str)] = &[
+        (
+            "[lockin.window]",
+            "filter = { kind = \"boxcar_legacy\", half_window_cycles = 1.0 }\n[lockin.window]",
+        ),
+        (
+            "kind = \"boxcar_legacy\"",
+            "kind = \"boxcar_legacy\"\nfit_harmonics = [1]",
+        ),
+        (
+            "output_harmonics = [1, 2, 3, 4, 5, 6]",
+            "output_harmonics = [1, 2]",
+        ),
+        ("half_window_cycles = 1.0", "half_window_cycles = 0.0"),
+        ("half_window_cycles = 1.0", "half_window_cycles = inf"),
+        ("noise_mode = \"identity\"", "noise_mode = \"quantum\""),
+        ("envelope_degree = 0", "envelope_degree = 2"),
+        ("version = 7", "version = 6"),
+    ];
+    for (from, to) in mutants {
+        for base in [V7_BASE.to_string(), v7_gls_config()] {
+            if !base.contains(from) {
+                continue;
+            }
+            let text = base.replacen(from, to, 1);
+            let native_ready = matches!(load_from_str(&text), ConfigLoad::Ready { .. });
+            let core_valid = crate::config::validate_config_toml_core(&text).valid;
+            assert!(!native_ready, "native accepted mutant {from:?} -> {to:?}");
+            assert_eq!(
+                native_ready, core_valid,
+                "native/core disagreement for mutant {from:?} -> {to:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -263,4 +336,192 @@ fn v7_normalized_render_round_trips() {
             config.lockin.estimator_name()
         );
     }
+}
+
+fn gls_config(calibrations: Vec<crate::config::EstimatorCalibration>) -> JointHarmonicGlsConfig {
+    JointHarmonicGlsConfig {
+        fit_harmonics: vec![1, 2, 3, 4, 5, 6],
+        output_harmonics: vec![1, 2, 3, 4, 5, 6],
+        envelope_degree: 0,
+        noise_mode: GlsNoiseMode::Identity,
+        covariance_output: GlsCovarianceOutput::Diagonal,
+        failure_policy: GlsFailurePolicy::Error,
+        calibrations,
+    }
+}
+
+fn good_calibration() -> crate::config::EstimatorCalibration {
+    crate::config::EstimatorCalibration {
+        channel: 3,
+        path: "calibration/ch3.json".to_string(),
+        sha256: SHA_A.to_string(),
+    }
+}
+
+fn estimator_error_paths(cfg: &mut crate::config::Config) -> Vec<String> {
+    super::super::validation::validate_common(cfg)
+        .errors
+        .iter()
+        .filter_map(|error| error.path.clone())
+        .filter(|path| path.starts_with("lockin.estimator") || path.starts_with("lockin.window"))
+        .collect()
+}
+
+#[test]
+fn native_validation_accepts_a_good_gls_config_directly() {
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(gls_config(vec![good_calibration()]));
+    assert_eq!(estimator_error_paths(&mut cfg), Vec::<String>::new());
+}
+
+#[test]
+fn native_validation_rejects_bad_gls_contracts_directly() {
+    // output harmonics
+    let mut cfg = test_config(vec![1], vec![3]);
+    let mut gls = gls_config(vec![good_calibration()]);
+    gls.output_harmonics = vec![1, 2, 3];
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(gls);
+    let paths = estimator_error_paths(&mut cfg);
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == "lockin.estimator.output_harmonics"),
+        "unexpected paths: {paths:?}"
+    );
+
+    // envelope degree
+    let mut cfg = test_config(vec![1], vec![3]);
+    let mut gls = gls_config(vec![good_calibration()]);
+    gls.envelope_degree = 2;
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(gls);
+    let paths = estimator_error_paths(&mut cfg);
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == "lockin.estimator.envelope_degree"),
+        "unexpected paths: {paths:?}"
+    );
+
+    // template digest
+    let mut cfg = test_config(vec![1], vec![3]);
+    let mut bad = good_calibration();
+    bad.sha256 = "${CALIBRATION_SHA256}".to_string();
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(gls_config(vec![bad]));
+    let paths = estimator_error_paths(&mut cfg);
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == "lockin.estimator.calibrations[0].sha256"),
+        "unexpected paths: {paths:?}"
+    );
+
+    // missing binding
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(gls_config(Vec::new()));
+    let paths = estimator_error_paths(&mut cfg);
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == "lockin.estimator.calibrations"),
+        "unexpected paths: {paths:?}"
+    );
+
+    // unsorted fit
+    let mut cfg = test_config(vec![1], vec![3]);
+    let mut gls = gls_config(vec![good_calibration()]);
+    gls.fit_harmonics = vec![1, 3, 2, 4, 5, 6];
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(gls);
+    let paths = estimator_error_paths(&mut cfg);
+    assert!(
+        paths
+            .iter()
+            .any(|path| path.starts_with("lockin.estimator.fit_harmonics")),
+        "unexpected paths: {paths:?}"
+    );
+}
+
+#[test]
+fn native_validation_flags_a_diverged_window_mirror_directly() {
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.lockin.lpf_half_window_cycles = 2.0;
+    let paths = estimator_error_paths(&mut cfg);
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == "lockin.window.half_window_cycles"),
+        "unexpected paths: {paths:?}"
+    );
+}
+
+use crate::config::schema::{
+    ConfigV7, EstimatorCalibrationV7, LockinEstimatorV7, LockinV7, LockinWindowV7,
+};
+
+fn lockin_v7_toml() -> String {
+    V7_BASE
+        .split("[lockin]\n")
+        .nth(1)
+        .unwrap()
+        .split("[phase]")
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn raw_v7_structs_reject_unknown_fields_directly() {
+    // Full-document unknown top-level key.
+    let document = format!("{V7_BASE}top_level_unknown = true\n");
+    assert!(toml::from_str::<ConfigV7>(&document).is_err());
+
+    // Lockin-level: the removed filter table is rejected.
+    let lockin = lockin_v7_toml();
+    assert!(
+        toml::from_str::<LockinV7>(&lockin.replace(
+            "[lockin.window]",
+            "filter = { kind = \"boxcar_legacy\" }\n[lockin.window]"
+        ))
+        .is_err()
+    );
+
+    // Window-level unknown key.
+    assert!(
+        toml::from_str::<LockinWindowV7>(
+            "kind = \"reference_cycles\"\nhalf_window_cycles = 1.0\nedge_policy = \"legacy_trim\"\ntricubic = true"
+        )
+        .is_err()
+    );
+
+    // Legacy estimator rejects GLS-only settings.
+    assert!(
+        toml::from_str::<LockinEstimatorV7>("kind = \"boxcar_legacy\"\nfit_harmonics = [1]")
+            .is_err()
+    );
+
+    // GLS estimator rejects legacy filter keys (all required GLS fields
+    // present so the unknown field is the only possible failure).
+    assert!(
+        toml::from_str::<LockinEstimatorV7>(
+            "kind = \"joint_harmonic_gls\"\nfit_harmonics = [1, 2, 3, 4, 5, 6]\noutput_harmonics = [1, 2, 3, 4, 5, 6]\nnoise_mode = \"identity\"\nfilter = { kind = \"boxcar_legacy\" }"
+        )
+        .is_err()
+    );
+
+    // Calibration entries reject unknown keys.
+    assert!(
+        toml::from_str::<EstimatorCalibrationV7>(
+            "channel = 3\npath = \"c.json\"\nsha256 = \"abc\"\nnote = \"hi\""
+        )
+        .is_err()
+    );
+
+    // Positive controls: the same fragments without unknown keys parse.
+    assert!(toml::from_str::<ConfigV7>(V7_BASE).is_ok());
+    assert!(
+        toml::from_str::<LockinWindowV7>(
+            "kind = \"reference_cycles\"\nhalf_window_cycles = 1.0\nedge_policy = \"legacy_trim\""
+        )
+        .is_ok()
+    );
+    assert!(toml::from_str::<LockinEstimatorV7>("kind = \"boxcar_legacy\"").is_ok());
 }
