@@ -354,7 +354,7 @@ fn run_joint_channel(
                 estimate.xy.len()
             );
         }
-        for (harmonic, column_pair) in columns.chunks_exact_mut(2).enumerate() {
+        for (harmonic, column_pair) in columns.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             column_pair[0].push(estimate.xy[2 * harmonic]);
             column_pair[1].push(estimate.xy[2 * harmonic + 1]);
         }
