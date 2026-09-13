@@ -13,6 +13,8 @@ from joint_gls_oracle import (
     map_to_xy,
     solve_case,
     solve_whitened,
+    toeplitz_from_lags,
+    whiten_correlated,
     whiten_diagonal,
     whiten_identity,
 )
@@ -192,6 +194,76 @@ class MapToXyTests(unittest.TestCase):
     def test_output_outside_fitting_list_is_rejected(self):
         with self.assertRaises(ValueError):
             map_to_xy([1.0, 2.0, 3.0], [1, 3], [5])
+
+
+class CorrelatedOracleTests(unittest.TestCase):
+    def test_toeplitz_zero_padding(self):
+        factor = toeplitz_from_lags([1.0, 0.5], 4)
+        np.testing.assert_allclose(
+            factor,
+            [[1.0, 0.5, 0.0, 0.0],
+             [0.5, 1.0, 0.5, 0.0],
+             [0.0, 0.5, 1.0, 0.5],
+             [0.0, 0.0, 0.5, 1.0]],
+            rtol=0, atol=0,
+        )
+
+    def test_single_lag_matches_identity_whitening(self):
+        rng = np.random.RandomState(41)
+        design = rng.normal(0, 1, (64, 5))
+        signal = rng.normal(0, 1, 64)
+        times = (np.arange(64) * 1e-5).tolist()
+        dw, yw, info = whiten_correlated(design, signal, times, 1000.0, 0.0,
+                                         [1.0], v0=2.0)
+        np.testing.assert_allclose(dw, design / np.sqrt(2.0), rtol=0, atol=1e-12)
+        np.testing.assert_allclose(yw, signal / np.sqrt(2.0), rtol=0, atol=1e-12)
+        self.assertEqual(info["variance_scale"], 1.0)
+
+    def test_stationary_scale_flows_through_whitening(self):
+        case = convention_case("large_even_weak_odd")
+        times = [case["t_start"] + i * case["dt"] for i in range(case["samples"])]
+        lags = [0.5 ** lag for lag in range(9)]
+        unit = solve_case(times, case["signal"], case["f_ref"], case["phase_rad"],
+                          list(range(1, 13)), list(range(1, 7)),
+                          noise={"mode": "stationary", "v0": 1.0, "lags": lags})
+        scaled = solve_case(times, case["signal"], case["f_ref"], case["phase_rad"],
+                            list(range(1, 13)), list(range(1, 7)),
+                            noise={"mode": "stationary", "v0": 4.0, "lags": lags})
+        # Same GLS estimate (R scaled by a constant); the whitened designs
+        # differ by 1/2, so the pinv covariance scales by 4.
+        np.testing.assert_allclose(unit["beta"], scaled["beta"], rtol=0, atol=1e-9)
+        design = design_matrix(times, case["f_ref"], case["phase_rad"], list(range(1, 13)))
+        dw_unit, _, _ = whiten_correlated(design, case["signal"], times, case["f_ref"],
+                                          case["phase_rad"], lags, v0=1.0)
+        dw_scaled, _, _ = whiten_correlated(design, case["signal"], times, case["f_ref"],
+                                            case["phase_rad"], lags, v0=4.0)
+        np.testing.assert_allclose(
+            covariance_pinv_reference(dw_scaled),
+            4.0 * covariance_pinv_reference(dw_unit), rtol=0, atol=1e-12)
+
+    def test_degenerate_stationary_matches_identity(self):
+        # Lags [1.0] make C_N the identity: stationary must reproduce the
+        # identity mode bit-for-bit in beta and covariance.
+        case = convention_case("large_even_weak_odd")
+        times = [case["t_start"] + i * case["dt"] for i in range(case["samples"])]
+        stationary = solve_case(times, case["signal"], case["f_ref"], case["phase_rad"],
+                                list(range(1, 13)), list(range(1, 7)),
+                                noise={"mode": "stationary", "v0": 2.0, "lags": [1.0]})
+        identity = solve_case(times, case["signal"], case["f_ref"], case["phase_rad"],
+                              list(range(1, 13)), list(range(1, 7)))
+        np.testing.assert_allclose(stationary["beta"], identity["beta"], rtol=0, atol=1e-9)
+        design = design_matrix(times, case["f_ref"], case["phase_rad"], list(range(1, 13)))
+        dw, _, _ = whiten_correlated(design, case["signal"], times, case["f_ref"],
+                                     case["phase_rad"], [1.0], v0=2.0)
+        np.testing.assert_allclose(
+            covariance_pinv_reference(dw),
+            covariance_pinv_reference(design, 2.0), rtol=0, atol=1e-9)
+
+    def test_indefinite_factor_is_rejected(self):
+        design = np.eye(4)
+        with self.assertRaises(ValueError):
+            whiten_correlated(design, [1.0, 2.0, 3.0, 4.0], [0.0, 1.0, 2.0, 3.0],
+                              1000.0, 0.0, [1.0, 1.0], v0=1.0)
 
 
 if __name__ == "__main__":

@@ -50,6 +50,57 @@ def whiten_known_cholesky(design, signal, chol):
     return dw, yw, {"mode": "known_cholesky"}
 
 
+def toeplitz_from_lags(lags, samples):
+    """Finite Toeplitz factor with zeros beyond the recorded support."""
+    lags = list(lags)
+    factor = np.zeros((samples, samples))
+    for lag, value in enumerate(lags):
+        if lag >= samples:
+            break
+        for row in range(samples - lag):
+            factor[row, row + lag] = value
+            factor[row + lag, row] = value
+    return factor
+
+
+def whiten_correlated(design, signal, times, f_ref, phase_rad, lags, v0=None,
+                      variances=None):
+    """Correlated whitening mirroring NUMERICS 4.2 order: variance scaling
+    first (1/sqrt(v0) for stationary, 1/sqrt(v(phi)) for phase-correlated),
+    then the Cholesky triangular solve of the finite Toeplitz factor.
+    Returns (dw, yw, info) with the design-model variance scale."""
+    design = np.asarray(design, dtype=float)
+    signal = np.asarray(signal, dtype=float)
+    rows = design.shape[0]
+    if variances is None:
+        if v0 is None or not v0 > 0.0:
+            raise ValueError("stationary whitening needs a positive v0")
+        scaled_design = design / math.sqrt(v0)
+        scaled_signal = signal / math.sqrt(v0)
+        # The v0 scale is absorbed into the whitened system: covariance is
+        # pinv(Dw) pinv(Dw)^T with unit scale, matching the solver.
+        scale = 1.0
+        mode = "stationary"
+    else:
+        variances = np.asarray(variances, dtype=float)
+        if np.any(~np.isfinite(variances)) or np.any(variances <= 0.0):
+            raise ValueError("phase-correlated whitening needs positive finite variances")
+        weight = 1.0 / np.sqrt(variances)
+        scaled_design = design * weight[:, None]
+        scaled_signal = signal * weight
+        scale = 1.0
+        mode = "phase_correlated"
+    factor = toeplitz_from_lags(lags, rows)
+    try:
+        lower = scipy.linalg.cholesky(factor, lower=True)
+        jitter = 0.0
+    except scipy.linalg.LinAlgError:
+        raise ValueError("correlation Toeplitz factor is not positive definite")
+    dw = scipy.linalg.solve_triangular(lower, scaled_design, lower=True)
+    yw = scipy.linalg.solve_triangular(lower, scaled_signal, lower=True)
+    return dw, yw, {"mode": mode, "variance_scale": scale, "jitter_applied": jitter}
+
+
 def solve_whitened(design_w, signal_w, driver="gelsd"):
     """Least squares via LAPACK driver (gelsd SVD-based; gelsy QR-based).
 
@@ -125,6 +176,13 @@ def solve_case(times, signal, f_ref, phase_rad, fit_harmonics, output_harmonics,
         dw, yw, info = whiten_diagonal(design, signal, noise["variances"])
     elif noise["mode"] == "known_cholesky":
         dw, yw, info = whiten_known_cholesky(design, signal, noise["chol"])
+    elif noise["mode"] == "stationary":
+        dw, yw, info = whiten_correlated(
+            design, signal, times, f_ref, phase_rad, noise["lags"], v0=noise["v0"])
+    elif noise["mode"] == "phase_correlated":
+        dw, yw, info = whiten_correlated(
+            design, signal, times, f_ref, phase_rad, noise["lags"],
+            variances=noise["variances"])
     else:
         raise ValueError(f"unknown noise mode: {noise['mode']}")
     result = solve_whitened(dw, yw, driver=driver)

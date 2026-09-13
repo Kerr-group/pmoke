@@ -24,6 +24,8 @@ from joint_gls_oracle import (
     covariance_pinv_reference,
     design_matrix as oracle_design_matrix,
     solve_case,
+    toeplitz_from_lags,
+    whiten_correlated,
     whiten_diagonal,
 )
 
@@ -331,6 +333,84 @@ def build_weighted_golden():
     }]
 
 
+def build_correlated_golden():
+    """Stationary/phase-correlated cases with committed oracle solutions.
+
+    AR(1)-style lags (positive definite by construction) drive both the
+    noise synthesis and the oracle whitening; the Rust solver must reproduce
+    the oracle through its own Toeplitz/Cholesky path.
+    """
+    import scipy.linalg
+    f_ref, dt, t_start, phase = 1000.0, 1e-5, 1.3e-6, 0.4
+    samples = 512
+    fit = list(range(1, 13))
+    out = list(range(1, 7))
+    rho, support = 0.5, 17
+    lags = [rho ** lag for lag in range(support)]
+    times = t_start + np.arange(samples) * dt
+    phi = 2.0 * math.pi * f_ref * times - phase
+    beta_true = [0.25] + [v for k in range(1, 13) for v in (0.6 / k, -0.4 / k)]
+    clean = np.full(samples, beta_true[0])
+    for k in range(1, 13):
+        clean += beta_true[2 * k - 1] * np.cos(k * phi) + beta_true[2 * k] * np.sin(k * phi)
+    design = oracle_design_matrix(times.tolist(), f_ref, phase, fit)
+    factor = toeplitz_from_lags(lags, samples)
+    lower = scipy.linalg.cholesky(factor, lower=True)
+    cases = []
+
+    # Stationary: R = v0 * C_N with v0 = 4.
+    rng = np.random.RandomState(20260930)
+    v0 = 4.0
+    noise = math.sqrt(v0) * (lower @ rng.normal(0.0, 1.0, samples))
+    signal = (clean + noise).tolist()
+    solved = solve_case(times.tolist(), signal, f_ref, phase, fit, out,
+                        noise={"mode": "stationary", "v0": v0, "lags": lags})
+    dw, _, _ = whiten_correlated(design, np.array(signal), times.tolist(),
+                                 f_ref, phase, lags, v0=v0)
+    cases.append({
+        "name": "stationary_ar1", "f_ref": f_ref, "dt": dt,
+        "t_start": t_start, "samples": samples, "phase_rad": phase,
+        "fit_harmonics": fit, "output_harmonics": out,
+        "mode": "stationary", "v0": v0, "lags": lags, "lag_step_s": dt,
+        "signal": signal, "true_beta": beta_true,
+        "oracle": {"beta": solved["beta"], "xy": solved["xy"],
+                   "rank": solved["rank"], "residual_norm": solved["residual_norm"],
+                   "covariance_beta": covariance_pinv_reference(dw).tolist(),
+                   "jitter_applied": 0.0},
+    })
+
+    # Phase-correlated: R = S_N C_N S_N with a known hetero profile.
+    rng = np.random.RandomState(20260931)
+    bins = 16
+    profile = (1.0 + 0.3 * np.sin(2.0 * math.pi * (np.arange(bins) + 0.5) / bins)).tolist()
+    sample_phases = np.mod(phi, 2.0 * math.pi)
+    centers = 2.0 * math.pi * (np.arange(bins) + 0.5) / bins
+    hetero_v0 = 2.25
+    variances = hetero_v0 * periodic_interp(sample_phases, centers, np.array(profile))
+    std_noise = lower @ rng.normal(0.0, 1.0, samples)
+    signal = (clean + np.sqrt(variances) * std_noise).tolist()
+    solved = solve_case(times.tolist(), signal, f_ref, phase, fit, out,
+                        noise={"mode": "phase_correlated",
+                               "variances": variances.tolist(), "lags": lags})
+    dw, _, _ = whiten_correlated(design, np.array(signal), times.tolist(),
+                                 f_ref, phase, lags, variances=variances)
+    cases.append({
+        "name": "phase_correlated_hetero", "f_ref": f_ref, "dt": dt,
+        "t_start": t_start, "samples": samples, "phase_rad": phase,
+        "fit_harmonics": fit, "output_harmonics": out,
+        "mode": "phase_correlated", "v0": hetero_v0,
+        "variance_profile": profile, "bins": bins,
+        "variance_bins": (hetero_v0 * np.array(profile)).tolist(),
+        "variances": variances.tolist(), "lags": lags, "lag_step_s": dt,
+        "signal": signal, "true_beta": beta_true,
+        "oracle": {"beta": solved["beta"], "xy": solved["xy"],
+                   "rank": solved["rank"], "residual_norm": solved["residual_norm"],
+                   "covariance_beta": covariance_pinv_reference(dw).tolist(),
+                   "jitter_applied": 0.0},
+    })
+    return cases
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -397,6 +477,9 @@ def main():
 
     weighted = build_weighted_golden()
     files["weighted-golden.json"] = {"schema_version": 1, "cases": weighted}
+
+    correlated = build_correlated_golden()
+    files["correlated-golden.json"] = {"schema_version": 1, "cases": correlated}
 
     golden = []
     for name, params in [
