@@ -16,6 +16,38 @@ SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
 FIXTURE_DIR = REPO_ROOT / "crates" / "pmoke-analysis-core" / "tests" / "fixtures" / "joint-gls"
 
+# Float regenerations cross platform libm boundaries (macOS-committed vs
+# Linux-regenerated sin/cos agree to the last ulp, not to the last repr
+# digit), so regenerated-vs-committed comparison is numeric with a tight
+# tolerance, not byte-exact. Same-machine determinism is pinned separately
+# by test_regeneration_is_byte_identical. A 1% legacy-output mutation
+# (≈1e-2 relative) is orders of magnitude above these floors.
+FLOAT_REL_TOL = 1.0e-12
+FLOAT_ABS_FLOOR = 1.0e-15
+
+
+def assert_fixture_close(testcase, fresh, committed, path="root"):
+    """Recursive fixture comparison: exact for structure and non-floats,
+    tolerance-bound for floats."""
+    if isinstance(fresh, float) and isinstance(committed, float):
+        if fresh == committed:
+            return
+        testcase.assertTrue(
+            math.isclose(fresh, committed, rel_tol=FLOAT_REL_TOL)
+            or abs(fresh - committed) <= FLOAT_ABS_FLOOR,
+            f"{path}: {fresh!r} vs {committed!r}",
+        )
+    elif isinstance(fresh, dict) and isinstance(committed, dict):
+        testcase.assertEqual(sorted(fresh), sorted(committed), path)
+        for key in fresh:
+            assert_fixture_close(testcase, fresh[key], committed[key], f"{path}.{key}")
+    elif isinstance(fresh, list) and isinstance(committed, list):
+        testcase.assertEqual(len(fresh), len(committed), path)
+        for index, (a, b) in enumerate(zip(fresh, committed)):
+            assert_fixture_close(testcase, a, b, f"{path}[{index}]")
+    else:
+        testcase.assertEqual(fresh, committed, path)
+
 
 class GeneratorDeterminismTests(unittest.TestCase):
     def test_regeneration_is_byte_identical(self):
@@ -55,12 +87,9 @@ class GeneratorDeterminismTests(unittest.TestCase):
             fresh = sorted(p.name for p in Path(directory).iterdir())
             self.assertEqual(fresh, sorted(["manifest.json", *manifest["files"]]))
             for name, entry in manifest["files"].items():
-                regenerated = (Path(directory) / name).read_bytes()
-                committed = (FIXTURE_DIR / name).read_bytes()
-                self.assertEqual(len(regenerated), entry["bytes"], name)
-                self.assertEqual(hashlib.sha256(regenerated).hexdigest(),
-                                 entry["sha256"], name)
-                self.assertEqual(regenerated, committed, name)
+                regenerated = json.loads((Path(directory) / name).read_text(encoding="utf-8"))
+                committed = json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
+                assert_fixture_close(self, regenerated, committed, name)
 
 
 class GeometryFormulaTests(unittest.TestCase):
@@ -132,7 +161,19 @@ class NoiseFamilyTests(unittest.TestCase):
         payload = json.loads((FIXTURE_DIR / "noise.json").read_text(encoding="utf-8"))
         fresh = build_noise_families()
         for name, family in payload["families"].items():
-            self.assertEqual(fresh[name]["values"], family["values"], name)
+            # Exact for seeds/kinds; tolerance-bound for libm-derived arrays.
+            self.assertEqual(fresh[name]["seed"], family["seed"], name)
+            self.assertEqual(fresh[name]["kind"], family["kind"], name)
+            for key in ("values", "variances", "phases", "variance_profile"):
+                if key in family:
+                    np.testing.assert_allclose(
+                        np.array(fresh[name][key]), np.array(family[key]),
+                        rtol=FLOAT_REL_TOL, atol=FLOAT_ABS_FLOOR, err_msg=f"{name}.{key}",
+                    )
+            for key in ("sample_mean", "sample_var", "variance_mean"):
+                if key in family:
+                    self.assertAlmostEqual(fresh[name][key], family[key],
+                                           places=12, msg=f"{name}.{key}")
 
     def test_phase_family_carries_samplewise_truth(self):
         from generate_joint_gls_fixtures import periodic_interp
