@@ -22,10 +22,13 @@ use crate::config::{EstimatorCalibration, GlsNoiseMode};
 use crate::lockin::joint::{ModelBinding, NoiseModelSource, gls_noise_mode_name};
 use anyhow::{Context, Result, bail};
 use pmoke_analysis_core::calibration::{
-    ApplicabilityRequest, CALIBRATION_ARTIFACT_SCHEMA_VERSION, CALIBRATION_PHASE_CONVENTION,
-    CalibrationArtifact, MAX_CALIBRATION_ARTIFACT_BYTES, VARIANCE_INTERP_ID, inspect_applicability,
+    ApplicabilityRequest, CALIBRATION_ALGORITHM_VERSION, CALIBRATION_ARTIFACT_SCHEMA_VERSION,
+    CALIBRATION_PHASE_CONVENTION, CalibrationArtifact, MAX_CALIBRATION_ARTIFACT_BYTES,
+    VARIANCE_INTERP_ID, inspect_applicability,
 };
-use pmoke_analysis_core::joint::{CorrelationKernel, NoiseMode, NoiseModel, validate_noise_model};
+use pmoke_analysis_core::joint::{
+    CorrelationKernel, NoiseMode, NoiseModel, validate_correlation_kernel, validate_noise_model,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -242,6 +245,110 @@ fn mode_name(noise_mode: GlsNoiseMode) -> &'static str {
     gls_noise_mode_name(noise_mode)
 }
 
+/// Artifact-level semantic validation after hashing (AT-018): a correct
+/// digest authenticates the selected bytes but does not make their contents
+/// valid. Algorithm identity, declared shapes, coverage-record shapes,
+/// correlation support metadata, and parameter domains are checked here,
+/// before the artifact is reduced to a mode-specific noise model.
+fn check_artifact_structure(artifact: &CalibrationArtifact, channel: u8) -> Result<()> {
+    let here = |what: &str| format!("calibration artifact for channel {channel} has {what}");
+    if artifact.algorithm_version != CALIBRATION_ALGORITHM_VERSION {
+        bail!(
+            "{}",
+            here(&format!(
+                "unknown algorithm_version {:?} (expected {CALIBRATION_ALGORITHM_VERSION:?})",
+                artifact.algorithm_version
+            ))
+        );
+    }
+    if artifact.phase.bins < 2 {
+        bail!("{}", here("a phase table with fewer than two bins"));
+    }
+    if artifact.phase.bins != artifact.phase.variances_v2.len() {
+        bail!(
+            "{}",
+            here(&format!(
+                "phase table declares {} bins but carries {} variances",
+                artifact.phase.bins,
+                artifact.phase.variances_v2.len()
+            ))
+        );
+    }
+    for (bin, variance) in artifact.phase.variances_v2.iter().enumerate() {
+        if !variance.is_finite() || *variance <= 0.0 {
+            bail!(
+                "{}",
+                here(&format!(
+                    "non-positive non-finite phase variance in bin {bin}"
+                ))
+            );
+        }
+    }
+    if artifact.training.per_bin_counts.len() != artifact.phase.bins
+        || artifact.training.per_bin_cycles.len() != artifact.phase.bins
+    {
+        bail!(
+            "{}",
+            here("training coverage records do not match the phase table shape")
+        );
+    }
+    if artifact.training.contributing_blocks == 0 {
+        bail!(
+            "{}",
+            here("no contributing training blocks; the calibration is vacuous")
+        );
+    }
+    if let Some(table) = artifact.correlation.as_ref() {
+        if table.support_samples != table.lags.len() {
+            bail!(
+                "{}",
+                here("correlation support_samples disagrees with the lag count")
+            );
+        }
+        validate_correlation_kernel(&CorrelationKernel {
+            lags: table.lags.clone(),
+            lag_step_s: table.lag_step_s,
+        })
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "{}: {}",
+                here("an invalid correlation kernel"),
+                error.message()
+            )
+        })?;
+        if !(0.0..=1.0).contains(&table.shrinkage_eta) {
+            bail!(
+                "{}",
+                here(&format!(
+                    "correlation shrinkage eta {} lies outside [0, 1]",
+                    table.shrinkage_eta
+                ))
+            );
+        }
+        if table.shrinkage_eta != artifact.regularization.correlation_eta {
+            bail!(
+                "{}",
+                here("correlation eta disagrees with the regularization record")
+            );
+        }
+        if let Some(tail) = table.tail_energy
+            && (!tail.is_finite() || tail < 0.0)
+        {
+            bail!(
+                "{}",
+                here("correlation tail energy must be finite non-negative")
+            );
+        }
+        if table.max_tail_lag + 1 < table.support_samples {
+            bail!(
+                "{}",
+                here("correlation max_tail_lag precedes the taper support")
+            );
+        }
+    }
+    Ok(())
+}
+
 impl NoiseModelSource for FileNoiseModelSource {
     fn load(&self, channel: u8, noise_mode: GlsNoiseMode) -> Result<(NoiseModel, ModelBinding)> {
         let entry = self.entries.get(&channel).ok_or_else(|| {
@@ -277,6 +384,7 @@ impl NoiseModelSource for FileNoiseModelSource {
                 artifact.schema_version
             );
         }
+        check_artifact_structure(&artifact, channel)?;
         let name = mode_name(noise_mode);
         // Capability bridge: WP-3 artifacts predate the stationary runtime
         // and only advertise identity/phase_diagonal/phase_correlated, but a
@@ -368,9 +476,6 @@ impl NoiseModelSource for FileNoiseModelSource {
                          taper {:?}",
                         table.taper
                     );
-                }
-                if !table.shrinkage_eta.is_finite() || table.shrinkage_eta < 0.0 {
-                    bail!("calibration artifact for channel {channel} has invalid shrinkage eta");
                 }
                 let lag_detail =
                     (table.lag_step_s - self.sample_interval_s).abs() / self.sample_interval_s;

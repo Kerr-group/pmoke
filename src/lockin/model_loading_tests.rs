@@ -61,9 +61,9 @@ fn artifact_json() -> String {
     "blocks": [],
     "exclusions": [],
     "seed": 7,
-    "per_bin_counts": [],
-    "per_bin_cycles": [],
-    "contributing_blocks": 0
+    "per_bin_counts": [4, 4, 4, 4],
+    "per_bin_cycles": [2, 2, 2, 2],
+    "contributing_blocks": 1
   },
   "validation": {
     "heldout_blocks": 0,
@@ -427,5 +427,49 @@ fn joint_end_to_end_through_run_li() {
     );
     assert!(paths.lockin_covariance_npy(3).is_file());
     assert!(paths.lockin_xy_csv(3).is_file());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn incompatible_artifact_contents_fail_after_hashing() {
+    // A correct digest authenticates the bytes but does not make their
+    // contents valid: every case below carries a fresh correct digest.
+    let dir = temp_dir("contents");
+    // Unknown algorithm version.
+    let json = artifact_json().replacen(
+        "\"algorithm_version\": \"pmoke-calibration-v1\",",
+        "\"algorithm_version\": \"future-incompatible-v999\",",
+        1,
+    );
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3.json");
+    assert!(
+        format!(
+            "{error:#}",
+            error = source.load(CHANNEL, GlsNoiseMode::Identity).err().unwrap()
+        )
+        .contains("unknown algorithm_version")
+    );
+    // Declared bin count disagrees with the carried variances.
+    let json = artifact_json().replacen("\"bins\": 4,", "\"bins\": 999,", 1);
+    let (_, digest) = write_case(&dir, "ch3b.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3b.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::Identity).is_err());
+    // Unknown nested binding field (nested deny_unknown_fields).
+    let json = artifact_json().replacen(
+        "\"acquisition\": {\"device\": null, \"gain\": null, \"bandwidth_hz\": null}",
+        "\"acquisition\": {\"device\": null, \"gain\": null, \"bandwidth_hz\": null, \"future\": 1}",
+        1,
+    );
+    let (_, digest) = write_case(&dir, "ch3c.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3c.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::Identity).is_err());
+    // Out-of-range correlation eta agreed by both records.
+    let json = artifact_json()
+        .replacen("\"shrinkage_eta\": 0.01,", "\"shrinkage_eta\": 2.0,", 1)
+        .replacen("\"correlation_eta\": 0.01", "\"correlation_eta\": 2.0", 1);
+    let (_, digest) = write_case(&dir, "ch3d.json", json.as_bytes());
+    let source = source_for(&dir, &digest, "ch3d.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::PhaseCorrelated).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }
