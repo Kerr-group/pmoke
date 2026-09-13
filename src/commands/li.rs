@@ -17,12 +17,21 @@ pub fn li(cfg: &Config) -> Result<()> {
     result
 }
 
-fn li_inner(cfg: &Config) -> Result<()> {
+pub(crate) fn li_inner(cfg: &Config) -> Result<()> {
     let data = read_all_fetched_waveforms(cfg)?;
+    li_inner_with_data(cfg, &data)
+}
+
+/// LI-only entrypoint on already-loaded data, so comparison legs share one
+/// frozen read instead of re-reading per method.
+pub(crate) fn li_inner_with_data(
+    cfg: &Config,
+    data: &crate::utils::waveform::WaveformData,
+) -> Result<()> {
     if data.channels.is_empty() {
         bail!("fetched data is empty, cannot run lock-in analysis");
     }
-    crate::commands::analyze::validate_waveform_data(&data)?;
+    crate::commands::analyze::validate_waveform_data(data)?;
     let staging_cfg = crate::commands::run_dir::prepare_analysis_staging(
         cfg,
         crate::commands::run_dir::AnalysisStage::Li,

@@ -1,0 +1,307 @@
+use super::*;
+use crate::config::{GlsCovarianceOutput, GlsNoiseMode, JointHarmonicGlsConfig};
+use crate::config::{LockinEstimator, LockinWindow};
+
+fn write_request(dir: &Path, name: &str, text: &str) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+fn temp_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("pmoke_compare_{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn request_validation_rejects_bad_inputs() {
+    let dir = temp_dir("request");
+    // Missing file.
+    assert!(load_compare_request(&dir.join("nope.toml")).is_err());
+    // Unknown field.
+    let path = write_request(
+        &dir,
+        "unknown.toml",
+        "schema_version = 1\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"a\"\nestimator = \"boxcar_legacy\"\nfuture = true\n",
+    );
+    assert!(load_compare_request(&path).is_err());
+    // Bad schema version.
+    let path = write_request(
+        &dir,
+        "schema.toml",
+        "schema_version = 2\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"a\"\nestimator = \"boxcar_legacy\"\n",
+    );
+    assert!(load_compare_request(&path).is_err());
+    // Empty methods.
+    let path = write_request(
+        &dir,
+        "empty.toml",
+        "schema_version = 1\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\nmethods = []\n",
+    );
+    assert!(load_compare_request(&path).is_err());
+    // Duplicate names.
+    let path = write_request(
+        &dir,
+        "dup.toml",
+        "schema_version = 1\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"a\"\nestimator = \"boxcar_legacy\"\n[[methods]]\nname = \"a\"\nestimator = \"boxcar_legacy\"\n",
+    );
+    assert!(load_compare_request(&path).is_err());
+    // Unsafe labels (traversal / separators).
+    for bad in ["../evil", "a/b", "a b", ""] {
+        let path = write_request(
+            &dir,
+            "label.toml",
+            &format!(
+                "schema_version = 1\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"{bad}\"\nestimator = \"boxcar_legacy\"\n"
+            ),
+        );
+        assert!(load_compare_request(&path).is_err(), "{bad}");
+    }
+    // Traversal in paths.
+    let path = write_request(
+        &dir,
+        "traverse.toml",
+        "schema_version = 1\nbase_config = \"../b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"a\"\nestimator = \"boxcar_legacy\"\n",
+    );
+    let (request, request_dir) = load_compare_request(&path).unwrap();
+    assert!(resolve_request_path(&request_dir, &request.base_config).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn destination_safety_blocks_overwrite_and_nesting() {
+    let dir = temp_dir("dest");
+    let base = dir.join("base");
+    std::fs::create_dir_all(&base).unwrap();
+    // Existing output.
+    let existing = dir.join("out");
+    std::fs::create_dir_all(&existing).unwrap();
+    assert!(ensure_new_destination(&existing, &base).is_err());
+    // Missing parent.
+    assert!(ensure_new_destination(&dir.join("ghost/out"), &base).is_err());
+    // Output nested inside the base root.
+    assert!(ensure_new_destination(&base.join("out"), &base).is_err());
+    // Base root nested inside the output parent is fine only when disjoint;
+    // output equal to the base root is rejected.
+    assert!(ensure_new_destination(&base, &base).is_err());
+    // Disjoint fresh destination passes.
+    let fresh = dir.join("fresh");
+    assert!(ensure_new_destination(&fresh, &base).is_ok());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn missing_base_config_fails_before_any_write() {
+    let dir = temp_dir("missing");
+    let request = write_request(
+        &dir,
+        "request.toml",
+        "schema_version = 1\nbase_config = \"ghost.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"a\"\nestimator = \"boxcar_legacy\"\n",
+    );
+    assert!(run_compare(&request, None).is_err());
+    // Nothing was created beside the request.
+    let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+    assert_eq!(entries.len(), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+fn artifact_json() -> String {
+    r#"{
+  "schema_version": 1,
+  "algorithm_version": "pmoke-calibration-v1",
+  "model_id": "test-model-ch3",
+  "builder": {
+    "pmoke_version": "0.4.1",
+    "backend_versions": {},
+    "recipe_settings": {}
+  },
+  "binding": {
+    "channel": 3,
+    "voltage_unit": "V",
+    "adc_scale_provenance": null,
+    "sample_interval_s": 0.00001,
+    "recorded_original_dt_s": null,
+    "sample_interval_rel_tol": 1e-9,
+    "reference_frequency_hz": 1000.0,
+    "frequency_rel_tol": 1e-9,
+    "phase_convention": "phi=2*pi*f*t-reference_phase_rad",
+    "acquisition": {"device": null, "gain": null, "bandwidth_hz": null}
+  },
+  "reference_variance_v2": 0.01,
+  "phase": {
+    "bins": 4,
+    "center_convention": "bin_centers_at_2pi*(i+0.5)/bins",
+    "variances_v2": [0.01, 0.012, 0.011, 0.009],
+    "interpolation": "periodic_linear_variance_v1"
+  },
+  "correlation": null,
+  "regularization": {
+    "smoothing": "none",
+    "shrinkage_alpha_v": 0.0,
+    "variance_floor_ratio": 0.0,
+    "floor_activations": [],
+    "correlation_taper": "bartlett_v1",
+    "correlation_eta": 0.01
+  },
+  "training": {
+    "source_digests": [],
+    "intervals": [],
+    "blocks": [],
+    "exclusions": [],
+    "seed": 7,
+    "per_bin_counts": [],
+    "per_bin_cycles": [],
+    "contributing_blocks": 0
+  },
+  "validation": {
+    "heldout_blocks": 0,
+    "profile_rmse_v2": null,
+    "standardized_lag1": null,
+    "dof_treatment": "none",
+    "nuisance_params_per_block": 0,
+    "limits": []
+  },
+  "capabilities": {
+    "modes": ["identity", "phase_diagonal"],
+    "geometry_restrictions": []
+  }
+}"#
+    .to_string()
+}
+
+#[test]
+fn legs_share_grid_and_never_touch_the_source() {
+    use crate::test_support::test_config;
+    use crate::utils::waveform::WaveformData;
+    use std::f64::consts::PI;
+
+    let dir = temp_dir("legs");
+    let json = artifact_json();
+    std::fs::write(dir.join("ch3.json"), &json).unwrap();
+    let digest = crate::utils::checksum::sha256_hex(json.as_bytes());
+
+    let base_root = dir.join("base");
+    std::fs::create_dir_all(&base_root).unwrap();
+    // Frozen source input the legs copy: existence-checked by LI
+    // validation, linked (not parsed) by manifest sources.
+    std::fs::create_dir_all(base_root.join("acquisition/waveforms")).unwrap();
+    std::fs::write(
+        base_root.join("acquisition/waveforms/waveform.csv"),
+        "time (s),ch1,ch2,ch3\n0,0,0,0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base_root.join("acquisition/manifest.toml"),
+        "schema_version = 1\n",
+    )
+    .unwrap();
+    let mut base_cfg = test_config(vec![1], vec![3]);
+    base_cfg.roles.reference_ch = 2;
+    // LI validation requires an oscilloscope block; legs never touch
+    // hardware (data is injected, models are files).
+    base_cfg.instruments = Some(crate::config::Instruments {
+        function_generator: None,
+        oscilloscope: crate::config::Oscilloscope {
+            connection: crate::config::Connection::Tcpip {
+                ip: "127.0.0.1".to_string(),
+                port: 1,
+            },
+            model: "compare-test".to_string(),
+        },
+    });
+    base_cfg.source_path = dir.join("config.toml");
+    base_cfg.set_artifact_root(base_root.clone());
+    base_cfg.lockin.workers = 1;
+    base_cfg.lockin.stride_samples = 10;
+    base_cfg.lockin.lpf_half_window_cycles = 1.0;
+    base_cfg.lockin.window = LockinWindow::legacy_boxcar(1.0);
+    base_cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(JointHarmonicGlsConfig {
+        fit_harmonics: (1..=12).collect(),
+        output_harmonics: (1..=6).collect(),
+        envelope_degree: 0,
+        noise_mode: GlsNoiseMode::Identity,
+        covariance_output: GlsCovarianceOutput::Diagonal,
+        failure_policy: crate::config::GlsFailurePolicy::Error,
+        calibrations: vec![crate::config::EstimatorCalibration {
+            channel: 3,
+            path: "ch3.json".to_string(),
+            sha256: digest,
+        }],
+    });
+    // Channels from test_config carry display factors; the LI estimator
+    // inputs are never rescaled, so clear scaling on the signal channel
+    // for a raw-volts comparison (sensor channels keep theirs).
+    for channel in &mut base_cfg.channels {
+        if channel.index == 3 {
+            channel.factor = None;
+            channel.scale_to_abs_max = None;
+        }
+    }
+
+    let dt = 1.0e-5;
+    let samples = 3_000usize;
+    let time: Vec<f64> = (0..samples).map(|index| index as f64 * dt).collect();
+    let sensor: Vec<f64> = time.iter().map(|t| 0.001 * t).collect();
+    let reference: Vec<f64> = time.iter().map(|t| (2.0 * PI * 1000.0 * t).sin()).collect();
+    let signal: Vec<f64> = time
+        .iter()
+        .map(|t| (2.0 * PI * 1000.0 * t + 0.3).sin())
+        .collect();
+    let data = WaveformData {
+        t: time.into(),
+        channels: vec![sensor, reference, signal],
+    };
+
+    let methods = vec![
+        CompareMethod {
+            name: "boxcar".to_string(),
+            estimator: CompareEstimator::BoxcarLegacy,
+        },
+        CompareMethod {
+            name: "joint_identity".to_string(),
+            estimator: CompareEstimator::Joint {
+                noise_mode: GlsNoiseMode::Identity,
+                covariance_output: GlsCovarianceOutput::Diagonal,
+            },
+        },
+    ];
+    let output = dir.join("comparison");
+    std::fs::create_dir(&output).unwrap();
+    let legs = run_legs(&base_cfg, &data, &methods, &output).unwrap();
+    assert_eq!(legs.len(), 2);
+    for leg in &legs {
+        assert_eq!(leg.status, LegStatus::Complete, "{leg:?}");
+    }
+    assert_eq!(legs[0].grid_fingerprint, legs[1].grid_fingerprint);
+    assert_eq!(
+        legs[0].reference_frequency_hz,
+        legs[1].reference_frequency_hz
+    );
+    // Candidate artifacts exist per leg, including GLS-only diagnostics.
+    assert!(output.join("boxcar/analysis/lockin/ch3_xy.csv").is_file());
+    assert!(
+        output
+            .join("joint_identity/analysis/lockin/ch3_xy.csv")
+            .is_file()
+    );
+    assert!(
+        output
+            .join("joint_identity/analysis/lockin/ch3_quality.csv")
+            .is_file()
+    );
+    assert!(
+        !output
+            .join("boxcar/analysis/lockin/ch3_quality.csv")
+            .exists()
+    );
+    assert!(
+        output
+            .join("joint_identity/analysis/lockin/ch3_estimator.json")
+            .is_file()
+    );
+    // The source (base artifact root) gained no analysis output.
+    assert!(!base_root.join("analysis").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
