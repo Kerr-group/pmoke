@@ -24,6 +24,9 @@ FIXTURE_DIR = REPO_ROOT / "crates" / "pmoke-analysis-core" / "tests" / "fixtures
 # (≈1e-2 relative) is orders of magnitude above these floors.
 FLOAT_REL_TOL = 1.0e-12
 FLOAT_ABS_FLOOR = 1.0e-15
+# Recorded generating-environment metadata, not numerical ground truth:
+# regenerating under a newer SciPy must not fail the binding.
+EXEMPT_VALUE_KEYS = {"numpy_version", "scipy_version"}
 
 
 def assert_fixture_close(testcase, fresh, committed, path="root"):
@@ -40,6 +43,8 @@ def assert_fixture_close(testcase, fresh, committed, path="root"):
     elif isinstance(fresh, dict) and isinstance(committed, dict):
         testcase.assertEqual(sorted(fresh), sorted(committed), path)
         for key in fresh:
+            if key in EXEMPT_VALUE_KEYS:
+                continue
             assert_fixture_close(testcase, fresh[key], committed[key], f"{path}.{key}")
     elif isinstance(fresh, list) and isinstance(committed, list):
         testcase.assertEqual(len(fresh), len(committed), path)
