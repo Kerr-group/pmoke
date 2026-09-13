@@ -126,10 +126,11 @@ fn identity_recovers_tone_matching_boxcar() {
 
     // Quality diagnostics: exact fit, full rank, no jitter.
     for row in &output.quality[0] {
-        assert!(row.residual_rms < 1e-9, "residual {}", row.residual_rms);
+        assert!(row.residual_rms_v < 1e-9, "residual {}", row.residual_rms_v);
         assert_eq!(row.rank, 25);
-        assert!(row.condition.is_finite() && row.condition > 0.0);
+        assert!(row.scaled_design_condition.is_finite() && row.scaled_design_condition > 0.0);
         assert_eq!(row.jitter_applied_v2, 0.0);
+        assert_eq!(row.status, WindowStatus::Ok);
         assert_eq!(row.noise_mode, "identity");
     }
 
@@ -193,10 +194,12 @@ fn failure_is_typed_and_leaves_no_files() {
     let path = dir.join("ch3_quality.csv");
     std::fs::write(&path, b"old").unwrap();
     let rows = vec![QualityRow {
+        original_center_index: 12,
         time_s: 0.0,
-        residual_rms: 0.0,
+        scaled_design_condition: 1.0,
+        residual_rms_v: 0.0,
         rank: 25,
-        condition: 1.0,
+        status: WindowStatus::Ok,
         jitter_applied_v2: 0.0,
         noise_mode: "identity",
     }];
@@ -213,19 +216,23 @@ fn quality_csv_shape_round_trips() {
     let path = dir.join("ch3_quality.csv");
     let rows = vec![
         QualityRow {
+            original_center_index: 12,
             time_s: 0.001,
-            residual_rms: 1e-12,
+            scaled_design_condition: 3.5,
+            residual_rms_v: 1e-12,
             rank: 25,
-            condition: 3.5,
+            status: WindowStatus::Ok,
             jitter_applied_v2: 0.0,
             noise_mode: "identity",
         },
         QualityRow {
+            original_center_index: 13,
             time_s: 0.002,
-            residual_rms: 2e-12,
+            scaled_design_condition: 3.6,
+            residual_rms_v: 2e-12,
             rank: 25,
-            condition: 3.6,
-            jitter_applied_v2: 0.0,
+            status: WindowStatus::Warning,
+            jitter_applied_v2: 1e-6,
             noise_mode: "identity",
         },
     ];
@@ -234,7 +241,7 @@ fn quality_csv_shape_round_trips() {
     let mut lines = text.lines();
     assert_eq!(
         lines.next().unwrap(),
-        "time_s,residual_rms,rank,condition,jitter_applied_v2,noise_mode"
+        "original_center_index,time_s,scaled_design_condition,residual_rms_v,rank,status"
     );
     assert_eq!(lines.count(), 2);
     std::fs::remove_dir_all(&dir).unwrap();
@@ -327,10 +334,12 @@ fn quality_artifact_registers_through_manifest_refresh() {
     write_quality_csv(
         &paths.lockin_quality_csv(3),
         &[QualityRow {
+            original_center_index: 12,
             time_s: 0.0,
-            residual_rms: 1e-12,
+            scaled_design_condition: 3.5,
+            residual_rms_v: 1e-12,
             rank: 25,
-            condition: 3.5,
+            status: WindowStatus::Ok,
             jitter_applied_v2: 0.0,
             noise_mode: "identity",
         }],
@@ -461,4 +470,307 @@ fn check_impulse_support(impulse_at: usize, inside_center: usize, outside_center
             assert!(peak == 0.0, "boxcar output {output_index} leaked");
         }
     }
+}
+
+fn joint_gls(lockin: &crate::config::Lockin) -> JointHarmonicGlsConfig {
+    match &lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => gls.clone(),
+        LockinEstimator::BoxcarLegacy => unreachable!(),
+    }
+}
+
+#[test]
+fn covariance_headers_match_contract() {
+    let diagonal = covariance_csv_header(GlsCovarianceOutput::Diagonal).unwrap();
+    assert_eq!(diagonal.len(), 13);
+    assert_eq!(diagonal[0], "time_s");
+    assert_eq!(diagonal[1], "cov_x1_x1_v2");
+    assert_eq!(diagonal[2], "cov_y1_y1_v2");
+    assert_eq!(diagonal[3], "cov_x2_x2_v2");
+    assert_eq!(diagonal[12], "cov_y6_y6_v2");
+    let full = covariance_csv_header(GlsCovarianceOutput::Full).unwrap();
+    assert_eq!(full.len(), 79);
+    assert_eq!(full[0], "time_s");
+    assert_eq!(full[1], "cov_x1_x1_v2");
+    assert_eq!(full[2], "cov_x1_y1_v2");
+    assert_eq!(full[3], "cov_x1_x2_v2");
+    assert_eq!(full[13], "cov_y1_y1_v2");
+    assert_eq!(full[14], "cov_y1_x2_v2");
+    assert_eq!(full[78], "cov_y6_y6_v2");
+    assert!(covariance_csv_header(GlsCovarianceOutput::None).is_err());
+    assert!(pack_covariance_row(&vec![vec![0.0; 12]; 12], GlsCovarianceOutput::None).is_err());
+    assert_eq!(QUADRATURE_NAMES.len(), 12);
+}
+
+#[test]
+fn covariance_packing_scales_with_signal_and_noise() {
+    let (time, signal) = tone_waveform_with(1_500);
+    let lockin = joint_lockin();
+    let gls = joint_gls(&lockin);
+    let run = |time: &[f64], data: &[f64], v0: f64| {
+        let source = SyntheticNoiseModelSource::identity(v0);
+        let inputs = test_inputs(&lockin, &gls, time);
+        run_joint_li(&inputs, &[3], &[data], &source).unwrap()
+    };
+    let base = run(&time, &signal, 0.01);
+    let window = 7;
+    let diag =
+        pack_covariance_row(&base.covariance[0][window], GlsCovarianceOutput::Diagonal).unwrap();
+    let full = pack_covariance_row(&base.covariance[0][window], GlsCovarianceOutput::Full).unwrap();
+    assert_eq!(diag.len(), 12);
+    assert_eq!(full.len(), 78);
+    for (index, expected) in diag.iter().enumerate() {
+        let triangular = index * 12 - index.saturating_sub(1) * index / 2;
+        assert_eq!(*expected, full[triangular]);
+    }
+    for row in 0..12 {
+        for column in 0..12 {
+            assert_eq!(
+                base.covariance[0][window][row][column],
+                base.covariance[0][window][column][row]
+            );
+        }
+    }
+    let doubled_signal: Vec<f64> = signal.iter().map(|value| 2.0 * value).collect();
+    let doubled = run(&time, &doubled_signal, 0.01);
+    for (plain, scaled) in base.result[0].iter().zip(doubled.result[0].iter()) {
+        for (left, right) in plain.iter().zip(scaled.iter()) {
+            assert!((2.0 * left - right).abs() <= 1e-12 * right.abs().max(1.0));
+        }
+    }
+    assert_eq!(base.covariance, doubled.covariance);
+    let noisy = run(&time, &signal, 0.04);
+    assert_eq!(base.covariance.len(), noisy.covariance.len());
+    for (plain_windows, scaled_windows) in base.covariance.iter().zip(noisy.covariance.iter()) {
+        for (plain, scaled) in plain_windows.iter().zip(scaled_windows.iter()) {
+            for (plain_row, scaled_row) in plain.iter().zip(scaled.iter()) {
+                for (left, right) in plain_row.iter().zip(scaled_row.iter()) {
+                    assert!((4.0 * left - right).abs() <= 1e-9 * right.abs().max(1e-12));
+                }
+            }
+        }
+    }
+}
+
+struct TinyRng(u64);
+
+impl TinyRng {
+    fn next_f64(&mut self) -> f64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((self.0 >> 33) as f64) / (u32::MAX as f64)
+    }
+
+    fn next_normal(&mut self, spare: &mut Option<f64>) -> f64 {
+        if let Some(value) = spare.take() {
+            return value;
+        }
+        let radius = (-2.0 * self.next_f64().max(1e-12).ln()).sqrt();
+        let angle = 2.0 * std::f64::consts::PI * self.next_f64();
+        *spare = Some(radius * angle.sin());
+        radius * angle.cos()
+    }
+}
+
+#[test]
+fn covariance_covers_known_noise() {
+    let dt = 1.0e-5;
+    let f_ref = 1_000.0;
+    let samples = 900usize;
+    let v0: f64 = 0.01;
+    let lockin = joint_lockin();
+    let gls = joint_gls(&lockin);
+    let mut inside = 0usize;
+    let mut total = 0usize;
+    for seed in 0..6u64 {
+        let mut rng = TinyRng(0x9E3779B97F4A7C15u64.wrapping_add(seed));
+        let mut spare = None;
+        let time: Vec<f64> = (0..samples).map(|index| index as f64 * dt).collect();
+        let signal: Vec<f64> = time
+            .iter()
+            .map(|&t| {
+                (2.0 * std::f64::consts::PI * f_ref * t).sin()
+                    + v0.sqrt() * rng.next_normal(&mut spare)
+            })
+            .collect();
+        let source = SyntheticNoiseModelSource::identity(v0);
+        let inputs = test_inputs(&lockin, &gls, &time);
+        let output = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+        let grid = output.result[0][0].len();
+        assert!(grid >= 64, "need room for disjoint windows, got {grid}");
+        let middle = grid / 2;
+        // Two windows with non-overlapping support (centers differ by more
+        // than the 203-tap window: 21 outputs at stride 10).
+        for choice in [middle - 21, middle + 21] {
+            let x1 = output.result[0][0][choice];
+            let variance = output.covariance[0][choice][0][0];
+            assert!(variance > 0.0);
+            // Phase-zero unit tone: X1 truth is the 1/2 half-amplitude.
+            if ((x1 - 0.5) / variance.sqrt()).abs() <= 1.0 {
+                inside += 1;
+            }
+            total += 1;
+        }
+    }
+    assert!(total >= 10, "need independent samples, got {total}");
+    let rate = inside as f64 / total as f64;
+    assert!(
+        (0.35..=0.95).contains(&rate),
+        "coverage {inside}/{total} = {rate} outside the nominal band"
+    );
+}
+
+#[test]
+fn covariance_artifacts_round_trip_and_register() {
+    let (time, signal) = tone_waveform_with(1_500);
+    let lockin = joint_lockin();
+    let gls = joint_gls(&lockin);
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, &gls, &time);
+    let output = run_joint_li(
+        &inputs,
+        &[3, 4],
+        &[signal.as_slice(), signal.as_slice()],
+        &source,
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("pmoke_joint_covariance_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut cfg = test_config(vec![1], vec![3, 4]);
+    cfg.set_artifact_root(dir.clone());
+    let paths = cfg.paths();
+    std::fs::create_dir_all(paths.analysis_dir().join("lockin")).unwrap();
+    let grid: Vec<f64> = output.quality[0].iter().map(|row| row.time_s).collect();
+    for (position, channel) in [3u8, 4u8].iter().enumerate() {
+        write_covariance_csv(
+            &paths.lockin_covariance_csv(*channel),
+            GlsCovarianceOutput::Diagonal,
+            &grid,
+            &output.covariance[position],
+        )
+        .unwrap();
+        write_covariance_npy(
+            &paths.lockin_covariance_npy(*channel),
+            GlsCovarianceOutput::Diagonal,
+            &grid,
+            &output.covariance[position],
+        )
+        .unwrap();
+        assert!(
+            write_covariance_csv(
+                &paths.lockin_covariance_csv(*channel),
+                GlsCovarianceOutput::Diagonal,
+                &grid,
+                &output.covariance[position],
+            )
+            .is_err()
+        );
+    }
+    let text = std::fs::read_to_string(paths.lockin_covariance_csv(3)).unwrap();
+    let mut lines = text.lines();
+    assert_eq!(
+        lines.next().unwrap(),
+        covariance_csv_header(GlsCovarianceOutput::Diagonal)
+            .unwrap()
+            .join(",")
+    );
+    assert_eq!(lines.count(), grid.len());
+    std::fs::write(paths.analysis_manifest(), "schema_version = 3\n").unwrap();
+    std::fs::write(paths.analysis_source_config(), b"version = 3\n").unwrap();
+    std::fs::write(paths.analysis_resolved_config(), b"version = 3\n").unwrap();
+    crate::lockin::provenance::refresh_analysis_manifest_outputs(&cfg, "li").unwrap();
+    let manifest = std::fs::read_to_string(paths.analysis_manifest()).unwrap();
+    let value: toml::Value = toml::from_str(&manifest).unwrap();
+    let artifacts = value["artifacts"].as_array().unwrap();
+    let covariance: Vec<&toml::Value> = artifacts
+        .iter()
+        .filter(|artifact| artifact["kind"].as_str() == Some("lockin_covariance"))
+        .collect();
+    assert_eq!(covariance.len(), 2);
+    for artifact in covariance {
+        assert_eq!(artifact["columns"].as_integer(), Some(13));
+        assert_eq!(artifact["rows"].as_integer(), Some(grid.len() as i64));
+        assert_eq!(artifact["dtype"].as_str(), Some("<f8"));
+        assert_eq!(artifact["order"].as_str(), Some("C"));
+        assert!(artifact["npy"].as_str().is_some());
+        assert_eq!(
+            artifact["format"].as_str(),
+            Some("covariance_mode=design_model")
+        );
+    }
+    let column_sets = value["column_sets"].as_table().unwrap();
+    let names = column_sets["lockin_covariance"]["names"]
+        .as_array()
+        .unwrap();
+    assert_eq!(names.len(), 13);
+    assert_eq!(names[0].as_str(), Some("time_s"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn full_covariance_registers_with_79_columns() {
+    let (time, signal) = tone_waveform_with(1_500);
+    let lockin = joint_lockin();
+    let gls = joint_gls(&lockin);
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, &gls, &time);
+    let output = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    let dir = std::env::temp_dir().join(format!(
+        "pmoke_joint_covariance_full_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.set_artifact_root(dir.clone());
+    let paths = cfg.paths();
+    std::fs::create_dir_all(paths.analysis_dir().join("lockin")).unwrap();
+    let grid: Vec<f64> = output.quality[0].iter().map(|row| row.time_s).collect();
+    write_covariance_csv(
+        &paths.lockin_covariance_csv(3),
+        GlsCovarianceOutput::Full,
+        &grid,
+        &output.covariance[0],
+    )
+    .unwrap();
+    std::fs::write(paths.analysis_manifest(), "schema_version = 3\n").unwrap();
+    std::fs::write(paths.analysis_source_config(), b"version = 3\n").unwrap();
+    std::fs::write(paths.analysis_resolved_config(), b"version = 3\n").unwrap();
+    crate::lockin::provenance::refresh_analysis_manifest_outputs(&cfg, "li").unwrap();
+    let manifest = std::fs::read_to_string(paths.analysis_manifest()).unwrap();
+    let value: toml::Value = toml::from_str(&manifest).unwrap();
+    let artifacts = value["artifacts"].as_array().unwrap();
+    let artifact = artifacts
+        .iter()
+        .find(|artifact| artifact["kind"].as_str() == Some("lockin_covariance"))
+        .expect("lockin_covariance artifact missing");
+    assert_eq!(artifact["columns"].as_integer(), Some(79));
+    assert!(artifact.get("npy").is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn quality_writer_rejects_non_finite_rows() {
+    let dir =
+        std::env::temp_dir().join(format!("pmoke_joint_quality_finite_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let bad = vec![QualityRow {
+        original_center_index: 12,
+        time_s: 0.0,
+        scaled_design_condition: f64::INFINITY,
+        residual_rms_v: 0.0,
+        rank: 25,
+        status: WindowStatus::Ok,
+        jitter_applied_v2: 0.0,
+        noise_mode: "identity",
+    }];
+    assert!(write_quality_csv(&dir.join("bad.csv"), &bad).is_err());
+    assert!(!dir.join("bad.csv").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(WindowStatus::for_jitter(0.0), WindowStatus::Ok);
+    assert_eq!(WindowStatus::for_jitter(1e-9), WindowStatus::Warning);
 }

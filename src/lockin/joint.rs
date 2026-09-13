@@ -7,7 +7,7 @@
 //! file-backed calibration loader (WP-5B) plugs in without touching the
 //! engine.
 
-use crate::config::{GlsNoiseMode, JointHarmonicGlsConfig, Lockin};
+use crate::config::{GlsCovarianceOutput, GlsNoiseMode, JointHarmonicGlsConfig, Lockin};
 use crate::lockin::lockin_params::LockinParams;
 use crate::lockin::provenance::LockinProvenance;
 use crate::utils::time_axis::TimeAxisRef;
@@ -130,16 +130,61 @@ impl NoiseModelSource for SyntheticNoiseModelSource {
     }
 }
 
-/// One quality row per executed window (FR-044 diagnostics, AT-025 shape).
+/// One quality row per executed window (INTERFACES section 5 contract).
+///
+/// The CSV column set is fixed: `original_center_index,time_s,
+/// scaled_design_condition,residual_rms_v,rank,status`. `jitter_applied_v2`
+/// and `noise_mode` ride along in memory for the estimator snapshot (next
+/// slice) but are never CSV columns: a window that needed regularization is
+/// flagged `warning`, and fatal windows abort publication instead of
+/// becoming shortened tables.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QualityRow {
+    pub original_center_index: usize,
     pub time_s: f64,
-    pub residual_rms: f64,
+    pub scaled_design_condition: f64,
+    pub residual_rms_v: f64,
     pub rank: usize,
-    pub condition: f64,
+    pub status: WindowStatus,
     pub jitter_applied_v2: f64,
     pub noise_mode: &'static str,
 }
+
+/// Per-window execution status: `ok`, or `warning` when the solver applied
+/// nonzero regularization jitter (the value itself is recorded, never
+/// hidden, and lands in the estimator snapshot).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowStatus {
+    Ok,
+    Warning,
+}
+
+impl WindowStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WindowStatus::Ok => "ok",
+            WindowStatus::Warning => "warning",
+        }
+    }
+
+    pub fn for_jitter(jitter_applied_v2: f64) -> Self {
+        if jitter_applied_v2 > 0.0 {
+            WindowStatus::Warning
+        } else {
+            WindowStatus::Ok
+        }
+    }
+}
+
+/// Legacy-order quadrature names `[X1,Y1,...,X6,Y6]` for covariance headers.
+pub const QUADRATURE_NAMES: [&str; 12] = [
+    "x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4", "x5", "y5", "x6", "y6",
+];
+
+/// Per-quadrature columns over the output grid: `[x_h1, y_h1, ..., x_h6, y_h6]`.
+pub type XyColumns = Vec<Vec<f64>>;
+/// Per-output 12x12 design-model covariance matrices in XY order.
+pub type XyCovariances = Vec<Vec<Vec<f64>>>;
 
 /// Shared inputs for a joint lock-in execution (keeps the engine entry
 /// points within the argument-count lint).
@@ -158,10 +203,15 @@ pub struct JointRunInputs<'a> {
 /// none/diagonal/full serialization modes land with the covariance artifacts
 /// in the next slice, so no information is dropped here.
 pub struct JointRunOutput {
-    /// Per channel `[x_h1, y_h1, ..., x_h6, y_h6]` over the shared output grid.
-    pub result: Vec<Vec<Vec<f64>>>,
+    /// Per channel [`XyColumns`] over the shared output grid.
+    pub result: Vec<XyColumns>,
     /// Per-channel quality rows aligned with the output grid.
     pub quality: Vec<Vec<QualityRow>>,
+    /// Per-channel, per-output 12x12 design-model covariance in XY order
+    /// (half-amplitude scaled). Always collected in memory so staged reruns
+    /// can reconstruct cross terms (INTERFACES 5.1a); the none/diagonal/full
+    /// serialization mode only controls which artifact is published.
+    pub covariance: Vec<XyCovariances>,
     pub provenance: LockinProvenance,
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
@@ -170,6 +220,7 @@ pub struct JointRunOutput {
 /// Writes per-window quality diagnostics as a typed heterogeneous CSV
 /// (AT-025). CSV only: no NPY sidecar is ever written, and existing files
 /// are never overwritten (a partial write must not masquerade as complete).
+/// Non-finite diagnostics abort the write instead of publishing bad rows.
 pub fn write_quality_csv(path: &std::path::Path, rows: &[QualityRow]) -> Result<()> {
     if path.exists() {
         bail!("joint quality output already exists: {}", path.display());
@@ -179,6 +230,22 @@ pub fn write_quality_csv(path: &std::path::Path, rows: &[QualityRow]) -> Result<
             format!("failed to create quality output dir: {}", parent.display())
         })?;
     }
+    // Validate every row before creating the file: a bailed write must not
+    // leave a header-only partial artifact behind.
+    for row in rows {
+        for (name, value) in [
+            ("time_s", row.time_s),
+            ("scaled_design_condition", row.scaled_design_condition),
+            ("residual_rms_v", row.residual_rms_v),
+        ] {
+            if !value.is_finite() {
+                bail!(
+                    "joint quality row at center {} has non-finite {name}: {value}",
+                    row.original_center_index
+                );
+            }
+        }
+    }
     let file = std::fs::File::create(path)
         .with_context(|| format!("failed to create quality output: {}", path.display()))?;
     let mut writer = csv::WriterBuilder::new()
@@ -186,27 +253,184 @@ pub fn write_quality_csv(path: &std::path::Path, rows: &[QualityRow]) -> Result<
         .from_writer(file);
     writer
         .write_record([
+            "original_center_index",
             "time_s",
-            "residual_rms",
+            "scaled_design_condition",
+            "residual_rms_v",
             "rank",
-            "condition",
-            "jitter_applied_v2",
-            "noise_mode",
+            "status",
         ])
         .context("failed to write quality header")?;
     for row in rows {
         writer
             .write_record([
+                row.original_center_index.to_string(),
                 row.time_s.to_string(),
-                row.residual_rms.to_string(),
+                row.scaled_design_condition.to_string(),
+                row.residual_rms_v.to_string(),
                 row.rank.to_string(),
-                row.condition.to_string(),
-                row.jitter_applied_v2.to_string(),
-                row.noise_mode.to_string(),
+                row.status.as_str().to_string(),
             ])
-            .with_context(|| format!("failed to write quality row at t={}", row.time_s))?;
+            .with_context(|| {
+                format!(
+                    "failed to write quality row at center {}",
+                    row.original_center_index
+                )
+            })?;
     }
     writer.flush().context("failed to flush quality output")?;
+    Ok(())
+}
+
+/// Covariance CSV column header for a serialization mode (INTERFACES
+/// section 5, FR-041): `time_s` plus 12 diagonal `cov_<q>_<q>_v2` entries in
+/// XY order, or 78 upper-triangle entries in lexicographic (row,column)
+/// order with row<=column. `none` is rejected: it omits the artifact
+/// entirely instead of writing an empty file.
+pub fn covariance_csv_header(mode: GlsCovarianceOutput) -> Result<Vec<String>> {
+    let mut header = vec!["time_s".to_string()];
+    match mode {
+        GlsCovarianceOutput::None => {
+            bail!(
+                "covariance_output=none omits the covariance artifact; do not write an empty file"
+            )
+        }
+        GlsCovarianceOutput::Diagonal => {
+            for name in QUADRATURE_NAMES {
+                header.push(format!("cov_{name}_{name}_v2"));
+            }
+        }
+        GlsCovarianceOutput::Full => {
+            for (row, row_name) in QUADRATURE_NAMES.iter().enumerate() {
+                for column_name in &QUADRATURE_NAMES[row..] {
+                    header.push(format!("cov_{row_name}_{column_name}_v2"));
+                }
+            }
+        }
+    }
+    Ok(header)
+}
+
+/// Packs one 12x12 XY covariance into a serialized row matching
+/// [`covariance_csv_header`]. Values are already half-amplitude scaled (1/4)
+/// by the core mapper; this function only selects and orders entries.
+pub fn pack_covariance_row(
+    covariance_xy: &[Vec<f64>],
+    mode: GlsCovarianceOutput,
+) -> Result<Vec<f64>> {
+    if covariance_xy.len() != 12 || covariance_xy.iter().any(|row| row.len() != 12) {
+        bail!("covariance packing needs a 12x12 XY matrix");
+    }
+    match mode {
+        GlsCovarianceOutput::None => {
+            bail!("covariance_output=none omits the covariance artifact; do not pack rows")
+        }
+        GlsCovarianceOutput::Diagonal => {
+            Ok((0..12).map(|index| covariance_xy[index][index]).collect())
+        }
+        GlsCovarianceOutput::Full => {
+            let mut packed = Vec::with_capacity(78);
+            for (row, values) in covariance_xy.iter().enumerate() {
+                packed.extend_from_slice(&values[row..]);
+            }
+            Ok(packed)
+        }
+    }
+}
+
+/// Writes the per-window conditional covariance artifact
+/// (`lockin/ch{channel}_covariance.csv`, AT-025): `time_s` plus the selected
+/// covariance columns. Existing files are never overwritten, and non-finite
+/// entries abort instead of publishing unknown-as-zero (FR-041).
+pub fn write_covariance_csv(
+    path: &std::path::Path,
+    mode: GlsCovarianceOutput,
+    times: &[f64],
+    covariances: &[Vec<Vec<f64>>],
+) -> Result<()> {
+    let header = covariance_csv_header(mode)?;
+    write_covariance_table(path, &header, times, covariances, mode, false)
+}
+
+/// NPY mirror of [`write_covariance_csv`] with exactly the same
+/// time-plus-covariance columns, C-order `<f8`, via the shared
+/// [`crate::utils::csv::write_npy`] conventions. Quality CSVs stay
+/// CSV-only; covariance is the numeric artifact with an NPY mirror.
+pub fn write_covariance_npy(
+    path: &std::path::Path,
+    mode: GlsCovarianceOutput,
+    times: &[f64],
+    covariances: &[Vec<Vec<f64>>],
+) -> Result<()> {
+    let header = covariance_csv_header(mode)?;
+    write_covariance_table(path, &header, times, covariances, mode, true)
+}
+
+fn write_covariance_table(
+    path: &std::path::Path,
+    header: &[String],
+    times: &[f64],
+    covariances: &[Vec<Vec<f64>>],
+    mode: GlsCovarianceOutput,
+    npy: bool,
+) -> Result<()> {
+    if times.len() != covariances.len() {
+        bail!(
+            "covariance times ({}) and matrices ({}) differ",
+            times.len(),
+            covariances.len()
+        );
+    }
+    if path.exists() {
+        bail!("joint covariance output already exists: {}", path.display());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create covariance output dir: {}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut columns: Vec<Vec<f64>> = vec![Vec::with_capacity(times.len()); header.len()];
+    for (index, (time, covariance)) in times.iter().zip(covariances.iter()).enumerate() {
+        if !time.is_finite() {
+            bail!("joint covariance row {index} has non-finite time_s");
+        }
+        let packed = pack_covariance_row(covariance, mode)?;
+        if packed.iter().any(|value| !value.is_finite()) {
+            bail!("joint covariance row {index} has non-finite entries");
+        }
+        columns[0].push(*time);
+        for (column, value) in columns.iter_mut().skip(1).zip(packed.iter()) {
+            column.push(*value);
+        }
+    }
+    if npy {
+        crate::utils::csv::write_npy(path, &columns)
+            .with_context(|| format!("failed to write covariance NPY: {}", path.display()))?;
+    } else {
+        let file = std::fs::File::create(path)
+            .with_context(|| format!("failed to create covariance output: {}", path.display()))?;
+        let mut writer = csv::WriterBuilder::new()
+            .has_headers(true)
+            .from_writer(file);
+        writer
+            .write_record(header)
+            .context("failed to write covariance header")?;
+        for index in 0..times.len() {
+            let record: Vec<String> = columns
+                .iter()
+                .map(|column| column[index].to_string())
+                .collect();
+            writer
+                .write_record(&record)
+                .with_context(|| format!("failed to write covariance row {index}"))?;
+        }
+        writer
+            .flush()
+            .context("failed to flush covariance output")?;
+    }
     Ok(())
 }
 
@@ -263,6 +487,7 @@ pub fn run_joint_li(
 
     let mut result = Vec::with_capacity(signal_data.len());
     let mut quality = Vec::with_capacity(signal_data.len());
+    let mut covariance = Vec::with_capacity(signal_data.len());
     let mut bindings = Vec::with_capacity(signal_data.len());
     for (&channel, signal) in signal_ch.iter().zip(signal_data.iter()) {
         let signal: &[f64] = signal;
@@ -275,9 +500,11 @@ pub fn run_joint_li(
             noise,
             tolerances: JointSolverTolerances::default(),
         };
-        let (columns, rows) = run_joint_channel(inputs, signal, channel, &params, &settings)?;
+        let (columns, rows, covariances) =
+            run_joint_channel(inputs, signal, channel, &params, &settings)?;
         result.push(columns);
         quality.push(rows);
+        covariance.push(covariances);
     }
 
     let provenance =
@@ -285,6 +512,7 @@ pub fn run_joint_li(
     Ok(JointRunOutput {
         result,
         quality,
+        covariance,
         provenance,
         base_index_range: (params.i_start, params.i_end),
         output_index_range: (params.i_start, params.i_end),
@@ -297,7 +525,7 @@ fn run_joint_channel(
     channel: u8,
     params: &LockinParams,
     settings: &JointHarmonicSettings,
-) -> Result<(Vec<Vec<f64>>, Vec<QualityRow>)> {
+) -> Result<(XyColumns, Vec<QualityRow>, XyCovariances)> {
     let JointRunInputs {
         gls,
         t,
@@ -307,8 +535,9 @@ fn run_joint_channel(
         ..
     } = *inputs;
     let outputs = params.i_end - params.i_start + 1;
-    let mut columns: Vec<Vec<f64>> = (0..12).map(|_| Vec::with_capacity(outputs)).collect();
+    let mut columns: XyColumns = (0..12).map(|_| Vec::with_capacity(outputs)).collect();
     let mut rows = Vec::with_capacity(outputs);
+    let mut covariances = Vec::with_capacity(outputs);
     // Same tap support as the legacy boxcar (edge legacy_trim): centers on
     // the strided grid, samples [center - n_half - 1, center + n_half + 1].
     let half_taps = params.n_half + 1;
@@ -354,20 +583,49 @@ fn run_joint_channel(
                 estimate.xy.len()
             );
         }
+        require_xy_covariance(&estimate.covariance_xy, channel, output_index)?;
         for (harmonic, column_pair) in columns.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             column_pair[0].push(estimate.xy[2 * harmonic]);
             column_pair[1].push(estimate.xy[2 * harmonic + 1]);
         }
         rows.push(QualityRow {
+            original_center_index: center_k,
             time_s: t.value_at(center),
-            residual_rms: estimate.residual_rms,
+            scaled_design_condition: estimate.condition,
+            residual_rms_v: estimate.residual_rms,
             rank: estimate.rank,
-            condition: estimate.condition,
+            status: WindowStatus::for_jitter(estimate.jitter_applied_v2),
             jitter_applied_v2: estimate.jitter_applied_v2,
             noise_mode: gls_noise_mode_name(gls.noise_mode),
         });
+        covariances.push(estimate.covariance_xy);
     }
-    Ok((columns, rows))
+    Ok((columns, rows, covariances))
+}
+
+/// Rejects malformed XY covariance before it can reach an artifact: exactly
+/// 12x12, finite everywhere (unknown uncertainty is never silently zero,
+/// FR-041).
+fn require_xy_covariance(
+    covariance_xy: &[Vec<f64>],
+    channel: u8,
+    output_index: usize,
+) -> Result<()> {
+    if covariance_xy.len() != 12 || covariance_xy.iter().any(|row| row.len() != 12) {
+        bail!(
+            "joint estimator returned non-12x12 XY covariance (channel={channel}, window={output_index})"
+        );
+    }
+    for (row, values) in covariance_xy.iter().enumerate() {
+        for (column, value) in values.iter().enumerate() {
+            if !value.is_finite() {
+                bail!(
+                    "joint estimator returned non-finite XY covariance at ({row},{column}) (channel={channel}, window={output_index})"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Canonical GLS noise-mode name for quality rows and provenance.

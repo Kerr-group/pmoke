@@ -412,6 +412,14 @@ fn describe_analysis_artifacts(
             // also used by the NPY exporter and pinned by the analyze
             // manifest tests; do not "fix" it here alone.
             let homogeneous_f64 = kind != "lockin_quality";
+            // Conditional design-model covariance (FR-040/041, AT-025): the
+            // mode tag lives on the artifact; the model hash and full
+            // conditioning statement land in the per-channel estimator
+            // snapshot (next slice). Only the joint engine publishes this
+            // kind, and it always reports design-model covariance —
+            // oracle-only evaluation sandwiches are never artifacts.
+            let covariance_format =
+                (kind == "lockin_covariance").then_some("covariance_mode=design_model".to_string());
             artifacts.push(AnalysisArtifact {
                 kind: kind.clone(),
                 channel,
@@ -424,7 +432,7 @@ fn describe_analysis_artifacts(
                 dtype: homogeneous_f64.then_some("<f8"),
                 order: homogeneous_f64.then_some("C"),
                 depends_on: None,
-                format: None,
+                format: covariance_format,
             });
         }
     }
@@ -592,6 +600,8 @@ fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
         "lockin_rotated"
     } else if stem.ends_with("_quality") {
         "lockin_quality"
+    } else if stem.ends_with("_covariance") {
+        "lockin_covariance"
     } else {
         return Err(anyhow::anyhow!(
             "unknown analysis artifact name: {}",
