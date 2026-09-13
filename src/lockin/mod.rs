@@ -1,4 +1,5 @@
 pub mod debug;
+pub mod estimator_snapshot;
 pub mod joint;
 pub mod lockin_core;
 pub mod lockin_params;
@@ -31,6 +32,8 @@ pub struct LockinProcessOutput {
     /// Per-channel, per-output XY covariance for GLS executions; None for
     /// boxcar_legacy.
     pub covariance: Option<Vec<crate::lockin::joint::XyCovariances>>,
+    /// Per-channel frozen estimator snapshots; None for boxcar_legacy.
+    pub estimator_snapshots: Option<Vec<crate::lockin::estimator_snapshot::EstimatorSnapshot>>,
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
     pub provenance: LockinProvenance,
@@ -151,7 +154,12 @@ pub fn run_li<'a>(
     // covariance serialization (none omits the artifact entirely). The
     // manifest refresh downstream registers both kinds through the real
     // consumer path; boxcar executions publish neither.
-    if let (Some(quality), Some(covariance)) = (&lockin_output.quality, &lockin_output.covariance) {
+    if let (Some(quality), Some(covariance), Some(snapshots)) = (
+        &lockin_output.quality,
+        &lockin_output.covariance,
+        &lockin_output.estimator_snapshots,
+    ) {
+        use crate::lockin::estimator_snapshot::write_estimator_json;
         use crate::lockin::joint::{write_covariance_csv, write_covariance_npy, write_quality_csv};
         let mode = match &cfg.lockin.estimator {
             crate::config::LockinEstimator::JointHarmonicGls(gls) => gls.covariance_output,
@@ -159,10 +167,14 @@ pub fn run_li<'a>(
                 crate::config::GlsCovarianceOutput::None
             }
         };
-        for ((sig_ch, rows), covariances) in
-            signal_ch.iter().zip(quality.iter()).zip(covariance.iter())
+        for (((sig_ch, rows), covariances), snapshot) in signal_ch
+            .iter()
+            .zip(quality.iter())
+            .zip(covariance.iter())
+            .zip(snapshots.iter())
         {
             write_quality_csv(&paths.lockin_quality_csv(*sig_ch), rows)?;
+            write_estimator_json(&paths.lockin_estimator_json(*sig_ch), snapshot)?;
             if !matches!(mode, crate::config::GlsCovarianceOutput::None) {
                 let times: Vec<f64> = rows.iter().map(|row| row.time_s).collect();
                 write_covariance_csv(
@@ -277,12 +289,14 @@ fn li_process_joint<'a>(
         f_ref: ref_fit_params.f_ref,
         omega_tref: ref_fit_params.omega_tref,
         sample_rate: sample_interval_s.recip(),
+        tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
     };
     let output = run_joint_li(&inputs, signal_ch, signal_data, &source)?;
     Ok(LockinProcessOutput {
         result: output.result,
         quality: Some(output.quality),
         covariance: Some(output.covariance),
+        estimator_snapshots: Some(output.snapshots),
         base_index_range: output.base_index_range,
         output_index_range: output.output_index_range,
         provenance: output.provenance,
@@ -446,6 +460,7 @@ pub fn li_process_boxcar<'a>(
         result: all_signals_results,
         quality: None,
         covariance: None,
+        estimator_snapshots: None,
         base_index_range: base_index_range.unwrap_or((0, 0)),
         output_index_range: output_index_range.unwrap_or((0, 0)),
         provenance: provenance

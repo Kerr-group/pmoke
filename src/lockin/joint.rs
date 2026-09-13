@@ -7,6 +7,7 @@
 //! ([`crate::lockin::model_loading`]), tests use synthetic sources.
 
 use crate::config::{GlsCovarianceOutput, GlsNoiseMode, JointHarmonicGlsConfig, Lockin};
+use crate::lockin::estimator_snapshot::{EstimatorSnapshot, build_estimator_snapshot};
 use crate::lockin::lockin_params::LockinParams;
 use crate::lockin::provenance::LockinProvenance;
 use crate::utils::time_axis::TimeAxisRef;
@@ -194,6 +195,9 @@ pub struct JointRunInputs<'a> {
     pub f_ref: f64,
     pub omega_tref: f64,
     pub sample_rate: f64,
+    /// Effective solver tolerances, recorded verbatim in the estimator
+    /// snapshot (no hidden policy).
+    pub tolerances: JointSolverTolerances,
 }
 
 /// Joint lock-in outputs in boxcar-compatible layout.
@@ -211,6 +215,8 @@ pub struct JointRunOutput {
     /// can reconstruct cross terms (INTERFACES 5.1a); the none/diagonal/full
     /// serialization mode only controls which artifact is published.
     pub covariance: Vec<XyCovariances>,
+    /// Per-channel frozen estimator snapshots for staged reruns.
+    pub snapshots: Vec<EstimatorSnapshot>,
     pub provenance: LockinProvenance,
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
@@ -463,6 +469,7 @@ pub fn run_joint_li(
         t,
         f_ref,
         sample_rate: sample_rate_hz,
+        tolerances,
         ..
     } = *inputs;
     if signal_ch.len() != signal_data.len() {
@@ -487,6 +494,7 @@ pub fn run_joint_li(
     let mut result = Vec::with_capacity(signal_data.len());
     let mut quality = Vec::with_capacity(signal_data.len());
     let mut covariance = Vec::with_capacity(signal_data.len());
+    let mut snapshots = Vec::with_capacity(signal_data.len());
     let mut bindings = Vec::with_capacity(signal_data.len());
     for (&channel, signal) in signal_ch.iter().zip(signal_data.iter()) {
         let signal: &[f64] = signal;
@@ -497,13 +505,29 @@ pub fn run_joint_li(
         let settings = JointHarmonicSettings {
             model: model.clone(),
             noise,
-            tolerances: JointSolverTolerances::default(),
+            tolerances,
         };
         let (columns, rows, covariances) =
             run_joint_channel(inputs, signal, channel, &params, &settings)?;
         result.push(columns);
         quality.push(rows);
         covariance.push(covariances);
+        snapshots.push(
+            build_estimator_snapshot(
+                channel,
+                gls,
+                &settings.noise,
+                &tolerances,
+                JOINT_SOLVER_ID,
+                f_ref,
+                inputs.omega_tref,
+                sample_rate_hz.recip(),
+                &params,
+                bindings.last().expect("binding just pushed"),
+                quality.last().expect("quality just pushed"),
+            )
+            .with_context(|| format!("joint estimator snapshot failed for channel {channel}"))?,
+        );
     }
 
     let provenance =
@@ -512,6 +536,7 @@ pub fn run_joint_li(
         result,
         quality,
         covariance,
+        snapshots,
         provenance,
         base_index_range: (params.i_start, params.i_end),
         output_index_range: (params.i_start, params.i_end),
