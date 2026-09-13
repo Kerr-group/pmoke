@@ -301,7 +301,176 @@ fn legs_share_grid_and_never_touch_the_source() {
             .join("joint_identity/analysis/lockin/ch3_estimator.json")
             .is_file()
     );
+    // Leg manifests register estimator-specific kinds truthfully: the
+    // joint leg publishes quality/covariance/snapshot artifacts while the
+    // boxcar leg publishes none of them.
+    for (leg, gls) in [("boxcar", false), ("joint_identity", true)] {
+        let manifest =
+            std::fs::read_to_string(output.join(format!("{leg}/analysis/manifest.toml"))).unwrap();
+        let value: toml::Value = toml::from_str(&manifest).unwrap();
+        let kinds: Vec<&str> = value["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|artifact| artifact["kind"].as_str())
+            .collect();
+        assert!(kinds.contains(&"lockin_xy"), "{leg}: {kinds:?}");
+        assert_eq!(kinds.contains(&"lockin_quality"), gls, "{leg}");
+        assert_eq!(kinds.contains(&"lockin_covariance"), gls, "{leg}");
+        assert_eq!(kinds.contains(&"lockin_estimator"), gls, "{leg}");
+    }
     // The source (base artifact root) gained no analysis output.
     assert!(!base_root.join("analysis").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+fn complete_leg(name: &str, grid: &str, f_ref: f64) -> LegReport {
+    LegReport {
+        name: name.to_string(),
+        estimator: "boxcar_legacy".to_string(),
+        status: LegStatus::Complete,
+        code: None,
+        message: None,
+        grid_fingerprint: Some(grid.to_string()),
+        reference_frequency_hz: Some(f_ref),
+        artifact_dir: format!("out/{name}"),
+    }
+}
+
+#[test]
+fn summarize_legs_computes_truthful_status() {
+    let legs = vec![
+        complete_leg("a", "grid", 1000.0),
+        complete_leg("b", "grid", 1000.0),
+    ];
+    assert_eq!(summarize_legs(&legs), (true, true, true));
+    // A failed leg keeps its evidence but fails overall completion.
+    let mut legs = vec![
+        complete_leg("a", "grid", 1000.0),
+        LegReport {
+            status: LegStatus::Failed,
+            code: Some("model_hash_mismatch".to_string()),
+            message: Some("digest mismatch".to_string()),
+            grid_fingerprint: None,
+            reference_frequency_hz: None,
+            ..complete_leg("b", "grid", 1000.0)
+        },
+    ];
+    assert_eq!(summarize_legs(&legs), (true, true, false));
+    // Divergent grids or references fail even when every leg completes.
+    legs[1].status = LegStatus::Complete;
+    legs[1].grid_fingerprint = Some("other".to_string());
+    assert_eq!(summarize_legs(&legs), (false, true, false));
+    legs[1].grid_fingerprint = Some("grid".to_string());
+    legs[1].reference_frequency_hz = Some(1001.0);
+    assert_eq!(summarize_legs(&legs), (true, false, false));
+    // No evidence at all is not agreement.
+    assert_eq!(summarize_legs(&[]), (false, true, false));
+}
+
+#[test]
+fn unknown_estimator_modes_fail_visibly() {
+    let dir = temp_dir("estimator");
+    let path = write_request(
+        &dir,
+        "request.toml",
+        "schema_version = 1\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"a\"\nestimator = \"fourier\"\n",
+    );
+    assert!(load_compare_request(&path).is_err());
+    let path = write_request(
+        &dir,
+        "request2.toml",
+        "schema_version = 1\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"a\"\n[methods.estimator.joint]\nnoise_mode = \"identity\"\n",
+    );
+    assert!(load_compare_request(&path).is_ok());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn joint_leg_without_bindings_fails_without_fallback() {
+    use crate::test_support::test_config;
+    use crate::utils::waveform::WaveformData;
+    use std::f64::consts::PI;
+
+    // Boxcar base config: no calibration bindings anywhere.
+    let dir = temp_dir("nobindings");
+    let base_root = dir.join("base");
+    std::fs::create_dir_all(&base_root).unwrap();
+    std::fs::create_dir_all(base_root.join("acquisition/waveforms")).unwrap();
+    std::fs::write(
+        base_root.join("acquisition/waveforms/waveform.csv"),
+        "time (s),ch1,ch2,ch3\n0,0,0,0\n",
+    )
+    .unwrap();
+    let mut base_cfg = test_config(vec![1], vec![3]);
+    base_cfg.roles.reference_ch = 2;
+    base_cfg.instruments = Some(crate::config::Instruments {
+        function_generator: None,
+        oscilloscope: crate::config::Oscilloscope {
+            connection: crate::config::Connection::Tcpip {
+                ip: "127.0.0.1".to_string(),
+                port: 1,
+            },
+            model: "compare-test".to_string(),
+        },
+    });
+    base_cfg.source_path = dir.join("config.toml");
+    base_cfg.set_artifact_root(base_root);
+    base_cfg.lockin.workers = 1;
+    base_cfg.lockin.stride_samples = 10;
+    base_cfg.lockin.lpf_half_window_cycles = 1.0;
+    base_cfg.lockin.window = LockinWindow::legacy_boxcar(1.0);
+    base_cfg.lockin.estimator = LockinEstimator::BoxcarLegacy;
+    for channel in &mut base_cfg.channels {
+        if channel.index == 3 {
+            channel.factor = None;
+            channel.scale_to_abs_max = None;
+        }
+    }
+    let dt = 1.0e-5;
+    let samples = 3_000usize;
+    let time: Vec<f64> = (0..samples).map(|index| index as f64 * dt).collect();
+    let sensor: Vec<f64> = time.iter().map(|t| 0.001 * t).collect();
+    let reference: Vec<f64> = time.iter().map(|t| (2.0 * PI * 1000.0 * t).sin()).collect();
+    let signal: Vec<f64> = time
+        .iter()
+        .map(|t| (2.0 * PI * 1000.0 * t + 0.3).sin())
+        .collect();
+    let data = WaveformData {
+        t: time.into(),
+        channels: vec![sensor, reference, signal],
+    };
+    let methods = vec![
+        CompareMethod {
+            name: "boxcar".to_string(),
+            estimator: CompareEstimator::BoxcarLegacy,
+        },
+        CompareMethod {
+            name: "joint_identity".to_string(),
+            estimator: CompareEstimator::Joint {
+                noise_mode: GlsNoiseMode::Identity,
+                covariance_output: GlsCovarianceOutput::Diagonal,
+            },
+        },
+    ];
+    let output = dir.join("comparison");
+    std::fs::create_dir(&output).unwrap();
+    let legs = run_legs(&base_cfg, &data, &methods, &output).unwrap();
+    assert_eq!(legs[0].status, LegStatus::Complete);
+    // The joint leg fails explicitly on missing bindings; nothing falls
+    // back to boxcar (no quality artifact appears under its directory).
+    assert_eq!(legs[1].status, LegStatus::Failed);
+    let message = legs[1].message.clone().unwrap();
+    assert!(message.contains("calibration bindings"), "{message}");
+    assert!(
+        !output
+            .join("joint_identity/analysis/lockin/ch3_quality.csv")
+            .exists()
+    );
+    assert!(
+        !output
+            .join("joint_identity/analysis/lockin/ch3_xy.csv")
+            .exists()
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }

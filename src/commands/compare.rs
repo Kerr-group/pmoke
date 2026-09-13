@@ -298,6 +298,37 @@ fn leg_grid_fingerprint(manifest: &toml::Value) -> Result<(String, f64)> {
     ))
 }
 
+/// Fingerprint of the frozen source input: the base acquisition manifest
+/// bytes when present. Legs must never mix generations (code
+/// `source_changed`).
+fn frozen_source_fingerprint(base_cfg: &Config) -> Result<Option<String>> {
+    let manifest = base_cfg.resolver().acquisition_manifest();
+    if !manifest.is_file() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(&manifest)
+        .with_context(|| format!("cannot fingerprint {}", manifest.display()))?;
+    Ok(Some(crate::utils::checksum::sha256_hex(&bytes)))
+}
+
+/// Pure summary over leg reports: shared grid/reference equality and
+/// overall completion (unit-testable without I/O).
+pub(crate) fn summarize_legs(legs: &[LegReport]) -> (bool, bool, bool) {
+    let grids: std::collections::HashSet<&str> = legs
+        .iter()
+        .filter_map(|leg| leg.grid_fingerprint.as_deref())
+        .collect();
+    let references: Vec<f64> = legs
+        .iter()
+        .filter_map(|leg| leg.reference_frequency_hz)
+        .collect();
+    let grid_equal = grids.len() <= 1 && legs.iter().any(|leg| leg.grid_fingerprint.is_some());
+    let reference_equal = references.windows(2).all(|pair| pair[0] == pair[1]);
+    let complete =
+        legs.iter().all(|leg| leg.status == LegStatus::Complete) && grid_equal && reference_equal;
+    (grid_equal, reference_equal, complete)
+}
+
 /// Runs estimator legs for one base config and already-loaded data.
 /// Testable without fetch storage; the CLI wrapper adds request I/O.
 pub(crate) fn run_legs(
@@ -459,28 +490,18 @@ pub fn run_compare(request_path: &Path, output_override: Option<&Path>) -> Resul
     // staged, or written.
     let _lock = crate::commands::run_dir::RunMutationLock::acquire(&output, "compare-lockin")
         .context("cannot lock the comparison destination")?;
+    let source_before = frozen_source_fingerprint(&base_cfg)?;
     let legs = run_legs(&base_cfg, &data, &request.methods, &output)?;
+    // Nonmutating source consistency: fail before claiming a complete
+    // publication rather than mixing generations (code `source_changed`).
+    // The report below still publishes the truthful partial status.
+    let source_stable = frozen_source_fingerprint(&base_cfg)? == source_before;
+    let (shared_grid_equal, shared_reference_equal, legs_complete) = summarize_legs(&legs);
     let completed = legs
         .iter()
         .filter(|leg| leg.status == LegStatus::Complete)
         .count();
-    let shared_grid_equal = legs
-        .iter()
-        .filter_map(|leg| leg.grid_fingerprint.as_deref())
-        .collect::<std::collections::HashSet<_>>()
-        .len()
-        <= 1;
-    let shared_reference_equal = legs
-        .iter()
-        .filter_map(|leg| leg.reference_frequency_hz)
-        .collect::<Vec<_>>()
-        .windows(2)
-        .all(|pair| pair[0] == pair[1]);
-    // An empty fingerprint set (no completed leg) is not agreement.
-    let shared_grid_equal =
-        shared_grid_equal && legs.iter().any(|leg| leg.grid_fingerprint.is_some());
-    let computation_complete =
-        completed == legs.len() && shared_grid_equal && shared_reference_equal;
+    let computation_complete = legs_complete && source_stable;
     let report = CompareReport {
         schema_version: COMPARE_REQUEST_SCHEMA_VERSION,
         gate_version: request.gate_version.clone(),
@@ -499,6 +520,13 @@ pub fn run_compare(request_path: &Path, output_override: Option<&Path>) -> Resul
     println!("{text}");
     if computation_complete {
         Ok(())
+    } else if !source_stable {
+        bail!(
+            "comparison source changed during execution (code=source_changed); refusing to mix \
+             generations ({completed} of {} legs complete; report: {})",
+            report.legs.len(),
+            report_path.display()
+        )
     } else {
         bail!(
             "comparison incomplete: {completed} of {} legs complete, grid equal: \
