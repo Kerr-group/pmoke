@@ -9,7 +9,7 @@ fn write_request(dir: &Path, name: &str, text: &str) -> PathBuf {
 }
 
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("pmoke_compare_{name}"));
+    let dir = std::env::temp_dir().join(format!("pmoke_compare_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
