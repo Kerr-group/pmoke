@@ -805,3 +805,34 @@ fn short_trace_fails_without_partial_output() {
         "unhelpful short-trace error: {message}"
     );
 }
+
+#[test]
+fn engine_output_is_invariant_to_worker_settings() {
+    // The direct engine processes the full grid in one pass: the workers
+    // setting must not change any output value, quality row, covariance,
+    // or snapshot (AT-012 worker invariance; a future parallel engine must
+    // preserve this contract).
+    let (time, signal) = tone_waveform_with(1_500);
+    let run = |workers: usize| {
+        let mut lockin = joint_lockin();
+        lockin.workers = workers;
+        let gls = match &lockin.estimator {
+            LockinEstimator::JointHarmonicGls(gls) => gls.clone(),
+            LockinEstimator::BoxcarLegacy => unreachable!(),
+        };
+        let source = SyntheticNoiseModelSource::identity(0.01);
+        let inputs = test_inputs(&lockin, &gls, &time);
+        run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap()
+    };
+    let single = run(1);
+    for workers in [2, 6, 32] {
+        let parallel = run(workers);
+        assert_eq!(single.result, parallel.result);
+        assert_eq!(single.quality, parallel.quality);
+        assert_eq!(single.covariance, parallel.covariance);
+        assert_eq!(
+            single.base_index_range, parallel.base_index_range,
+            "workers={workers}"
+        );
+    }
+}

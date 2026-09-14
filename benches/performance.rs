@@ -63,6 +63,7 @@ enum BenchmarkCase {
     SensorIntegral,
     LockinWorker1,
     LockinWorker2,
+    JointGls,
     PythonCopy,
     RawToCsv,
     AnalysisPipeline,
@@ -79,6 +80,7 @@ impl BenchmarkCase {
             "sensor_integral" => Self::SensorIntegral,
             "lockin_w1" => Self::LockinWorker1,
             "lockin_w2" => Self::LockinWorker2,
+            "joint_gls" => Self::JointGls,
             "python_copy" => Self::PythonCopy,
             "raw_to_csv" => Self::RawToCsv,
             "analysis_pipeline" => Self::AnalysisPipeline,
@@ -96,6 +98,7 @@ impl BenchmarkCase {
             Self::SensorIntegral => "sensor_integral",
             Self::LockinWorker1 => "lockin_w1",
             Self::LockinWorker2 => "lockin_w2",
+            Self::JointGls => "joint_gls",
             Self::PythonCopy => "python_copy",
             Self::RawToCsv => "raw_to_csv",
             Self::AnalysisPipeline => "analysis_pipeline",
@@ -116,7 +119,8 @@ fn main() {
         .runs(BenchmarkCase::RawWordDecode)
         .then(|| synthetic_words(options.samples));
     let needs_lockin_input = options.case.runs(BenchmarkCase::LockinWorker1)
-        || options.case.runs(BenchmarkCase::LockinWorker2);
+        || options.case.runs(BenchmarkCase::LockinWorker2)
+        || options.case.runs(BenchmarkCase::JointGls);
     let time_and_signal = needs_lockin_input.then(|| {
         let times = synthetic_times(options.samples);
         let signal = synthetic_signal(&times);
@@ -173,6 +177,10 @@ fn main() {
             let (times, signal) = time_and_signal.as_ref().expect("signal is available");
             black_box(run_lockin_harmonics(times, signal, workers));
         }
+    }
+    if options.case.runs(BenchmarkCase::JointGls) {
+        let (times, signal) = time_and_signal.as_ref().expect("signal is available");
+        black_box(run_joint_gls(times, signal));
     }
     if options.case.runs(BenchmarkCase::PythonCopy) {
         let signal = selected_signal(&time_and_signal, &standalone_signal);
@@ -259,6 +267,40 @@ fn main() {
                 || run_lockin_harmonics(black_box(times), black_box(signal), workers),
             ));
         }
+    }
+    if options.case.runs(BenchmarkCase::JointGls) {
+        let (times, signal) = time_and_signal.as_ref().expect("signal is available");
+        // Preparation (config/source/input assembly) is timed separately
+        // from application (the estimator run), so the engine cost is
+        // visible on its own (AT-037 stage separation).
+        results.push(measure(
+            "joint_gls_prepare",
+            options.samples,
+            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
+            options.iterations,
+            || {
+                black_box(joint_gls_setup());
+                std::mem::size_of::<JointGlsSetup>()
+            },
+        ));
+        // Repeated measurements even in smoke mode: a single iteration is
+        // not a distributional qualification.
+        let apply_iterations = options.iterations.max(3);
+        let setup = joint_gls_setup();
+        results.push(measure(
+            "joint_gls_apply",
+            options.samples,
+            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
+            apply_iterations,
+            || run_joint_gls_apply(&setup, black_box(times), black_box(signal)),
+        ));
+        results.push(measure(
+            "joint_harmonic_gls_identity",
+            options.samples,
+            (times.len() + signal.len()) * std::mem::size_of::<f64>(),
+            options.iterations,
+            || run_joint_gls(black_box(times), black_box(signal)),
+        ));
     }
     if options.case.runs(BenchmarkCase::PythonCopy) {
         let signal = selected_signal(&time_and_signal, &standalone_signal);
@@ -536,6 +578,67 @@ fn run_lockin_harmonics(times: &[f64], signal: &[f64], workers: usize) -> usize 
                 })
                 .sum()
         })
+}
+
+struct JointGlsSetup {
+    lockin: pmoke::config::Lockin,
+    gls: pmoke::config::JointHarmonicGlsConfig,
+    source: pmoke::lockin::joint::SyntheticNoiseModelSource,
+}
+
+/// Preparation stage (AT-037): config, noise source, and estimator
+/// binding assembly, timed separately from application.
+fn joint_gls_setup() -> JointGlsSetup {
+    use pmoke::config::{
+        GlsCovarianceOutput, GlsFailurePolicy, GlsNoiseMode, JointHarmonicGlsConfig,
+    };
+    use pmoke::lockin::joint::SyntheticNoiseModelSource;
+
+    let mut lockin = benchmark_lockin();
+    lockin.workers = 1;
+    lockin.stride_samples = 100;
+    let gls = JointHarmonicGlsConfig {
+        fit_harmonics: (1..=12).collect(),
+        output_harmonics: (1..=6).collect(),
+        envelope_degree: 0,
+        noise_mode: GlsNoiseMode::Identity,
+        covariance_output: GlsCovarianceOutput::Diagonal,
+        failure_policy: GlsFailurePolicy::Error,
+        calibrations: Vec::new(),
+    };
+    lockin.estimator = pmoke::config::LockinEstimator::JointHarmonicGls(gls.clone());
+    JointGlsSetup {
+        lockin,
+        gls,
+        source: SyntheticNoiseModelSource::identity(1.0),
+    }
+}
+
+/// Application stage (AT-037): the estimator run on prepared inputs.
+fn run_joint_gls_apply(setup: &JointGlsSetup, times: &[f64], signal: &[f64]) -> usize {
+    use pmoke::lockin::joint::{JointRunInputs, run_joint_li};
+
+    let output = run_joint_li(
+        &JointRunInputs {
+            lockin: &setup.lockin,
+            gls: &setup.gls,
+            t: pmoke::utils::time_axis::TimeAxisRef::Explicit(times),
+            f_ref: 10_000.0,
+            omega_tref: 0.2,
+            sample_rate: 1.0 / (times[1] - times[0]),
+            tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
+        },
+        &[3],
+        &[signal],
+        &setup.source,
+    )
+    .expect("valid joint benchmark configuration");
+    output.result[0].iter().map(Vec::len).sum::<usize>() + output.covariance[0].len() * 144
+}
+
+fn run_joint_gls(times: &[f64], signal: &[f64]) -> usize {
+    let setup = joint_gls_setup();
+    run_joint_gls_apply(&setup, times, signal)
 }
 
 fn benchmark_lockin() -> Lockin {
