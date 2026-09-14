@@ -1,9 +1,18 @@
 use std::f64::consts::TAU;
+use std::mem::{size_of, size_of_val};
 use wasm_bindgen::prelude::*;
 
 const MIN_SAMPLES: usize = 64;
 const MAX_SAMPLES: usize = 4_096;
 const LOCKIN_HEADER_VALUES: usize = 8;
+/// WASM joint-window caps (NFR-008): at most 2047 window samples and 25
+/// design parameters (1 + 2 * fit harmonics) per call.
+pub const MAX_JOINT_WINDOW_SAMPLES: usize = 2_047;
+pub const MAX_JOINT_PARAMETERS: usize = 25;
+/// WASM joint-model byte cap per channel (NFR-008/AT-029): 1 MiB across
+/// all supplied model components (variance table, correlation lags,
+/// harmonic lists), enforced before any cloning or solving.
+pub const MAX_JOINT_MODEL_BYTES: usize = 1_048_576;
 
 /// Compute raw channel values at continuous time t in [0, 1].
 pub fn sample_channels(t: f64, phase: f64) -> (f64, f64, f64) {
@@ -195,12 +204,15 @@ pub fn boxcar_response_interleaved(
 #[wasm_bindgen]
 pub fn analysis_limits_json() -> String {
     format!(
-        r#"{{"max_demo_samples":{},"max_upload_samples":{},"max_upload_bytes":{},"max_total_harmonic_points":{},"lockin_header_values":{}}}"#,
+        r#"{{"max_demo_samples":{},"max_upload_samples":{},"max_upload_bytes":{},"max_total_harmonic_points":{},"lockin_header_values":{},"max_joint_window_samples":{},"max_joint_parameters":{},"max_joint_model_bytes":{}}}"#,
         pmoke_analysis_core::DEFAULT_MAX_DEMO_SAMPLES,
         pmoke_analysis_core::MAX_UPLOAD_SAMPLES,
         pmoke_analysis_core::MAX_UPLOAD_BYTES,
         pmoke_analysis_core::MAX_TOTAL_HARMONIC_POINTS,
         LOCKIN_HEADER_VALUES,
+        MAX_JOINT_WINDOW_SAMPLES,
+        MAX_JOINT_PARAMETERS,
+        MAX_JOINT_MODEL_BYTES,
     )
 }
 
@@ -215,6 +227,172 @@ pub fn build_info() -> String {
 
 fn analysis_error(error: pmoke_analysis_core::AnalysisError) -> JsError {
     JsError::new(&format!("{}: {}", error.code(), error.message()))
+}
+
+/// Joint harmonic GLS estimate for one window through the shared core
+/// solver (AT-028 parity: the same `estimate_joint` the native engine
+/// calls). All four noise modes are executable; unsupported combinations
+/// fail explicitly with the core's typed codes.
+///
+/// Layout: `[xy (2 * outputs) | residual_rms | rank | condition |
+/// jitter_applied_v2 | covariance diagonal (2 * outputs)]`. The covariance
+/// is the half-amplitude-scaled design-model XY covariance (FR-040).
+/// Native-testable core of [`analyze_joint_window_packed`]: identical logic,
+/// `String` errors (JsError messages are unreadable off-wasm targets).
+#[allow(clippy::too_many_arguments)]
+fn joint_window_inner(
+    signal: &[f64],
+    start_time_s: f64,
+    sample_interval_s: f64,
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    fit_harmonics: &[u32],
+    output_harmonics: &[u32],
+    noise_mode: &str,
+    reference_variance_v2: f64,
+    variance_bins: &[f64],
+    correlation_lags: &[f64],
+    correlation_lag_step_s: f64,
+) -> Result<Vec<f64>, String> {
+    use pmoke_analysis_core::{
+        CorrelationKernel, HarmonicSignalModel, JointHarmonicSettings, JointSolverTolerances,
+        NoiseMode, NoiseModel, estimate_joint,
+    };
+    if signal.len() > MAX_JOINT_WINDOW_SAMPLES {
+        return Err(format!(
+            "resource_limit_exceeded: joint window holds {} samples above cap {MAX_JOINT_WINDOW_SAMPLES}",
+            signal.len()
+        ));
+    }
+    if signal.len() < 3 {
+        return Err("insufficient_support: joint window needs at least 3 samples".to_string());
+    }
+    // Model-byte preflight before any cloning or solving: a sample-count
+    // cap is not a model-size cap, and unused oversized components must
+    // not reach the solver either.
+    let model_bytes = size_of_val(variance_bins)
+        + size_of_val(correlation_lags)
+        + (fit_harmonics.len() + output_harmonics.len()) * size_of::<u32>();
+    if model_bytes > MAX_JOINT_MODEL_BYTES {
+        return Err(format!(
+            "resource_limit_exceeded: joint model holds {model_bytes} bytes above cap {MAX_JOINT_MODEL_BYTES}",
+        ));
+    }
+    let fit: Vec<usize> = fit_harmonics
+        .iter()
+        .map(|harmonic| *harmonic as usize)
+        .collect();
+    let outputs: Vec<usize> = output_harmonics
+        .iter()
+        .map(|harmonic| *harmonic as usize)
+        .collect();
+    if 1 + 2 * fit.len() > MAX_JOINT_PARAMETERS {
+        return Err(format!(
+            "resource_limit_exceeded: joint design holds {} parameters above cap {MAX_JOINT_PARAMETERS}",
+            1 + 2 * fit.len()
+        ));
+    }
+    let mode = match noise_mode {
+        "identity" => NoiseMode::Identity,
+        "phase_diagonal" => NoiseMode::PhaseDiagonal,
+        "stationary_correlated" => NoiseMode::StationaryCorrelated,
+        "phase_correlated" => NoiseMode::PhaseCorrelated,
+        _ => {
+            return Err(format!(
+                "unsupported_estimator_mode: unknown joint noise mode {noise_mode:?}"
+            ));
+        }
+    };
+    let noise = NoiseModel {
+        mode,
+        reference_variance_v2,
+        variance_bins: if variance_bins.is_empty() {
+            None
+        } else {
+            Some(variance_bins.to_vec())
+        },
+        correlation: if correlation_lags.is_empty() {
+            None
+        } else {
+            Some(CorrelationKernel {
+                lags: correlation_lags.to_vec(),
+                lag_step_s: correlation_lag_step_s,
+            })
+        },
+    };
+    let times: Vec<f64> = (0..signal.len())
+        .map(|index| start_time_s + index as f64 * sample_interval_s)
+        .collect();
+    let sample_rate_hz = 1.0 / sample_interval_s;
+    let estimate = estimate_joint(
+        &times,
+        signal,
+        reference_frequency_hz,
+        reference_phase_rad,
+        sample_rate_hz,
+        &JointHarmonicSettings {
+            model: HarmonicSignalModel {
+                fit_harmonics: fit,
+                output_harmonics: outputs.clone(),
+                envelope_degree: 0,
+            },
+            noise,
+            tolerances: JointSolverTolerances::default(),
+        },
+    )
+    .map_err(|error| format!("{}: {}", error.code(), error.message()))?;
+    if estimate.xy.len() != 2 * outputs.len() {
+        return Err("non_finite_output: joint solver returned no quadratures".to_string());
+    }
+    let mut packed = Vec::with_capacity(2 * estimate.xy.len() + 4);
+    packed.extend_from_slice(&estimate.xy);
+    packed.extend_from_slice(&[
+        estimate.residual_rms,
+        estimate.rank as f64,
+        estimate.condition,
+        estimate.jitter_applied_v2,
+    ]);
+    for (index, row) in estimate.covariance_xy.iter().enumerate() {
+        packed.push(row[index]);
+    }
+    if !packed.iter().all(|value| value.is_finite()) {
+        return Err("non_finite_output: joint window produced non-finite values".to_string());
+    }
+    Ok(packed)
+}
+
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_joint_window_packed(
+    signal: &[f64],
+    start_time_s: f64,
+    sample_interval_s: f64,
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    fit_harmonics: &[u32],
+    output_harmonics: &[u32],
+    noise_mode: &str,
+    reference_variance_v2: f64,
+    variance_bins: &[f64],
+    correlation_lags: &[f64],
+    correlation_lag_step_s: f64,
+) -> Result<Box<[f64]>, JsError> {
+    joint_window_inner(
+        signal,
+        start_time_s,
+        sample_interval_s,
+        reference_frequency_hz,
+        reference_phase_rad,
+        fit_harmonics,
+        output_harmonics,
+        noise_mode,
+        reference_variance_v2,
+        variance_bins,
+        correlation_lags,
+        correlation_lag_step_s,
+    )
+    .map(Vec::into_boxed_slice)
+    .map_err(|message| JsError::new(&message))
 }
 
 #[cfg(test)]
@@ -432,5 +610,294 @@ factor = -1.0
             Some(pmoke_analysis_core::MAX_UPLOAD_SAMPLES as u64)
         );
         assert_eq!(limits["lockin_header_values"].as_u64(), Some(8));
+    }
+}
+
+#[cfg(test)]
+mod joint_window_tests {
+    use super::*;
+
+    const FIT: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const OUTPUTS: &[u32] = &[1, 2, 3, 4, 5, 6];
+
+    fn tone_window() -> (Vec<f64>, f64, f64) {
+        let dt = 1.0e-5;
+        let f_ref = 1_000.0;
+        let signal: Vec<f64> = (0..203)
+            .map(|index| (TAU * f_ref * index as f64 * dt).sin())
+            .collect();
+        (signal, dt, f_ref)
+    }
+
+    #[test]
+    fn joint_window_recovers_tone_in_all_modes() {
+        let (signal, dt, f_ref) = tone_window();
+        // Identity and stationary-correlated share the scalar path shape;
+        // phase modes need bins; correlated modes need lags.
+        let bins = vec![0.01; 16];
+        let lags = vec![1.0, 0.5, 0.25];
+        for (mode, bins, lags) in [
+            ("identity", [].as_slice(), [].as_slice()),
+            ("phase_diagonal", bins.as_slice(), [].as_slice()),
+            ("stationary_correlated", [].as_slice(), lags.as_slice()),
+            ("phase_correlated", bins.as_slice(), lags.as_slice()),
+        ] {
+            let packed = joint_window_inner(
+                &signal, 0.0, dt, f_ref, 0.0, FIT, OUTPUTS, mode, 0.01, bins, lags, dt,
+            )
+            .unwrap();
+            // 12 xy + 4 diagnostics + 12 diagonal = 28 values.
+            assert_eq!(packed.len(), 28, "mode {mode}");
+            assert!(packed.iter().all(|value| value.is_finite()), "mode {mode}");
+            // Phase-zero unit tone: X1 is the 1/2 half-amplitude.
+            assert!((packed[0] - 0.5).abs() < 1e-9, "mode {mode}: {}", packed[0]);
+            assert!(packed[1].abs() < 1e-9, "mode {mode}: {}", packed[1]);
+            // Rank is full (25) and no jitter was needed on clean data.
+            assert_eq!(packed[13], 25.0, "mode {mode}");
+            assert_eq!(packed[15], 0.0, "mode {mode}");
+            // Diagonal variances are positive (unknown is never zero).
+            assert!(packed[16] > 0.0, "mode {mode}");
+        }
+    }
+
+    #[test]
+    fn joint_window_matches_direct_core_call() {
+        // Parity: the packed boundary round-trips the shared core call
+        // exactly (AT-028 same-core execution).
+        use pmoke_analysis_core::{
+            CorrelationKernel, HarmonicSignalModel, JointHarmonicSettings, JointSolverTolerances,
+            NoiseMode, NoiseModel, estimate_joint,
+        };
+        let (signal, dt, f_ref) = tone_window();
+        let times: Vec<f64> = (0..signal.len()).map(|index| index as f64 * dt).collect();
+        let direct = estimate_joint(
+            &times,
+            &signal,
+            f_ref,
+            0.0,
+            1.0 / dt,
+            &JointHarmonicSettings {
+                model: HarmonicSignalModel {
+                    fit_harmonics: (1..=12).collect(),
+                    output_harmonics: (1..=6).collect(),
+                    envelope_degree: 0,
+                },
+                noise: NoiseModel {
+                    mode: NoiseMode::Identity,
+                    reference_variance_v2: 0.01,
+                    variance_bins: None,
+                    correlation: None,
+                },
+                tolerances: JointSolverTolerances::default(),
+            },
+        )
+        .unwrap();
+        let packed = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "identity",
+            0.01,
+            &[],
+            &[],
+            dt,
+        )
+        .unwrap();
+        assert_eq!(&packed[0..12], direct.xy.as_slice());
+        assert_eq!(packed[12], direct.residual_rms);
+        assert_eq!(packed[13], direct.rank as f64);
+        assert_eq!(packed[14], direct.condition);
+        assert_eq!(packed[15], direct.jitter_applied_v2);
+        for index in 0..12 {
+            assert_eq!(packed[16 + index], direct.covariance_xy[index][index]);
+        }
+        let _ = CorrelationKernel {
+            lags: vec![1.0],
+            lag_step_s: dt,
+        };
+    }
+
+    #[test]
+    fn joint_window_enforces_caps_and_modes() {
+        let (signal, dt, f_ref) = tone_window();
+        // Oversized window.
+        let big = vec![0.0; MAX_JOINT_WINDOW_SAMPLES + 1];
+        let error = joint_window_inner(
+            &big,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "identity",
+            0.01,
+            &[],
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("resource_limit_exceeded"));
+        // Too many parameters.
+        let fit: Vec<u32> = (1..=13).collect();
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            &fit,
+            OUTPUTS,
+            "identity",
+            0.01,
+            &[],
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("resource_limit_exceeded"));
+        // Unknown mode.
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "fourier",
+            0.01,
+            &[],
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("unsupported_estimator_mode"));
+        // Missing per-mode data surfaces the core's typed codes.
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "phase_diagonal",
+            0.01,
+            &[],
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("missing_noise_component"));
+        // Degenerate window.
+        let error = joint_window_inner(
+            &[0.0, 0.0],
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "identity",
+            0.01,
+            &[],
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("insufficient_support"));
+    }
+
+    #[test]
+    fn joint_limits_are_advertised() {
+        let limits = analysis_limits_json();
+        assert!(limits.contains("\"max_joint_window_samples\":2047"));
+        assert!(limits.contains("\"max_joint_parameters\":25"));
+        assert!(limits.contains("\"max_joint_model_bytes\":1048576"));
+    }
+
+    #[test]
+    fn joint_window_enforces_model_byte_cap() {
+        let (signal, dt, f_ref) = tone_window();
+        let harmonic_bytes = (FIT.len() + OUTPUTS.len()) * size_of::<u32>();
+        // Exactly at the 1 MiB cap: variance table sized so the total of
+        // all components equals the cap.
+        let at_cap = vec![1.0; (MAX_JOINT_MODEL_BYTES - harmonic_bytes) / size_of::<f64>()];
+        // Exactly at the cap succeeds: the cap is inclusive.
+        let packed = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "phase_diagonal",
+            0.01,
+            &at_cap,
+            &[],
+            dt,
+        )
+        .unwrap();
+        assert!(!packed.is_empty());
+        // One entry over the cap.
+        let over_cap = vec![1.0; (MAX_JOINT_MODEL_BYTES - harmonic_bytes) / size_of::<f64>() + 1];
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "phase_diagonal",
+            0.01,
+            &over_cap,
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("resource_limit_exceeded"), "{error}");
+        // The review repro: 150,000 f64 entries (1.2 MB) rejected.
+        let review_case = vec![1.0; 150_000];
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "phase_diagonal",
+            0.01,
+            &review_case,
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("resource_limit_exceeded"), "{error}");
+        // Oversized components are rejected even when the mode ignores
+        // them: identity mode with a huge unused variance table.
+        let error = joint_window_inner(
+            &signal,
+            0.0,
+            dt,
+            f_ref,
+            0.0,
+            FIT,
+            OUTPUTS,
+            "identity",
+            0.01,
+            &over_cap,
+            &[],
+            dt,
+        )
+        .unwrap_err();
+        assert!(error.contains("resource_limit_exceeded"), "{error}");
     }
 }
