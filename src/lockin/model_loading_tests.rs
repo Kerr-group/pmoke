@@ -440,6 +440,25 @@ fn joint_end_to_end_through_run_li() {
 }
 
 #[test]
+fn loader_tail_metadata_accepts_integer_max_without_panicking() {
+    let dir = temp_dir("tail_integer_max");
+    let mut artifact: serde_json::Value = serde_json::from_str(&artifact_json()).unwrap();
+    artifact["correlation"]["max_tail_lag"] = serde_json::json!(usize::MAX);
+    let bytes = serde_json::to_vec(&artifact).unwrap();
+    let (_, digest) = write_case(&dir, "ch3.json", &bytes);
+    let source = source_for(&dir, &digest, "ch3.json");
+    // A longer declared diagnostic horizon is not an addition request.
+    // Validate its ordering without overflowing at the integer boundary.
+    assert!(source.load(CHANNEL, GlsNoiseMode::PhaseCorrelated).is_ok());
+    artifact["correlation"]["max_tail_lag"] = serde_json::json!(1);
+    let bytes = serde_json::to_vec(&artifact).unwrap();
+    let (_, digest) = write_case(&dir, "short.json", &bytes);
+    let source = source_for(&dir, &digest, "short.json");
+    assert!(source.load(CHANNEL, GlsNoiseMode::PhaseCorrelated).is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn incompatible_artifact_contents_fail_after_hashing() {
     // A correct digest authenticates the bytes but does not make their
     // contents valid: every case below carries a fresh correct digest.

@@ -182,13 +182,14 @@ fn load_compare_request(request_path: &Path) -> Result<(CompareRequest, PathBuf)
     }
     let mut names = std::collections::HashSet::new();
     for method in &request.methods {
-        if !safe_label(&method.name) {
+        if !safe_label(&method.name) || method.name.eq_ignore_ascii_case(FROZEN_SOURCE_DIR_NAME) {
             bail!(
                 "comparison method name {:?} is not a safe output label",
                 method.name
             );
         }
-        if !names.insert(method.name.clone()) {
+        // Use portable directory identity, including case-insensitive filesystems.
+        if !names.insert(method.name.to_ascii_lowercase()) {
             bail!("duplicate comparison method name: {}", method.name);
         }
     }
