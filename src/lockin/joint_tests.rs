@@ -61,6 +61,7 @@ fn test_inputs<'a>(
         f_ref: 1_000.0,
         omega_tref: 0.0,
         sample_rate: 100_000.0,
+        tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
     }
 }
 

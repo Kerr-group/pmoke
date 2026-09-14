@@ -427,6 +427,15 @@ fn joint_end_to_end_through_run_li() {
     );
     assert!(paths.lockin_covariance_npy(3).is_file());
     assert!(paths.lockin_xy_csv(3).is_file());
+    let snapshot = std::fs::read_to_string(paths.lockin_estimator_json(3)).unwrap();
+    let snapshot_value: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+    assert_eq!(snapshot_value["channel"], 3);
+    assert_eq!(snapshot_value["solver"]["id"], "joint-direct-qr/1");
+    assert_eq!(snapshot_value["noise_model"]["mode"], "identity");
+    assert_eq!(
+        snapshot_value["covariance"]["covariance_mode"],
+        "design_model"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
