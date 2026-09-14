@@ -116,6 +116,12 @@
     { "locale": "ja", "query": "失敗した hardware の doctor 確認", "expected": "/ja/docs/troubleshooting" },
     { "locale": "ja", "query": "pmoke software の引用方法", "expected": "/ja/docs/citation" },
     { "locale": "ja", "query": "パルス MOKE 手法論文 DOI", "expected": "/ja/docs/citation" },
-    { "locale": "ja", "query": "zero-area Sagnac EOM reference", "expected": "/ja/docs/citation" }
+    { "locale": "ja", "query": "zero-area Sagnac EOM reference", "expected": "/ja/docs/citation" },
+    { "locale": "en", "query": "how to build a calibration artifact", "expected": "/en/docs/cli/reference" },
+    { "locale": "en", "query": "calibrate inspect validate workflow", "expected": "/en/docs/cli/reference" },
+    { "locale": "en", "query": "recorded waveform calibration build", "expected": "/en/docs/cli/reference" },
+    { "locale": "ja", "query": "較正artifactのbuild方法", "expected": "/ja/docs/cli/reference" },
+    { "locale": "ja", "query": "較正artifactの確認手順", "expected": "/ja/docs/cli/reference" },
+    { "locale": "ja", "query": "記録済み波形からの較正build", "expected": "/ja/docs/cli/reference" }
   ]
 }
