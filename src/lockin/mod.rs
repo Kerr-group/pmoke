@@ -3,6 +3,7 @@ pub mod joint;
 pub mod lockin_core;
 pub mod lockin_params;
 pub mod lockin_plot;
+pub mod model_loading;
 pub mod provenance;
 pub mod reference;
 pub mod resolve;
@@ -25,6 +26,11 @@ use rayon::prelude::*;
 
 pub struct LockinProcessOutput {
     pub result: Vec<Vec<Vec<f64>>>,
+    /// Per-channel quality rows for GLS executions; None for boxcar_legacy.
+    pub quality: Option<Vec<Vec<crate::lockin::joint::QualityRow>>>,
+    /// Per-channel, per-output XY covariance for GLS executions; None for
+    /// boxcar_legacy.
+    pub covariance: Option<Vec<crate::lockin::joint::XyCovariances>>,
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
     pub provenance: LockinProvenance,
@@ -141,6 +147,43 @@ pub fn run_li<'a>(
         ui::fmt_duration(elapsed_save)
     ));
 
+    // GLS diagnostics: per-window quality (always) plus the selected XY
+    // covariance serialization (none omits the artifact entirely). The
+    // manifest refresh downstream registers both kinds through the real
+    // consumer path; boxcar executions publish neither.
+    if let (Some(quality), Some(covariance)) = (&lockin_output.quality, &lockin_output.covariance) {
+        use crate::lockin::joint::{write_covariance_csv, write_covariance_npy, write_quality_csv};
+        let mode = match &cfg.lockin.estimator {
+            crate::config::LockinEstimator::JointHarmonicGls(gls) => gls.covariance_output,
+            crate::config::LockinEstimator::BoxcarLegacy => {
+                crate::config::GlsCovarianceOutput::None
+            }
+        };
+        for ((sig_ch, rows), covariances) in
+            signal_ch.iter().zip(quality.iter()).zip(covariance.iter())
+        {
+            write_quality_csv(&paths.lockin_quality_csv(*sig_ch), rows)?;
+            if !matches!(mode, crate::config::GlsCovarianceOutput::None) {
+                let times: Vec<f64> = rows.iter().map(|row| row.time_s).collect();
+                write_covariance_csv(
+                    &paths.lockin_covariance_csv(*sig_ch),
+                    mode,
+                    &times,
+                    covariances,
+                )?;
+                write_covariance_npy(
+                    &paths.lockin_covariance_npy(*sig_ch),
+                    mode,
+                    &times,
+                    covariances,
+                )?;
+            }
+        }
+        ui::saved(format!(
+            "joint GLS diagnostics for signals {signal_ch:?} (quality always, covariance {mode:?})"
+        ));
+    }
+
     let headers = LI_HEADER;
     let labels: Vec<String> = headers
         .iter()
@@ -187,13 +230,63 @@ pub fn li_process<'a>(
         crate::config::LockinEstimator::BoxcarLegacy => {
             li_process_boxcar(cfg, t, signal_ch, signal_data, ref_fit_params)
         }
-        // The engine (crate::lockin::joint) is complete and tested, but
-        // execution needs calibration-backed model loading (WP-5B). Running
-        // boxcar here would be a silent fallback (FR-048), so refuse.
-        crate::config::LockinEstimator::JointHarmonicGls(_) => bail!(
-            "joint_harmonic_gls execution needs calibration-backed model loading, which arrives in WP-5B; refusing to fall back to boxcar_legacy"
-        ),
+        crate::config::LockinEstimator::JointHarmonicGls(gls) => {
+            li_process_joint(cfg, t, signal_ch, signal_data, ref_fit_params, gls)
+        }
     }
+}
+
+/// Joint-harmonic GLS estimation over the shared legacy-trim grid.
+/// Calibration-backed models only (FR-048): any loading failure aborts,
+/// never falls back to boxcar_legacy.
+fn li_process_joint<'a>(
+    cfg: &Config,
+    t: impl Into<TimeAxisRef<'a>>,
+    signal_ch: &[u8],
+    signal_data: &[&[f64]],
+    ref_fit_params: RefFitParams,
+    gls: &crate::config::JointHarmonicGlsConfig,
+) -> Result<LockinProcessOutput> {
+    use crate::lockin::joint::{JointRunInputs, run_joint_li};
+    use crate::lockin::model_loading::{FileNoiseModelSource, PIPELINE_VOLTAGE_UNIT};
+
+    let t = t.into();
+    let sample_interval_s = t
+        .dt()
+        .ok_or_else(|| anyhow::anyhow!("joint_harmonic_gls execution needs a uniform timebase"))?;
+    // Calibration paths resolve against the declaring configuration file
+    // directory, never an unspecified cwd (INTERFACES section 5).
+    let base_dir = cfg
+        .source_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let source = FileNoiseModelSource::new(
+        base_dir,
+        &gls.calibrations,
+        PIPELINE_VOLTAGE_UNIT.to_string(),
+        sample_interval_s,
+        ref_fit_params.f_ref,
+    )
+    .context("joint_harmonic_gls model source is not usable")?;
+    let inputs = JointRunInputs {
+        lockin: &cfg.lockin,
+        gls,
+        t,
+        f_ref: ref_fit_params.f_ref,
+        omega_tref: ref_fit_params.omega_tref,
+        sample_rate: sample_interval_s.recip(),
+    };
+    let output = run_joint_li(&inputs, signal_ch, signal_data, &source)?;
+    Ok(LockinProcessOutput {
+        result: output.result,
+        quality: Some(output.quality),
+        covariance: Some(output.covariance),
+        base_index_range: output.base_index_range,
+        output_index_range: output.output_index_range,
+        provenance: output.provenance,
+    })
 }
 
 pub fn li_process_boxcar<'a>(
@@ -351,6 +444,8 @@ pub fn li_process_boxcar<'a>(
 
     Ok(LockinProcessOutput {
         result: all_signals_results,
+        quality: None,
+        covariance: None,
         base_index_range: base_index_range.unwrap_or((0, 0)),
         output_index_range: output_index_range.unwrap_or((0, 0)),
         provenance: provenance
