@@ -119,6 +119,11 @@ pub enum Command {
         #[arg(long, value_name = "DIR")]
         output: Option<std::path::PathBuf>,
     },
+    /// Build, inspect, or validate a recorded-only calibration artifact
+    Calibrate {
+        #[command(subcommand)]
+        command: CalibrateCommand,
+    },
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
     #[cfg(feature = "hw-core")]
     Process,
@@ -308,6 +313,34 @@ pub enum RawCommand {
         /// RAW acquisition directory (defaults to acquisition/ with legacy fallback)
         #[arg(long, value_name = "DIR")]
         input: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CalibrateCommand {
+    /// Build an immutable calibration artifact from a recorded waveform CSV
+    Build {
+        /// Path to the calibration build request file
+        #[arg(long, value_name = "FILE")]
+        request: PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
+    /// Inspect a calibration artifact file (read-only)
+    Inspect {
+        /// Path to the calibration artifact JSON file
+        #[arg(long, value_name = "FILE")]
+        artifact: PathBuf,
+    },
+    /// Validate a calibration artifact against an inference context (read-only)
+    Validate {
+        /// Path to the calibration artifact JSON file
+        #[arg(long, value_name = "FILE")]
+        artifact: PathBuf,
+        /// Path to the TOML applicability context file
+        #[arg(long, value_name = "FILE")]
+        context: PathBuf,
     },
 }
 

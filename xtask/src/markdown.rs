@@ -361,6 +361,21 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Compare lock-in estimators on shared data and grid into a new directory" => {
             "共有データ・gridでのlock-in推定器比較（新規directoryへ）"
         }
+        "Build, inspect, or validate a recorded-only calibration artifact" => {
+            "記録済みデータからの較正artifactのbuild・inspect・validate"
+        }
+        "Build an immutable calibration artifact from a recorded waveform CSV" => {
+            "記録済み波形CSVからの不変較正artifactのbuild"
+        }
+        "Path to the calibration build request file" => "較正build requestファイルのpath",
+        "Path to the calibration artifact JSON file" => "較正artifact JSONファイルのpath",
+        "Path to the TOML applicability context file" => "適用性context TOMLファイルのpath",
+        "Inspect a calibration artifact file (read-only)" => {
+            "較正artifactファイルのinspect（読み取り専用）"
+        }
+        "Validate a calibration artifact against an inference context (read-only)" => {
+            "推論contextに対する較正artifactのvalidate（読み取り専用）"
+        }
         "Path to the comparison request file" => "比較requestファイルのpath",
         "Override the output directory from the request" => "requestの出力directoryの上書き",
         "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)" => {
