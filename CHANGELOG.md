@@ -4,6 +4,10 @@
 
 ### Changes
 
+- Comparison method names cannot alias internal staging directories or each
+  other on case-insensitive filesystems. Calibration tail metadata is checked
+  without overflowing at the integer boundary.
+
 - `pmoke sensor` no longer requires a reference channel: it emits
   `sensor/sensor.csv` (stride-decimated rate/integral series shared with the
   sensor plots) with NPY export, and a zero reference channel is accepted as

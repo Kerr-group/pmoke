@@ -339,7 +339,9 @@ fn check_artifact_structure(artifact: &CalibrationArtifact, channel: u8) -> Resu
                 here("correlation tail energy must be finite non-negative")
             );
         }
-        if table.max_tail_lag + 1 < table.support_samples {
+        // The validated lag vector is nonempty. Compare its final index
+        // directly instead of incrementing untrusted metadata.
+        if table.max_tail_lag < table.support_samples - 1 {
             bail!(
                 "{}",
                 here("correlation max_tail_lag precedes the taper support")

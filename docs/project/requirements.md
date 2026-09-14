@@ -86,7 +86,11 @@ The following surfaces are part of the product contract:
 - Run artifacts preserve provenance and integrity through isolated directories,
   immutable source/resolved configuration snapshots, checksums, and
   transactional publication. User-controlled paths and labels must remain
-  within their intended artifact boundary.
+  within their intended artifact boundary. Comparison method labels must not
+  alias reserved staging directories or each other on supported filesystems;
+  validate them before creating output. Calibration metadata comparisons must
+  preserve their ordering contract across the full representable integer range
+  without overflow or a process panic.
 - Public branches, Issues, PRs, logs, screenshots, and generated reports must
   contain only redacted, reproducible evidence. Never commit credentials,
   private endpoints, raw captures, personal data, machine-specific paths, or

@@ -71,6 +71,39 @@ fn request_validation_rejects_bad_inputs() {
 }
 
 #[test]
+fn request_labels_cannot_alias_internal_or_other_method_directories() {
+    let dir = temp_dir("reserved_names");
+    for names in [
+        vec!["_frozen_source"],
+        vec!["_FROZEN_SOURCE"],
+        vec!["baseline", "BASELINE"],
+    ] {
+        let mut text = String::from(
+            "schema_version = 1\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n",
+        );
+        for name in names {
+            text.push_str(&format!(
+                "[[methods]]\nname = \"{name}\"\nestimator = \"boxcar_legacy\"\n"
+            ));
+        }
+        let path = write_request(&dir, "request.toml", &text);
+        assert!(
+            load_compare_request(&path).is_err(),
+            "accepted conflicting labels: {text}"
+        );
+    }
+    // A distinct underscore-prefixed user label remains valid.
+    let path = write_request(
+        &dir,
+        "valid.toml",
+        "schema_version = 1\nbase_config = \"b.toml\"\noutput = \"out\"\ngate_version = \"g\"\n[[methods]]\nname = \"_candidate\"\nestimator = \"boxcar_legacy\"\n",
+    );
+    assert!(load_compare_request(&path).is_ok());
+    assert!(!dir.join("out").exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn destination_safety_blocks_overwrite_and_nesting() {
     let dir = temp_dir("dest");
     let base = dir.join("base");
