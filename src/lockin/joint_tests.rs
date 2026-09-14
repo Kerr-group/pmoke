@@ -836,3 +836,62 @@ fn engine_output_is_invariant_to_worker_settings() {
         );
     }
 }
+
+#[test]
+fn quality_center_index_matches_raw_timebase() {
+    // R0: original_center_index must be the original-sample center index,
+    // consistent with time_s. Stride 10, dt=1e-5: the first quality row
+    // must carry a raw index whose time equals its time_s.
+    let (time, signal) = tone_waveform_with(3_000);
+    let lockin = joint_lockin();
+    assert_eq!(lockin.stride_samples, 10);
+    let gls = match &lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => gls,
+        LockinEstimator::BoxcarLegacy => unreachable!(),
+    };
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, gls, &time);
+    let output = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    let rows = &output.quality[0];
+    assert!(!rows.is_empty());
+    let dt = 1.0e-5;
+    for row in rows.iter() {
+        // Index lives in the raw-sample namespace...
+        assert_eq!(time[row.original_center_index], row.time_s);
+        // ...and equals (time - t0) / dt rounded.
+        let expected = ((row.time_s - time[0]) / dt).round() as usize;
+        assert_eq!(row.original_center_index, expected);
+        // A decimated counter would be exactly stride times smaller here.
+        assert_ne!(row.original_center_index * 10, expected);
+    }
+}
+
+#[test]
+fn quality_center_index_matches_raw_timebase_with_origin() {
+    // Same contract with a nonzero time origin: the index still resolves
+    // against the actual raw timebase, not a zero-based assumption.
+    // origin=1000.0 is exactly representable and keeps rounding inside the
+    // timebase tolerance (origin=1e6 would not: its grid rounding exceeds
+    // the uniformity allowance, a validator matter unrelated to R0).
+    let dt = 1.0e-5;
+    let origin = 1000.0;
+    let samples = 3_000usize;
+    let time: Vec<f64> = (0..samples).map(|i| origin + i as f64 * dt).collect();
+    let signal: Vec<f64> = time
+        .iter()
+        .map(|&t| (2.0 * PI * 1_000.0 * t + 0.3).sin())
+        .collect();
+    let lockin = joint_lockin();
+    let gls = match &lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => gls,
+        LockinEstimator::BoxcarLegacy => unreachable!(),
+    };
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, gls, &time);
+    let output = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    let rows = &output.quality[0];
+    assert!(!rows.is_empty());
+    for row in rows.iter() {
+        assert_eq!(time[row.original_center_index], row.time_s);
+    }
+}
