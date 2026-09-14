@@ -15,9 +15,12 @@ const output = path.resolve('out');
 // Joint-window WASM parity (shared core estimate_joint going live in the
 // bundle) measured 844157 B raw / 287182 B gzip locally and 801578 B raw /
 // 286057 B gzip on CI against a 755966 B raw / 250294 B gzip main baseline;
-// the delta is the direct QR solver with all four whitening paths, so the
-// budgets below carry ~6% headroom over the CI figures.
-const M4_WASM_RAW_BUDGET_BYTES = 832 * 1024;
+// The direct QR solver includes all four whitening paths.
+// Current M3 boundary checks and the M5 model-byte guard measured 853811 B
+// raw / 291452 B gzip with pinned Rust 1.97.1 and Binaryen 130. The composed
+// native stack produces the same raw size, so this is not a merge-only delta.
+// Retain bounded host/toolchain headroom without weakening the transfer cap.
+const M4_WASM_RAW_BUDGET_BYTES = 848 * 1024;
 const M4_WASM_GZIP_BUDGET_BYTES = 300 * 1024;
 // Warn at the former budget so growth is visible, then retain a hard 1 MiB
 // ceiling for the bilingual documentation search index.
