@@ -775,3 +775,33 @@ fn quality_writer_rejects_non_finite_rows() {
     assert_eq!(WindowStatus::for_jitter(0.0), WindowStatus::Ok);
     assert_eq!(WindowStatus::for_jitter(1e-9), WindowStatus::Warning);
 }
+
+#[test]
+fn short_trace_fails_without_partial_output() {
+    // A record shorter than the window cannot yield outputs: the engine
+    // fails during geometry/trimming with a descriptive error instead of
+    // padding, shrinking the window, or publishing rows (insufficient
+    // support, AT-024).
+    let dt = 1.0e-5;
+    let time: Vec<f64> = (0..100).map(|index| index as f64 * dt).collect();
+    let signal = vec![0.0; 100];
+    let lockin = joint_lockin();
+    let gls = match &lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => gls,
+        LockinEstimator::BoxcarLegacy => unreachable!(),
+    };
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, gls, &time);
+    let error = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source)
+        .err()
+        .unwrap();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("edge trim")
+            || message.contains("empty")
+            || message.contains("geometry")
+            || message.contains("support")
+            || message.contains("window"),
+        "unhelpful short-trace error: {message}"
+    );
+}

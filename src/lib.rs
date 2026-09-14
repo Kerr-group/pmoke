@@ -114,6 +114,9 @@ fn run_with(args: Cli) -> Result<()> {
     match args.command.as_ref() {
         Some(Command::Show) => return commands::show::show(&load),
         None | Some(Command::Monitor) => return commands::monitor::monitor(&args.config, load),
+        Some(Command::CompareLockin { request, output }) => {
+            return commands::compare::run_compare(request, output.as_deref());
+        }
         _ => {}
     }
 
@@ -154,7 +157,8 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Instruments { .. }
                 | Command::Bench { .. }
                 | Command::Export { .. }
-                | Command::Doctor { .. },
+                | Command::Doctor { .. }
+                | Command::CompareLockin { .. },
             ) => unreachable!(),
             Some(Command::Single) => {
                 run_validated(&cfg, ValidationTarget::Single, commands::single::single)
@@ -228,7 +232,8 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Instruments { .. }
                 | Command::Bench { .. }
                 | Command::Export { .. }
-                | Command::Doctor { .. },
+                | Command::Doctor { .. }
+                | Command::CompareLockin { .. },
             ) => unreachable!(),
             Some(Command::Reference) => run_validated(
                 &cfg,

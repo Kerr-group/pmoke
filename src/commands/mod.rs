@@ -6,6 +6,7 @@ pub mod automeasure;
 #[cfg(feature = "hw-core")]
 pub mod autoshot;
 pub mod bench;
+pub mod compare;
 pub mod completions;
 pub mod config;
 pub mod doctor;

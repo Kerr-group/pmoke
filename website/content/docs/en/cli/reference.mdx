@@ -34,6 +34,7 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke phase`](#pmoke-phase) | Rotate the reference phase for lock-in analysis | core |
 | [`pmoke moke`](#pmoke-moke) | Calculate the Kerr angle | core |
 | [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, signal, phase, moke | core |
+| [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data and grid into a new directory | core |
 | [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
 | [`pmoke completions`](#pmoke-completions) | Generate shell completion script | core |
@@ -524,6 +525,21 @@ pmoke analyze [-h, --help]
 
 | Option | Required | Default / values | Description | Conflicts |
 | --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | Print help | - |
+
+
+## `pmoke compare-lockin`
+
+Compare lock-in estimators on shared data and grid into a new directory
+
+```text
+pmoke compare-lockin --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | yes | - | Path to the comparison request file | - |
+| `--output <DIR>` | - | - | Override the output directory from the request | - |
 | `-h, --help` | - | - | Print help | - |
 
 

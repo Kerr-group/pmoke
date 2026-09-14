@@ -1457,6 +1457,61 @@
         "subcommands": []
       },
       {
+        "name": "compare-lockin",
+        "path": "pmoke compare-lockin",
+        "summary": "Compare lock-in estimators on shared data and grid into a new directory",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "request",
+            "kind": "option",
+            "short": null,
+            "long": "request",
+            "value_names": [
+              "FILE"
+            ],
+            "help": "Path to the comparison request file",
+            "required": true,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "output",
+            "kind": "option",
+            "short": null,
+            "long": "output",
+            "value_names": [
+              "DIR"
+            ],
+            "help": "Override the output directory from the request",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
         "name": "process",
         "path": "pmoke process",
         "summary": "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)",
