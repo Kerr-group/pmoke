@@ -133,7 +133,10 @@ impl NoiseModelSource for SyntheticNoiseModelSource {
 /// One quality row per executed window (INTERFACES section 5 contract).
 ///
 /// The CSV column set is fixed: `original_center_index,time_s,
-/// scaled_design_condition,residual_rms_v,rank,status`. `jitter_applied_v2`
+/// scaled_design_condition,residual_rms_v,rank,status`. `original_center_index`
+/// is the original-sample center index (consistent with `time_s`); artifacts
+/// written before this convention carry the decimated output counter instead
+/// and must be interpreted under that old convention. `jitter_applied_v2`
 /// and `noise_mode` ride along in memory for the estimator snapshot (next
 /// slice) but are never CSV columns: a window that needed regularization is
 /// flagged `warning`, and fatal windows abort publication instead of
@@ -613,7 +616,12 @@ fn run_joint_channel(
             column_pair[1].push(estimate.xy[2 * harmonic + 1]);
         }
         rows.push(QualityRow {
-            original_center_index: center_k,
+            // Original-sample center index, consistent with time_s above:
+            // the decimated output counter (center_k) is a grid namespace,
+            // not an original-sample index. Pre-R0 artifacts recorded
+            // center_k here; readers must interpret those under the old
+            // convention (see the quality CSV contract docs).
+            original_center_index: center,
             time_s: t.value_at(center),
             scaled_design_condition: estimate.condition,
             residual_rms_v: estimate.residual_rms,
