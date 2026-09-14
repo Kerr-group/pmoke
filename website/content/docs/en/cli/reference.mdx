@@ -35,6 +35,7 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke moke`](#pmoke-moke) | Calculate the Kerr angle | core |
 | [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, signal, phase, moke | core |
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data and grid into a new directory | core |
+| [`pmoke calibrate`](#pmoke-calibrate) | Build, inspect, or validate a recorded-only calibration artifact | core |
 | [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
 | [`pmoke completions`](#pmoke-completions) | Generate shell completion script | core |
@@ -540,6 +541,63 @@ pmoke compare-lockin --request <FILE> [--output <DIR>] [-h, --help]
 | --- | :---: | --- | --- | --- |
 | `--request <FILE>` | yes | - | Path to the comparison request file | - |
 | `--output <DIR>` | - | - | Override the output directory from the request | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+## `pmoke calibrate`
+
+Build, inspect, or validate a recorded-only calibration artifact
+
+```text
+pmoke calibrate [-h, --help] <COMMAND>
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | Print help | - |
+
+
+### `pmoke calibrate build`
+
+Build an immutable calibration artifact from a recorded waveform CSV
+
+```text
+pmoke calibrate build --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | yes | - | Path to the calibration build request file | - |
+| `--output <DIR>` | - | - | Override the output directory from the request | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+### `pmoke calibrate inspect`
+
+Inspect a calibration artifact file (read-only)
+
+```text
+pmoke calibrate inspect --artifact <FILE> [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--artifact <FILE>` | yes | - | Path to the calibration artifact JSON file | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+### `pmoke calibrate validate`
+
+Validate a calibration artifact against an inference context (read-only)
+
+```text
+pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--artifact <FILE>` | yes | - | Path to the calibration artifact JSON file | - |
+| `--context <FILE>` | yes | - | Path to the TOML applicability context file | - |
 | `-h, --help` | - | - | Print help | - |
 
 

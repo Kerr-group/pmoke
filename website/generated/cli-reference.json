@@ -1512,6 +1512,179 @@
         "subcommands": []
       },
       {
+        "name": "calibrate",
+        "path": "pmoke calibrate",
+        "summary": "Build, inspect, or validate a recorded-only calibration artifact",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "build",
+            "path": "pmoke calibrate build",
+            "summary": "Build an immutable calibration artifact from a recorded waveform CSV",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "request",
+                "kind": "option",
+                "short": null,
+                "long": "request",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the calibration build request file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Override the output directory from the request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "inspect",
+            "path": "pmoke calibrate inspect",
+            "summary": "Inspect a calibration artifact file (read-only)",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "artifact",
+                "kind": "option",
+                "short": null,
+                "long": "artifact",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the calibration artifact JSON file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "validate",
+            "path": "pmoke calibrate validate",
+            "summary": "Validate a calibration artifact against an inference context (read-only)",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "artifact",
+                "kind": "option",
+                "short": null,
+                "long": "artifact",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the calibration artifact JSON file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "context",
+                "kind": "option",
+                "short": null,
+                "long": "context",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the TOML applicability context file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
         "name": "process",
         "path": "pmoke process",
         "summary": "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)",
