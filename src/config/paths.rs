@@ -113,6 +113,13 @@ impl ArtifactPaths {
             .join(format!("ch{channel}_quality.csv"))
     }
 
+    /// Frozen per-channel estimator snapshot (JSON only, never NPY).
+    pub fn lockin_estimator_json(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_estimator.json"))
+    }
+
     /// Conditional XY covariance artifact (CSV plus NPY mirror).
     pub fn lockin_covariance_csv(&self, channel: u8) -> PathBuf {
         self.analysis_dir()
@@ -370,6 +377,10 @@ impl ArtifactResolver {
 
     pub fn lockin_quality_csv(&self, channel: u8) -> PathBuf {
         self.paths.lockin_quality_csv(channel)
+    }
+
+    pub fn lockin_estimator_json(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_estimator_json(channel)
     }
 
     pub fn lockin_covariance_csv(&self, channel: u8) -> PathBuf {

@@ -110,6 +110,15 @@ pub enum Command {
     Kerr,
     /// Run all analysis steps: reference, sensor, lock-in, signal, phase, moke
     Analyze,
+    /// Compare lock-in estimators on shared data and grid into a new directory
+    CompareLockin {
+        /// Path to the comparison request file
+        #[arg(long, value_name = "FILE")]
+        request: std::path::PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<std::path::PathBuf>,
+    },
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
     #[cfg(feature = "hw-core")]
     Process,

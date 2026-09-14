@@ -358,6 +358,11 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke" => {
             "reference・sensor・lock-in・signal・phase・mokeの全解析"
         }
+        "Compare lock-in estimators on shared data and grid into a new directory" => {
+            "共有データ・gridでのlock-in推定器比較（新規directoryへ）"
+        }
+        "Path to the comparison request file" => "比較requestファイルのpath",
+        "Override the output directory from the request" => "requestの出力directoryの上書き",
         "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)" => {
             "手動pulse trigger後のfetch・lock-in・phase・moke自動解析"
         }

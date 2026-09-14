@@ -83,6 +83,7 @@ pub enum CalibrationRole {
 
 /// Half-open original-index interval `[start, end)` nominated for one role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoleInterval {
     pub role: CalibrationRole,
     pub start: u64,
@@ -93,6 +94,7 @@ pub struct RoleInterval {
 /// `index_in_role` counts blocks within the single nominating interval
 /// (interval-local); the `(start, end)` pair is the unique identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlannedBlock {
     pub role: CalibrationRole,
     pub index_in_role: usize,
@@ -103,6 +105,7 @@ pub struct PlannedBlock {
 
 /// Realized exclusion: samples or blocks dropped with an explicit reason.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlannedExclusion {
     pub start: u64,
     pub end: u64,
@@ -938,6 +941,7 @@ pub fn estimate_correlation(
 
 /// Builder provenance recorded in every artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuilderInfo {
     pub pmoke_version: String,
     pub backend_versions: BTreeMap<String, String>,
@@ -946,6 +950,7 @@ pub struct BuilderInfo {
 
 /// Channel/scale/reference binding checked before any reuse.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelBinding {
     pub channel: u32,
     pub voltage_unit: String,
@@ -961,6 +966,7 @@ pub struct ModelBinding {
 
 /// Gain/bandwidth/scale metadata; `None` is explicitly unknown, never guessed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AcquisitionMeta {
     pub device: Option<String>,
     pub gain: Option<f64>,
@@ -969,6 +975,7 @@ pub struct AcquisitionMeta {
 
 /// Phase variance table with its interpolation contract.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhaseTable {
     pub bins: usize,
     pub center_convention: String,
@@ -978,6 +985,7 @@ pub struct PhaseTable {
 
 /// Normalized correlation with taper/shrinkage/SPD evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CorrelationTable {
     pub lags: Vec<f64>,
     pub lag_step_s: f64,
@@ -991,6 +999,7 @@ pub struct CorrelationTable {
 
 /// Actual regularization values in application order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegularizationRecord {
     pub smoothing: String,
     pub shrinkage_alpha_v: f64,
@@ -1002,6 +1011,7 @@ pub struct RegularizationRecord {
 
 /// Training provenance: digests, realized intervals/blocks/roles, exclusions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrainingRecord {
     pub source_digests: Vec<String>,
     pub intervals: Vec<RoleInterval>,
@@ -1015,6 +1025,7 @@ pub struct TrainingRecord {
 
 /// Held-out validation evidence; never an SNR-improvement certificate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ValidationRecord {
     pub heldout_blocks: usize,
     pub profile_rmse_v2: Option<f64>,
@@ -1029,6 +1040,7 @@ pub struct ValidationRecord {
 /// model data; it does not promise executable correlated runtime inference
 /// (WP-4 owns that mode).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapabilityRecord {
     pub modes: Vec<String>,
     pub geometry_restrictions: Vec<String>,
