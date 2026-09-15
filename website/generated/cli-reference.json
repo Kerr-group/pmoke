@@ -1740,6 +1740,85 @@
         ]
       },
       {
+        "name": "noise",
+        "path": "pmoke noise",
+        "summary": "Recorded-only pulse-noise diagnosis (PN-M1, Issue #246)",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "diagnose",
+            "path": "pmoke noise diagnose",
+            "summary": "Plan a recorded-only noise diagnosis into a new destination",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "request",
+                "kind": "option",
+                "short": null,
+                "long": "request",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the noise diagnose request file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Override the output directory from the request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
         "name": "process",
         "path": "pmoke process",
         "summary": "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)",

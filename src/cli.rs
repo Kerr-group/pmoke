@@ -133,6 +133,11 @@ pub enum Command {
         #[command(subcommand)]
         command: CalibrateCommand,
     },
+    /// Recorded-only pulse-noise diagnosis (PN-M1, Issue #246)
+    Noise {
+        #[command(subcommand)]
+        command: NoiseCommand,
+    },
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
     #[cfg(feature = "hw-core")]
     Process,
@@ -350,6 +355,19 @@ pub enum CalibrateCommand {
         /// Path to the TOML applicability context file
         #[arg(long, value_name = "FILE")]
         context: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NoiseCommand {
+    /// Plan a recorded-only noise diagnosis into a new destination
+    Diagnose {
+        /// Path to the noise diagnose request file
+        #[arg(long, value_name = "FILE")]
+        request: PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
     },
 }
 

@@ -21,7 +21,7 @@ pub mod utils;
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use cli::{Cli, Command, ConfigCommand, ExportCommand, RawCommand};
+use cli::{Cli, Command, ConfigCommand, ExportCommand, NoiseCommand, RawCommand};
 use config::{ConfigLoad, ValidationTarget};
 
 /// Parses command-line arguments and runs pmoke.
@@ -123,6 +123,9 @@ fn run_with(args: Cli) -> Result<()> {
         Some(Command::Calibrate { command }) => {
             return commands::calibrate::run(command);
         }
+        Some(Command::Noise { command }) => {
+            return run_noise(command);
+        }
         _ => {}
     }
 
@@ -166,7 +169,8 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Doctor { .. }
                 | Command::CompareLockin { .. }
                 | Command::EvaluateLockin { .. }
-                | Command::Calibrate { .. },
+                | Command::Calibrate { .. }
+                | Command::Noise { .. },
             ) => unreachable!(),
             Some(Command::Single) => {
                 run_validated(&cfg, ValidationTarget::Single, commands::single::single)
@@ -243,7 +247,8 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Doctor { .. }
                 | Command::CompareLockin { .. }
                 | Command::EvaluateLockin { .. }
-                | Command::Calibrate { .. },
+                | Command::Calibrate { .. }
+                | Command::Noise { .. },
             ) => unreachable!(),
             Some(Command::Reference) => run_validated(
                 &cfg,
@@ -274,6 +279,10 @@ fn run_with(args: Cli) -> Result<()> {
             None => unreachable!(),
         }
     }
+}
+
+fn run_noise(command: &NoiseCommand) -> Result<()> {
+    commands::noise::run(command)
 }
 
 fn run_validated(

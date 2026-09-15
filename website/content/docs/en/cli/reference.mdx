@@ -37,6 +37,7 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data and grid into a new directory | core |
 | [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | Run the frozen paired-block M6 evaluation protocol and write a JSON report | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | Build, inspect, or validate a recorded-only calibration artifact | core |
+| [`pmoke noise`](#pmoke-noise) | Recorded-only pulse-noise diagnosis (PN-M1, Issue #246) | core |
 | [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
 | [`pmoke completions`](#pmoke-completions) | Generate shell completion script | core |
@@ -614,6 +615,34 @@ pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
 | --- | :---: | --- | --- | --- |
 | `--artifact <FILE>` | yes | - | Path to the calibration artifact JSON file | - |
 | `--context <FILE>` | yes | - | Path to the TOML applicability context file | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+## `pmoke noise`
+
+Recorded-only pulse-noise diagnosis (PN-M1, Issue #246)
+
+```text
+pmoke noise [-h, --help] <COMMAND>
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | Print help | - |
+
+
+### `pmoke noise diagnose`
+
+Plan a recorded-only noise diagnosis into a new destination
+
+```text
+pmoke noise diagnose --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | yes | - | Path to the noise diagnose request file | - |
+| `--output <DIR>` | - | - | Override the output directory from the request | - |
 | `-h, --help` | - | - | Print help | - |
 
 
