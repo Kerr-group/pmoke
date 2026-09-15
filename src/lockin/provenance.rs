@@ -518,6 +518,13 @@ fn describe_estimator_snapshots(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
         if covariance.exists() {
             depends_on.push(format!("lockin/ch{channel}_covariance.csv"));
         }
+        // R2c: the rotated covariance shares the rotated XY grid behind this
+        // snapshot's fitted deltas; registering it keeps the MOKE
+        // conditioning chain verifiable after external removal.
+        let rotated_covariance = lockin.join(format!("ch{channel}_rotated_covariance.csv"));
+        if rotated_covariance.is_file() {
+            depends_on.push(format!("lockin/ch{channel}_rotated_covariance.csv"));
+        }
         // v4: the retained calibration bytes back this snapshot's model
         // receipt; registering them keeps the exact bytes verifiable after
         // the external model file is gone.
@@ -745,6 +752,11 @@ fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
     if stem == "moke" {
         return Ok(("moke".to_string(), None));
     }
+    // R2c: conditional MOKE variance is one combined CSV (single column set
+    // across channels, mirroring the moke pattern).
+    if stem == "moke_variance" {
+        return Ok(("moke_variance".to_string(), None));
+    }
     if stem == "signal" {
         return Ok(("signal".to_string(), None));
     }
@@ -756,7 +768,9 @@ fn analysis_artifact_identity(path: &Path) -> Result<(String, Option<u8>)> {
         .and_then(|value| value.split('_').next())
         .and_then(|value| value.parse::<u8>().ok())
         .ok_or_else(|| anyhow::anyhow!("invalid analysis artifact name: {}", path.display()))?;
-    let kind = if stem.ends_with("_xy") {
+    let kind = if stem.ends_with("_rotated_covariance") {
+        "lockin_rotated_covariance"
+    } else if stem.ends_with("_xy") {
         "lockin_xy"
     } else if stem.ends_with("_rotated") {
         "lockin_rotated"

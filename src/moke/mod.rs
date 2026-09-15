@@ -8,6 +8,7 @@ use crate::constants::{LI_ROTATED_HEADER, MOKE_NAME};
 use crate::moke::moke_harmonics_analysis::{MokeHarmonicsAnalyser, MokeHarmonicsAnalysisInput};
 use crate::moke::moke_standard_analysis::{MokeStandardAnalyser, MokeStandardAnalysisInput};
 use crate::moke::save::{get_moke_headers, write_moke_results};
+use crate::phase::uncertainty::{conditional_moke_variance, read_rotated_covariance_csv};
 use crate::ui;
 use crate::{config::Config, utils::csv::read_csv};
 use anyhow::{Context, Result};
@@ -110,6 +111,16 @@ pub fn run_moke_analysis(
     let factor = cfg.moke.factor;
     let mut angle_results: Vec<Vec<f64>> = Vec::new();
     let mut vm_results: Vec<Vec<f64>> = Vec::new();
+    // R2c: conditional MOKE uncertainty is Standard-only and GLS-only. The
+    // rotated covariance shares the rotated XY grid; when it is absent
+    // (boxcar / none-policy / missing) the per-channel variance stays empty
+    // and no zeros are invented. Harmonics angles have no conditional
+    // variance yet.
+    let gls_standard = matches!(
+        cfg.lockin.estimator,
+        crate::config::LockinEstimator::JointHarmonicGls(_)
+    ) && matches!(moke_type, MokeType::Standard);
+    let mut angle_variance_results: Vec<Vec<f64>> = Vec::new();
     let pb = ui::progress("running Moke analysis", ch.len() as u64);
     for (ch_i, li_rotated_result) in ch.iter().zip(li_rotated_results.iter()) {
         pb.set_message(format!("Moke analysis ch{ch_i}"));
@@ -156,6 +167,43 @@ pub fn run_moke_analysis(
 
         angle_results.push(channel_output.angle);
         vm_results.push(channel_output.vm);
+        // R2c: per-window delta-method variance from the rotated (x1, x2)
+        // marginal (row-major indices 0, 2, 2*12+2). Malformed grids fail
+        // closed; absence yields an empty column, never zeros.
+        if gls_standard {
+            let rotated_path = paths.lockin_rotated_covariance_csv(*ch_i);
+            let variance = match read_rotated_covariance_csv(&rotated_path)? {
+                None => Vec::new(),
+                Some((cov_times, matrices)) => {
+                    if cov_times.len() != li_rotated_result[0].len() {
+                        anyhow::bail!(
+                            "rotated covariance rows ({}) differ from rotated XY rows ({}) for ch{ch_i}",
+                            cov_times.len(),
+                            li_rotated_result[0].len()
+                        );
+                    }
+                    let x1 = &li_rotated_result[0];
+                    let x2 = &li_rotated_result[2];
+                    matrices
+                        .iter()
+                        .enumerate()
+                        .map(|(row, matrix)| {
+                            conditional_moke_variance(
+                                x1[row],
+                                x2[row],
+                                matrix[0],
+                                matrix[2],
+                                matrix[2 * 12 + 2],
+                            )
+                            .with_context(|| {
+                                format!("conditional MOKE variance failed at row {row} ch{ch_i}")
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                }
+            };
+            angle_variance_results.push(variance);
+        }
         pb.inc(1);
     }
     let path = paths.moke_csv();
@@ -170,10 +218,50 @@ pub fn run_moke_analysis(
         &vm_results,
         cfg.lockin.save_npy,
     )?;
+    // R2c: conditional variance lives beside moke.csv in one combined CSV
+    // (single column set across channels); empty columns when unavailable.
+    if gls_standard {
+        write_moke_variance_csv(&paths.moke_variance_csv(), ch, &angle_variance_results)?;
+    }
 
     ui::finish_saved(pb, format!("Moke analysis results for channels {:?}", ch));
     ui::success("Moke analysis completed");
 
+    Ok(())
+}
+
+/// Writes the conditional MOKE variance artifact
+/// (`moke/moke_variance.csv`, R2c): one row per MOKE output window, one
+/// `Ch{N} angle_variance (rad^2)` column per channel. Empty columns mark
+/// explicit unavailability (boxcar / none-policy / missing covariance);
+/// non-finite variances fail closed instead of publishing zeros.
+fn write_moke_variance_csv(
+    path: &std::path::Path,
+    channels: &[u8],
+    variances: &[Vec<f64>],
+) -> Result<()> {
+    use crate::utils::csv::write_csv;
+    if channels.len() != variances.len() {
+        anyhow::bail!(
+            "moke variance channels ({}) and columns ({}) differ",
+            channels.len(),
+            variances.len()
+        );
+    }
+    let rows = variances.first().map_or(0, Vec::len);
+    if variances.iter().any(|column| column.len() != rows) {
+        anyhow::bail!("moke variance columns have unequal lengths");
+    }
+    if variances.iter().flatten().any(|value| !value.is_finite()) {
+        anyhow::bail!("moke variance has non-finite entries");
+    }
+    let headers: Vec<String> = channels
+        .iter()
+        .map(|channel| format!("Ch{channel} angle_variance (rad^2)"))
+        .collect();
+    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let columns: Vec<&[f64]> = variances.iter().map(Vec::as_slice).collect();
+    write_csv(path, &header_refs, &columns)?;
     Ok(())
 }
 
