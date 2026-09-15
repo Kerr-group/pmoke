@@ -68,6 +68,23 @@ for (const locale of ['en', 'ja'] as const) {
   });
 }
 
+test('browser worker runs the bounded joint GLS route and keeps the capability visible', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser joint GLS gate');
+  await page.goto('/pmoke/en/docs/interactive/waveform-analyzer/');
+  const analyzer = page.locator('.waveform-analyzer');
+  await expect(analyzer).toHaveAttribute('data-state', 'complete', { timeout: 20_000 });
+  await analyzer.getByLabel('ESTIMATOR').selectOption('joint_harmonic_gls');
+  await expect(analyzer.locator('strong').filter({ hasText: 'Joint harmonic GLS' })).toBeVisible();
+  await analyzer.getByLabel('Samples').fill('4000');
+  await analyzer.getByLabel('Stride').fill('20');
+  await analyzer.getByRole('button', { name: 'Run analysis' }).click();
+  await expect(analyzer).toHaveAttribute('data-state', 'complete', { timeout: 20_000 });
+  await expect(analyzer.locator('strong').filter({ hasText: 'Joint harmonic GLS' })).toBeVisible();
+  await expect(analyzer.locator('canvas')).toHaveCount(6);
+  await expect(analyzer.getByText('Native-equivalent', { exact: true })).toBeVisible();
+});
+
+
 test('maximum demo remains responsive and reports bounded output', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'single-browser runtime gate');
   await page.goto('/pmoke/en/docs/interactive/waveform-analyzer/');

@@ -1,5 +1,6 @@
 let wasm;
 let limits;
+let activeGeneration = 0;
 
 self.onmessage = async (event) => {
   const message = event.data;
@@ -9,11 +10,20 @@ self.onmessage = async (event) => {
   }
   if (message?.type !== 'run') return;
   const generation = message.generation;
+  activeGeneration = generation;
   const startedAt = performance.now();
   try {
     if (!wasm) throw new Error('worker_not_ready: analysis core is not initialized');
     progress(generation, 0.04, 'prepare');
     const source = prepareSource(message.source, message.parameters);
+    const algorithm = message.parameters.estimator ?? message.parameters.algorithm ?? 'boxcar_legacy';
+    if (algorithm === 'joint_harmonic_gls') {
+      await runJointAnalysis(generation, startedAt, source, message.parameters);
+      return;
+    }
+    if (algorithm !== 'boxcar_legacy') {
+      throw new Error(`unsupported_estimator_mode: unknown browser estimator ${algorithm}`);
+    }
     const signal = source.signal;
     const parameters = message.parameters;
     const estimatedPoints = Math.ceil(signal.length / parameters.strideSamples) * 6;
@@ -29,6 +39,7 @@ self.onmessage = async (event) => {
     const harmonics = [];
     let metadata;
     for (let harmonic = 1; harmonic <= 6; harmonic += 1) {
+      ensureGeneration(generation);
       progress(generation, 0.08 + harmonic * 0.105, `lockin:${harmonic}/6`);
       const packed = wasm.analyze_boxcar_legacy_interleaved(
         signal,
@@ -153,12 +164,231 @@ self.onmessage = async (event) => {
   }
 };
 
+async function runJointAnalysis(generation, startedAt, source, parameters) {
+  const signal = source.signal;
+  const referenceFrequencyHz = parameters.referenceFrequencyHz;
+  const sampleRateHz = source.sampleRateHz;
+  const sampleIntervalS = 1 / sampleRateHz;
+  const halfWindowSamples = Math.max(
+    1,
+    Math.floor((parameters.halfWindowCycles * sampleRateHz) / referenceFrequencyHz),
+  );
+  const halfTaps = halfWindowSamples + 1;
+  const windowSamples = 2 * halfTaps + 1;
+  if (windowSamples > limits.max_joint_window_samples) {
+    throw new Error(
+      `resource_limit_exceeded: joint window holds ${windowSamples} samples above cap ${limits.max_joint_window_samples}`,
+    );
+  }
+  const stride = Math.max(1, Math.round(parameters.strideSamples));
+  const gridSamples = Math.floor((signal.length - 1) / stride) + 1;
+  const firstOutput = 2 + Math.floor((halfWindowSamples + 1) / stride);
+  const lastOutput = gridSamples - firstOutput;
+  if (lastOutput < firstOutput) {
+    throw new Error('insufficient_support: joint output grid is empty after edge trimming');
+  }
+  const outputSamples = lastOutput - firstOutput + 1;
+  const estimatedPoints = outputSamples * 6;
+  if (estimatedPoints > limits.max_total_harmonic_points) {
+    throw new Error(
+      `output_too_large: estimated harmonic points ${estimatedPoints} exceed ${limits.max_total_harmonic_points}`,
+    );
+  }
+
+  const fitHarmonics = Uint32Array.from({ length: 12 }, (_, index) => index + 1);
+  const outputHarmonics = Uint32Array.from({ length: 6 }, (_, index) => index + 1);
+  const noiseMode = parameters.noiseMode ?? 'identity';
+  const varianceBins = Float64Array.from(parameters.varianceBins ?? []);
+  const correlationLags = Float64Array.from(parameters.correlationLags ?? []);
+  const referenceVarianceV2 = parameters.referenceVarianceV2 ?? 1;
+  if (!Number.isFinite(referenceVarianceV2) || referenceVarianceV2 <= 0) {
+    throw new Error('invalid_model: referenceVarianceV2 must be finite and positive');
+  }
+
+  const x = Array.from({ length: 6 }, () => new Float64Array(outputSamples));
+  const y = Array.from({ length: 6 }, () => new Float64Array(outputSamples));
+  const residualRms = new Float64Array(outputSamples);
+  const condition = new Float64Array(outputSamples);
+  const jitter = new Float64Array(outputSamples);
+  const rank = new Float64Array(outputSamples);
+  const time = new Float64Array(outputSamples);
+  for (let outputIndex = 0; outputIndex < outputSamples; outputIndex += 1) {
+    ensureGeneration(generation);
+    const center = (firstOutput + outputIndex) * stride;
+    const lo = center - halfTaps;
+    const hi = center + halfTaps;
+    if (lo < 0 || hi >= signal.length) {
+      throw new Error(`invalid_window: joint support [${lo},${hi}] exceeds input`);
+    }
+    const packed = wasm.analyze_joint_window_packed(
+      signal.slice(lo, hi + 1),
+      source.startTimeS + lo * sampleIntervalS,
+      sampleIntervalS,
+      referenceFrequencyHz,
+      parameters.referencePhaseRad ?? 0,
+      fitHarmonics,
+      outputHarmonics,
+      noiseMode,
+      referenceVarianceV2,
+      varianceBins,
+      correlationLags,
+      parameters.correlationLagStepS ?? sampleIntervalS,
+    );
+    const expectedLength = 6 * 2 + 4 + 12;
+    if (packed.length !== expectedLength) {
+      throw new Error(`invalid_wasm_output: joint buffer length ${packed.length} != ${expectedLength}`);
+    }
+    for (let harmonic = 0; harmonic < 6; harmonic += 1) {
+      x[harmonic][outputIndex] = packed[harmonic * 2];
+      y[harmonic][outputIndex] = packed[harmonic * 2 + 1];
+    }
+    residualRms[outputIndex] = packed[12];
+    rank[outputIndex] = packed[13];
+    condition[outputIndex] = packed[14];
+    jitter[outputIndex] = packed[15];
+    time[outputIndex] = source.startTimeS + center * sampleIntervalS;
+    if ((outputIndex & 15) === 0) {
+      progress(generation, 0.08 + (0.58 * outputIndex) / outputSamples, `gls:${outputIndex}/${outputSamples}`);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  const harmonics = [];
+  for (let harmonic = 0; harmonic < 6; harmonic += 1) {
+    ensureGeneration(generation);
+    const rotatedPacked = wasm.rotate_phase_interleaved(x[harmonic], y[harmonic], parameters.rotationRad ?? 0);
+    const rotated = deinterleavePair(rotatedPacked);
+    harmonics.push({
+      time,
+      x: x[harmonic],
+      y: y[harmonic],
+      inPhase: rotated.first,
+      outOfPhase: rotated.second,
+      metadata: { outputSamples, sampleRateHz, outputRateHz: sampleRateHz / stride, halfWindowS: halfWindowSamples * sampleIntervalS },
+    });
+  }
+
+  progress(generation, 0.72, 'moke');
+  const anglePacked = wasm.calculate_harmonics_moke_packed(
+    harmonics[1].inPhase,
+    harmonics[2].inPhase,
+    harmonics[3].inPhase,
+    harmonics[5].inPhase,
+    parameters.angleFactor ?? 1,
+  );
+  const modulationDepth = anglePacked[0];
+  const angle = anglePacked.slice(1);
+  const vm = wasm.calculate_harmonics_vm_packed(
+    harmonics[1].inPhase,
+    harmonics[2].inPhase,
+    modulationDepth,
+  );
+  const signalMean = new Float64Array(outputSamples);
+  for (let outputIndex = 0; outputIndex < outputSamples; outputIndex += 1) {
+    const center = (firstOutput + outputIndex) * stride;
+    const lo = center - halfTaps;
+    const hi = center + halfTaps;
+    let total = 0;
+    for (let index = lo; index <= hi; index += 1) total += signal[index];
+    signalMean[outputIndex] = total / windowSamples;
+  }
+  const selectedHarmonic = Math.min(6, Math.max(1, Math.round(parameters.harmonic ?? 1)));
+  const selected = harmonics[selectedHarmonic - 1];
+  if (signalMean.length !== selected.time.length) {
+    throw new Error(`invalid_wasm_output: signal mean length ${signalMean.length} mismatches joint grid ${selected.time.length}`);
+  }
+  const magnitude = new Float64Array(selected.x.length);
+  const phase = new Float64Array(selected.x.length);
+  for (let index = 0; index < selected.x.length; index += 1) {
+    magnitude[index] = Math.hypot(selected.x[index], selected.y[index]);
+    phase[index] = Math.atan2(selected.y[index], selected.x[index]);
+  }
+  const responsePacked = wasm.boxcar_response_interleaved(
+    halfWindowSamples * sampleIntervalS,
+    Math.min(3 * referenceFrequencyHz, 0.5 * sampleRateHz),
+    256,
+  );
+  const response = deinterleavePair(responsePacked);
+  progress(generation, 0.9, 'decimate');
+  const supportS = 2 * halfWindowSamples * sampleIntervalS;
+  const display = {
+    input: decimateInput(signal, source.startTimeS, sampleRateHz, 1_200),
+    lockin: decimateAligned(
+      [selected.time, selected.x, selected.y, magnitude, phase, angle, vm, signalMean],
+      1_200,
+    ),
+    response: { frequency: response.first, magnitude: response.second },
+  };
+  const warnings = [];
+  if (parameters.halfWindowCycles > 4) warnings.push('long_window');
+  if (sampleRateHz / stride < 20 * referenceFrequencyHz) warnings.push('sparse_output');
+  if (source.kind === 'upload') warnings.push('local_input');
+  const result = {
+    source: {
+      kind: source.kind,
+      name: source.name,
+      samples: signal.length,
+      startTimeS: source.startTimeS,
+      sampleRateHz,
+    },
+    parameters,
+    metadata: {
+      outputSamples,
+      outputRateHz: sampleRateHz / stride,
+      halfWindowS: halfWindowSamples * sampleIntervalS,
+      supportS,
+      estimatedEnbwHz: 1 / Math.max(supportS, Number.EPSILON),
+      firstInputIndex: firstOutput * stride,
+      lastInputIndex: lastOutput * stride,
+      selectedHarmonic,
+      modulationDepth,
+      elapsedMs: performance.now() - startedAt,
+      algorithm: 'joint_harmonic_gls',
+      parity: 'wasm-joint',
+      quality: { residualRms, rank, condition, jitter, noiseMode },
+    },
+    warnings,
+    display,
+    export: {
+      time: selected.time,
+      x: selected.x,
+      y: selected.y,
+      inPhase: selected.inPhase,
+      outOfPhase: selected.outOfPhase,
+      magnitude,
+      phase,
+      angle,
+      vm,
+      signalMean,
+    },
+  };
+  ensureGeneration(generation);
+  const transfer = collectBuffers(result);
+  progress(generation, 1, 'complete');
+  self.postMessage({ type: 'result', generation, result }, transfer);
+}
+
+function ensureGeneration(generation) {
+  if (generation !== activeGeneration) {
+    throw new Error('cancelled: stale worker generation');
+  }
+}
+
 async function initialize(basePath) {
   try {
     wasm = await import(`${basePath}/wasm/pmoke_web_wasm.js`);
     await wasm.default();
     limits = JSON.parse(wasm.analysis_limits_json());
-    self.postMessage({ type: 'ready', limits, build: wasm.build_info() });
+    self.postMessage({
+      type: 'ready',
+      limits,
+      capabilities: {
+        estimators: ['boxcar_legacy', 'joint_harmonic_gls'],
+        noiseModes: ['identity', 'phase_diagonal', 'stationary_correlated', 'phase_correlated'],
+        cancellation: 'worker_restart_and_generation_filter',
+      },
+      build: wasm.build_info(),
+    });
   } catch (error) {
     self.postMessage({ type: 'error', generation: 0, message: normalizeError(error) });
   }

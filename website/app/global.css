@@ -1692,8 +1692,9 @@ html:not(.dark) .capability-grid p { color: #52615f; }
 .number-control > span { display: block; margin-bottom: 0.3rem; color: var(--color-fd-muted-foreground); font-size: 0.59rem; font-weight: 650; text-transform: uppercase; }
 .number-control > div { height: 30px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 1px solid var(--color-fd-border); border-radius: 3px; background: var(--color-fd-background); }
 .number-control input { width: 100%; min-width: 0; height: 28px; padding: 0 0.45rem; border: 0; outline: 0; background: transparent; color: var(--color-fd-foreground); font: 0.67rem/1 var(--font-mono), monospace; }
-.number-control input:focus { box-shadow: inset 0 -2px var(--cyan); }
-.number-control input:disabled { opacity: 0.38; }
+.number-control select { width: 100%; min-width: 0; height: 28px; padding: 0 0.35rem; border: 0; outline: 0; background: transparent; color: var(--color-fd-foreground); font: 0.61rem/1 var(--font-mono), monospace; }
+.number-control input:focus, .number-control select:focus { box-shadow: inset 0 -2px var(--cyan); }
+.number-control input:disabled, .number-control select:disabled { opacity: 0.38; }
 .number-control i { padding: 0 0.4rem; border-left: 1px solid var(--color-fd-border); color: var(--color-fd-muted-foreground); font: normal 0.54rem/1 var(--font-mono), monospace; }
 
 .unsupported-contract { min-height: 35px; gap: 0.65rem; color: var(--color-fd-muted-foreground); font-size: 0.58rem; }
