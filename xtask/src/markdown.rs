@@ -371,9 +371,16 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Build, inspect, or validate a recorded-only calibration artifact" => {
             "記録済みデータからの較正artifactのbuild・inspect・validate"
         }
-        "Recorded-only pulse-noise diagnosis (PN-M1, Issue #246)" => {
-            "記録済みデータのパルスノイズ診断（PN-M1、Issue #246）"
+        "Recorded-only pulse-noise diagnosis and comparison (PN-M1/M2, Issue #246)" => {
+            "記録済みデータのパルスノイズ診断・比較（PN-M1/M2、Issue #246）"
         }
+        "Recorded-only pulse-noise comparison (PN-M2, Issue #246)" => {
+            "記録済みデータのパルスノイズ比較（PN-M2、Issue #246）"
+        }
+        "Run the frozen global calibration plus controlled comparison workflow" => {
+            "凍結グローバル較正と比較ワークフローの実行"
+        }
+        "Path to the noise compare request file" => "ノイズ比較requestファイルのpath",
         "Plan a recorded-only noise diagnosis into a new destination" => {
             "記録済みデータのノイズ診断計画（新規destinationへ）"
         }
