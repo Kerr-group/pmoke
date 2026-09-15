@@ -22,6 +22,7 @@ pub mod phase;
 #[cfg(feature = "hw-core")]
 pub mod process;
 pub mod raw;
+pub mod recovery;
 pub mod reference;
 pub mod run_dir;
 #[cfg(feature = "hw-core")]
