@@ -92,9 +92,8 @@ jobs:
       - name: Test Python utilities
         run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s scripts -p "test_*.py"
 
-      - name: Check
-        run: cargo check --locked --workspace --all-targets --all-features
-
+      # `cargo check` is intentionally omitted: `cargo clippy` below type-checks
+      # the identical target set, so a separate check would only recompile it.
       - name: Test
         run: cargo test --locked --workspace --lib --bins --tests --examples --all-features
 
@@ -198,27 +197,21 @@ jobs:
           shared-key: linux-full-hardware
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Check gpib-rs
-        run: cargo check --locked -p gpib-rs --lib --bins --tests --examples
-
+      # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Test gpib-rs
         run: cargo test --locked -p gpib-rs --lib --bins --tests --examples
 
       - name: Lint gpib-rs
         run: cargo clippy --locked -p gpib-rs --lib --bins --tests --examples -- -D warnings
 
-      - name: Check instruments gpib
-        run: cargo check --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib
-
+      # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Test instruments gpib
         run: cargo test --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib
 
       - name: Lint instruments gpib
         run: cargo clippy --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib -- -D warnings
 
-      - name: Check pmoke Linux full build
-        run: cargo check --locked -p pmoke --lib --bins --tests --examples
-
+      # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Test pmoke Linux full build
         run: cargo test --locked -p pmoke --lib --bins --tests --examples
 
@@ -254,21 +247,15 @@ jobs:
           shared-key: windows-full
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Check gpib-rs VISA bindings
-        run: cargo check --locked -p gpib-rs --lib
-
+      # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Lint gpib-rs VISA bindings
         run: cargo clippy --locked -p gpib-rs --lib -- -D warnings
 
-      - name: Check instruments VISA integration
-        run: cargo check --locked -p instruments --lib --no-default-features --features gpib
-
+      # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Lint instruments VISA integration
         run: cargo clippy --locked -p instruments --lib --no-default-features --features gpib -- -D warnings
 
-      - name: Check pmoke Windows full build
-        run: cargo check --locked -p pmoke --all-targets
-
+      # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Lint pmoke Windows full build
         run: cargo clippy --locked -p pmoke --all-targets -- -D warnings
 
@@ -354,7 +341,7 @@ jobs:
           shared-key: feature-suite-${{ matrix.os }}-${{ matrix.cache-key }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Check, test, and lint feature profiles
+      - name: Test and lint feature profiles
         shell: bash
         env:
           FEATURE_PROFILES: ${{ matrix.profiles }}
@@ -365,9 +352,7 @@ jobs:
             profile_status=0
             read -r -a cargo_flags <<< "${flags}"
             echo "::group::${package} ${label}"
-            if ! cargo check --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}"; then
-              profile_status=1
-            fi
+            # No `cargo check`: `cargo clippy` below checks identical targets.
             if ! cargo test --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}"; then
               profile_status=1
             fi
@@ -433,11 +418,13 @@ jobs:
           shared-key: analysis-${{ matrix.os }}-${{ matrix.python }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Check analysis-only targets
-        run: cargo check --locked -p pmoke --all-targets --no-default-features
-
+      # `cargo check` is intentionally omitted: `cargo clippy` below type-checks
+      # the identical target set, so a separate check would only recompile it.
+      # The test scope excludes benches: `cargo test --all-targets` executed
+      # benches/performance.rs (~25 min per job), which stays covered by the
+      # performance-smoke job and the scheduled performance workflow instead.
       - name: Test analysis-only build
-        run: cargo test --locked -p pmoke --all-targets --no-default-features
+        run: cargo test --locked -p pmoke --lib --bins --tests --examples --no-default-features
 
       - name: Lint analysis-only build
         run: cargo clippy --locked -p pmoke --all-targets --no-default-features -- -D warnings
