@@ -120,6 +120,15 @@ impl ArtifactPaths {
             .join(format!("ch{channel}_estimator.json"))
     }
 
+    /// Retained exact calibration model bytes per channel (v4 manifests):
+    /// the validated artifact bytes the loader hashed, so staged reruns
+    /// survive external model removal.
+    pub fn lockin_calibration_json(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_calibration.json"))
+    }
+
     /// Conditional XY covariance artifact (CSV plus NPY mirror).
     pub fn lockin_covariance_csv(&self, channel: u8) -> PathBuf {
         self.analysis_dir()
@@ -381,6 +390,10 @@ impl ArtifactResolver {
 
     pub fn lockin_estimator_json(&self, channel: u8) -> PathBuf {
         self.paths.lockin_estimator_json(channel)
+    }
+
+    pub fn lockin_calibration_json(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_calibration_json(channel)
     }
 
     pub fn lockin_covariance_csv(&self, channel: u8) -> PathBuf {

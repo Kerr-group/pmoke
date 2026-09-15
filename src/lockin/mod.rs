@@ -34,6 +34,9 @@ pub struct LockinProcessOutput {
     pub covariance: Option<Vec<crate::lockin::joint::XyCovariances>>,
     /// Per-channel frozen estimator snapshots; None for boxcar_legacy.
     pub estimator_snapshots: Option<Vec<crate::lockin::estimator_snapshot::EstimatorSnapshot>>,
+    /// Per-channel retained calibration bindings (exact validated bytes);
+    /// None for boxcar_legacy.
+    pub bindings: Option<Vec<crate::lockin::joint::ModelBinding>>,
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
     pub provenance: LockinProvenance,
@@ -154,10 +157,11 @@ pub fn run_li<'a>(
     // covariance serialization (none omits the artifact entirely). The
     // manifest refresh downstream registers both kinds through the real
     // consumer path; boxcar executions publish neither.
-    if let (Some(quality), Some(covariance), Some(snapshots)) = (
+    if let (Some(quality), Some(covariance), Some(snapshots), Some(bindings)) = (
         &lockin_output.quality,
         &lockin_output.covariance,
         &lockin_output.estimator_snapshots,
+        &lockin_output.bindings,
     ) {
         use crate::lockin::estimator_snapshot::write_estimator_json;
         use crate::lockin::joint::{write_covariance_csv, write_covariance_npy, write_quality_csv};
@@ -167,14 +171,34 @@ pub fn run_li<'a>(
                 crate::config::GlsCovarianceOutput::None
             }
         };
-        for (((sig_ch, rows), covariances), snapshot) in signal_ch
+        for ((((sig_ch, rows), covariances), snapshot), binding) in signal_ch
             .iter()
             .zip(quality.iter())
             .zip(covariance.iter())
             .zip(snapshots.iter())
+            .zip(bindings.iter())
         {
             write_quality_csv(&paths.lockin_quality_csv(*sig_ch), rows)?;
             write_estimator_json(&paths.lockin_estimator_json(*sig_ch), snapshot)?;
+            // v4 retention: persist the exact validated calibration bytes
+            // the loader hashed, so staged reruns survive external model
+            // removal (synthetic sources carry no bytes: nothing to retain).
+            if let Some(bytes) = binding.bytes.as_ref() {
+                let retained = paths.lockin_calibration_json(*sig_ch);
+                if !retained.exists() {
+                    if let Some(parent) = retained.parent() {
+                        std::fs::create_dir_all(parent).with_context(|| {
+                            format!(
+                                "failed to create calibration retention dir: {}",
+                                parent.display()
+                            )
+                        })?;
+                    }
+                    std::fs::write(&retained, bytes).with_context(|| {
+                        format!("failed to retain calibration bytes: {}", retained.display())
+                    })?;
+                }
+            }
             if !matches!(mode, crate::config::GlsCovarianceOutput::None) {
                 let times: Vec<f64> = rows.iter().map(|row| row.time_s).collect();
                 write_covariance_csv(
@@ -297,6 +321,7 @@ fn li_process_joint<'a>(
         quality: Some(output.quality),
         covariance: Some(output.covariance),
         estimator_snapshots: Some(output.snapshots),
+        bindings: Some(output.bindings),
         base_index_range: output.base_index_range,
         output_index_range: output.output_index_range,
         provenance: output.provenance,
@@ -461,6 +486,7 @@ pub fn li_process_boxcar<'a>(
         quality: None,
         covariance: None,
         estimator_snapshots: None,
+        bindings: None,
         base_index_range: base_index_range.unwrap_or((0, 0)),
         output_index_range: output_index_range.unwrap_or((0, 0)),
         provenance: provenance

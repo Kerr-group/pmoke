@@ -501,3 +501,99 @@ fn incompatible_artifact_contents_fail_after_hashing() {
     assert!(source.load(CHANNEL, GlsNoiseMode::PhaseCorrelated).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn retained_calibration_survives_external_removal() {
+    use crate::config::{
+        GlsCovarianceOutput, GlsFailurePolicy, GlsNoiseMode, JointHarmonicGlsConfig,
+    };
+    use crate::config::{LockinEstimator, LockinWindow};
+    use crate::lockin::run_li;
+    use crate::test_support::test_config;
+    use crate::utils::time_axis::TimeAxisRef;
+    use std::f64::consts::PI;
+
+    // v4 retention: the exact validated artifact bytes are persisted under
+    // analysis/lockin/ch3_calibration.json, so the run stays verifiable
+    // after the external model file is removed.
+    let dir = temp_dir("retained");
+    let json = artifact_json();
+    let (_, digest) = write_case(&dir, "ch3.json", json.as_bytes());
+
+    let mut cfg = test_config(vec![1], vec![3]);
+    cfg.roles.reference_ch = 2;
+    cfg.source_path = dir.join("config.toml");
+    cfg.set_artifact_root(dir.clone());
+    cfg.lockin.workers = 1;
+    cfg.lockin.stride_samples = 10;
+    cfg.lockin.lpf_half_window_cycles = 1.0;
+    cfg.lockin.window = LockinWindow::legacy_boxcar(1.0);
+    cfg.lockin.estimator = LockinEstimator::JointHarmonicGls(JointHarmonicGlsConfig {
+        fit_harmonics: (1..=12).collect(),
+        output_harmonics: (1..=6).collect(),
+        envelope_degree: 0,
+        noise_mode: GlsNoiseMode::Identity,
+        covariance_output: GlsCovarianceOutput::Diagonal,
+        failure_policy: GlsFailurePolicy::Error,
+        calibrations: vec![EstimatorCalibration {
+            channel: CHANNEL,
+            path: "ch3.json".to_string(),
+            sha256: digest.clone(),
+        }],
+    });
+
+    let dt = DT;
+    let samples = 3_000usize;
+    let time: Vec<f64> = (0..samples).map(|index| index as f64 * dt).collect();
+    let sensor: Vec<f64> = time.iter().map(|t| 0.001 * t).collect();
+    let reference: Vec<f64> = time.iter().map(|t| (2.0 * PI * F_REF * t).sin()).collect();
+    let signal: Vec<f64> = time
+        .iter()
+        .map(|t| (2.0 * PI * F_REF * t + 0.3).sin())
+        .collect();
+    let data = vec![sensor, reference, signal];
+
+    run_li(&cfg, TimeAxisRef::Explicit(&time), &data).unwrap();
+    let paths = cfg.paths();
+    let retained = paths.lockin_calibration_json(3);
+    assert!(retained.is_file());
+    // Byte identity with the external source plus digest agreement.
+    assert_eq!(std::fs::read(&retained).unwrap(), json.as_bytes());
+    assert_eq!(
+        crate::utils::checksum::file_sha256(&retained).unwrap(),
+        digest
+    );
+    // Manifest registration through the real consumer, with schema v4.
+    std::fs::write(paths.analysis_manifest(), "schema_version = 3\n").unwrap();
+    std::fs::write(paths.analysis_source_config(), b"version = 3\n").unwrap();
+    std::fs::write(paths.analysis_resolved_config(), b"version = 3\n").unwrap();
+    crate::lockin::provenance::refresh_analysis_manifest_outputs(&cfg, "li").unwrap();
+    let manifest = std::fs::read_to_string(paths.analysis_manifest()).unwrap();
+    let value: toml::Value = toml::from_str(&manifest).unwrap();
+    assert_eq!(value["schema_version"].as_integer(), Some(4));
+    let artifacts = value["artifacts"].as_array().unwrap();
+    let calibration = artifacts
+        .iter()
+        .find(|artifact| artifact["kind"].as_str() == Some("lockin_calibration"))
+        .expect("lockin_calibration artifact missing");
+    assert_eq!(calibration["channel"].as_integer(), Some(3));
+    assert!(
+        calibration["format"]
+            .as_str()
+            .is_some_and(|format| format == format!("json;sha256={digest}"))
+    );
+    // External removal changes nothing about the retained bytes.
+    std::fs::remove_file(dir.join("ch3.json")).unwrap();
+    assert_eq!(std::fs::read(&retained).unwrap(), json.as_bytes());
+    crate::lockin::provenance::refresh_analysis_manifest_outputs(&cfg, "li").unwrap();
+    let manifest = std::fs::read_to_string(paths.analysis_manifest()).unwrap();
+    let value: toml::Value = toml::from_str(&manifest).unwrap();
+    assert!(
+        value["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|artifact| artifact["kind"].as_str() == Some("lockin_calibration"))
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

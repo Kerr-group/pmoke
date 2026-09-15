@@ -10,7 +10,10 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-pub(crate) const ANALYSIS_MANIFEST_SCHEMA_VERSION: u32 = 3;
+pub(crate) const ANALYSIS_MANIFEST_SCHEMA_VERSION: u32 = 4;
+/// Historical schema-3 manifests are still accepted by readers (the reader
+/// range `1..=current` covers them); v4 adds the retained calibration model
+/// bytes (kind `lockin_calibration`, see `describe_calibration_models`).
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LockinProvenance {
@@ -454,6 +457,9 @@ fn describe_analysis_artifacts(
 /// receipt, geometry, quality consistency); a corrupt snapshot fails
 /// refresh instead of registering silently. Covariance is listed as a
 /// dependency only when the artifact exists (serialization `none` omits it).
+/// Retained calibration bytes (`lockin/ch{N}_calibration.json`, v4) are
+/// registered as `lockin_calibration` with a sha256 digest so staged reruns
+/// can verify the exact model bytes after external removal.
 fn describe_estimator_snapshots(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
     let lockin = dir.join("lockin");
     if !lockin.exists() {
@@ -512,6 +518,13 @@ fn describe_estimator_snapshots(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
         if covariance.exists() {
             depends_on.push(format!("lockin/ch{channel}_covariance.csv"));
         }
+        // v4: the retained calibration bytes back this snapshot's model
+        // receipt; registering them keeps the exact bytes verifiable after
+        // the external model file is gone.
+        let retained = lockin.join(format!("ch{channel}_calibration.json"));
+        if retained.is_file() {
+            depends_on.push(format!("lockin/ch{channel}_calibration.json"));
+        }
         artifacts.push(AnalysisArtifact {
             kind: "lockin_estimator".to_string(),
             channel: Some(channel),
@@ -529,6 +542,67 @@ fn describe_estimator_snapshots(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
                 Some(depends_on)
             },
             format: Some("json".to_string()),
+        });
+    }
+    artifacts.extend(describe_calibration_models(dir)?);
+    Ok(artifacts)
+}
+
+/// Registers retained calibration model bytes (`lockin/ch{N}_calibration.json`,
+/// kind `lockin_calibration`, v4 only): exact validated bytes the loader
+/// hashed, with a sha256 digest. Schema-3 manifests never list this kind.
+fn describe_calibration_models(dir: &Path) -> Result<Vec<AnalysisArtifact>> {
+    let lockin = dir.join("lockin");
+    if !lockin.exists() {
+        return Ok(Vec::new());
+    }
+    let mut paths: Vec<std::path::PathBuf> = fs::read_dir(&lockin)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension().and_then(|value| value.to_str()) == Some("json")
+                && path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| stem.starts_with("ch") && stem.ends_with("_calibration"))
+        })
+        .collect();
+    paths.sort();
+    let mut artifacts = Vec::with_capacity(paths.len());
+    for path in paths {
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("");
+        let channel = stem
+            .strip_prefix("ch")
+            .and_then(|value| value.split('_').next())
+            .and_then(|value| value.parse::<u8>().ok());
+        let Some(channel) = channel else {
+            bail!(
+                "retained calibration filename does not carry a channel: {}",
+                path.display()
+            );
+        };
+        let bytes = fs::read(&path)
+            .with_context(|| format!("failed to read retained calibration: {}", path.display()))?;
+        let digest = crate::utils::checksum::sha256_hex(&bytes);
+        let relative = path
+            .strip_prefix(dir)
+            .context("failed to relativize retained calibration")?;
+        let file = relative.to_string_lossy().replace('\\', "/");
+        artifacts.push(AnalysisArtifact {
+            kind: "lockin_calibration".to_string(),
+            channel: Some(channel),
+            csv: None,
+            file: Some(file),
+            npy: None,
+            column_set: None,
+            rows: None,
+            columns: None,
+            dtype: None,
+            order: None,
+            depends_on: None,
+            format: Some(format!("json;sha256={digest}")),
         });
     }
     Ok(artifacts)
