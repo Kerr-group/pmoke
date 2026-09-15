@@ -904,7 +904,9 @@ fn read_raw_range(spec: &RawChannelFile, start: u64, end: u64) -> Result<Vec<f64
     file.read_exact(&mut bytes)
         .with_context(|| format!("cannot read raw channel range: {}", spec.path.display()))?;
     Ok(bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|word| {
             let raw = u16::from_le_bytes([word[0], word[1]]);
             spec.scale.value_at(raw)
