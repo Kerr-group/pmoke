@@ -119,6 +119,15 @@ pub enum Command {
         #[arg(long, value_name = "DIR")]
         output: Option<std::path::PathBuf>,
     },
+    /// Run the frozen paired-block M6 evaluation protocol and write a JSON report
+    EvaluateLockin {
+        /// Path to the evaluation request file
+        #[arg(long, value_name = "FILE")]
+        request: std::path::PathBuf,
+        /// Write the report to FILE instead of beside the request
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+    },
     /// Build, inspect, or validate a recorded-only calibration artifact
     Calibrate {
         #[command(subcommand)]

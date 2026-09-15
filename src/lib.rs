@@ -117,6 +117,9 @@ fn run_with(args: Cli) -> Result<()> {
         Some(Command::CompareLockin { request, output }) => {
             return commands::compare::run_compare(request, output.as_deref());
         }
+        Some(Command::EvaluateLockin { request, output }) => {
+            return commands::evaluate::run_evaluate(request, output.as_deref());
+        }
         Some(Command::Calibrate { command }) => {
             return commands::calibrate::run(command);
         }
@@ -162,6 +165,7 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Export { .. }
                 | Command::Doctor { .. }
                 | Command::CompareLockin { .. }
+                | Command::EvaluateLockin { .. }
                 | Command::Calibrate { .. },
             ) => unreachable!(),
             Some(Command::Single) => {
@@ -238,6 +242,7 @@ fn run_with(args: Cli) -> Result<()> {
                 | Command::Export { .. }
                 | Command::Doctor { .. }
                 | Command::CompareLockin { .. }
+                | Command::EvaluateLockin { .. }
                 | Command::Calibrate { .. },
             ) => unreachable!(),
             Some(Command::Reference) => run_validated(
