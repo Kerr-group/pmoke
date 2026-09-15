@@ -520,6 +520,7 @@ impl NoiseModelSource for FileNoiseModelSource {
                 path: path.display().to_string(),
                 sha256: entry.sha256.clone(),
                 noise_mode,
+                bytes: Some(bytes),
             },
         ))
     }

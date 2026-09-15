@@ -21,12 +21,15 @@ use pmoke_analysis_core::{
 pub const JOINT_SOLVER_ID: &str = "joint-direct-qr/1";
 
 /// Immutable model binding receipt: which artifact bytes back a channel.
+/// `bytes` carries the exact validated artifact bytes the loader hashed
+/// (v4 retention); `None` for synthetic sources that hold no file bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelBinding {
     pub channel: u8,
     pub path: String,
     pub sha256: String,
     pub noise_mode: GlsNoiseMode,
+    pub bytes: Option<Vec<u8>>,
 }
 
 /// Noise-model provider seam. The file-backed calibration loader arrives in
@@ -72,6 +75,7 @@ impl NoiseModelSource for SyntheticNoiseModelSource {
             path: format!("synthetic:{}:ch{channel}", self.label),
             sha256: "synthetic".to_string(),
             noise_mode,
+            bytes: None,
         };
         let model = match noise_mode {
             GlsNoiseMode::Identity => NoiseModel {
@@ -220,6 +224,8 @@ pub struct JointRunOutput {
     pub covariance: Vec<XyCovariances>,
     /// Per-channel frozen estimator snapshots for staged reruns.
     pub snapshots: Vec<EstimatorSnapshot>,
+    /// Per-channel retained calibration bindings (exact validated bytes).
+    pub bindings: Vec<ModelBinding>,
     pub provenance: LockinProvenance,
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
@@ -540,6 +546,7 @@ pub fn run_joint_li(
         quality,
         covariance,
         snapshots,
+        bindings,
         provenance,
         base_index_range: (params.i_start, params.i_end),
         output_index_range: (params.i_start, params.i_end),

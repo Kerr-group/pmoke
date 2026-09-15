@@ -43,6 +43,7 @@ fn test_binding() -> ModelBinding {
         path: "calibration/ch3-noise.json".to_string(),
         sha256: "0".repeat(64),
         noise_mode: GlsNoiseMode::Identity,
+        bytes: None,
     }
 }
 
