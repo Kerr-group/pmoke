@@ -734,6 +734,32 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
             &resolver.lockin_xy_npy(channel),
             &staging.lockin_xy_npy(channel),
         )?;
+        // Retained GLS dependency closure: quality, estimator snapshot,
+        // conditional covariance, and the exact calibration bytes travel
+        // with the XY results so staged reruns reconstruct uncertainty
+        // without the external model files. Missing companions stay
+        // optional here (boxcar stages publish none); the manifest refresh
+        // registers whatever is present.
+        copy_optional_file(
+            &resolver.lockin_quality_csv(channel),
+            &staging.lockin_quality_csv(channel),
+        )?;
+        copy_optional_file(
+            &resolver.lockin_estimator_json(channel),
+            &staging.lockin_estimator_json(channel),
+        )?;
+        copy_optional_file(
+            &resolver.lockin_calibration_json(channel),
+            &staging.lockin_calibration_json(channel),
+        )?;
+        copy_optional_file(
+            &resolver.lockin_covariance_csv(channel),
+            &staging.lockin_covariance_csv(channel),
+        )?;
+        copy_optional_file(
+            &resolver.lockin_covariance_npy(channel),
+            &staging.lockin_covariance_npy(channel),
+        )?;
         if stage == AnalysisStage::Moke {
             copy_required_file(
                 &resolver.lockin_rotated_csv(channel),
@@ -1625,5 +1651,85 @@ config_resolved_sha256 = "{resolved_hash}"
     fn sync_parent_handles_bare_file_paths() {
         assert!(sync_parent(Path::new("output.csv")).is_ok());
         assert!(sync_parent(Path::new("./output.csv")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod staging_closure_tests {
+    use super::AnalysisStage;
+    use crate::test_support::test_config;
+
+    fn staging_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pmoke_staging_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn phase_staging_carries_gls_dependency_closure() {
+        // R2b: phase staging copies the full GLS companion set (quality,
+        // estimator, retained calibration, covariance) alongside XY, so
+        // staged reruns reconstruct uncertainty without external files.
+        let dir = staging_dir("closure");
+        let mut cfg = test_config(vec![1], vec![3]);
+        cfg.source_path = dir.join("config.toml");
+        cfg.set_artifact_root(dir.clone());
+        let paths = cfg.paths();
+        let lockin = paths.analysis_dir().join("lockin");
+        std::fs::create_dir_all(&lockin).unwrap();
+        for name in [
+            "ch3_xy.csv",
+            "ch3_xy.npy",
+            "ch3_quality.csv",
+            "ch3_estimator.json",
+            "ch3_calibration.json",
+            "ch3_covariance.csv",
+            "ch3_covariance.npy",
+        ] {
+            std::fs::write(lockin.join(name), b"staged-bytes").unwrap();
+        }
+        std::fs::write(paths.analysis_manifest(), "schema_version = 4\n").unwrap();
+        let staging_cfg = super::prepare_analysis_staging(&cfg, AnalysisStage::Phase).unwrap();
+        let staging = staging_cfg.paths();
+        for name in [
+            "ch3_xy.csv",
+            "ch3_xy.npy",
+            "ch3_quality.csv",
+            "ch3_estimator.json",
+            "ch3_calibration.json",
+            "ch3_covariance.csv",
+            "ch3_covariance.npy",
+        ] {
+            assert!(
+                staging.analysis_dir().join("lockin").join(name).is_file(),
+                "{name} missing from phase staging"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn phase_staging_stays_boxcar_compatible_without_companions() {
+        // Missing companions stay optional: a boxcar-only stage still
+        // prepares with XY alone.
+        let dir = staging_dir("boxcar");
+        let mut cfg = test_config(vec![1], vec![3]);
+        cfg.source_path = dir.join("config.toml");
+        cfg.set_artifact_root(dir.clone());
+        let paths = cfg.paths();
+        let lockin = paths.analysis_dir().join("lockin");
+        std::fs::create_dir_all(&lockin).unwrap();
+        std::fs::write(lockin.join("ch3_xy.csv"), b"x,y\n").unwrap();
+        std::fs::write(paths.analysis_manifest(), "schema_version = 4\n").unwrap();
+        let staging_cfg = super::prepare_analysis_staging(&cfg, AnalysisStage::Phase).unwrap();
+        assert!(
+            staging_cfg
+                .paths()
+                .analysis_dir()
+                .join("lockin/ch3_xy.csv")
+                .is_file()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
