@@ -1416,3 +1416,22 @@ pub fn estimate_joint(
         jitter_applied_v2: system.jitter_applied_v2,
     })
 }
+
+/// Dense-slice flavor of [`rotate_xy_covariance`] for nalgebra-free callers
+/// (native pipeline, WASM boundary): accepts a row-major 12x12 slice and
+/// returns the rotated row-major 12x12 entries. Fail-closed on shape and
+/// finiteness exactly like the matrix entry point.
+pub fn rotate_xy_covariance_dense(
+    covariance_xy_row_major: &[f64],
+    deltas_rad: &[f64; 6],
+) -> Result<Vec<f64>> {
+    if covariance_xy_row_major.len() != 144 {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            "XY covariance rotation needs the 12 quadrature entries",
+        ));
+    }
+    let matrix = DMatrix::from_row_slice(12, 12, covariance_xy_row_major);
+    let rotated = rotate_xy_covariance(&matrix, deltas_rad)?;
+    Ok(rotated.iter().copied().collect())
+}

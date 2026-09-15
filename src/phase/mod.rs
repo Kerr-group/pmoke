@@ -2,6 +2,7 @@ pub mod omega_t0_analysis;
 pub mod phase_rotation_plot;
 pub mod rotator;
 pub mod save;
+pub mod uncertainty;
 
 use crate::analysis_results::parse_analysis_result_files;
 use crate::constants::{LI_HEADER, LI_ROTATED_HEADER};
@@ -9,6 +10,7 @@ use crate::phase::omega_t0_analysis::OT0Analyser;
 use crate::phase::phase_rotation_plot::PhaseRotationPlotter;
 use crate::phase::rotator::rotate_phase;
 use crate::phase::save::{get_li_rotated_headers, write_li_rotated_results};
+use crate::phase::uncertainty::write_rotated_covariance_csv;
 use crate::{config::Config, utils::csv::read_csv};
 use crate::{plot, ui};
 use anyhow::{Context, Result, bail};
@@ -87,9 +89,23 @@ pub fn run_phase_analysis(
         ch.len() as u64,
     );
     let mut rotated_results: Vec<Vec<Vec<f64>>> = Vec::new();
+    let is_gls = matches!(
+        cfg.lockin.estimator,
+        crate::config::LockinEstimator::JointHarmonicGls(_)
+    );
     for (ch_i, li_result) in ch.iter().zip(li_results.iter()) {
         pb.set_message(format!("phase analysis ch{ch_i}"));
         let phase_output = phase_analysis(cfg, li_result)?;
+        // R2c: reconstruct the rotated XY covariance behind this channel's
+        // fitted deltas while the unrotated artifact is still the matching
+        // revision (None for boxcar / missing / none-policy; malformed
+        // artifacts fail closed). Persisted below next to the rotated XY.
+        let rotated_covariance = crate::phase::uncertainty::reconstruct_rotated_covariances(
+            &paths,
+            *ch_i,
+            &phase_output.deltas,
+            is_gls,
+        )?;
         ui::suspend_progress(&pb, || {
             ui::summary_table(
                 format!("Phase rotation ch{ch_i}"),
@@ -122,6 +138,13 @@ pub fn run_phase_analysis(
             &phase_output.rotated_result,
             cfg.lockin.save_npy,
         )?;
+        // R2c: the rotated covariance shares the rotated XY grid and
+        // revision, so staged reruns derive MOKE uncertainty without the
+        // external model files. CSV-only (no NPY mirror): it is a derived
+        // diagnostic, not the numeric estimator artifact.
+        if let Some(rotated) = rotated_covariance {
+            write_rotated_covariance_csv(&paths.lockin_rotated_covariance_csv(*ch_i), t, &rotated)?;
+        }
         rotated_results.push(phase_output.rotated_result);
         pb.inc(1);
     }

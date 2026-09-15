@@ -156,6 +156,12 @@ impl ArtifactPaths {
             .join(format!("ch{channel}_rotated.csv"))
     }
 
+    pub fn lockin_rotated_covariance_csv(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_rotated_covariance.csv"))
+    }
+
     pub fn lockin_rotated_npy(&self, channel: u8) -> PathBuf {
         self.analysis_dir()
             .join("lockin")
@@ -168,6 +174,12 @@ impl ArtifactPaths {
 
     pub fn moke_npy(&self) -> PathBuf {
         self.analysis_dir().join("moke").join("moke.npy")
+    }
+
+    /// Conditional MOKE angle variance per output window (R2c, CSV-only):
+    /// one combined file with one column per channel, beside moke.csv.
+    pub fn moke_variance_csv(&self) -> PathBuf {
+        self.analysis_dir().join("moke").join("moke_variance.csv")
     }
 
     pub fn signal_dir(&self) -> PathBuf {
@@ -404,6 +416,10 @@ impl ArtifactResolver {
         self.paths.lockin_covariance_npy(channel)
     }
 
+    pub fn lockin_rotated_covariance_csv(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_rotated_covariance_csv(channel)
+    }
+
     pub fn lockin_rotated_csv(&self, channel: u8) -> PathBuf {
         let new_path = self.paths.lockin_rotated_csv(channel);
         if new_path.exists() {
@@ -469,6 +485,10 @@ impl ArtifactResolver {
             return legacy_path;
         }
         new_path
+    }
+
+    pub fn moke_variance_csv(&self) -> PathBuf {
+        self.paths.moke_variance_csv()
     }
 
     pub fn moke_npy(&self) -> PathBuf {

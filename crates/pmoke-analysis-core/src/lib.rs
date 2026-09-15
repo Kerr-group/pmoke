@@ -3,6 +3,7 @@ pub mod error;
 pub mod joint;
 mod lockin;
 mod moke;
+pub mod moke_uncertainty;
 mod phase;
 mod synthetic;
 
