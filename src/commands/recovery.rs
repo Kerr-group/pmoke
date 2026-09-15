@@ -415,7 +415,7 @@ fn write_atomic_sibling(path: &Path, contents: &[u8]) -> Result<()> {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".{}.tmp", std::process::id()));
     let temporary = path.with_file_name(name);
-    let result = (|| {
+    let result: Result<()> = (|| {
         fs::write(&temporary, contents)?;
         #[cfg(not(windows))]
         {
@@ -445,10 +445,11 @@ fn write_atomic_sibling(path: &Path, contents: &[u8]) -> Result<()> {
                 )
             };
             if result == 0 {
-                return Err(std::io::Error::last_os_error());
+                return Err(std::io::Error::last_os_error().into());
             }
         }
-        super::run_dir::sync_parent(path)
+        super::run_dir::sync_parent(path)?;
+        Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
