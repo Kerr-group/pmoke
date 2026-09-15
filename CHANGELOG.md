@@ -16,6 +16,12 @@
   analyzer UI keeps boxcar as the default and adds an explicit estimator
   control.
 
+- Staged publication now records a durable destination-side journal and
+  content digest before replacement. Restart recovery distinguishes an
+  unpublished/cancelled attempt, a completed generation with uncertain
+  durability, and an old-generation restore; pre-commit cancellation leaves
+  the published destination untouched.
+
 - Comparison method names cannot alias internal staging directories or each
   other on case-insensitive filesystems. Calibration tail metadata is checked
   without overflowing at the integer boundary.
