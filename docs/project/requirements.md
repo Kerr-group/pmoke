@@ -100,6 +100,17 @@ The following surfaces are part of the product contract:
   secret-scanning expectations. Vulnerability reports follow `SECURITY.md` and
   must never be filed with exploit details in a public Issue.
 
+- Scientific estimator comparisons keep the reference frequency, rotation,
+  modulation depth, field factor, evaluation interval, detrending policy,
+  paired block length, confidence method, and gate version explicit in the
+  request/report. The accepted benefit gate is candidate/baseline SD ratio
+  `<= 0.97` with the paired confidence-interval upper endpoint `< 1`; too few
+  independent blocks or an unconfirmed retained physical feature/fidelity
+  tolerance produces `inconclusive`, not a pass. A completed negative result
+  remains a completed report, and residual variance is not assigned a
+  physical noise mechanism. Evaluation reports do not change the estimator
+  default or authorize publication of private measurement evidence.
+
 ## Change acceptance
 
 Every durable public change has one Issue with purpose, scope, non-goals,

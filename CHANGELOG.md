@@ -22,6 +22,13 @@
   durability, and an old-generation restore; pre-commit cancellation leaves
   the published destination untouched.
 
+- Added the native-only `evaluate-lockin` M6 protocol report. It freezes the
+  declared reference/rotation/depth/field context, interval, detrending,
+  paired-block bootstrap, source fingerprint, and gate version; reports the
+  accepted SD-ratio gate, inconclusive insufficient-block cases, and explicit
+  unverified known-noise/dynamic/private-control states without promoting a
+  default or attributing residual variance to a physical mechanism.
+
 - Comparison method names cannot alias internal staging directories or each
   other on case-insensitive filesystems. Calibration tail metadata is checked
   without overflowing at the integer boundary.

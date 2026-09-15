@@ -11,6 +11,7 @@ pub mod compare;
 pub mod completions;
 pub mod config;
 pub mod doctor;
+pub mod evaluate;
 pub mod export;
 #[cfg(feature = "hw-core")]
 pub mod fetch;

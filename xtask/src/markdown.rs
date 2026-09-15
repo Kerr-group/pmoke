@@ -361,6 +361,13 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Compare lock-in estimators on shared data and grid into a new directory" => {
             "共有データ・gridでのlock-in推定器比較（新規directoryへ）"
         }
+        "Run the frozen paired-block M6 evaluation protocol and write a JSON report" => {
+            "固定済みpaired block M6評価protocolの実行とJSON report出力"
+        }
+        "Path to the evaluation request file" => "評価requestファイルのpath",
+        "Write the report to FILE instead of beside the request" => {
+            "requestと別のFILEへreportを書き出す"
+        }
         "Build, inspect, or validate a recorded-only calibration artifact" => {
             "記録済みデータからの較正artifactのbuild・inspect・validate"
         }

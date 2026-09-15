@@ -1512,6 +1512,61 @@
         "subcommands": []
       },
       {
+        "name": "evaluate-lockin",
+        "path": "pmoke evaluate-lockin",
+        "summary": "Run the frozen paired-block M6 evaluation protocol and write a JSON report",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "request",
+            "kind": "option",
+            "short": null,
+            "long": "request",
+            "value_names": [
+              "FILE"
+            ],
+            "help": "Path to the evaluation request file",
+            "required": true,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "output",
+            "kind": "option",
+            "short": null,
+            "long": "output",
+            "value_names": [
+              "FILE"
+            ],
+            "help": "Write the report to FILE instead of beside the request",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
         "name": "calibrate",
         "path": "pmoke calibrate",
         "summary": "Build, inspect, or validate a recorded-only calibration artifact",

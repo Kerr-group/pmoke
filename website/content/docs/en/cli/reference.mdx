@@ -35,6 +35,7 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke moke`](#pmoke-moke) | Calculate the Kerr angle | core |
 | [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, signal, phase, moke | core |
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data and grid into a new directory | core |
+| [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | Run the frozen paired-block M6 evaluation protocol and write a JSON report | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | Build, inspect, or validate a recorded-only calibration artifact | core |
 | [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
@@ -541,6 +542,21 @@ pmoke compare-lockin --request <FILE> [--output <DIR>] [-h, --help]
 | --- | :---: | --- | --- | --- |
 | `--request <FILE>` | yes | - | Path to the comparison request file | - |
 | `--output <DIR>` | - | - | Override the output directory from the request | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+## `pmoke evaluate-lockin`
+
+Run the frozen paired-block M6 evaluation protocol and write a JSON report
+
+```text
+pmoke evaluate-lockin --request <FILE> [--output <FILE>] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | yes | - | Path to the evaluation request file | - |
+| `--output <FILE>` | - | - | Write the report to FILE instead of beside the request | - |
 | `-h, --help` | - | - | Print help | - |
 
 
