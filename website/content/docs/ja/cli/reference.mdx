@@ -37,6 +37,7 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | 共有データ・gridでのlock-in推定器比較（新規directoryへ） | core |
 | [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | 固定済みpaired block M6評価protocolの実行とJSON report出力 | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | 記録済みデータからの較正artifactのbuild・inspect・validate | core |
+| [`pmoke noise`](#pmoke-noise) | 記録済みデータのパルスノイズ診断（PN-M1、Issue #246） | core |
 | [`pmoke process`](#pmoke-process) | 手動pulse trigger後のfetch・lock-in・phase・moke自動解析 | hw-core |
 | [`pmoke auto`](#pmoke-auto) | 完全自動測定・解析 | hw-core |
 | [`pmoke completions`](#pmoke-completions) | shell completion scriptの生成 | core |
@@ -614,6 +615,34 @@ pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
 | --- | :---: | --- | --- | --- |
 | `--artifact <FILE>` | 必須 | - | 較正artifact JSONファイルのpath | - |
 | `--context <FILE>` | 必須 | - | 適用性context TOMLファイルのpath | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
+## `pmoke noise`
+
+記録済みデータのパルスノイズ診断（PN-M1、Issue #246）
+
+```text
+pmoke noise [-h, --help] <COMMAND>
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | help表示 | - |
+
+
+### `pmoke noise diagnose`
+
+記録済みデータのノイズ診断計画（新規destinationへ）
+
+```text
+pmoke noise diagnose --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | 必須 | - | ノイズ診断requestファイルのpath | - |
+| `--output <DIR>` | - | - | requestの出力directoryの上書き | - |
 | `-h, --help` | - | - | help表示 | - |
 
 

@@ -371,6 +371,13 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Build, inspect, or validate a recorded-only calibration artifact" => {
             "記録済みデータからの較正artifactのbuild・inspect・validate"
         }
+        "Recorded-only pulse-noise diagnosis (PN-M1, Issue #246)" => {
+            "記録済みデータのパルスノイズ診断（PN-M1、Issue #246）"
+        }
+        "Plan a recorded-only noise diagnosis into a new destination" => {
+            "記録済みデータのノイズ診断計画（新規destinationへ）"
+        }
+        "Path to the noise diagnose request file" => "ノイズ診断requestファイルのpath",
         "Build an immutable calibration artifact from a recorded waveform CSV" => {
             "記録済み波形CSVからの不変較正artifactのbuild"
         }

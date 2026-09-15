@@ -122,6 +122,12 @@
     { "locale": "en", "query": "recorded waveform calibration build", "expected": "/en/docs/cli/reference" },
     { "locale": "ja", "query": "較正artifactのbuild方法", "expected": "/ja/docs/cli/reference" },
     { "locale": "ja", "query": "較正artifactの確認手順", "expected": "/ja/docs/cli/reference" },
-    { "locale": "ja", "query": "記録済み波形からの較正build", "expected": "/ja/docs/cli/reference" }
+    { "locale": "ja", "query": "記録済み波形からの較正build", "expected": "/ja/docs/cli/reference" },
+    { "locale": "en", "query": "how to run recorded noise diagnosis", "expected": "/en/docs/cli/reference" },
+    { "locale": "en", "query": "noise diagnose request workflow", "expected": "/en/docs/cli/reference" },
+    { "locale": "en", "query": "pulse noise diagnostics report", "expected": "/en/docs/cli/reference" },
+    { "locale": "ja", "query": "記録済みパルスノイズの診断方法", "expected": "/ja/docs/cli/reference" },
+    { "locale": "ja", "query": "noise diagnoseの実行手順", "expected": "/ja/docs/cli/reference" },
+    { "locale": "ja", "query": "ノイズ診断レポートの確認", "expected": "/ja/docs/cli/reference" }
   ]
 }
