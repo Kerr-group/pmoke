@@ -9,6 +9,13 @@
   preserves deterministic output order. `covariance_output=none` validates
   solver covariance per window without retaining unused 12x12 matrices.
 
+- The browser waveform worker now exposes and executes the bounded
+  `joint_harmonic_gls` route alongside the legacy boxcar route. Joint requests
+  enforce window/model/output budgets before solving, preserve request
+  generations across worker restart, and report estimator capabilities; the
+  analyzer UI keeps boxcar as the default and adds an explicit estimator
+  control.
+
 - Comparison method names cannot alias internal staging directories or each
   other on case-insensitive filesystems. Calibration tail metadata is checked
   without overflowing at the integer boundary.
