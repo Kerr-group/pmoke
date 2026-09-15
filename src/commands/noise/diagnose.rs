@@ -25,6 +25,7 @@ use crate::utils::recorded_source::{
     RecordedSourceRequest,
 };
 
+use super::diagnostics::{SignalDiagnostics, run_signal_diagnostics};
 use super::plan::{GuardSpec, LeakageGuard, ResolvedRolePlan, resolve_role_plan};
 
 /// Noise diagnose request schema version (workflow request v1, PN-A-004).
@@ -128,16 +129,19 @@ pub struct ResolvedDiagnosePlan {
     pub frozen_inputs: FrozenInputView,
 }
 
-/// Minimal diagnostic report skeleton; M1b fills measurement sections.
-/// Unknown/insufficient outcomes are first-class (PN-FR-012/035): an empty
-/// measurement set still reports `unknown` with reasons, never a pass.
+/// Full diagnostic report (PN-FR-011): measurements plus supported/unknown
+/// conclusions with no asserted noise cause. Unknown/insufficient outcomes
+/// stay first-class (PN-FR-012/035): a computable run reports its verdict
+/// with reasons, never a pass by default.
 #[derive(Debug, Clone, Serialize)]
-pub struct DiagnosticReportSkeleton {
+pub struct DiagnosticReport {
     pub schema_version: u32,
     pub operation: String,
+    pub study_classification: String,
     pub diagnostic_finding: String,
     pub finding_reason: String,
     pub measurements_available: bool,
+    pub measurements: Option<SignalDiagnostics>,
     pub frozen_inputs: FrozenInputView,
     pub role_plan: ResolvedRolePlan,
 }
@@ -245,22 +249,39 @@ pub fn run_diagnose(request_path: &Path, output_override: Option<&Path>) -> Resu
     });
     write_json(&output.join("inputs.json"), &inputs, "frozen inputs")?;
 
-    // Skeleton report: measurements land in M1b; the finding is an honest
-    // `unknown` until computed diagnostics exist (PN-FR-012).
-    let report = DiagnosticReportSkeleton {
+    // Signal diagnostics over the resolved training blocks (M1b): failures
+    // to compute stay honest `unknown`/`insufficient_evidence` (PN-FR-012).
+    let (measurements, finding, reason) = match run_signal_diagnostics(
+        &source,
+        &resolved,
+        request.reference_frequency_hz,
+        request.reference_phase_rad,
+        request.sample_interval_s,
+    ) {
+        Ok((measurements, finding, reason)) => (Some(measurements), finding, reason),
+        Err(error) => (
+            None,
+            "unknown".to_string(),
+            format!("signal diagnostics not computed: {error:#}"),
+        ),
+    };
+    let report = DiagnosticReport {
         schema_version: NOISE_DIAGNOSTIC_SCHEMA_VERSION,
         operation: "diagnose".to_string(),
-        diagnostic_finding: "unknown".to_string(),
-        finding_reason: "signal diagnostics not yet computed (M1b slice)".to_string(),
-        measurements_available: false,
+        study_classification: study.to_string(),
+        diagnostic_finding: finding,
+        finding_reason: reason,
+        measurements_available: measurements.is_some(),
+        measurements,
         frozen_inputs: source.frozen_view().clone(),
         role_plan: resolved.role_plan.clone(),
     };
     write_json(
         &output.join("diagnostics.json"),
         &report,
-        "diagnostic skeleton",
+        "diagnostic report",
     )?;
+    write_report_md(&output.join("report.md"), &report, &plan, request_path)?;
 
     crate::ui::success(format!(
         "noise diagnosis planned: {} ({} eligible evaluation blocks)",
@@ -362,3 +383,112 @@ fn role_coverage(plan: &BlockPlan) -> BTreeMap<String, usize> {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+/// Mechanism-agnostic Markdown report (PN-FR-011/035): descriptive shape
+/// evidence, coverage, recipe provenance, and frozen-input identity with no
+/// asserted physical noise cause. Written beside the JSON diagnostics.
+fn write_report_md(
+    path: &Path,
+    report: &DiagnosticReport,
+    plan: &ResolvedDiagnosePlan,
+    request_path: &Path,
+) -> Result<()> {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "# Noise diagnosis report (recorded-only, PN-M1)\n\n\
+         - finding: `{finding}`\n- reason: {reason}\n\
+         - study: `{study}`\n- source: `{source}` (detector ch{det}, stride {stride})\n\
+         - reference: {freq} Hz, phase {phase} rad, dt {dt} s, block {block}\n\
+         - eligible evaluation blocks: {elig}\n\
+         - request: `{req}`\n",
+        finding = report.diagnostic_finding,
+        reason = report.finding_reason,
+        study = report.study_classification,
+        source = plan.source_kind,
+        det = plan.detector_channel,
+        stride = plan.stride,
+        freq = plan.reference_frequency_hz,
+        phase = plan.reference_phase_rad,
+        dt = plan.sample_interval_s,
+        block = plan.block_len,
+        elig = plan.leakage.eligible_evaluation_blocks.len(),
+        req = request_path.display(),
+    );
+    if let Some(measurements) = &report.measurements {
+        let qc = &measurements.acquisition_qc;
+        let _ = writeln!(
+            text,
+            "## Acquisition QC (PN-FR-009)\n\n\
+             - blocks read: {blocks} ({read}/{expected} samples)\n\
+             - timebase drift max: {drift:.3e} ({ok})\n",
+            blocks = qc.blocks_read,
+            read = qc.samples_read,
+            expected = qc.samples_expected,
+            drift = qc.timebase_drift_max,
+            ok = if qc.timebase_ok { "ok" } else { "EXCEEDED" },
+        );
+        let nuisance = &measurements.nuisance_observability;
+        let _ = writeln!(
+            text,
+            "## Nuisance observability (PN-FR-010)\n\n\
+             - recipe: `{recipe}`, blocks fitted: {n}\n\
+             - rank-deficient blocks: {rd:?}, ill-conditioned blocks: {ic:?}\n",
+            recipe = nuisance.recipe_id,
+            n = nuisance.blocks_fitted,
+            rd = nuisance.rank_deficient_blocks,
+            ic = nuisance.ill_conditioned_blocks,
+        );
+        let phase = &measurements.phase_variance;
+        let _ = writeln!(
+            text,
+            "## Phase-binned residual variance (PN-FR-010)\n\n\
+             - recipe: `{recipe}`, v0 = {v0:.6e}, peak/median = {pm:.2}x\n\
+             - contributing blocks: {cb}, floor activations: {fl:?}\n",
+            recipe = phase.recipe_id,
+            v0 = phase.v0,
+            pm = phase.peak_to_median_ratio,
+            cb = phase.contributing_blocks,
+            fl = phase.floor_activations,
+        );
+        let correlation = &measurements.correlation;
+        let _ = writeln!(
+            text,
+            "## Residual autocorrelation (PN-FR-010)\n\n\
+             - recipe: `{recipe}`, support {sup} samples ({dur:.6e} s)\n\
+             - max |off-peak| = {m:.3}, tail energy = {tail:?}\n\
+             - taper `{taper}`, eta {eta}, SPD validated: {spd}\n",
+            recipe = correlation.recipe_id,
+            sup = correlation.support_samples,
+            dur = correlation.physical_duration_s,
+            m = correlation.max_abs_offpeak,
+            tail = correlation.tail_energy,
+            taper = correlation.taper_id,
+            eta = correlation.eta,
+            spd = correlation.spd_validated,
+        );
+        let ident = &measurements.identifiability;
+        let _ = writeln!(
+            text,
+            "## Identifiability (PN-FR-012)\n\n- verdict: `{v}` (non-identifiable: {ni})\n",
+            v = ident.verdict,
+            ni = ident.non_identifiable,
+        );
+        for reason in &ident.reasons {
+            let _ = writeln!(text, "- {reason}");
+        }
+        text.push('\n');
+    } else {
+        text.push_str("## Measurements\n\n- not computed; see finding reason above.\n\n");
+    }
+    text.push_str(
+        "## Provenance\n\n\
+         - `request.source.toml`: exact request bytes\n\
+         - `request.resolved.json`: resolved role plan + guard\n\
+         - `inputs.json`: frozen input digests (before/after reads verified)\n\
+         - No physical noise cause is asserted by this report.\n",
+    );
+    std::fs::write(path, text).with_context(|| format!("cannot write {}", path.display()))?;
+    Ok(())
+}

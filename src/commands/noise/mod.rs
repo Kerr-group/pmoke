@@ -1,6 +1,7 @@
 //! `pmoke noise` command surface (PN-M1, Issue #246).
 
 pub mod diagnose;
+pub mod diagnostics;
 pub mod plan;
 
 use crate::cli::NoiseCommand;
