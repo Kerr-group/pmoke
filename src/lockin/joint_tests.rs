@@ -373,6 +373,29 @@ fn quality_artifact_registers_through_manifest_refresh() {
 }
 
 #[test]
+fn covariance_none_does_not_retain_per_window_matrices() {
+    let (time, signal) = tone_waveform_with(1_500);
+    let mut lockin = joint_lockin();
+    let LockinEstimator::JointHarmonicGls(gls) = &mut lockin.estimator else {
+        unreachable!()
+    };
+    gls.covariance_output = GlsCovarianceOutput::None;
+    let LockinEstimator::JointHarmonicGls(gls) = &lockin.estimator else {
+        unreachable!()
+    };
+    let inputs = test_inputs(&lockin, gls, &time);
+    let output = run_joint_li(
+        &inputs,
+        &[3],
+        &[signal.as_slice()],
+        &SyntheticNoiseModelSource::identity(0.01),
+    )
+    .unwrap();
+    assert_eq!(output.covariance.len(), 1);
+    assert!(output.covariance[0].is_empty());
+    assert_eq!(output.quality[0].len(), output.result[0][0].len());
+}
+#[test]
 fn window_support_matches_boxcar_taps() {
     // A unit impulse at input j may influence only outputs whose window
     // covers j: |center - j| <= n_half + 1 with centers on the strided grid.

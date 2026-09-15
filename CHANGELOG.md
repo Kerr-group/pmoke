@@ -4,6 +4,11 @@
 
 ### Changes
 
+- Native joint GLS now prepares one immutable geometry/resource plan per run,
+  executes output windows in bounded chunks on the configured worker pool, and
+  preserves deterministic output order. `covariance_output=none` validates
+  solver covariance per window without retaining unused 12x12 matrices.
+
 - Comparison method names cannot alias internal staging directories or each
   other on case-insensitive filesystems. Calibration tail metadata is checked
   without overflowing at the integer boundary.
