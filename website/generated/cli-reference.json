@@ -1742,7 +1742,7 @@
       {
         "name": "noise",
         "path": "pmoke noise",
-        "summary": "Recorded-only pulse-noise diagnosis (PN-M1, Issue #246)",
+        "summary": "Recorded-only pulse-noise diagnosis and comparison (PN-M1/M2, Issue #246)",
         "required_feature": null,
         "arguments": [
           {
@@ -1776,6 +1776,61 @@
                   "FILE"
                 ],
                 "help": "Path to the noise diagnose request file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Override the output directory from the request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "compare",
+            "path": "pmoke noise compare",
+            "summary": "Run the frozen global calibration plus controlled comparison workflow",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "request",
+                "kind": "option",
+                "short": null,
+                "long": "request",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the noise compare request file",
                 "required": true,
                 "global": false,
                 "repeatable": false,

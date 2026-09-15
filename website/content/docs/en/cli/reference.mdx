@@ -37,7 +37,7 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data and grid into a new directory | core |
 | [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | Run the frozen paired-block M6 evaluation protocol and write a JSON report | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | Build, inspect, or validate a recorded-only calibration artifact | core |
-| [`pmoke noise`](#pmoke-noise) | Recorded-only pulse-noise diagnosis (PN-M1, Issue #246) | core |
+| [`pmoke noise`](#pmoke-noise) | Recorded-only pulse-noise diagnosis and comparison (PN-M1/M2, Issue #246) | core |
 | [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
 | [`pmoke completions`](#pmoke-completions) | Generate shell completion script | core |
@@ -620,7 +620,7 @@ pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
 
 ## `pmoke noise`
 
-Recorded-only pulse-noise diagnosis (PN-M1, Issue #246)
+Recorded-only pulse-noise diagnosis and comparison (PN-M1/M2, Issue #246)
 
 ```text
 pmoke noise [-h, --help] <COMMAND>
@@ -642,6 +642,21 @@ pmoke noise diagnose --request <FILE> [--output <DIR>] [-h, --help]
 | Option | Required | Default / values | Description | Conflicts |
 | --- | :---: | --- | --- | --- |
 | `--request <FILE>` | yes | - | Path to the noise diagnose request file | - |
+| `--output <DIR>` | - | - | Override the output directory from the request | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+### `pmoke noise compare`
+
+Run the frozen global calibration plus controlled comparison workflow
+
+```text
+pmoke noise compare --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | yes | - | Path to the noise compare request file | - |
 | `--output <DIR>` | - | - | Override the output directory from the request | - |
 | `-h, --help` | - | - | Print help | - |
 
