@@ -33,7 +33,7 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke signal`](#pmoke-signal) | Average raw signal channels over the lock-in window | core |
 | [`pmoke phase`](#pmoke-phase) | Rotate the reference phase for lock-in analysis | core |
 | [`pmoke moke`](#pmoke-moke) | Calculate the Kerr angle | core |
-| [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, signal, phase, moke | core |
+| [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: sensor, reference, signal, lock-in, phase, moke | core |
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data and grid into a new directory | core |
 | [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | Run the frozen paired-block M6 evaluation protocol and write a JSON report | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | Build, inspect, or validate a recorded-only calibration artifact | core |
@@ -520,7 +520,7 @@ pmoke moke [-h, --help]
 
 ## `pmoke analyze`
 
-Run all analysis steps: reference, sensor, lock-in, signal, phase, moke
+Run all analysis steps: sensor, reference, signal, lock-in, phase, moke
 
 ```text
 pmoke analyze [-h, --help]

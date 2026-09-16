@@ -1,6 +1,5 @@
 use crate::{
     config::Config,
-    lockin::run_li,
     moke::run_moke_analysis,
     phase::run_phase_analysis,
     ui,
@@ -64,7 +63,29 @@ fn record_analysis_result(cfg: &Config, result: &Result<()>) -> Result<()> {
     Ok(())
 }
 
+/// One executed step of the native analyze pipeline. The observer exists so
+/// tests and evidence capture can prove the *real* execution order (sensor,
+/// reference preparation, signal, lock-in, phase, MOKE) instead of a
+/// reordered log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnalyzeStep {
+    Sensor,
+    ReferencePreparation,
+    Signal,
+    Lockin,
+    Phase,
+    Moke,
+}
+
 fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
+    run_analyze_inner_observed(cfg, data, &mut |_| {})
+}
+
+pub(crate) fn run_analyze_inner_observed(
+    cfg: &Config,
+    data: &WaveformData,
+    observer: &mut dyn FnMut(AnalyzeStep),
+) -> Result<()> {
     let mut cfg_staging = cfg.clone();
     cfg_staging.staging_active = true;
 
@@ -78,22 +99,38 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     crate::commands::run_dir::write_analysis_config_snapshots(&cfg_staging)?;
 
     validate_waveform_data(data)?;
-    let (t_stride, sensor_rate_stride, sensor_integral_stride, li_results, reference, provenance) =
-        run_li(&cfg_staging, &data.t, &data.channels)?;
+
+    // Execution order: sensor -> reference/common preparation -> signal ->
+    // lock-in -> phase -> MOKE. The reference fit and the frozen analysis
+    // window/output grid are prepared once after the sensor stage and reused
+    // by the signal readout and the lock-in demodulation; the full-rate
+    // sensor series is strided onto that prepared grid without repeating the
+    // sensor computation.
+    let sensor = crate::lockin::run_sensor_stage(&cfg_staging, &data.t, &data.channels)?;
+    observer(AnalyzeStep::Sensor);
+    let preparation =
+        crate::lockin::prepare_lockin_grid(&cfg_staging, &data.t, &data.channels, &sensor)?;
+    observer(AnalyzeStep::ReferencePreparation);
 
     if !cfg_staging.signals.is_empty() {
         crate::signal::run_signal_analysis(
             &cfg_staging,
-            &t_stride,
-            &sensor_rate_stride,
-            &sensor_integral_stride,
+            &preparation.t_stride,
+            &preparation.sensor_rate_stride,
+            &preparation.sensor_integral_stride,
             &data.t,
             &data.channels,
-            reference.f_ref,
+            preparation.reference.f_ref,
         )?;
+        observer(AnalyzeStep::Signal);
     } else {
         ui::skipped("signal analysis: no [[signals]] entries specified");
     }
+
+    let lockin_output =
+        crate::lockin::execute_lockin(&cfg_staging, &data.t, &data.channels, &preparation)?;
+    observer(AnalyzeStep::Lockin);
+    let li_results = lockin_output.result;
 
     // run phase analysis here
     let ch = cfg_staging.phase_signal_ch();
@@ -101,21 +138,23 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
     if !ch.is_empty() {
         let li_rotated_results = run_phase_analysis(
             &cfg_staging,
-            &t_stride,
-            &sensor_rate_stride,
-            &sensor_integral_stride,
+            &preparation.t_stride,
+            &preparation.sensor_rate_stride,
+            &preparation.sensor_integral_stride,
             &li_results,
         )?;
+        observer(AnalyzeStep::Phase);
         drop(li_results);
 
         // run Moke analysis here
         run_moke_analysis(
             &cfg_staging,
-            &t_stride,
-            &sensor_rate_stride,
-            &sensor_integral_stride,
+            &preparation.t_stride,
+            &preparation.sensor_rate_stride,
+            &preparation.sensor_integral_stride,
             &li_rotated_results,
         )?;
+        observer(AnalyzeStep::Moke);
     } else {
         ui::skipped("phase analysis: no channels specified");
     }
@@ -124,8 +163,8 @@ fn run_analyze_inner(cfg: &Config, data: &WaveformData) -> Result<()> {
         &cfg_staging,
         &cfg_staging.paths(),
         &cfg.resolver(),
-        &reference,
-        &provenance,
+        &preparation.reference,
+        &lockin_output.provenance,
         cfg_staging.roles.reference_ch,
     )?;
 
@@ -235,6 +274,454 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// Fixture origin (s): nonzero to pin that the prepared downstream grid
+    /// keeps the recorded time base instead of re-zeroing it.
+    const FIXTURE_ORIGIN_S: f64 = 0.001_37;
+    const FIXTURE_DT_S: f64 = 1.0e-5;
+    const FIXTURE_SAMPLES: usize = 20_000;
+    const FIXTURE_FREQUENCY_HZ: f64 = 1_000.0;
+    const FIXTURE_THETA: f64 = 0.01;
+    const FIXTURE_STRIDE_SAMPLES: usize = 20;
+    /// Fractional lock-in support: `half_window_cycles / f_ref / dt` is not an
+    /// integer for the fitted reference, so the trapezoidal support exercises
+    /// its endpoint-interpolation path.
+    const FIXTURE_HALF_WINDOW_CYCLES: f64 = 1.3;
+
+    fn fixture_time() -> Vec<f64> {
+        (0..FIXTURE_SAMPLES)
+            .map(|index| FIXTURE_ORIGIN_S + index as f64 * FIXTURE_DT_S)
+            .collect()
+    }
+
+    /// Synthetic recorded waveform: ch1 sensor, ch2 reference, ch3 lock-in
+    /// signal, ch4.. raw `[[signals]]` readout channels.
+    fn synthetic_recorded_waveform(max_channel: u8) -> WaveformData {
+        let time = fixture_time();
+        let relative = |value: f64| value - FIXTURE_ORIGIN_S;
+        let sensor = time
+            .iter()
+            .map(|value| {
+                if (0.03..0.15).contains(&relative(*value)) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect::<Vec<_>>();
+        let reference = time
+            .iter()
+            .map(|value| {
+                let relative = relative(*value);
+                let amplitude_drift = 1.0 + 0.01 * (2.0 * PI * 3.0 * relative).sin();
+                0.02 + 0.01 * relative
+                    + amplitude_drift * (2.0 * PI * FIXTURE_FREQUENCY_HZ * relative).sin()
+            })
+            .collect::<Vec<_>>();
+        let bessel = [
+            0.581_864_936_842_083_3,
+            0.315_745_306_087_972_3,
+            0.104_537_902_479_595_42,
+            0.025_139_158_519_404_087,
+            0.004_762_786_735_204_94,
+            0.000_745_551_998_014_054_3,
+        ];
+        let lockin = time
+            .iter()
+            .map(|value| {
+                let relative = relative(*value);
+                let harmonics = bessel
+                    .iter()
+                    .enumerate()
+                    .map(|(index, coefficient)| {
+                        let harmonic = index + 1;
+                        let amplitude = if harmonic % 2 == 0 {
+                            (2.0 * FIXTURE_THETA).cos() * coefficient
+                        } else {
+                            (2.0 * FIXTURE_THETA).sin() * coefficient
+                        };
+                        let phase = if harmonic % 2 == 0 { PI / 2.0 } else { PI };
+                        2.0 * amplitude
+                            * (harmonic as f64 * 2.0 * PI * FIXTURE_FREQUENCY_HZ * relative + phase)
+                                .sin()
+                    })
+                    .sum::<f64>();
+                let deterministic_noise = 1.0e-5 * (2.0 * PI * 12_345.0 * relative + 0.4).sin();
+                0.01 + 0.002 * relative + harmonics + deterministic_noise
+            })
+            .collect::<Vec<_>>();
+        let mut channels = vec![sensor, reference, lockin];
+        for channel in 4..=max_channel {
+            let index = f64::from(channel);
+            channels.push(
+                time.iter()
+                    .map(|value| {
+                        let relative = relative(*value);
+                        0.05 * index
+                            + 0.01 * index * relative
+                            + 0.001 * index * (2.0 * PI * 7.3 * relative).sin()
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        WaveformData {
+            t: time.into(),
+            channels,
+        }
+    }
+
+    /// Regression fixture config: sensor ch1, reference ch2, lock-in ch3 and
+    /// raw `[[signals]]` entries from `signal_channels`.
+    fn analyze_regression_config(
+        directory: &TemporaryDirectory,
+        signal_channels: &[u8],
+    ) -> crate::config::Config {
+        let mut cfg = crate::test_support::test_config(vec![1], vec![3]);
+        cfg.source_path = directory.0.join("config.toml");
+        cfg.set_artifact_root(directory.0.clone());
+        cfg.roles.reference_ch = 2;
+        cfg.signals = signal_channels
+            .iter()
+            .copied()
+            .map(|channel| crate::config::Signal {
+                channel,
+                label: format!("DC{channel}"),
+                unit: "V".to_string(),
+            })
+            .collect();
+        let max_channel = signal_channels.iter().copied().max().unwrap_or(3).max(3);
+        cfg.channels = (1..=max_channel)
+            .map(|index| crate::config::Channel {
+                index,
+                factor: Some(index as f64),
+                scale_to_abs_max: None,
+                label: Some(format!("ch{index}")),
+                unit_out: Some("T".to_string()),
+            })
+            .collect();
+        cfg.reference.fft_window = Window {
+            start: FIXTURE_ORIGIN_S,
+            end: FIXTURE_ORIGIN_S + 0.097_3,
+        };
+        cfg.reference.stride_samples = 1_000;
+        cfg.reference.window_samples = 100;
+        cfg.pulse.bg_window_before = Window {
+            start: FIXTURE_ORIGIN_S,
+            end: FIXTURE_ORIGIN_S + 0.01,
+        };
+        cfg.pulse.bg_window_after = Window {
+            start: FIXTURE_ORIGIN_S + 0.18,
+            end: FIXTURE_ORIGIN_S + 0.199,
+        };
+        cfg.lockin.lpf_kind = LockinLpfKind::BoxcarLegacy;
+        cfg.lockin.stride_samples = FIXTURE_STRIDE_SAMPLES;
+        cfg.lockin.lpf_half_window_cycles = FIXTURE_HALF_WINDOW_CYCLES;
+        cfg.phase.m_omega_t0_offset = vec![0.0; 6];
+        cfg.moke.moke_type = MokeType::Harmonics;
+        cfg.moke.use_sensor_ch = 1;
+        cfg
+    }
+
+    /// SHA-256 of the outputs recorded before the stage-order change, pinned
+    /// from the same fixture. Byte identity proves that the restructured
+    /// pipeline kept the averaging recipe, support, grid, timestamps and
+    /// downstream values unchanged.
+    const GOLDEN_SIGNAL_SHA256: &str =
+        "96b06cf124fa2eea1fc98f03420ee5af27179c75292862c36a62dd4dd093fd4e";
+    const GOLDEN_LOCKIN3_SHA256: &str =
+        "a7b650b2853a2eae3183984a071906e4ce8693eb496e851e9bc2d94881ccbcdd";
+    const GOLDEN_MOKE_SHA256: &str =
+        "4ead3e9cb75d706a1d7e3b6969e0dd049f477b0caf502537b14f7b0883753f54";
+    const GOLDEN_SENSOR_SHA256: &str =
+        "796d64559725fc9e5fd87f77823fcbfc7c67fac8beff362da1774e79640cb5c1";
+    const GOLDEN_ROWS: usize = 985;
+    const GOLDEN_SENSOR_ROWS: usize = 1_000;
+
+    #[test]
+    fn analyze_executes_sensor_reference_signal_lockin_phase_moke_once_in_order() {
+        let directory = TemporaryDirectory::new();
+        let cfg = analyze_regression_config(&directory, &[4]);
+        let data = synthetic_recorded_waveform(4);
+
+        // Staging paths are deterministic for the run root, so the observer
+        // can check the real filesystem state at each execution boundary: the
+        // signal stage must have produced its CSV before lock-in starts.
+        let mut staging_cfg = cfg.clone();
+        staging_cfg.staging_active = true;
+        let staging_paths = staging_cfg.paths();
+
+        let mut steps = Vec::new();
+        let mut lockin_csv_existed = Vec::new();
+        let mut signal_csv_existed = Vec::new();
+        super::run_analyze_inner_observed(&cfg, &data, &mut |step| {
+            steps.push(step);
+            lockin_csv_existed.push(staging_paths.lockin_xy_csv(3).exists());
+            signal_csv_existed.push(staging_paths.signal_csv().exists());
+        })
+        .unwrap();
+
+        assert_eq!(
+            steps,
+            vec![
+                super::AnalyzeStep::Sensor,
+                super::AnalyzeStep::ReferencePreparation,
+                super::AnalyzeStep::Signal,
+                super::AnalyzeStep::Lockin,
+                super::AnalyzeStep::Phase,
+                super::AnalyzeStep::Moke,
+            ]
+        );
+        // The shared prerequisites run exactly once each.
+        for step in [
+            super::AnalyzeStep::Sensor,
+            super::AnalyzeStep::ReferencePreparation,
+            super::AnalyzeStep::Signal,
+            super::AnalyzeStep::Lockin,
+            super::AnalyzeStep::Phase,
+            super::AnalyzeStep::Moke,
+        ] {
+            assert_eq!(
+                steps.iter().filter(|candidate| **candidate == step).count(),
+                1,
+                "{step:?} must execute exactly once"
+            );
+        }
+        // No lock-in artifact exists while sensor/reference/signal run, and
+        // the signal output already exists by the time lock-in completes:
+        // this is execution order, not reordered logging.
+        let signal_index = steps
+            .iter()
+            .position(|step| *step == super::AnalyzeStep::Signal)
+            .unwrap();
+        let lockin_index = steps
+            .iter()
+            .position(|step| *step == super::AnalyzeStep::Lockin)
+            .unwrap();
+        assert!(
+            lockin_csv_existed[..=signal_index]
+                .iter()
+                .all(|exists| !exists)
+        );
+        assert!(signal_csv_existed[lockin_index]);
+    }
+
+    #[test]
+    fn analyze_pipeline_outputs_match_the_recorded_regression() {
+        let directory = TemporaryDirectory::new();
+        let cfg = analyze_regression_config(&directory, &[4]);
+        let data = synthetic_recorded_waveform(4);
+        run_analyze(&cfg, &data).unwrap();
+
+        let paths = cfg.paths();
+        assert_eq!(
+            crate::utils::checksum::file_sha256(&paths.signal_csv()).unwrap(),
+            GOLDEN_SIGNAL_SHA256
+        );
+        assert_eq!(
+            crate::utils::checksum::file_sha256(&paths.lockin_xy_csv(3)).unwrap(),
+            GOLDEN_LOCKIN3_SHA256
+        );
+        assert_eq!(
+            crate::utils::checksum::file_sha256(&paths.moke_csv()).unwrap(),
+            GOLDEN_MOKE_SHA256
+        );
+        assert_eq!(
+            crate::utils::checksum::file_sha256(&paths.sensor_csv()).unwrap(),
+            GOLDEN_SENSOR_SHA256
+        );
+
+        let signal = read_csv(paths.signal_csv()).unwrap();
+        let lockin = read_csv(paths.lockin_xy_csv(3)).unwrap();
+        let moke = read_csv(paths.moke_csv()).unwrap();
+
+        // Exact row/column/time/grid identity: the signal readout reuses the
+        // lock-in grid and the same sensor columns, and MOKE consumes that
+        // grid unchanged.
+        assert_eq!(signal[0].len(), GOLDEN_ROWS);
+        assert_eq!(lockin[0].len(), GOLDEN_ROWS);
+        assert_eq!(moke[0].len(), GOLDEN_ROWS);
+        assert_eq!(signal.len(), 4);
+        assert_eq!(lockin.len(), crate::constants::LI_HEADER.len() + 3);
+        assert_eq!(moke.len(), 5);
+        assert_eq!(signal[0], lockin[0]);
+        assert_eq!(signal[1], lockin[1]);
+        assert_eq!(signal[2], lockin[2]);
+        assert_eq!(moke[0], lockin[0]);
+
+        // Nonzero origin and the prepared stride grid are preserved.
+        let step = signal[0][1] - signal[0][0];
+        assert!(signal[0][0] > FIXTURE_ORIGIN_S);
+        assert!((step - FIXTURE_STRIDE_SAMPLES as f64 * FIXTURE_DT_S).abs() < 1e-12);
+        let sensor = read_csv(paths.sensor_csv()).unwrap();
+        assert_eq!(sensor[0].len(), GOLDEN_SENSOR_ROWS);
+        assert!(
+            (sensor[0][1] - sensor[0][0] - FIXTURE_STRIDE_SAMPLES as f64 * FIXTURE_DT_S).abs()
+                < 1e-12,
+            "sensor time step {} vs expected {}",
+            sensor[0][1] - sensor[0][0],
+            FIXTURE_STRIDE_SAMPLES as f64 * FIXTURE_DT_S
+        );
+    }
+
+    #[test]
+    fn analyze_without_signal_entries_runs_no_signal_stage_or_plot() {
+        let directory = TemporaryDirectory::new();
+        let cfg = analyze_regression_config(&directory, &[]);
+        let data = synthetic_recorded_waveform(4);
+        let mut steps = Vec::new();
+        super::run_analyze_inner_observed(&cfg, &data, &mut |step| steps.push(step)).unwrap();
+
+        assert_eq!(
+            steps,
+            vec![
+                super::AnalyzeStep::Sensor,
+                super::AnalyzeStep::ReferencePreparation,
+                super::AnalyzeStep::Lockin,
+                super::AnalyzeStep::Phase,
+                super::AnalyzeStep::Moke,
+            ]
+        );
+        assert!(!cfg.paths().signal_csv().exists());
+        assert!(!cfg.paths().signal_plot_dir().exists());
+        assert!(cfg.paths().lockin_xy_csv(3).is_file());
+        assert!(cfg.paths().moke_csv().is_file());
+    }
+
+    #[test]
+    fn analyze_with_multiple_signals_keeps_combined_csv_order_and_no_channel_figures() {
+        let directory = TemporaryDirectory::new();
+        let cfg = analyze_regression_config(&directory, &[4, 8]);
+        let data = synthetic_recorded_waveform(8);
+
+        // A per-channel figure left by an older generation must not survive
+        // into the new published generation.
+        let stale = cfg.paths().signal_plot_dir().join("ch4_mean.png");
+        std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        std::fs::write(&stale, b"\x89PNG\r\n\x1a\nstale").unwrap();
+
+        run_analyze(&cfg, &data).unwrap();
+
+        assert!(!cfg.paths().signal_plot_dir().exists());
+
+        // The combined CSV keeps the configured signal order and headers.
+        let signal = read_csv(cfg.paths().signal_csv()).unwrap();
+        assert_eq!(signal.len(), 5);
+        let header = std::fs::read_to_string(cfg.paths().signal_csv()).unwrap();
+        assert!(
+            header.starts_with(
+                "time (s),ch1 rate (T/s),ch1 integral (T),Ch4 DC4 mean (V),Ch8 DC8 mean (V)"
+            ),
+            "unexpected signal CSV header: {}",
+            header.lines().next().unwrap_or("")
+        );
+
+        // No signal plot artifact is registered while plotting is disabled.
+        let manifest: toml::Value =
+            toml::from_str(&std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap())
+                .unwrap();
+        assert!(
+            !manifest["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|artifact| artifact["kind"].as_str() == Some("signal_plot"))
+        );
+    }
+
+    #[test]
+    fn analyze_rerun_keeps_signal_outputs_and_manifest_registration() {
+        let directory = TemporaryDirectory::new();
+        let cfg = analyze_regression_config(&directory, &[4, 8]);
+        let data = synthetic_recorded_waveform(8);
+        std::fs::create_dir_all(directory.0.join("acquisition")).unwrap();
+        std::fs::write(
+            directory.0.join("acquisition/manifest.toml"),
+            b"schema_version = 1\n",
+        )
+        .unwrap();
+
+        run_analyze(&cfg, &data).unwrap();
+        let first_signal = std::fs::read(cfg.paths().signal_csv()).unwrap();
+        run_analyze(&cfg, &data).unwrap();
+
+        // The rerun keeps the signal output generated by the same pipeline.
+        assert_eq!(
+            std::fs::read(cfg.paths().signal_csv()).unwrap(),
+            first_signal
+        );
+
+        let manifest: toml::Value =
+            toml::from_str(&std::fs::read_to_string(cfg.paths().analysis_manifest()).unwrap())
+                .unwrap();
+        let artifacts = manifest["artifacts"].as_array().unwrap();
+        let signal_artifacts = artifacts
+            .iter()
+            .filter(|artifact| artifact["kind"].as_str() == Some("signal"))
+            .collect::<Vec<_>>();
+        assert_eq!(signal_artifacts.len(), 1);
+        assert_eq!(
+            signal_artifacts[0]["csv"].as_str(),
+            Some("signal/signal.csv")
+        );
+        assert!(
+            !artifacts
+                .iter()
+                .any(|artifact| artifact["kind"].as_str() == Some("signal_plot"))
+        );
+        assert!(!artifacts.iter().any(|artifact| {
+            artifact
+                .get("file")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|file| file.contains("_mean.png"))
+        }));
+        assert_eq!(manifest["generation"].as_integer(), Some(2));
+        assert_eq!(manifest["published_through"].as_str(), Some("moke"));
+        // The retained acquisition input stays readable and referenced.
+        assert_eq!(
+            std::fs::read(directory.0.join("acquisition/manifest.toml")).unwrap(),
+            b"schema_version = 1\n"
+        );
+        assert_eq!(
+            manifest["source_acquisition"].as_str(),
+            Some("../acquisition/manifest.toml")
+        );
+    }
+
+    #[test]
+    fn failed_analyze_rerun_keeps_the_previous_generation_intact() {
+        let directory = TemporaryDirectory::new();
+        let cfg = analyze_regression_config(&directory, &[4]);
+        let data = synthetic_recorded_waveform(4);
+        run_analyze(&cfg, &data).unwrap();
+
+        let published_signal = std::fs::read(cfg.paths().signal_csv()).unwrap();
+        let published_lockin = std::fs::read(cfg.paths().lockin_xy_csv(3)).unwrap();
+        let published_manifest = std::fs::read(cfg.paths().analysis_manifest()).unwrap();
+
+        // Break a stage after signal/lock-in have already produced staging
+        // output, so a partial publish would be observable.
+        let mut broken = cfg.clone();
+        broken.moke.use_sensor_ch = 7;
+        let error = run_analyze(&broken, &data).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("missing from channels"),
+            "unexpected failure: {error:#}"
+        );
+
+        assert_eq!(
+            std::fs::read(cfg.paths().signal_csv()).unwrap(),
+            published_signal
+        );
+        assert_eq!(
+            std::fs::read(cfg.paths().lockin_xy_csv(3)).unwrap(),
+            published_lockin
+        );
+        assert_eq!(
+            std::fs::read(cfg.paths().analysis_manifest()).unwrap(),
+            published_manifest
+        );
+        assert!(!cfg.paths().signal_plot_dir().exists());
     }
 
     #[test]
