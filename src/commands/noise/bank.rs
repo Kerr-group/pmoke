@@ -138,6 +138,7 @@ pub(super) struct BankLegOutput {
     pub prepare_ms: f64,
     pub apply_ms: f64,
     pub direct_reference_rows: usize,
+    pub direct_reference_ms: f64,
     pub max_abs_error_v: f64,
 }
 
@@ -612,6 +613,7 @@ pub(super) fn apply_bank_leg(
     // accelerated values must satisfy abs(error) <= 1e-8 + 1e-8*abs(ref)
     // (PN-NFR-002). The regression is measured, not assumed.
     let mut direct_reference_rows = 0_usize;
+    let mut direct_reference_ms = 0.0_f64;
     let mut max_abs_error_v = 0.0_f64;
     for row in rows.iter().take(direct_reference_sample.min(4)) {
         let local = row
@@ -623,6 +625,7 @@ pub(super) fn apply_bank_leg(
         let lo = center_usize.saturating_sub(half_taps + 1);
         let hi = center_usize + half_taps + 1;
         let slot_index = regime_to_slot[row.regime_index];
+        let direct_started = Instant::now();
         let direct = estimate_joint(
             &times[lo..=hi],
             &signal[lo..=hi],
@@ -635,6 +638,7 @@ pub(super) fn apply_bank_leg(
                 tolerances,
             },
         )?;
+        direct_reference_ms += direct_started.elapsed().as_secs_f64() * 1.0e3;
         let direct_magnitude = direct.xy[0].hypot(direct.xy[1]);
         for (got, want) in row.xy.iter().zip(direct.xy.iter()) {
             let error = (got - want).abs();
@@ -657,6 +661,7 @@ pub(super) fn apply_bank_leg(
         prepare_ms,
         apply_ms,
         direct_reference_rows,
+        direct_reference_ms,
         max_abs_error_v,
     })
 }

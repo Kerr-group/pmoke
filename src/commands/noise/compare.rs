@@ -503,6 +503,13 @@ struct BankLegEvidence {
     prepare_ms: f64,
     apply_ms: f64,
     direct_reference_rows: usize,
+    direct_reference_ms: f64,
+    /// Measured per-window cost of the direct estimator on the same grid,
+    /// extrapolated over every retained row: the conditional-bank apply is
+    /// measured against the equivalent fixed-global solver (PN-NFR-004).
+    fixed_global_projection_ms: f64,
+    /// apply_ms / fixed_global_projection_ms; <= 1 means the bank is cheaper.
+    accelerated_vs_projection_ratio: f64,
     max_abs_error_v: f64,
     boundary: BoundaryStats,
 }
@@ -2549,6 +2556,18 @@ fn run_compare_staged(
                             reserved.reason
                         ));
                     }
+                    let per_window_direct_ms = if output.direct_reference_rows == 0 {
+                        0.0
+                    } else {
+                        output.direct_reference_ms / output.direct_reference_rows as f64
+                    };
+                    let fixed_global_projection_ms =
+                        per_window_direct_ms * output.rows.len() as f64;
+                    let accelerated_vs_projection_ratio = if fixed_global_projection_ms > 0.0 {
+                        output.apply_ms / fixed_global_projection_ms
+                    } else {
+                        f64::NAN
+                    };
                     state.evidence.push(BankLegEvidence {
                         leg: label,
                         mode: mode_key,
@@ -2558,6 +2577,9 @@ fn run_compare_staged(
                         prepare_ms: output.prepare_ms,
                         apply_ms: output.apply_ms,
                         direct_reference_rows: output.direct_reference_rows,
+                        direct_reference_ms: output.direct_reference_ms,
+                        fixed_global_projection_ms,
+                        accelerated_vs_projection_ratio,
                         max_abs_error_v: output.max_abs_error_v,
                         boundary: stats,
                     });
@@ -2882,6 +2904,21 @@ fn run_compare_staged(
             .iter()
             .map(|item| item.direct_reference_rows)
             .sum();
+        let direct_ms: f64 = state
+            .evidence
+            .iter()
+            .map(|item| item.direct_reference_ms)
+            .sum();
+        let projection_ms: f64 = state
+            .evidence
+            .iter()
+            .map(|item| item.fixed_global_projection_ms)
+            .sum();
+        let ratio = if projection_ms > 0.0 {
+            apply_ms / projection_ms
+        } else {
+            f64::NAN
+        };
         let max_error = state
             .evidence
             .iter()
@@ -2908,12 +2945,17 @@ fn run_compare_staged(
             "legs": state.evidence,
             "acceleration": {
                 "prepared_plans": prepared_plans,
+                "plan_reuse_windows": retained_rows,
                 "prepare_ms_total": prepare_ms,
                 "apply_ms_total": apply_ms,
                 "direct_reference_rows": direct_rows,
+                "direct_reference_ms_total": direct_ms,
+                "fixed_global_projection_ms_total": projection_ms,
+                "accelerated_vs_projection_ratio": ratio,
                 "max_abs_error_v": max_error,
                 "equivalence_bound": "abs(error) <= 1e-8 V + 1e-8 * abs(reference)",
                 "core_equivalence_tests": "crates/pmoke-analysis-core/tests/joint_gls_prepared.rs",
+                "cache_state": "one factorization per distinct (mode, model, window length) per leg; the first window on a geometry is the cold prepare and every later window is warm reuse",
             },
         });
         write_json(

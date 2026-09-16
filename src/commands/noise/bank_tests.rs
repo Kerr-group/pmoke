@@ -433,6 +433,33 @@ fn bank_workers_and_chunks_preserve_rows_and_values() {
     let acceleration = &evidence["acceleration"];
     assert!(acceleration["prepared_plans"].as_u64().unwrap() >= 1);
     assert!(acceleration["direct_reference_rows"].as_u64().unwrap() >= 1);
+    // PN-NFR-004: the conditional-bank apply is measured against the
+    // equivalent fixed-global cost on the same grid, with the cache state
+    // and the reuse count reported.
+    let reuse = acceleration["plan_reuse_windows"].as_u64().unwrap();
+    assert!(reuse >= acceleration["prepared_plans"].as_u64().unwrap());
+    let projection = acceleration["fixed_global_projection_ms_total"]
+        .as_f64()
+        .unwrap();
+    assert!(projection.is_finite() && projection > 0.0);
+    let ratio = acceleration["accelerated_vs_projection_ratio"]
+        .as_f64()
+        .unwrap();
+    assert!(ratio.is_finite() && ratio > 0.0);
+    assert!(
+        acceleration["cache_state"]
+            .as_str()
+            .unwrap()
+            .contains("cold prepare")
+    );
+    let leg_evidence = &evidence["legs"][0];
+    assert!(leg_evidence["direct_reference_ms"].as_f64().unwrap() >= 0.0);
+    assert!(
+        leg_evidence["fixed_global_projection_ms"]
+            .as_f64()
+            .unwrap()
+            .is_finite()
+    );
     let max_error = acceleration["max_abs_error_v"].as_f64().unwrap();
     assert!(
         max_error <= 1.0e-12,
