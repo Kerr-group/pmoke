@@ -44,6 +44,15 @@ copied from elsewhere.
   The standalone `pmoke signal` command re-runs `run_li` from fetched data (same
   pattern as `pmoke li`) and then computes the means. Signal results feed nothing
   downstream (phase/moke do not consume them).
+  **Amended 2026-09-16 (Architecture decision, superseded):** the native analyze
+  workflow executes sensor → reference preparation → signal → lock-in → phase →
+  MOKE. The reference fit and the immutable analysis-window/output-grid
+  preparation run once after the sensor stage, before signal and lock-in, and are
+  reused by both; lock-in demodulation is not executed early, and the sensor and
+  reference work is not repeated. Standalone `pmoke sensor` remains
+  reference-independent; its full-rate series are aligned to the prepared
+  downstream grid without recomputation. The standalone `pmoke signal` command
+  reuses the same preparation and order while keeping its existing artifacts.
 - D5 Invalidation: re-running `li` invalidates `signal` outputs; re-running `signal`
   invalidates only `signal` plus `export_npy`. No further downstream propagation.
 - D6 Scope includes CSV output, time-trace plot, NPY export, manifest/provenance,
@@ -54,6 +63,13 @@ copied from elsewhere.
   `signal/ch{N}_mean.png` plus combined `signal/mean.png`. Axis labels come from
   each entry's `label`/`unit`. Combined angle-vs-signal loop plots are out of scope
   (deferred to a later analysis step).
+  **Amended 2026-09-16 (Architecture decision, superseded):** the combined figure
+  `signal/mean.png` is the only signal plot. Per-channel
+  `signal/ch{N}_mean.png` figures are never rendered or written, including when a
+  single signal entry is configured; the run emits exactly one signal plot
+  completion line carrying the measured elapsed time. The panels, mosaic growth,
+  axis labels, and "no combined angle-vs-signal loop plot" contract are
+  unchanged.
 - D8 CSV: a single combined file (`signal/signal.csv`) mirroring `moke/moke.csv`:
   time, sensor rate/integral columns, then one mean column per entry in
   `[[signals]]` order with headers `Ch{N} {label} mean ({unit})`. A combined

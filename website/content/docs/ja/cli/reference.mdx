@@ -33,7 +33,7 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 | [`pmoke signal`](#pmoke-signal) | lock-in窓での生信号channel平均 | core |
 | [`pmoke phase`](#pmoke-phase) | lock-in解析の参照位相回転 | core |
 | [`pmoke moke`](#pmoke-moke) | Kerr角度を計算 | core |
-| [`pmoke analyze`](#pmoke-analyze) | reference・sensor・lock-in・signal・phase・mokeの全解析 | core |
+| [`pmoke analyze`](#pmoke-analyze) | sensor・reference・signal・lock-in・phase・mokeの全解析 | core |
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | 共有データ・gridでのlock-in推定器比較（新規directoryへ） | core |
 | [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | 固定済みpaired block M6評価protocolの実行とJSON report出力 | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | 記録済みデータからの較正artifactのbuild・inspect・validate | core |
@@ -520,7 +520,7 @@ pmoke moke [-h, --help]
 
 ## `pmoke analyze`
 
-reference・sensor・lock-in・signal・phase・mokeの全解析
+sensor・reference・signal・lock-in・phase・mokeの全解析
 
 ```text
 pmoke analyze [-h, --help]
