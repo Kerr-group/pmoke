@@ -220,6 +220,11 @@ impl UiProgress {
             Some(u64::try_from(self.state.started_at.elapsed().as_millis()).unwrap_or(u64::MAX));
         emit_event(&event, || {});
     }
+
+    /// Measured wall-clock time since this progress started.
+    pub fn elapsed(&self) -> Duration {
+        self.state.started_at.elapsed()
+    }
 }
 
 pub fn spinner(message: impl Into<String>) -> UiProgress {

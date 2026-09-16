@@ -355,8 +355,8 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Average raw signal channels over the lock-in window" => "lock-in窓での生信号channel平均",
         "Rotate the reference phase for lock-in analysis" => "lock-in解析の参照位相回転",
         "Calculate the Kerr angle" => "Kerr角度を計算",
-        "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke" => {
-            "reference・sensor・lock-in・signal・phase・mokeの全解析"
+        "Run all analysis steps: sensor, reference, signal, lock-in, phase, moke" => {
+            "sensor・reference・signal・lock-in・phase・mokeの全解析"
         }
         "Compare lock-in estimators on shared data and grid into a new directory" => {
             "共有データ・gridでのlock-in推定器比較（新規directoryへ）"

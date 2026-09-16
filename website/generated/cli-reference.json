@@ -1436,7 +1436,7 @@
       {
         "name": "analyze",
         "path": "pmoke analyze",
-        "summary": "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke",
+        "summary": "Run all analysis steps: sensor, reference, signal, lock-in, phase, moke",
         "required_feature": null,
         "arguments": [
           {

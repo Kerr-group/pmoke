@@ -108,7 +108,7 @@ pub enum Command {
     /// Deprecated alias for `moke`
     #[command(hide = true)]
     Kerr,
-    /// Run all analysis steps: reference, sensor, lock-in, signal, phase, moke
+    /// Run all analysis steps: sensor, reference, signal, lock-in, phase, moke
     Analyze,
     /// Compare lock-in estimators on shared data and grid into a new directory
     CompareLockin {

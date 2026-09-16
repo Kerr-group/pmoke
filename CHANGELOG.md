@@ -4,6 +4,15 @@
 
 ### Changes
 
+- `pmoke analyze` now executes its stages in the real order — sensor,
+  reference/window preparation, signal, lock-in, phase, MOKE — instead of
+  demodulating before the signal readout. The reference fit and the shared
+  output grid are prepared once and reused by the signal readout and the
+  lock-in stage. The signal readout publishes only the combined
+  `signal/mean.png` figure (per-channel `signal/ch{N}_mean.png` figures are no
+  longer generated, including for a single entry) and reports exactly one
+  signal plot completion line with the measured elapsed time.
+
 - Native joint GLS now prepares one immutable geometry/resource plan per run,
   executes output windows in bounded chunks on the configured worker pool, and
   preserves deterministic output order. `covariance_output=none` validates

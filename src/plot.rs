@@ -58,9 +58,43 @@ pub fn run_plot(
     completed: impl Into<String>,
     f: impl FnOnce(Option<&Path>) -> Result<()>,
 ) -> Result<()> {
-    let progress = progress.into();
-    let completed = completed.into();
+    run_plot_impl(
+        plot,
+        output_path,
+        progress.into(),
+        completed.into(),
+        false,
+        f,
+    )
+}
 
+/// `run_plot`, but the success line reports the measured render duration
+/// instead of only the completion text.
+pub fn run_plot_with_duration(
+    plot: &Plot,
+    output_path: &Path,
+    progress: impl Into<String>,
+    completed: impl Into<String>,
+    f: impl FnOnce(Option<&Path>) -> Result<()>,
+) -> Result<()> {
+    run_plot_impl(
+        plot,
+        output_path,
+        progress.into(),
+        completed.into(),
+        true,
+        f,
+    )
+}
+
+fn run_plot_impl(
+    plot: &Plot,
+    output_path: &Path,
+    progress: String,
+    completed: String,
+    with_duration: bool,
+    f: impl FnOnce(Option<&Path>) -> Result<()>,
+) -> Result<()> {
     if !plot.enabled {
         ui::skipped(format!("{progress}: disabled"));
         return Ok(());
@@ -91,6 +125,11 @@ pub fn run_plot(
         .with_context(|| progress.clone());
     match result {
         Ok(()) => {
+            let completed = if with_duration {
+                format!("{completed} ({})", ui::fmt_duration(pb.elapsed()))
+            } else {
+                completed
+            };
             ui::finish_success(pb, completed);
             Ok(())
         }

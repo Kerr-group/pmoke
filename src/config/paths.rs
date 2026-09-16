@@ -198,12 +198,10 @@ impl ArtifactPaths {
         self.plot_dir().join("signal")
     }
 
+    /// One combined plot holding every configured signal as its own panel.
+    /// Per-channel signal figures are not part of the artifact contract.
     pub fn signal_combined_plot(&self) -> PathBuf {
         self.signal_plot_dir().join("mean.png")
-    }
-
-    pub fn signal_channel_plot(&self, channel: u8) -> PathBuf {
-        self.signal_plot_dir().join(format!("ch{channel}_mean.png"))
     }
 
     pub fn sensor_dir(&self) -> PathBuf {
