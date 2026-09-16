@@ -378,6 +378,18 @@ pub enum NoiseCommand {
         #[arg(long, value_name = "DIR")]
         output: Option<PathBuf>,
     },
+    /// Verify a committed compare generation and replay phase -> MOKE -> NPY
+    Replay {
+        /// Committed noise compare destination directory
+        #[arg(long, value_name = "DIR")]
+        destination: PathBuf,
+        /// Replay destination (defaults to <destination>/replay)
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Verify digests and semantic schemas only; write nothing
+        #[arg(long)]
+        verify_only: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

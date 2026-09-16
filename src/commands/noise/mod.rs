@@ -1,9 +1,11 @@
 //! `pmoke noise` command surface (PN-M1/M2, Issue #246).
 
+pub mod bank;
 pub mod compare;
 pub mod diagnose;
 pub mod diagnostics;
 pub mod plan;
+pub mod replay;
 
 use crate::cli::NoiseCommand;
 
@@ -16,5 +18,10 @@ pub fn run(command: &NoiseCommand) -> Result<(), anyhow::Error> {
         NoiseCommand::Compare { request, output } => {
             compare::run_compare(request, output.as_deref(), None)
         }
+        NoiseCommand::Replay {
+            destination,
+            output,
+            verify_only,
+        } => replay::run_replay(destination, output.as_deref(), *verify_only),
     }
 }

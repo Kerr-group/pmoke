@@ -380,6 +380,18 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Run the frozen global calibration plus controlled comparison workflow" => {
             "凍結グローバル較正と比較ワークフローの実行"
         }
+        "Verify a committed compare generation and replay phase -> MOKE -> NPY" => {
+            "コミット済み比較世代の検証とphase → MOKE → NPY replay"
+        }
+        "Committed noise compare destination directory" => {
+            "コミット済みノイズ比較destination directory"
+        }
+        "Replay destination (defaults to <destination>/replay)" => {
+            "replay先（既定: <destination>/replay）"
+        }
+        "Verify digests and semantic schemas only; write nothing" => {
+            "digestと意味スキーマの検証のみ（書き込みなし）"
+        }
         "Path to the noise compare request file" => "ノイズ比較requestファイルのpath",
         "Plan a recorded-only noise diagnosis into a new destination" => {
             "記録済みデータのノイズ診断計画（新規destinationへ）"

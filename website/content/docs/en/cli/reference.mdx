@@ -661,6 +661,22 @@ pmoke noise compare --request <FILE> [--output <DIR>] [-h, --help]
 | `-h, --help` | - | - | Print help | - |
 
 
+### `pmoke noise replay`
+
+Verify a committed compare generation and replay phase -> MOKE -> NPY
+
+```text
+pmoke noise replay --destination <DIR> [--output <DIR>] [--verify-only] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--destination <DIR>` | yes | - | Committed noise compare destination directory | - |
+| `--output <DIR>` | - | - | Replay destination (defaults to &lt;destination&gt;/replay) | - |
+| `--verify-only` | - | - | Verify digests and semantic schemas only; write nothing | - |
+| `-h, --help` | - | - | Print help | - |
+
+
 ## `pmoke process`
 
 Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
