@@ -35,6 +35,8 @@ pub struct SignalDiagnostics {
     pub phase_variance: PhaseVarianceSection,
     pub correlation: CorrelationSection,
     pub identifiability: IdentifiabilitySection,
+    /// Recorded change-rule qualification (error/power limits, PN-FR-013).
+    pub change_qualification: ChangeQualification,
 }
 
 /// Acquisition quality control over the analyzed blocks (PN-FR-009).
@@ -106,6 +108,158 @@ pub struct IdentifiabilitySection {
 pub const NUISANCE_RECIPE_ID: &str = "nuisance-dc-trend-h12/v1";
 pub const PHASE_VARIANCE_RECIPE_ID: &str = "phase-variance-64bin/v1";
 pub const CORRELATION_RECIPE_ID: &str = "correlation-bartlett-j256/v1";
+
+// ---------------------------------------------------------------------------
+// Versioned calibrated change rule (PN-FR-013, PN-M4).
+//
+// The change rule separates "the residual structure justifies a
+// regime-dependent calibration" (`supported_structure`) from
+// "no detectable change" and an explicit abstention (`unknown`). Its
+// thresholds are not descriptive guesses: they were selected on the disjoint
+// calibration seeds of the registered synthetic benchmark
+// (`super::qualification`, `change-structure-benchmark/v1`) and verified on
+// fresh evaluation seeds (PN-A-006): >=200 independent null and >=200
+// alternative datasets per family with binomial intervals; null
+// false-selection 95% upper bound <= 0.10 and meaningful-alternative
+// detection 95% lower bound >= 0.80.
+//
+// The measured limits below are the recorded output of that benchmark run.
+// `qualification::tests::frozen_rule_matches_registered_benchmark` re-runs
+// the registered benchmark and fails if these constants drift from it.
+// ---------------------------------------------------------------------------
+
+/// Versioned identity of the calibrated change rule.
+pub const CHANGE_RULE_ID: &str = "phase-correlation-change/v1";
+
+/// Calibrated detection thresholds: a residual process is reported as
+/// `supported_structure` when either the phase-variance peak/median ratio or
+/// the strongest off-peak autocorrelation reaches its threshold.
+pub const CHANGE_PHASE_PEAK_MEDIAN_THRESHOLD: f64 = 1.15;
+pub const CHANGE_CORRELATION_OFFPEAK_THRESHOLD: f64 = 0.06;
+
+/// No-change band: below both bands the rule reports `no_detectable_change`;
+/// between the band and the detection threshold it abstains (`unknown`). The
+/// bands are the worst-case per-family 97.5th percentiles of the
+/// calibration-stage no-change control families (pooled stationary-iid and
+/// scalar-only-variance datasets), so a `no_detectable_change` report is
+/// calibrated rather than assumed.
+pub const CHANGE_NO_CHANGE_PHASE_BAND: f64 = 1.128_398_355_731_182_5;
+pub const CHANGE_NO_CHANGE_CORRELATION_BAND: f64 = 0.019_699_427_486_708_58;
+
+/// Registered benchmark identity and inherited engineering targets (PN-A-006).
+pub const CHANGE_BENCHMARK_ID: &str = "change-structure-benchmark/v1";
+pub const CHANGE_BENCHMARK_DATASETS_PER_FAMILY: usize = 200;
+pub const CHANGE_NULL_FP_TARGET_UPPER: f64 = 0.10;
+pub const CHANGE_POWER_TARGET_LOWER: f64 = 0.80;
+/// Internal QA target (not part of PN-A-006): the calibrated no-change
+/// families must be reported `no_detectable_change` at least this often.
+pub const CHANGE_NO_CHANGE_SPECIFICITY_TARGET: f64 = 0.90;
+
+/// Measured worst-case limits recorded by the registered benchmark evaluation
+/// stage (fresh seeds): null-family false-selection 95% upper bound and
+/// alternative-family detection 95% lower bound.
+pub const CHANGE_MEASURED_NULL_FP_UPPER_BOUND: f64 = 0.027773704428405807;
+pub const CHANGE_MEASURED_POWER_LOWER_BOUND: f64 = 0.9811546735929196;
+/// `qualified` when every family met its PN-A-006 target on fresh seeds;
+/// otherwise `unverified`/`failed` with the per-family report retained.
+pub const CHANGE_QUALIFICATION_STATUS: &str = "qualified";
+
+/// Calibrated change decision (see the frozen thresholds above).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeDecision {
+    SupportedStructure,
+    NoDetectableChange,
+    Unknown,
+}
+
+/// One frozen threshold set of the versioned change rule.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ChangeThresholds {
+    pub phase_peak_median: f64,
+    pub correlation_offpeak: f64,
+    pub no_change_phase_band: f64,
+    pub no_change_correlation_band: f64,
+}
+
+impl ChangeThresholds {
+    /// The frozen product thresholds (calibrated; see the constants above).
+    pub fn frozen() -> Self {
+        Self {
+            phase_peak_median: CHANGE_PHASE_PEAK_MEDIAN_THRESHOLD,
+            correlation_offpeak: CHANGE_CORRELATION_OFFPEAK_THRESHOLD,
+            no_change_phase_band: CHANGE_NO_CHANGE_PHASE_BAND,
+            no_change_correlation_band: CHANGE_NO_CHANGE_CORRELATION_BAND,
+        }
+    }
+}
+
+/// Decision under explicit thresholds; the registered benchmark uses this
+/// with candidate thresholds during calibration, and the workflow uses
+/// [`change_decision`] with the frozen constants.
+pub fn change_decision_with(
+    thresholds: ChangeThresholds,
+    phase_peak_median: f64,
+    max_abs_offpeak: f64,
+) -> ChangeDecision {
+    if !phase_peak_median.is_finite() || !max_abs_offpeak.is_finite() {
+        return ChangeDecision::Unknown;
+    }
+    if phase_peak_median >= thresholds.phase_peak_median
+        || max_abs_offpeak >= thresholds.correlation_offpeak
+    {
+        return ChangeDecision::SupportedStructure;
+    }
+    if phase_peak_median <= thresholds.no_change_phase_band
+        && max_abs_offpeak <= thresholds.no_change_correlation_band
+    {
+        return ChangeDecision::NoDetectableChange;
+    }
+    ChangeDecision::Unknown
+}
+
+/// The workflow decision under the frozen calibrated thresholds.
+pub fn change_decision(phase_peak_median: f64, max_abs_offpeak: f64) -> ChangeDecision {
+    change_decision_with(
+        ChangeThresholds::frozen(),
+        phase_peak_median,
+        max_abs_offpeak,
+    )
+}
+
+/// Recorded qualification of the change rule (PN-FR-013: report error/power
+/// before any regime-dependent calibration is recommended).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeQualification {
+    pub rule_id: String,
+    pub benchmark_id: String,
+    pub phase_peak_median_threshold: f64,
+    pub correlation_offpeak_threshold: f64,
+    pub datasets_per_family: usize,
+    pub null_fp_target_upper: f64,
+    pub power_target_lower: f64,
+    pub no_change_specificity_target: f64,
+    pub measured_null_fp_upper_bound: f64,
+    pub measured_power_lower_bound: f64,
+    pub status: String,
+}
+
+/// The frozen qualification record attached to every diagnostic measurement.
+pub fn change_qualification() -> ChangeQualification {
+    ChangeQualification {
+        rule_id: CHANGE_RULE_ID.to_string(),
+        benchmark_id: CHANGE_BENCHMARK_ID.to_string(),
+        phase_peak_median_threshold: CHANGE_PHASE_PEAK_MEDIAN_THRESHOLD,
+        correlation_offpeak_threshold: CHANGE_CORRELATION_OFFPEAK_THRESHOLD,
+        datasets_per_family: CHANGE_BENCHMARK_DATASETS_PER_FAMILY,
+        null_fp_target_upper: CHANGE_NULL_FP_TARGET_UPPER,
+        power_target_lower: CHANGE_POWER_TARGET_LOWER,
+        no_change_specificity_target: CHANGE_NO_CHANGE_SPECIFICITY_TARGET,
+        measured_null_fp_upper_bound: CHANGE_MEASURED_NULL_FP_UPPER_BOUND,
+        measured_power_lower_bound: CHANGE_MEASURED_POWER_LOWER_BOUND,
+        status: CHANGE_QUALIFICATION_STATUS.to_string(),
+    }
+}
 
 /// Runs the signal diagnostics over the resolved training blocks and
 /// returns the measurement sections plus the mechanism-agnostic finding.
@@ -253,6 +407,7 @@ pub fn run_signal_diagnostics(
             reasons: reasons.clone(),
             non_identifiable,
         },
+        change_qualification: change_qualification(),
     };
     let reason = reasons.join("; ");
     Ok((diagnostics, verdict, reason))
@@ -322,12 +477,13 @@ fn max_abs_offpeak(lags: &[f64]) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
-/// Mechanism-agnostic classification (PN-FR-011/012/035). Thresholds are
-/// descriptive shape guards on computed statistics, never physical causes:
-/// a peaked phase-variance profile or a strong off-peak autocorrelation is
-/// `supported_structure`; a flat profile with weak correlation is
-/// `no_detectable_change`; anything that fails coverage/condition gates is
-/// `insufficient_evidence` (non-identifiable); the remainder is `unknown`.
+/// Mechanism-agnostic classification (PN-FR-011/012/013/035). Thresholds are
+/// the calibrated change-rule constants (PN-M4); the rule is
+/// mechanism-agnostic — a peaked phase-variance profile or a strong off-peak
+/// autocorrelation is `supported_structure`; a flat profile with weak
+/// correlation is `no_detectable_change`; anything that fails
+/// coverage/condition gates is `insufficient_evidence` (non-identifiable);
+/// the remainder abstains as `unknown`. No physical noise cause is asserted.
 fn classify_identifiability(
     phase: &PhaseVarianceSection,
     correlation: &CorrelationSection,
@@ -370,33 +526,48 @@ fn classify_identifiability(
         ));
         return ("insufficient_evidence".to_string(), reasons, true);
     }
-    let peaked = phase.peak_to_median_ratio >= 1.5;
-    let correlated = correlation.max_abs_offpeak >= 0.2;
-    if peaked {
-        reasons.push(format!(
-            "phase variance peaks at {:.2}x median over {} bins (descriptive shape only)",
-            phase.peak_to_median_ratio, phase.bins
-        ));
+    let decision = change_decision(phase.peak_to_median_ratio, correlation.max_abs_offpeak);
+    match decision {
+        ChangeDecision::SupportedStructure => {
+            let peaked = phase.peak_to_median_ratio >= CHANGE_PHASE_PEAK_MEDIAN_THRESHOLD;
+            let correlated = correlation.max_abs_offpeak >= CHANGE_CORRELATION_OFFPEAK_THRESHOLD;
+            if peaked {
+                reasons.push(format!(
+                    "phase variance peaks at {:.2}x median over {} bins (change rule `{rule}`; descriptive shape only)",
+                    phase.peak_to_median_ratio,
+                    phase.bins,
+                    rule = CHANGE_RULE_ID
+                ));
+            }
+            if correlated {
+                reasons.push(format!(
+                    "residual autocorrelation reaches {:.3} off-peak (change rule `{rule}`; descriptive shape only)",
+                    correlation.max_abs_offpeak,
+                    rule = CHANGE_RULE_ID
+                ));
+            }
+            reasons.push("no physical noise cause is asserted".to_string());
+            ("supported_structure".to_string(), reasons, false)
+        }
+        ChangeDecision::NoDetectableChange => {
+            reasons.push(format!(
+                "phase variance flat ({:.2}x median) with weak off-peak correlation ({:.3}) under change rule `{rule}`",
+                phase.peak_to_median_ratio,
+                correlation.max_abs_offpeak,
+                rule = CHANGE_RULE_ID
+            ));
+            ("no_detectable_change".to_string(), reasons, false)
+        }
+        ChangeDecision::Unknown => {
+            reasons.push(format!(
+                "statistics sit between the change-rule `{rule}` bands ({:.2}x median, {:.3} off-peak); no structure can be claimed",
+                phase.peak_to_median_ratio,
+                correlation.max_abs_offpeak,
+                rule = CHANGE_RULE_ID
+            ));
+            ("unknown".to_string(), reasons, true)
+        }
     }
-    if correlated {
-        reasons.push(format!(
-            "residual autocorrelation reaches {:.3} off-peak (descriptive shape only)",
-            correlation.max_abs_offpeak
-        ));
-    }
-    if peaked || correlated {
-        reasons.push("no physical noise cause is asserted".to_string());
-        return ("supported_structure".to_string(), reasons, false);
-    }
-    if phase.peak_to_median_ratio <= 1.2 && correlation.max_abs_offpeak <= 0.1 {
-        reasons.push(format!(
-            "phase variance flat ({:.2}x median) with weak off-peak correlation ({:.3})",
-            phase.peak_to_median_ratio, correlation.max_abs_offpeak
-        ));
-        return ("no_detectable_change".to_string(), reasons, false);
-    }
-    reasons.push("statistics sit between detection bands; no structure can be claimed".to_string());
-    ("unknown".to_string(), reasons, true)
 }
 
 /// Recipe constants surfaced for report provenance.

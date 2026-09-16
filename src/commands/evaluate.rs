@@ -11,8 +11,18 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const EVALUATION_REQUEST_SCHEMA_VERSION: u32 = 1;
+/// Versioned identity of the statistic this lane computes (PN-FR-036): a
+/// ratio of average block standard deviations. It is a different estimator
+/// from the compare lane's pooled residual-scatter ratio; the two are never
+/// silently renamed into each other.
+pub const EVALUATE_STATISTIC_ID: &str = "mean_block_sd_ratio_v1";
+pub const EVALUATE_STATISTIC_FORMULA: &str = "mean_block_sd(candidate) / mean_block_sd(baseline) over the declared equal-length evaluation blocks (not pooled-variance equivalent)";
+pub const EVALUATE_RESAMPLING_UNIT: &str = "whole_equal_length_evaluation_blocks";
+pub const EVALUATE_MULTIPLICITY_POLICY_ID: &str = "single_candidate_no_selection/v1";
+pub const EVALUATE_PROMOTION_POLICY: &str = "not_authorized";
 const BOOTSTRAP_REPLICATES: usize = 10_000;
 const BOOTSTRAP_SEED: u64 = 0x4d_3645_7661_6c31;
+const BOOTSTRAP_RNG_ID: &str = "lcg6364136223846793005/v1";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -96,6 +106,18 @@ pub struct EvaluationReport {
     pub scientific_verdict: Verdict,
     pub computation_complete: bool,
     pub controls: ControlStatuses,
+    /// Versioned statistic identity and reproducibility policy (PN-FR-036,
+    /// PN-NFR-006): this lane reports the mean-block-SD ratio, never the
+    /// compare lane's pooled residual-scatter ratio.
+    pub statistic_id: String,
+    pub statistic_formula: String,
+    pub pooled_statistic_id: String,
+    pub resampling_unit: String,
+    pub bootstrap_replicates: usize,
+    pub bootstrap_seed: u64,
+    pub rng_id: String,
+    pub multiplicity_policy_id: String,
+    pub promotion: String,
     pub notes: Vec<String>,
 }
 
@@ -144,6 +166,7 @@ pub fn evaluate_request(request: &EvaluationRequest) -> Result<EvaluationReport>
         "Residual variance is not identified with a physical noise mechanism.".to_string(),
         "Private measurement evaluation was not run by this synthetic/statistical command."
             .to_string(),
+        "This lane reports the mean-block-SD ratio statistic; it is not pooled-variance equivalent to the compare lane's pooled residual-scatter statistic (PN-FR-036).".to_string(),
     ];
     if request.design_blocks == 0 || request.tuning_blocks == 0 {
         notes.push("Design and tuning role counts are incomplete; scientific qualification is not established.".to_string());
@@ -231,6 +254,15 @@ pub fn evaluate_request(request: &EvaluationRequest) -> Result<EvaluationReport>
             dynamic_fidelity: Verdict::Unverified,
             private_measurement: Verdict::Unverified,
         },
+        statistic_id: EVALUATE_STATISTIC_ID.to_string(),
+        statistic_formula: EVALUATE_STATISTIC_FORMULA.to_string(),
+        pooled_statistic_id: crate::commands::noise::compare::COMPARE_STATISTIC_ID.to_string(),
+        resampling_unit: EVALUATE_RESAMPLING_UNIT.to_string(),
+        bootstrap_replicates: BOOTSTRAP_REPLICATES,
+        bootstrap_seed: BOOTSTRAP_SEED,
+        rng_id: BOOTSTRAP_RNG_ID.to_string(),
+        multiplicity_policy_id: EVALUATE_MULTIPLICITY_POLICY_ID.to_string(),
+        promotion: EVALUATE_PROMOTION_POLICY.to_string(),
         notes,
     })
 }
@@ -451,5 +483,35 @@ mod tests {
         let mut request = request(40, 0.9);
         request.source_fingerprint_sha256 = "not-a-digest".to_string();
         assert!(evaluate_request(&request).is_err());
+    }
+
+    #[test]
+    fn statistic_identity_is_versioned_and_distinct_from_the_pooled_compare_statistic() {
+        // PN-FR-036 / PN-AT-018: the evaluate-lockin statistic keeps its own
+        // identity; it is never silently renamed to the compare lane's pooled
+        // residual-scatter ratio.
+        let report = evaluate_request(&request(40, 0.9)).unwrap();
+        assert_eq!(report.statistic_id, EVALUATE_STATISTIC_ID);
+        assert_eq!(report.statistic_id, "mean_block_sd_ratio_v1");
+        assert_ne!(
+            report.statistic_id,
+            crate::commands::noise::compare::COMPARE_STATISTIC_ID
+        );
+        assert_eq!(
+            report.pooled_statistic_id,
+            crate::commands::noise::compare::COMPARE_STATISTIC_ID
+        );
+        assert_eq!(report.promotion, "not_authorized");
+        assert_eq!(report.resampling_unit, EVALUATE_RESAMPLING_UNIT);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("not pooled-variance equivalent"))
+        );
+        // No scientific result grants promotion authority, even when the
+        // numeric benefit gate passes (PN-FR-032).
+        assert_eq!(report.benefit_gate, Verdict::Pass);
+        assert_eq!(report.promotion, "not_authorized");
     }
 }
