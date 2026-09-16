@@ -720,6 +720,245 @@ pub fn whiten(
     noise: &NoiseModel,
     tolerances: JointSolverTolerances,
 ) -> Result<WhitenedSystem> {
+    whiten_inner(
+        design,
+        signal,
+        reference_phase_rad,
+        reference_frequency_hz,
+        times,
+        noise,
+        tolerances,
+        None,
+    )
+}
+
+/// Immutable prepared noise plan (PN-M3 numerical acceleration): the mode
+/// preprocessing and, for the correlated modes, the Toeplitz Cholesky factor
+/// of the normalized kernel are computed once for one (model, window length)
+/// and shared safely across windows. The direct [`estimate_joint`] prepares
+/// and consumes one plan per call, so both paths execute the same arithmetic
+/// under the same gates: reuse changes cost, never values.
+#[derive(Debug, Clone)]
+pub struct PreparedNoisePlan {
+    noise: NoiseModel,
+    rows: usize,
+    tolerances: JointSolverTolerances,
+    correlation: Option<PreparedCorrelation>,
+}
+
+/// Factorized normalized Toeplitz factor for one window length, built once
+/// and reused by every window that shares the geometry.
+#[derive(Debug, Clone)]
+struct PreparedCorrelation {
+    lower: DMatrix<f64>,
+    toeplitz: DMatrix<f64>,
+    jitter_applied_v2: f64,
+}
+
+impl PreparedNoisePlan {
+    /// Prepares the immutable plan for one noise model and one window
+    /// length. Component checks and the correlated factorization happen
+    /// here, once, before any window data is touched; a correlated window
+    /// above [`MAX_WINDOW_SAMPLES`] is refused before the quadratic factor
+    /// is allocated (PN-FR-037).
+    pub fn prepare(
+        noise: &NoiseModel,
+        rows: usize,
+        tolerances: JointSolverTolerances,
+    ) -> Result<Self> {
+        if rows == 0 {
+            return Err(AnalysisError::new(
+                "dimension_mismatch",
+                "prepared noise plan needs at least one sample",
+            ));
+        }
+        if !(tolerances.max_noise_condition.is_finite() && tolerances.max_noise_condition > 0.0) {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "max_noise_condition must be positive finite",
+            ));
+        }
+        let correlation = match noise.mode {
+            NoiseMode::Identity => None,
+            NoiseMode::PhaseDiagonal => {
+                let bins = noise.variance_bins.as_ref().ok_or_else(|| {
+                    AnalysisError::new(
+                        "missing_noise_component",
+                        "phase_diagonal mode needs variance bins",
+                    )
+                })?;
+                table_condition_guard(bins, tolerances.max_noise_condition)?;
+                None
+            }
+            NoiseMode::StationaryCorrelated => {
+                let kernel = noise.correlation.as_ref().ok_or_else(|| {
+                    AnalysisError::new(
+                        "missing_noise_component",
+                        "stationary_correlated mode needs a correlation kernel",
+                    )
+                })?;
+                validate_correlation_kernel(kernel)?;
+                Some(prepare_correlation_factor(
+                    kernel,
+                    rows,
+                    tolerances.max_jitter_v2,
+                )?)
+            }
+            NoiseMode::PhaseCorrelated => {
+                let bins = noise.variance_bins.as_ref().ok_or_else(|| {
+                    AnalysisError::new(
+                        "missing_noise_component",
+                        "phase_correlated mode needs variance bins",
+                    )
+                })?;
+                let kernel = noise.correlation.as_ref().ok_or_else(|| {
+                    AnalysisError::new(
+                        "missing_noise_component",
+                        "phase_correlated mode needs a correlation kernel",
+                    )
+                })?;
+                validate_correlation_kernel(kernel)?;
+                table_condition_guard(bins, tolerances.max_noise_condition)?;
+                Some(prepare_correlation_factor(
+                    kernel,
+                    rows,
+                    tolerances.max_jitter_v2,
+                )?)
+            }
+        };
+        Ok(Self {
+            noise: noise.clone(),
+            rows,
+            tolerances,
+            correlation,
+        })
+    }
+
+    /// Window length this plan is prepared for.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Noise mode this plan is prepared for.
+    pub fn mode(&self) -> NoiseMode {
+        self.noise.mode
+    }
+
+    /// The exact noise model the plan was prepared from.
+    pub fn noise_model(&self) -> &NoiseModel {
+        &self.noise
+    }
+
+    /// Bounded jitter actually applied to the normalized Toeplitz diagonal
+    /// when the plan was prepared (0 when no correlated factor ran or the
+    /// exact factor was positive definite).
+    pub fn jitter_applied_v2(&self) -> f64 {
+        self.correlation
+            .as_ref()
+            .map(|prepared| prepared.jitter_applied_v2)
+            .unwrap_or(0.0)
+    }
+
+    /// Whitens design and response with the prepared plan (the accelerated
+    /// path). Every per-window validation, variance interpolation,
+    /// realized-covariance gate and triangular solve matches the direct
+    /// path exactly; only the correlated factor construction is reused.
+    pub fn whiten(
+        &self,
+        design: &DMatrix<f64>,
+        signal: &[f64],
+        times: &[f64],
+        reference_frequency_hz: f64,
+        reference_phase_rad: f64,
+    ) -> Result<WhitenedSystem> {
+        if design.nrows() != self.rows {
+            return Err(AnalysisError::new(
+                "dimension_mismatch",
+                format!(
+                    "prepared noise plan covers {} rows but the design holds {}",
+                    self.rows,
+                    design.nrows()
+                ),
+            ));
+        }
+        whiten_inner(
+            design,
+            signal,
+            reference_phase_rad,
+            reference_frequency_hz,
+            times,
+            &self.noise,
+            self.tolerances,
+            self.correlation.as_ref(),
+        )
+    }
+}
+
+/// Prepared or freshly built factor for one correlated window.
+enum FactorSource<'a> {
+    Prepared(&'a PreparedCorrelation),
+    Fresh(PreparedCorrelation),
+}
+
+impl FactorSource<'_> {
+    fn parts(&self) -> (&DMatrix<f64>, &DMatrix<f64>, f64) {
+        match self {
+            FactorSource::Prepared(prepared) => (
+                &prepared.lower,
+                &prepared.toeplitz,
+                prepared.jitter_applied_v2,
+            ),
+            FactorSource::Fresh(fresh) => (&fresh.lower, &fresh.toeplitz, fresh.jitter_applied_v2),
+        }
+    }
+}
+
+/// Builds and factorizes the normalized Toeplitz factor for one window
+/// length: recorded lags with zeros beyond the support, SPD-validated under
+/// the bounded jitter policy.
+fn prepare_correlation_factor(
+    kernel: &CorrelationKernel,
+    rows: usize,
+    max_jitter_v2: f64,
+) -> Result<PreparedCorrelation> {
+    if rows < 2 {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            "correlated whitening needs at least two samples",
+        ));
+    }
+    if rows > MAX_WINDOW_SAMPLES {
+        return Err(AnalysisError::new(
+            "resource_limit_exceeded",
+            format!(
+                "correlated window holds {rows} samples above cap {MAX_WINDOW_SAMPLES}; \
+                 refusing the quadratic factor before allocating it"
+            ),
+        ));
+    }
+    let toeplitz = toeplitz_from_lags(&kernel.lags, rows);
+    let (lower, jitter_applied_v2) = cholesky_factor(&toeplitz, max_jitter_v2)?;
+    Ok(PreparedCorrelation {
+        lower,
+        toeplitz,
+        jitter_applied_v2,
+    })
+}
+
+/// Whitening body shared by the direct and prepared paths. `prepared` is
+/// `None` for the direct path (every correlated window factorizes its own
+/// Toeplitz) and `Some` for the accelerated path.
+#[allow(clippy::too_many_arguments)]
+fn whiten_inner(
+    design: &DMatrix<f64>,
+    signal: &[f64],
+    reference_phase_rad: f64,
+    reference_frequency_hz: f64,
+    times: &[f64],
+    noise: &NoiseModel,
+    tolerances: JointSolverTolerances,
+    prepared: Option<&PreparedCorrelation>,
+) -> Result<WhitenedSystem> {
     if signal.len() != design.nrows() || times.len() != design.nrows() {
         return Err(AnalysisError::new(
             "dimension_mismatch",
@@ -820,8 +1059,9 @@ pub fn whiten(
             // phase-diagonal path, where S scaling also precedes the solve).
             let scaled = scale_rows(design, &response, noise.reference_variance_v2.sqrt())?;
             let uniform = vec![noise.reference_variance_v2.sqrt(); scaled.0.nrows()];
-            let system =
-                whiten_correlated(&scaled.0, &scaled.1, times, kernel, tolerances, &uniform)?;
+            let system = whiten_correlated(
+                &scaled.0, &scaled.1, times, kernel, tolerances, prepared, &uniform,
+            )?;
             Ok(system)
         }
         NoiseMode::PhaseCorrelated => {
@@ -873,6 +1113,7 @@ pub fn whiten(
                 times,
                 kernel,
                 tolerances,
+                prepared,
                 &sqrt_variance,
             )
         }
@@ -906,6 +1147,7 @@ fn whiten_correlated(
     times: &[f64],
     kernel: &CorrelationKernel,
     tolerances: JointSolverTolerances,
+    prepared: Option<&PreparedCorrelation>,
     sqrt_variance: &[f64],
 ) -> Result<WhitenedSystem> {
     let rows = scaled_design.nrows();
@@ -947,12 +1189,19 @@ fn whiten_correlated(
             ),
         ));
     }
-    let toeplitz = toeplitz_from_lags(&kernel.lags, rows);
-    let (lower, jitter) = cholesky_factor(&toeplitz, tolerances.max_jitter_v2)?;
+    let factor_source = match prepared {
+        Some(prepared) => FactorSource::Prepared(prepared),
+        None => FactorSource::Fresh(prepare_correlation_factor(
+            kernel,
+            rows,
+            tolerances.max_jitter_v2,
+        )?),
+    };
+    let (lower, toeplitz, jitter) = factor_source.parts();
     // TOL-07 on the executed covariance, not just its factors: Cholesky
     // success and whitened-design conditioning do not bound cond(R).
     gate_realized_noise_condition(
-        &toeplitz,
+        toeplitz,
         jitter,
         sqrt_variance,
         tolerances.max_noise_condition,
@@ -964,7 +1213,7 @@ fn whiten_correlated(
         }
         rhs[(row, scaled_design.ncols())] = scaled_response[row];
     }
-    let solved = forward_substitute(&lower, &rhs)?;
+    let solved = forward_substitute(lower, &rhs)?;
     let columns = scaled_design.ncols();
     let design = solved.columns(0, columns).into_owned();
     let response = DVector::from_iterator(rows, (0..rows).map(|row| solved[(row, columns)]));
@@ -1356,11 +1605,51 @@ pub fn estimate_joint(
     sample_rate_hz: f64,
     settings: &JointHarmonicSettings,
 ) -> Result<JointEstimate> {
-    let model = &settings.model;
-    let noise = &settings.noise;
-    let tolerances = settings.tolerances;
+    validate_signal_model(&settings.model, sample_rate_hz)?;
+    validate_noise_model(&settings.noise)?;
+    let plan = PreparedNoisePlan::prepare(&settings.noise, times.len(), settings.tolerances)?;
+    estimate_joint_with_plan(
+        times,
+        signal,
+        reference_frequency_hz,
+        reference_phase_rad,
+        sample_rate_hz,
+        &settings.model,
+        settings.tolerances,
+        &plan,
+    )
+}
+
+/// Direct-estimate entry point on an immutable prepared noise plan (the
+/// accelerated path). `estimate_joint` prepares and consumes one plan per
+/// call, so both paths share every arithmetic step; reuse across windows is
+/// a cost optimization proven by equivalence tests, never a different
+/// estimator. The plan's noise model is re-validated, so the acceptance
+/// surface matches the direct entry point exactly.
+#[allow(clippy::too_many_arguments)]
+pub fn estimate_joint_with_plan(
+    times: &[f64],
+    signal: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    sample_rate_hz: f64,
+    model: &HarmonicSignalModel,
+    tolerances: JointSolverTolerances,
+    plan: &PreparedNoisePlan,
+) -> Result<JointEstimate> {
+    let noise = plan.noise_model();
     validate_signal_model(model, sample_rate_hz)?;
     validate_noise_model(noise)?;
+    if plan.rows() != times.len() {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            format!(
+                "prepared noise plan covers {} samples but the window holds {}",
+                plan.rows(),
+                times.len()
+            ),
+        ));
+    }
     let design = design_matrix(
         times,
         reference_frequency_hz,
@@ -1368,14 +1657,12 @@ pub fn estimate_joint(
         model,
         sample_rate_hz,
     )?;
-    let system = whiten(
+    let system = plan.whiten(
         &design,
         signal,
-        reference_phase_rad,
-        reference_frequency_hz,
         times,
-        noise,
-        tolerances,
+        reference_frequency_hz,
+        reference_phase_rad,
     )?;
     let whitened_design = system.design;
     let whitened_signal = system.response;
