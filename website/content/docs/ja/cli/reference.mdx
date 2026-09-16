@@ -37,7 +37,7 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | 共有データ・gridでのlock-in推定器比較（新規directoryへ） | core |
 | [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | 固定済みpaired block M6評価protocolの実行とJSON report出力 | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | 記録済みデータからの較正artifactのbuild・inspect・validate | core |
-| [`pmoke noise`](#pmoke-noise) | 記録済みデータのパルスノイズ診断・比較（PN-M1/M2、Issue #246） | core |
+| [`pmoke noise`](#pmoke-noise) | 記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246） | core |
 | [`pmoke process`](#pmoke-process) | 手動pulse trigger後のfetch・lock-in・phase・moke自動解析 | hw-core |
 | [`pmoke auto`](#pmoke-auto) | 完全自動測定・解析 | hw-core |
 | [`pmoke completions`](#pmoke-completions) | shell completion scriptの生成 | core |
@@ -620,7 +620,7 @@ pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
 
 ## `pmoke noise`
 
-記録済みデータのパルスノイズ診断・比較（PN-M1/M2、Issue #246）
+記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246）
 
 ```text
 pmoke noise [-h, --help] <COMMAND>
