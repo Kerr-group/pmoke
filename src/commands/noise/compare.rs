@@ -1965,7 +1965,10 @@ fn run_compare_staged(
                     .strip_prefix(staging)
                     .unwrap_or(&artifact_path)
                     .display()
-                    .to_string();
+                    .to_string()
+                    // Portable manifest keys: staged paths use `/` even on
+                    // Windows so the closure audit agrees with the references.
+                    .replace('\\', "/");
                 model_records.push(record);
                 builds.push((*mode, build));
             }
@@ -3286,12 +3289,12 @@ fn collect_staged_files_into(dir: &Path, prefix: &Path, files: &mut Vec<String>)
         if file_type.is_dir() {
             collect_staged_files_into(&path, &relative, files)?;
         } else if file_type.is_file() {
-            files.push(
-                relative
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("non-UTF8 staged path: {}", path.display()))?
-                    .to_string(),
-            );
+            let path_text = relative
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-UTF8 staged path: {}", path.display()))?;
+            // Manifest keys are portable: staged paths always use `/`, even on
+            // Windows, so the closure audit and the resume digest map agree.
+            files.push(path_text.replace('\\', "/"));
         } else {
             bail!(
                 "staging holds a non-regular entry (code=staging_unreferenced_file): {}",

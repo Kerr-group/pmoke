@@ -360,10 +360,12 @@ pub fn run_replay(destination: &Path, output: Option<&Path>, verify_only: bool) 
 }
 
 fn relative(root: &Path, path: &Path) -> String {
+    // Replay manifest keys are portable: always `/`, even on Windows.
     path.strip_prefix(root)
         .unwrap_or(path)
         .display()
         .to_string()
+        .replace('\\', "/")
 }
 
 fn read_json(path: &Path) -> Result<Value> {
