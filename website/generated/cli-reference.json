@@ -1870,6 +1870,75 @@
               }
             ],
             "subcommands": []
+          },
+          {
+            "name": "replay",
+            "path": "pmoke noise replay",
+            "summary": "Verify a committed compare generation and replay phase -> MOKE -> NPY",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "destination",
+                "kind": "option",
+                "short": null,
+                "long": "destination",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Committed noise compare destination directory",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Replay destination (defaults to <destination>/replay)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "verify_only",
+                "kind": "flag",
+                "short": null,
+                "long": "verify-only",
+                "value_names": [],
+                "help": "Verify digests and semantic schemas only; write nothing",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
           }
         ]
       },

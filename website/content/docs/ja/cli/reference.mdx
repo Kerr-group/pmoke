@@ -661,6 +661,22 @@ pmoke noise compare --request <FILE> [--output <DIR>] [-h, --help]
 | `-h, --help` | - | - | help表示 | - |
 
 
+### `pmoke noise replay`
+
+コミット済み比較世代の検証とphase → MOKE → NPY replay
+
+```text
+pmoke noise replay --destination <DIR> [--output <DIR>] [--verify-only] [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--destination <DIR>` | 必須 | - | コミット済みノイズ比較destination directory | - |
+| `--output <DIR>` | - | - | replay先（既定: &lt;destination&gt;/replay） | - |
+| `--verify-only` | - | - | digestと意味スキーマの検証のみ（書き込みなし） | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
 ## `pmoke process`
 
 手動pulse trigger後のfetch・lock-in・phase・moke自動解析
