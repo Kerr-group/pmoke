@@ -1,18 +1,23 @@
-//! Frozen global calibration plus controlled comparison (PN-M2, Issue #246).
+//! Frozen global calibration plus controlled comparison (PN-M2, Issue #246;
+//! PN-M4 qualified diagnostics and benefit/fidelity evaluation).
 //!
 //! `pmoke noise compare --request REQUEST.toml` performs the complete
 //! explicitly requested recorded workflow in one request (PN-FR-008):
 //! open and freeze one recorded source -> resolve the role plan with the
 //! leakage guard (PN-FR-006/007) -> run mechanism-agnostic diagnostics
-//! (PN-FR-009..012) -> build and freeze one mode-specific calibration
-//! artifact per requested candidate mode with exact SHA-256 digests
-//! (PN-FR-014/015/016) -> compute measured reserved diagnostics from
-//! nominated reserved blocks (never caller-supplied statistics, PN-FR-014)
-//! -> freeze the shared downstream context (PN-FR-005) -> run the labeled
-//! boxcar baseline plus every requested candidate leg on the same fixed
-//! window grid (PN-FR-022/026) -> assess paired residual-scatter evidence
-//! with the frozen statistic choice (PN-FR-027) -> publish atomically into
-//! a new destination with restart/cancel semantics (PN-FR-031, PN-NFR-005).
+//! (PN-FR-009..012) with the calibrated change rule -> build and freeze one
+//! mode-specific calibration artifact per requested candidate mode with exact
+//! SHA-256 digests (PN-FR-014/015/016) -> compute measured reserved
+//! diagnostics from nominated reserved blocks (never caller-supplied
+//! statistics, PN-FR-014) -> freeze the shared downstream context (PN-FR-005)
+//! -> run the labeled boxcar baseline plus every requested candidate leg on
+//! the same fixed window grid (PN-FR-022/026) -> assess paired
+//! residual-scatter evidence with the frozen statistic choice, the distinct
+//! mean-block-SD statistic, the stratified paired bootstrap and the stability
+//! control (PN-FR-027/028/029) -> report separate result gates, complete
+//! method x channel x region accounting and the unverified fidelity section
+//! (PN-FR-030/032) -> publish atomically into a new destination with
+//! restart/cancel semantics (PN-FR-031, PN-NFR-005).
 //!
 //! Calibration reuses the shared core kernels (`plan_blocks`,
 //! `fit_nuisance`, `assemble_samples`, `estimate_phase_variance`,
@@ -52,7 +57,7 @@ use crate::utils::recorded_source::{
 };
 
 use super::bank::{self, BankLegRow, BoundaryStats};
-use super::diagnostics::run_signal_diagnostics;
+use super::diagnostics::{CHANGE_QUALIFICATION_STATUS, run_signal_diagnostics};
 use super::plan::{GuardSpec, ResolvedPlan, resolve_role_plan};
 
 /// Noise compare request schema version (workflow request v1, PN-A-004).
@@ -69,6 +74,34 @@ pub const COMPARE_ADEQUACY_POLICY_ID: &str = "scs-adequacy-lags4/v1";
 /// Pooled residual-scatter statistic identity (PN-FR-027; distinct from the
 /// evaluate-lockin ratio-of-block-SDs statistic, reconciled per PN-FR-036).
 pub const COMPARE_STATISTIC_ID: &str = "pooled_residual_scatter_ratio_v1";
+/// The distinct statistic retained by `pmoke evaluate` (PN-FR-036): a ratio
+/// of average block SDs. It is never silently renamed to the pooled
+/// statistic; the compare lane reports it side by side (PN-AT-019).
+pub const COMPARE_EVALUATE_LOCKIN_STATISTIC_ID: &str = "mean_block_sd_ratio_v1";
+/// Same identity as the evaluate-lockin statistic, computed here on the
+/// shared paired compare blocks for the side-by-side reconciliation.
+pub const COMPARE_MEAN_BLOCK_SD_STATISTIC_ID: &str = "mean_block_sd_ratio_v1";
+/// The exact primary formula recorded with every report (NUMERICS 7).
+pub const COMPARE_STATISTIC_FORMULA: &str = "candidate/baseline ratio of the paired scatter over eligible evaluation blocks: \
+     global-mean-centered SD of the concatenated block values under detrend=none; \
+     pooled within-block scatter after per-block mean removal with summed block degrees of freedom under detrend=block_mean";
+/// The exact secondary formula recorded with every report (NUMERICS 7).
+pub const COMPARE_MEAN_BLOCK_FORMULA: &str = "candidate/baseline ratio of the mean per-block SD over the same paired eligible blocks; \
+     block SD uses the declared detrending convention (the evaluate-lockin statistic family)";
+/// Statistical reproducibility identities (PN-NFR-006).
+pub const COMPARE_RNG_ID: &str = "xorshift64/v1";
+pub const COMPARE_RESAMPLING_UNIT: &str = "whole_disjoint_evaluation_blocks";
+pub const COMPARE_STRATIFICATION: &str = "eligible_evaluation_regions";
+pub const COMPARE_PAIRING_POLICY: &str = "paired_centers_within_region_blocks";
+pub const COMPARE_OVERLAP_POLICY: &str = "overlapping_supports_never_counted_as_independent";
+pub const COMPARE_MULTIPLICITY_POLICY_ID: &str = "all_candidates_visible_no_selection/v1";
+pub const COMPARE_STABILITY_POLICY_ID: &str = "block_reduction_stability/v1";
+/// Prespecified descriptive stability guard (PN-FR-028, PN-AT-018): a numeric
+/// reduction concentrated in a minority of blocks or improving fewer than
+/// half of them is reported as a stability failure and is never labeled a
+/// noise gain. Descriptive guard, not a physical threshold.
+pub const COMPARE_STABILITY_MAX_CONCENTRATION: f64 = 0.5;
+pub const COMPARE_STABILITY_MIN_IMPROVED_FRACTION: f64 = 0.5;
 /// Inherited numeric benefit gate (PN-D-006).
 pub const COMPARE_TARGET_SD_RATIO: f64 = 0.97;
 
@@ -402,23 +435,116 @@ pub struct CompareLeg {
 }
 
 /// Paired residual-scatter evidence for one candidate vs the baseline
-/// (PN-FR-026/027): pooled within-region scatter ratio with a paired
-/// bootstrap interval over disjoint eligible evaluation blocks.
+/// (PN-FR-026/027/029): pooled within-region scatter ratio with a paired
+/// bootstrap interval over disjoint eligible evaluation blocks, plus the
+/// distinct mean-block-SD statistic and the stability/sensitivity controls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CandidateEvidence {
     pub candidate: String,
     pub baseline: String,
     pub mode: Option<String>,
     pub region_label: String,
+    pub statistic_id: String,
+    pub secondary_statistic_id: String,
     pub independent_blocks: usize,
+    pub strata: usize,
+    pub pooled_dof: usize,
+    pub unequal_block_lengths: bool,
+    pub excluded_blocks: usize,
+    pub zero_denominator_blocks: usize,
+    pub nonfinite_blocks: usize,
     pub baseline_scatter: Option<f64>,
     pub candidate_scatter: Option<f64>,
     pub sd_ratio: Option<f64>,
+    pub mean_block_sd_ratio: Option<f64>,
     pub paired_ci: Option<[f64; 2]>,
+    pub familywise_ci: Option<[f64; 2]>,
+    pub detrend_ratio_none: Option<f64>,
+    pub detrend_ratio_block_mean: Option<f64>,
+    pub baseline_mean: Option<f64>,
+    pub candidate_mean: Option<f64>,
+    pub mean_shift: Option<f64>,
+    pub blocks_improved_fraction: Option<f64>,
+    pub reduction_concentration: Option<f64>,
+    pub stability_gate: String,
+    pub stability_policy_id: String,
     pub target_sd_ratio: f64,
     pub benefit_gate: String,
     pub scientific_verdict: String,
     pub notes: Vec<String>,
+}
+
+/// Versioned statistics policy recorded with the report (PN-NFR-006): RNG,
+/// resampling unit, pairing/stratification, multiplicity policy and the exact
+/// estimator formulas.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatisticsPolicy {
+    pub primary_statistic_id: String,
+    pub primary_formula: String,
+    pub secondary_statistic_id: String,
+    pub secondary_formula: String,
+    pub evaluate_lockin_statistic_id: String,
+    pub detrend: String,
+    pub detrend_sensitivity: Vec<String>,
+    pub resampling_unit: String,
+    pub stratification: String,
+    pub pairing: String,
+    pub overlap_policy: String,
+    pub bootstrap_replicates: usize,
+    pub bootstrap_seed: u64,
+    pub rng_id: String,
+    pub confidence_level: f64,
+    pub multiplicity_policy_id: String,
+    pub candidates_requested: usize,
+    pub candidates_compared: usize,
+    pub selection_performed: bool,
+    pub stability_policy_id: String,
+}
+
+/// Independently reported result gates (PN-FR-032, PN-AT-022). A pass on one
+/// dimension never overrides `unverified` on another.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultGates {
+    pub acquisition_validity: String,
+    pub computation: String,
+    pub diagnostic_qualification: String,
+    pub model_adequacy: String,
+    pub numeric_benefit: String,
+    pub dynamic_fidelity: String,
+    pub scientific: String,
+    pub default_promotion: String,
+    pub reasons: Vec<String>,
+}
+
+/// Fidelity controls (PN-FR-030, PN-AT-020): recorded status plus the
+/// boundary/seam evidence measured on the retained rows. The physical
+/// tolerance is unspecified (PN-D-007), so fidelity stays unverified and the
+/// scientific verdict cannot pass even when the numeric SD improves.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FidelitySection {
+    pub status: String,
+    pub reason: String,
+    pub tolerance_authority: Option<String>,
+    pub injected_controls: String,
+    pub output_resolution_centers: usize,
+    pub boundary_windows: usize,
+    pub cross_regime_windows: usize,
+    pub switch_jump_rms: Option<f64>,
+    pub interior_jump_rms: Option<f64>,
+    pub notes: Vec<String>,
+}
+
+/// One requested method x channel x region accounting row (PN-FR-026): every
+/// requested combination is enumerated with its outcome and reason, so an
+/// isolated failure keeps its record and nothing is silently dropped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateAccounting {
+    pub method: String,
+    pub channel: u8,
+    pub region: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub evidence_recorded: bool,
 }
 
 /// Top-level compare report (comparison v1).
@@ -440,6 +566,15 @@ pub struct CompareReport {
     pub reserved: ReservedEvidence,
     pub legs: Vec<CompareLeg>,
     pub evidence: Vec<CandidateEvidence>,
+    /// Versioned statistics policy (PN-NFR-006).
+    pub statistics: StatisticsPolicy,
+    /// Independently reported result gates (PN-FR-032).
+    pub gates: ResultGates,
+    /// Fidelity controls and boundary evidence (PN-FR-030).
+    pub fidelity: FidelitySection,
+    /// Complete requested method x channel x region accounting (PN-FR-026).
+    pub accounting: Vec<CandidateAccounting>,
+    pub accounting_complete: bool,
     pub grid_equal: bool,
     pub computation_complete: bool,
     pub cancelled_before_commit: bool,
@@ -1428,33 +1563,6 @@ fn resolve_statistics(request: &CompareRequest) -> Result<StatisticsConfig> {
     })
 }
 
-fn detrend_values(values: &[f64], policy: CompareDetrend) -> Vec<f64> {
-    match policy {
-        CompareDetrend::None => values.to_vec(),
-        CompareDetrend::BlockMean => {
-            let mean = values.iter().sum::<f64>() / values.len().max(1) as f64;
-            values.iter().map(|value| value - mean).collect()
-        }
-    }
-}
-
-fn scatter(values: &[f64]) -> Option<f64> {
-    if values.is_empty() {
-        return None;
-    }
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let sum: f64 = values
-        .iter()
-        .map(|value| (value - mean) * (value - mean))
-        .sum();
-    let variance = sum / values.len() as f64;
-    if variance.is_finite() && variance >= 0.0 {
-        Some(variance.sqrt())
-    } else {
-        None
-    }
-}
-
 fn xorshift64(state: &mut u64) -> u64 {
     let mut x = *state;
     x ^= x << 13;
@@ -1464,46 +1572,173 @@ fn xorshift64(state: &mut u64) -> u64 {
     x
 }
 
-/// Pooled within-block scatter after the declared detrending rule: pool
-/// within-block squared residuals, divide by the summed degrees of freedom,
-/// then take the square root (NUMERICS section 7).
-fn pooled_scatter(blocks: &[Vec<f64>], detrend: CompareDetrend) -> Option<f64> {
-    let mut sum_squares = 0.0;
-    let mut dof = 0_usize;
-    for block in blocks {
-        if block.is_empty() {
-            continue;
+/// Per-block sufficient moments of one leg's series. Every paired statistic
+/// (and every bootstrap replicate) is recomputed exactly from these moments,
+/// so resampling never invents new observations and overlapping supports can
+/// be detected instead of silently double counted (PN-FR-029, PN-NFR-006).
+#[derive(Debug, Clone, Copy)]
+struct BlockMoments {
+    len: usize,
+    sum: f64,
+    sum_squares: f64,
+}
+
+impl BlockMoments {
+    fn new(values: &[f64]) -> Self {
+        Self {
+            len: values.len(),
+            sum: values.iter().sum(),
+            sum_squares: values.iter().map(|value| value * value).sum(),
         }
-        let detrended = detrend_values(block, detrend);
-        let mean = match detrend {
-            CompareDetrend::None => 0.0,
-            CompareDetrend::BlockMean => 0.0,
-        };
-        let _ = mean;
-        // BlockMean detrending above already removed the mean; None keeps
-        // raw values around zero only when the series is centered by the
-        // demodulation contrast. Dof accounts for one estimated mean per
-        // block under BlockMean, zero under None.
-        let (squares, block_dof) = match detrend {
-            CompareDetrend::None => {
-                let squares: f64 = detrended.iter().map(|value| value * value).sum();
-                (squares, detrended.len())
-            }
-            CompareDetrend::BlockMean => {
-                let squares: f64 = detrended.iter().map(|value| value * value).sum();
-                (squares, detrended.len().saturating_sub(1))
-            }
-        };
-        if !squares.is_finite() {
+    }
+
+    /// Sum of squared deviations from this block's own mean.
+    fn centered_sum_squares(&self) -> f64 {
+        if self.len == 0 {
+            return 0.0;
+        }
+        self.sum_squares - self.sum * self.sum / self.len as f64
+    }
+
+    /// Standard deviation about the block's own mean (the declared per-block
+    /// SD convention of the mean-block ratio).
+    fn block_sd(&self) -> Option<f64> {
+        if self.len == 0 {
             return None;
         }
-        sum_squares += squares;
-        dof += block_dof;
+        let squares = self.centered_sum_squares();
+        if squares.is_finite() && squares >= 0.0 {
+            Some((squares / self.len as f64).sqrt())
+        } else {
+            None
+        }
     }
-    if dof == 0 || !sum_squares.is_finite() {
-        return None;
+
+    fn finite(&self) -> bool {
+        self.sum.is_finite() && self.sum_squares.is_finite()
     }
-    Some((sum_squares / dof as f64).sqrt())
+}
+
+/// Primary pooled scatter over a block set (NUMERICS 7, identity
+/// `pooled_residual_scatter_ratio_v1`): the declared detrending convention
+/// gives either the global-mean-centered SD of the concatenated block values
+/// (dof = summed samples) or the pooled within-block scatter after per-block
+/// mean removal (dof = summed samples minus one per block).
+fn pooled_scatter_of(blocks: &[BlockMoments], detrend: CompareDetrend) -> Option<f64> {
+    match detrend {
+        CompareDetrend::None => {
+            let total_len: usize = blocks.iter().map(|block| block.len).sum();
+            if total_len == 0 {
+                return None;
+            }
+            let total_sum: f64 = blocks.iter().map(|block| block.sum).sum();
+            let total_squares: f64 = blocks.iter().map(|block| block.sum_squares).sum();
+            let squares = total_squares - total_sum * total_sum / total_len as f64;
+            if squares.is_finite() && squares >= 0.0 {
+                Some((squares / total_len as f64).sqrt())
+            } else {
+                None
+            }
+        }
+        CompareDetrend::BlockMean => {
+            let squares: f64 = blocks.iter().map(BlockMoments::centered_sum_squares).sum();
+            let dof: usize = blocks.iter().map(|block| block.len.saturating_sub(1)).sum();
+            if dof == 0 || !squares.is_finite() || squares < 0.0 {
+                return None;
+            }
+            Some((squares / dof as f64).sqrt())
+        }
+    }
+}
+
+/// Mean per-block standard deviation over the same paired blocks (the
+/// evaluate-lockin statistic family): `mean_block_sd_ratio_v1`.
+fn mean_block_scatter(blocks: &[BlockMoments]) -> Option<f64> {
+    let mut sum = 0.0_f64;
+    let mut count = 0_usize;
+    for block in blocks {
+        let sd = block.block_sd()?;
+        sum += sd;
+        count += 1;
+    }
+    if count == 0 {
+        None
+    } else {
+        Some(sum / count as f64)
+    }
+}
+
+fn ratio_of(baseline: Option<f64>, candidate: Option<f64>) -> Option<f64> {
+    match (baseline, candidate) {
+        (Some(baseline), Some(candidate))
+            if baseline.is_finite() && baseline > 0.0 && candidate.is_finite() =>
+        {
+            Some(candidate / baseline)
+        }
+        _ => None,
+    }
+}
+
+/// Quantile of an ascending-sorted replicate vector.
+fn sorted_quantile(sorted: &[f64], probability: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let index = ((sorted.len() - 1) as f64 * probability.clamp(0.0, 1.0)).round() as usize;
+    sorted[index]
+}
+
+/// Overlapping supports are never independent observations (PN-FR-029).
+fn spans_pairwise_disjoint(spans: &[(u64, u64)]) -> bool {
+    let mut sorted: Vec<(u64, u64)> = spans.to_vec();
+    sorted.sort_unstable();
+    sorted.windows(2).all(|pair| pair[0].1 <= pair[1].0)
+}
+
+/// Evidence record for a candidate that cannot be assessed (overlap guard or
+/// empty block set): every statistic stays uncomputed with an explicit note.
+#[allow(clippy::too_many_arguments)]
+fn unassessable_evidence(
+    candidate: &LegSignal,
+    baseline: &LegSignal,
+    region_label: &str,
+    statistics: &StatisticsConfig,
+    notes: Vec<String>,
+) -> CandidateEvidence {
+    CandidateEvidence {
+        candidate: candidate.name.clone(),
+        baseline: baseline.name.clone(),
+        mode: candidate.mode.clone(),
+        region_label: region_label.to_string(),
+        statistic_id: COMPARE_STATISTIC_ID.to_string(),
+        secondary_statistic_id: COMPARE_MEAN_BLOCK_SD_STATISTIC_ID.to_string(),
+        independent_blocks: 0,
+        strata: 0,
+        pooled_dof: 0,
+        unequal_block_lengths: false,
+        excluded_blocks: 0,
+        zero_denominator_blocks: 0,
+        nonfinite_blocks: 0,
+        baseline_scatter: None,
+        candidate_scatter: None,
+        sd_ratio: None,
+        mean_block_sd_ratio: None,
+        paired_ci: None,
+        familywise_ci: None,
+        detrend_ratio_none: None,
+        detrend_ratio_block_mean: None,
+        baseline_mean: None,
+        candidate_mean: None,
+        mean_shift: None,
+        blocks_improved_fraction: None,
+        reduction_concentration: None,
+        stability_gate: "inconclusive".to_string(),
+        stability_policy_id: COMPARE_STABILITY_POLICY_ID.to_string(),
+        target_sd_ratio: statistics.target_sd_ratio,
+        benefit_gate: "inconclusive".to_string(),
+        scientific_verdict: "inconclusive".to_string(),
+        notes,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1511,98 +1746,222 @@ fn assess_candidate(
     candidate: &LegSignal,
     baseline: &LegSignal,
     region_label: &str,
-    region_spans: &[(u64, u64)],
+    strata: &[Vec<(u64, u64)>],
+    family_size: usize,
     statistics: &StatisticsConfig,
 ) -> CandidateEvidence {
     let mut notes = Vec::new();
-    let mut baseline_blocks: Vec<Vec<f64>> = Vec::new();
-    let mut candidate_blocks: Vec<Vec<f64>> = Vec::new();
-    for (start, end) in region_spans {
-        let baseline_values: Vec<f64> = baseline
-            .series
-            .iter()
-            .filter(|(center, _)| *center >= *start && *center < *end)
-            .map(|(_, value)| *value)
-            .collect();
-        let candidate_values: Vec<f64> = candidate
-            .series
-            .iter()
-            .filter(|(center, _)| *center >= *start && *center < *end)
-            .map(|(_, value)| *value)
-            .collect();
-        if baseline_values.len() == candidate_values.len() && !baseline_values.is_empty() {
-            baseline_blocks.push(baseline_values);
-            candidate_blocks.push(candidate_values);
+    let all_spans: Vec<(u64, u64)> = strata.iter().flatten().copied().collect();
+    if !spans_pairwise_disjoint(&all_spans) {
+        notes.push(
+            "overlapping evaluation supports are never counted as independent observations \
+             (PN-FR-029); no paired statistic was computed"
+                .to_string(),
+        );
+        return unassessable_evidence(candidate, baseline, region_label, statistics, notes);
+    }
+    let mut excluded_blocks = 0_usize;
+    let mut nonfinite_blocks = 0_usize;
+    let mut zero_denominator_blocks = 0_usize;
+    // Paired blocks per prespecified stratum (region). The bootstrap resamples
+    // whole blocks within each stratum; LI windows and resamples are never
+    // independent observations.
+    let mut strata_pairs: Vec<Vec<(BlockMoments, BlockMoments)>> = Vec::with_capacity(strata.len());
+    for stratum in strata {
+        let mut pairs = Vec::new();
+        for (start, end) in stratum {
+            let baseline_values: Vec<f64> = baseline
+                .series
+                .iter()
+                .filter(|(center, _)| *center >= *start && *center < *end)
+                .map(|(_, value)| *value)
+                .collect();
+            let candidate_values: Vec<f64> = candidate
+                .series
+                .iter()
+                .filter(|(center, _)| *center >= *start && *center < *end)
+                .map(|(_, value)| *value)
+                .collect();
+            if baseline_values.is_empty()
+                || candidate_values.is_empty()
+                || baseline_values.len() != candidate_values.len()
+            {
+                excluded_blocks += 1;
+                continue;
+            }
+            let baseline_moments = BlockMoments::new(&baseline_values);
+            let candidate_moments = BlockMoments::new(&candidate_values);
+            if !baseline_moments.finite() || !candidate_moments.finite() {
+                nonfinite_blocks += 1;
+                continue;
+            }
+            if baseline_moments.centered_sum_squares() <= 0.0
+                || candidate_moments.centered_sum_squares() < 0.0
+            {
+                zero_denominator_blocks += 1;
+            }
+            pairs.push((baseline_moments, candidate_moments));
+        }
+        if !pairs.is_empty() {
+            strata_pairs.push(pairs);
         }
     }
-    let independent_blocks = baseline_blocks.len();
-    let baseline_scatter = {
-        let flat: Vec<f64> = baseline_blocks.iter().flatten().copied().collect();
-        if statistics.detrend == CompareDetrend::BlockMean {
-            pooled_scatter(&baseline_blocks, statistics.detrend)
-        } else {
-            scatter(&flat)
-        }
-    };
-    let candidate_scatter = {
-        let flat: Vec<f64> = candidate_blocks.iter().flatten().copied().collect();
-        if statistics.detrend == CompareDetrend::BlockMean {
-            pooled_scatter(&candidate_blocks, statistics.detrend)
-        } else {
-            scatter(&flat)
-        }
-    };
-    let sd_ratio = match (baseline_scatter, candidate_scatter) {
-        (Some(base), Some(cand)) if base > 0.0 && base.is_finite() && cand.is_finite() => {
-            Some(cand / base)
-        }
+    let independent_blocks: usize = strata_pairs.iter().map(Vec::len).sum();
+    let strata_count = strata_pairs.len();
+    let baseline_blocks: Vec<BlockMoments> = strata_pairs
+        .iter()
+        .flatten()
+        .map(|(baseline, _)| *baseline)
+        .collect();
+    let candidate_blocks: Vec<BlockMoments> = strata_pairs
+        .iter()
+        .flatten()
+        .map(|(_, candidate)| *candidate)
+        .collect();
+    if independent_blocks == 0 {
+        notes.push(
+            "no complete paired evaluation blocks were available; no statistic was computed"
+                .to_string(),
+        );
+        return unassessable_evidence(candidate, baseline, region_label, statistics, notes);
+    }
+    let baseline_scatter = pooled_scatter_of(&baseline_blocks, statistics.detrend);
+    let candidate_scatter = pooled_scatter_of(&candidate_blocks, statistics.detrend);
+    let sd_ratio = ratio_of(baseline_scatter, candidate_scatter);
+    let baseline_mean_sd = mean_block_scatter(&baseline_blocks);
+    let candidate_mean_sd = mean_block_scatter(&candidate_blocks);
+    let mean_block_sd_ratio = ratio_of(baseline_mean_sd, candidate_mean_sd);
+    // Common-trend sensitivity: the pooled ratio under both declared
+    // detrending policies (no-detrend and shared-baseline-trend).
+    let detrend_ratio_none = ratio_of(
+        pooled_scatter_of(&baseline_blocks, CompareDetrend::None),
+        pooled_scatter_of(&candidate_blocks, CompareDetrend::None),
+    );
+    let detrend_ratio_block_mean = ratio_of(
+        pooled_scatter_of(&baseline_blocks, CompareDetrend::BlockMean),
+        pooled_scatter_of(&candidate_blocks, CompareDetrend::BlockMean),
+    );
+    let total_len: usize = baseline_blocks.iter().map(|block| block.len).sum();
+    let baseline_mean = (total_len > 0)
+        .then(|| baseline_blocks.iter().map(|block| block.sum).sum::<f64>() / total_len as f64);
+    let candidate_mean = (total_len > 0)
+        .then(|| candidate_blocks.iter().map(|block| block.sum).sum::<f64>() / total_len as f64);
+    let mean_shift = match (baseline_mean, candidate_mean) {
+        (Some(baseline), Some(candidate)) => Some(candidate - baseline),
         _ => None,
     };
-    // Paired bootstrap over whole disjoint blocks (never over windows or
-    // resamples as independent observations, PN-NFR-006).
-    let paired_ci = if independent_blocks >= statistics.min_independent_blocks.max(2) {
-        let block_ratios: Vec<f64> = baseline_blocks
-            .iter()
-            .zip(candidate_blocks.iter())
-            .filter_map(|(base, cand)| {
-                let base_sd = scatter(base)?;
-                let cand_sd = scatter(cand)?;
-                if base_sd > 0.0 && base_sd.is_finite() && cand_sd.is_finite() {
-                    Some(cand_sd / base_sd)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if block_ratios.len() == independent_blocks {
-            let mut state = statistics.bootstrap_seed;
-            let mut replicates = Vec::with_capacity(statistics.bootstrap_replicates);
-            for _ in 0..statistics.bootstrap_replicates {
-                let mut sum = 0.0;
-                for _ in 0..independent_blocks {
-                    let index = (xorshift64(&mut state) % independent_blocks as u64) as usize;
-                    sum += block_ratios[index];
-                }
-                replicates.push(sum / independent_blocks as f64);
+    let unequal_block_lengths = {
+        let first = baseline_blocks[0].len;
+        baseline_blocks.iter().any(|block| block.len != first)
+    };
+    // Stability / transient control (PN-FR-028): a reduction concentrated in
+    // a minority of blocks is not evidence of a noise-gain mechanism.
+    let mut reducible = 0_usize;
+    let mut improved = 0_usize;
+    let mut reductions: Vec<f64> = Vec::new();
+    for (baseline, candidate) in strata_pairs.iter().flatten() {
+        let baseline_ms = baseline.centered_sum_squares() / baseline.len.max(1) as f64;
+        let candidate_ms = candidate.centered_sum_squares() / candidate.len.max(1) as f64;
+        if baseline_ms.is_finite() && candidate_ms.is_finite() && baseline_ms > 0.0 {
+            reducible += 1;
+            if candidate_ms < baseline_ms {
+                improved += 1;
             }
+            reductions.push(baseline_ms - candidate_ms);
+        }
+    }
+    let blocks_improved_fraction = (reducible > 0).then(|| improved as f64 / reducible as f64);
+    let total_reduction: f64 = reductions.iter().sum();
+    let reduction_concentration = if reductions.is_empty() || total_reduction <= 0.0 {
+        None
+    } else {
+        Some(reductions.iter().copied().fold(f64::NEG_INFINITY, f64::max) / total_reduction)
+    };
+    let stability_gate = if reducible < 2 {
+        // With fewer than two reducible blocks the spread of the reduction
+        // cannot be assessed; that is insufficient evidence, not a failure.
+        "inconclusive"
+    } else {
+        match (blocks_improved_fraction, reduction_concentration) {
+            (Some(fraction), Some(concentration))
+                if fraction >= COMPARE_STABILITY_MIN_IMPROVED_FRACTION
+                    && concentration <= COMPARE_STABILITY_MAX_CONCENTRATION =>
+            {
+                "pass"
+            }
+            (Some(fraction), _) if fraction < COMPARE_STABILITY_MIN_IMPROVED_FRACTION => "fail",
+            (_, Some(_)) => "fail",
+            _ => "inconclusive",
+        }
+    };
+    if stability_gate == "fail" {
+        let concentration = reduction_concentration.unwrap_or(f64::NAN);
+        notes.push(format!(
+            "stability control `{policy}` failed: {improved} of {reducible} blocks improve and the largest single-block share of the total reduction is {concentration:.3}; a transient-dominated reduction is not a noise gain (PN-FR-028)",
+            policy = COMPARE_STABILITY_POLICY_ID,
+        ));
+    }
+    // Paired bootstrap over whole disjoint blocks within the prespecified
+    // stratification, recomputing the primary pooled statistic exactly.
+    let mut paired_ci: Option<[f64; 2]> = None;
+    let mut familywise_ci: Option<[f64; 2]> = None;
+    let minimum_blocks = statistics.min_independent_blocks.max(2);
+    if independent_blocks < minimum_blocks {
+        notes.push(format!(
+            "only {independent_blocks} independent blocks; the paired interval needs at least {minimum_blocks} (PN-FR-029)"
+        ));
+    } else {
+        let mut state = statistics.bootstrap_seed;
+        let mut replicates = Vec::with_capacity(statistics.bootstrap_replicates);
+        let mut degenerate = 0_usize;
+        for _ in 0..statistics.bootstrap_replicates {
+            let mut baseline_draw: Vec<BlockMoments> = Vec::with_capacity(independent_blocks);
+            let mut candidate_draw: Vec<BlockMoments> = Vec::with_capacity(independent_blocks);
+            for stratum in &strata_pairs {
+                for _ in 0..stratum.len() {
+                    let index = (xorshift64(&mut state) % stratum.len() as u64) as usize;
+                    baseline_draw.push(stratum[index].0);
+                    candidate_draw.push(stratum[index].1);
+                }
+            }
+            match (
+                pooled_scatter_of(&baseline_draw, statistics.detrend),
+                pooled_scatter_of(&candidate_draw, statistics.detrend),
+            ) {
+                (Some(baseline), Some(candidate))
+                    if baseline > 0.0 && baseline.is_finite() && candidate.is_finite() =>
+                {
+                    replicates.push(candidate / baseline);
+                }
+                _ => degenerate += 1,
+            }
+        }
+        if replicates.len() * 4 < statistics.bootstrap_replicates * 3 {
+            notes.push(format!(
+                "paired bootstrap unusable: {degenerate} of {} replicates had a non-positive or non-finite denominator",
+                statistics.bootstrap_replicates
+            ));
+        } else {
             replicates.sort_by(f64::total_cmp);
             let alpha = 1.0 - statistics.confidence_level;
-            let low = ((replicates.len() - 1) as f64 * alpha / 2.0).round() as usize;
-            let high = ((replicates.len() - 1) as f64 * (1.0 - alpha / 2.0)).round() as usize;
-            Some([replicates[low], replicates[high]])
-        } else {
-            notes.push(
-                "paired bootstrap skipped: a region block has non-positive scatter".to_string(),
-            );
-            None
+            paired_ci = Some([
+                sorted_quantile(&replicates, alpha / 2.0),
+                sorted_quantile(&replicates, 1.0 - alpha / 2.0),
+            ]);
+            // Predeclared multiplicity control for a candidate family
+            // (Bonferroni): all candidate outcomes remain visible and no
+            // selection is performed by this lane.
+            familywise_ci = if family_size > 1 {
+                let adjusted = alpha / family_size as f64;
+                Some([
+                    sorted_quantile(&replicates, adjusted / 2.0),
+                    sorted_quantile(&replicates, 1.0 - adjusted / 2.0),
+                ])
+            } else {
+                paired_ci
+            };
         }
-    } else {
-        notes.push(format!(
-            "only {independent_blocks} independent blocks; paired interval needs at least {}",
-            statistics.min_independent_blocks.max(2)
-        ));
-        None
-    };
+    }
     let benefit_gate = match (sd_ratio, paired_ci) {
         (Some(ratio), Some(ci)) if ratio <= statistics.target_sd_ratio && ci[1] < 1.0 => {
             "pass".to_string()
@@ -1610,12 +1969,16 @@ fn assess_candidate(
         (Some(_), Some(_)) => "fail".to_string(),
         _ => "inconclusive".to_string(),
     };
+    if familywise_ci.is_some_and(|ci| ci[1] >= 1.0) {
+        notes.push(
+            "the familywise-adjusted interval does not exclude 1; the unadjusted candidate interval is shown beside it (PN-FR-027/029)".to_string(),
+        );
+    }
     // PN-D-007: unknown physical fidelity tolerance leaves the scientific
-    // verdict inconclusive even when the numeric gate passes; exploratory
-    // intent is recorded, never a pass by default.
+    // verdict non-pass even when the numeric gate passes.
     let scientific_verdict = "inconclusive".to_string();
     notes.push(
-        "scientific verdict stays inconclusive: physical fidelity tolerance is unspecified (PN-D-007)".to_string(),
+        "scientific verdict stays non-pass: physical fidelity tolerance is unspecified (PN-D-007) and this lane performs no promotion".to_string(),
     );
     notes.push("residual scatter is not identified with a physical noise mechanism".to_string());
     CandidateEvidence {
@@ -1623,15 +1986,369 @@ fn assess_candidate(
         baseline: baseline.name.clone(),
         mode: candidate.mode.clone(),
         region_label: region_label.to_string(),
+        statistic_id: COMPARE_STATISTIC_ID.to_string(),
+        secondary_statistic_id: COMPARE_MEAN_BLOCK_SD_STATISTIC_ID.to_string(),
         independent_blocks,
+        strata: strata_count,
+        pooled_dof: baseline_blocks
+            .iter()
+            .map(|block| match statistics.detrend {
+                CompareDetrend::None => block.len,
+                CompareDetrend::BlockMean => block.len.saturating_sub(1),
+            })
+            .sum(),
+        unequal_block_lengths,
+        excluded_blocks,
+        zero_denominator_blocks,
+        nonfinite_blocks,
         baseline_scatter,
         candidate_scatter,
         sd_ratio,
+        mean_block_sd_ratio,
         paired_ci,
+        familywise_ci,
+        detrend_ratio_none,
+        detrend_ratio_block_mean,
+        baseline_mean,
+        candidate_mean,
+        mean_shift,
+        blocks_improved_fraction,
+        reduction_concentration,
+        stability_gate: stability_gate.to_string(),
+        stability_policy_id: COMPARE_STABILITY_POLICY_ID.to_string(),
         target_sd_ratio: statistics.target_sd_ratio,
         benefit_gate,
         scientific_verdict,
         notes,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Complete candidate accounting, separate result gates, fidelity section
+// (PN-FR-026/028/030/032, PN-AT-018/020/022).
+// ---------------------------------------------------------------------------
+
+/// Every requested method gets a terminal per-region outcome (PN-FR-026).
+fn build_accounting(
+    legs: &[LegSignal],
+    evidence: &[CandidateEvidence],
+    evaluation_spans: &[(u64, u64)],
+    channel: u8,
+) -> Vec<CandidateAccounting> {
+    let mut rows = Vec::new();
+    for leg in legs {
+        let method = leg.mode.clone().unwrap_or_else(|| "boxcar".to_string());
+        let is_baseline = leg.mode.is_none();
+        if leg.state == LegState::Complete {
+            for index in 0..evaluation_spans.len() {
+                let region = format!("eligible_evaluation_{index}");
+                let record = evidence
+                    .iter()
+                    .find(|item| item.candidate == leg.name && item.region_label == region);
+                if is_baseline {
+                    // The labeled baseline is the comparison anchor: it has no
+                    // candidate pairing of its own, but it is recorded as the
+                    // anchor of every evidence record over this region.
+                    let anchored = evidence
+                        .iter()
+                        .any(|item| item.baseline == leg.name && item.region_label == region);
+                    rows.push(CandidateAccounting {
+                        method: method.clone(),
+                        channel,
+                        region,
+                        outcome: "baseline_anchor".to_string(),
+                        reason: None,
+                        evidence_recorded: anchored,
+                    });
+                    continue;
+                }
+                let computed = record.is_some_and(|item| item.sd_ratio.is_some());
+                rows.push(CandidateAccounting {
+                    method: method.clone(),
+                    channel,
+                    region,
+                    outcome: if computed {
+                        "computed"
+                    } else {
+                        "computed_unusable"
+                    }
+                    .to_string(),
+                    reason: if computed {
+                        None
+                    } else {
+                        record
+                            .and_then(|item| item.notes.first().cloned())
+                            .or_else(|| {
+                                Some(
+                                    "no paired evidence record for this method and region"
+                                        .to_string(),
+                                )
+                            })
+                    },
+                    evidence_recorded: record.is_some(),
+                });
+            }
+        } else {
+            let outcome = match leg.state {
+                LegState::Failed => "failed",
+                LegState::Unavailable => "unavailable",
+                LegState::Unqualified => "unqualified",
+                LegState::NotRun => "not_run",
+                LegState::Complete => "complete",
+            };
+            rows.push(CandidateAccounting {
+                method: method.clone(),
+                channel,
+                region: "all_eligible".to_string(),
+                outcome: outcome.to_string(),
+                reason: leg
+                    .message
+                    .clone()
+                    .or_else(|| leg.code.clone())
+                    .or_else(|| Some("no reason recorded".to_string())),
+                evidence_recorded: false,
+            });
+        }
+    }
+    rows
+}
+
+/// Reconciliation of the requested method x region matrix: every requested
+/// method is either accounted once per eligible region or once with an
+/// explicit terminal reason (PN-FR-026, PN-AT-018).
+fn accounting_complete(
+    accounting: &[CandidateAccounting],
+    request: &CompareRequest,
+    evaluation_spans: &[(u64, u64)],
+) -> bool {
+    let mut methods: Vec<String> = vec!["boxcar".to_string()];
+    for mode in &request.candidates.joint_modes {
+        methods.push(mode_name(*mode).to_string());
+    }
+    if accounting.iter().any(|row| !methods.contains(&row.method)) {
+        return false;
+    }
+    for method in &methods {
+        let rows: Vec<&CandidateAccounting> = accounting
+            .iter()
+            .filter(|row| row.method == *method)
+            .collect();
+        if rows.is_empty() {
+            return false;
+        }
+        let per_region = rows
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row.outcome.as_str(),
+                    "computed" | "computed_unusable" | "baseline_anchor"
+                )
+            })
+            .count();
+        if per_region > 0 {
+            let mut regions: Vec<&str> = rows
+                .iter()
+                .filter(|row| {
+                    matches!(
+                        row.outcome.as_str(),
+                        "computed" | "computed_unusable" | "baseline_anchor"
+                    )
+                })
+                .map(|row| row.region.as_str())
+                .collect();
+            regions.sort_unstable();
+            regions.dedup();
+            if per_region != evaluation_spans.len() || regions.len() != evaluation_spans.len() {
+                return false;
+            }
+        } else if rows.len() != 1 || rows[0].reason.is_none() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Independently reported gates (PN-FR-032). A numeric pass never overrides
+/// unverified adequacy/fidelity, and promotion is never granted here.
+fn assemble_gates(
+    operation_status: &str,
+    data_quality: &str,
+    model_records: &[FrozenModelRecord],
+    evidence: &[CandidateEvidence],
+    completed_legs: usize,
+    total_legs: usize,
+) -> ResultGates {
+    let mut reasons = Vec::new();
+    let acquisition_validity = match data_quality {
+        "valid" => "pass",
+        "unverified" => "unverified",
+        _ => "suspect",
+    }
+    .to_string();
+    if acquisition_validity != "pass" {
+        reasons.push(format!(
+            "acquisition validity is `{data_quality}`: the recorded data did not qualify"
+        ));
+    }
+    let computation = match operation_status {
+        "complete" => "complete",
+        "partial" => "partial",
+        _ => "failed",
+    }
+    .to_string();
+    if computation != "complete" {
+        reasons.push(format!(
+            "computation is {computation}: {completed_legs} of {total_legs} leg records completed"
+        ));
+    }
+    let diagnostic_qualification = CHANGE_QUALIFICATION_STATUS.to_string();
+    if diagnostic_qualification != "qualified" {
+        reasons.push(format!(
+            "diagnostic qualification is `{diagnostic_qualification}`: the calibrated change rule is not verified"
+        ));
+    }
+    let frozen_models = model_records
+        .iter()
+        .filter(|record| record.status == "frozen")
+        .count();
+    let failed_models = model_records
+        .iter()
+        .filter(|record| record.status != "frozen")
+        .count();
+    let inadequate_models = model_records
+        .iter()
+        .filter(|record| record.status == "frozen" && !record.adequacy_adequate)
+        .count();
+    let model_adequacy = if frozen_models == 0 {
+        "unavailable"
+    } else if failed_models > 0 || inadequate_models > 0 {
+        "unqualified"
+    } else {
+        "adequate"
+    }
+    .to_string();
+    if model_adequacy != "adequate" {
+        reasons.push(format!(
+            "model applicability is `{model_adequacy}` ({frozen_models} frozen, {failed_models} unavailable, {inadequate_models} unqualified)"
+        ));
+    }
+    let computed_evidence: Vec<&CandidateEvidence> = evidence
+        .iter()
+        .filter(|item| item.sd_ratio.is_some())
+        .collect();
+    let numeric_benefit = if computed_evidence.is_empty() {
+        "inconclusive"
+    } else if computed_evidence
+        .iter()
+        .any(|item| item.benefit_gate == "pass")
+    {
+        "pass"
+    } else if computed_evidence
+        .iter()
+        .all(|item| item.benefit_gate == "fail")
+    {
+        "fail"
+    } else {
+        "inconclusive"
+    }
+    .to_string();
+    if numeric_benefit == "inconclusive" && computed_evidence.is_empty() {
+        reasons.push(
+            "numeric benefit is inconclusive: no candidate produced a paired statistic".to_string(),
+        );
+    }
+    let dynamic_fidelity = "unverified".to_string();
+    reasons.push(
+        "dynamic fidelity is unverified: the physical feature/tolerance is unspecified (PN-D-007)"
+            .to_string(),
+    );
+    let scientific = if computed_evidence.is_empty() {
+        "unverified"
+    } else {
+        "inconclusive"
+    }
+    .to_string();
+    reasons.push(
+        "scientific verdict stays non-pass on this lane: a numeric SD improvement cannot override unverified fidelity/applicability controls (PN-FR-032, PN-D-006)"
+            .to_string(),
+    );
+    ResultGates {
+        acquisition_validity,
+        computation,
+        diagnostic_qualification,
+        model_adequacy,
+        numeric_benefit,
+        dynamic_fidelity,
+        scientific,
+        default_promotion: "not_authorized".to_string(),
+        reasons,
+    }
+}
+
+/// Fidelity controls (PN-FR-030): the physical tolerance is unknown, so the
+/// section records `unverified` plus whatever boundary/seam evidence the
+/// retained rows carry. Known-truth injections live in the synthetic
+/// fidelity tests (PN-AT-020), never on recorded data.
+fn build_fidelity(legs: &[LegSignal], output_centers: usize) -> FidelitySection {
+    let bank_stats: Option<&BoundaryStats> = legs.iter().find_map(|leg| leg.bank_stats.as_ref());
+    let (boundary_windows, cross_regime_windows, switch_jump_rms, interior_jump_rms) =
+        match bank_stats {
+            Some(stats) => (
+                stats.boundary_windows,
+                stats.cross_regime_windows,
+                stats.switch_jump_rms,
+                stats.interior_jump_rms,
+            ),
+            None => (0, 0, None, None),
+        };
+    FidelitySection {
+        status: "unverified".to_string(),
+        reason: "the fastest physical feature and its fidelity/field-error tolerance are unspecified (PN-D-007); fidelity cannot be qualified from recorded data".to_string(),
+        tolerance_authority: None,
+        injected_controls: "known-truth harmonic/sideband/rise injections are exercised by the synthetic fidelity tests (PN-AT-020); no injected control runs on recorded data".to_string(),
+        output_resolution_centers: output_centers,
+        boundary_windows,
+        cross_regime_windows,
+        switch_jump_rms,
+        interior_jump_rms,
+        notes: vec![
+            "a smoother trace with damaged truth cannot earn a scientific pass (PN-FR-030)".to_string(),
+            "rise/latency/overshoot errors are only meaningful at the actual output resolution".to_string(),
+        ],
+    }
+}
+
+/// Versioned statistics policy recorded with the report (PN-NFR-006).
+fn build_statistics_policy(
+    request: &CompareRequest,
+    statistics: &StatisticsConfig,
+    compared: usize,
+) -> StatisticsPolicy {
+    StatisticsPolicy {
+        primary_statistic_id: COMPARE_STATISTIC_ID.to_string(),
+        primary_formula: COMPARE_STATISTIC_FORMULA.to_string(),
+        secondary_statistic_id: COMPARE_MEAN_BLOCK_SD_STATISTIC_ID.to_string(),
+        secondary_formula: COMPARE_MEAN_BLOCK_FORMULA.to_string(),
+        evaluate_lockin_statistic_id: COMPARE_EVALUATE_LOCKIN_STATISTIC_ID.to_string(),
+        detrend: match statistics.detrend {
+            CompareDetrend::None => "none",
+            CompareDetrend::BlockMean => "block_mean",
+        }
+        .to_string(),
+        detrend_sensitivity: vec!["none".to_string(), "block_mean".to_string()],
+        resampling_unit: COMPARE_RESAMPLING_UNIT.to_string(),
+        stratification: COMPARE_STRATIFICATION.to_string(),
+        pairing: COMPARE_PAIRING_POLICY.to_string(),
+        overlap_policy: COMPARE_OVERLAP_POLICY.to_string(),
+        bootstrap_replicates: statistics.bootstrap_replicates,
+        bootstrap_seed: statistics.bootstrap_seed,
+        rng_id: COMPARE_RNG_ID.to_string(),
+        confidence_level: statistics.confidence_level,
+        multiplicity_policy_id: COMPARE_MULTIPLICITY_POLICY_ID.to_string(),
+        candidates_requested: request.candidates.joint_modes.len(),
+        candidates_compared: compared,
+        selection_performed: false,
+        stability_policy_id: COMPARE_STABILITY_POLICY_ID.to_string(),
     }
 }
 
@@ -2695,10 +3412,15 @@ fn run_compare_staged(
         });
     }
 
-    // --- Phase 9: paired evidence per eligible evaluation region. The
-    // labeled baseline is the comparison anchor when present; when only
-    // explicit unavailable records exist, evidence stays empty and the
-    // report records the calibration-limited outcome (PN-FR-022/026).
+    // --- Phase 9: paired evidence per eligible evaluation region plus one
+    // stratified record per candidate (PN-FR-026/027/029). The labeled
+    // baseline is the comparison anchor when present; when only explicit
+    // unavailable records exist, evidence stays empty and the report records
+    // the calibration-limited outcome (PN-FR-022/026).
+    //
+    // Requested candidate family size drives the predeclared multiplicity
+    // control: every candidate stays visible and no selection is performed.
+    let family_size = request.candidates.joint_modes.len().max(1);
     let mut evidence = Vec::new();
     if let Some(baseline) = legs.first().filter(|leg| leg.state == LegState::Complete) {
         for leg in legs.iter().skip(1) {
@@ -2713,12 +3435,42 @@ fn run_compare_staged(
                     leg,
                     baseline,
                     &region_label,
-                    &relative,
+                    std::slice::from_ref(&relative),
+                    family_size,
+                    &statistics,
+                ));
+            }
+            // Prespecified stratification: one record over the whole
+            // evaluation domain, bootstrapped within each region stratum.
+            if evaluation_spans.len() > 1 {
+                let relative: Vec<(u64, u64)> = evaluation_spans
+                    .iter()
+                    .map(|(start, end)| (start - origin, end - origin))
+                    .collect();
+                let strata: Vec<Vec<(u64, u64)>> =
+                    relative.iter().map(|span| vec![*span]).collect();
+                evidence.push(assess_candidate(
+                    leg,
+                    baseline,
+                    "eligible_evaluation_stratified",
+                    &strata,
+                    family_size,
                     &statistics,
                 ));
             }
         }
     }
+
+    // --- Phase 9b: complete requested method x channel x region accounting
+    // (PN-FR-026, PN-AT-018). Every requested method appears with a terminal
+    // outcome; an isolated failure keeps its own record and reason.
+    let accounting = build_accounting(
+        &legs,
+        &evidence,
+        &evaluation_spans,
+        source.binding().detector,
+    );
+    let accounting_complete = accounting_complete(&accounting, request, &evaluation_spans);
 
     // --- Phase 10: stage every destination file, then the manifest.
     let request_text = std::fs::read_to_string(request_path)
@@ -3140,6 +3892,20 @@ fn run_compare_staged(
             row_mapping_ok,
         }
     });
+    let completed_modes = legs
+        .iter()
+        .filter(|leg| leg.state == LegState::Complete && leg.mode.is_some())
+        .count();
+    let statistics_policy = build_statistics_policy(request, &statistics, completed_modes);
+    let gates = assemble_gates(
+        operation_status,
+        data_quality,
+        &model_records,
+        &evidence,
+        completed_legs,
+        legs.len(),
+    );
+    let fidelity = build_fidelity(&legs, centers.len());
     let report = CompareReport {
         schema_version: NOISE_COMPARE_SCHEMA_VERSION,
         operation: "compare".to_string(),
@@ -3178,6 +3944,11 @@ fn run_compare_staged(
             })
             .collect(),
         evidence,
+        statistics: statistics_policy,
+        gates,
+        fidelity,
+        accounting,
+        accounting_complete,
         grid_equal,
         computation_complete,
         cancelled_before_commit: false,
@@ -3459,10 +4230,11 @@ fn write_report_md(
     for item in &report.evidence {
         let _ = writeln!(
             text,
-            "- `{cand}` vs `{base}` ({region}): SD ratio {ratio}, CI {ci}, gate {gate}, scientific {sci} over {n} blocks\n",
+            "- `{cand}` vs `{base}` ({region}): {stat} {ratio}, CI {ci}, gate {gate}, scientific {sci} over {n} blocks ({strata} strata); {secondary} {mean_sd}, stability {stability}\n",
             cand = item.candidate,
             base = item.baseline,
             region = item.region_label,
+            stat = item.statistic_id,
             ratio = item
                 .sd_ratio
                 .map(|ratio| format!("{ratio:.4}"))
@@ -3474,8 +4246,107 @@ fn write_report_md(
             gate = item.benefit_gate,
             sci = item.scientific_verdict,
             n = item.independent_blocks,
+            strata = item.strata,
+            secondary = item.secondary_statistic_id,
+            mean_sd = item
+                .mean_block_sd_ratio
+                .map(|ratio| format!("{ratio:.4}"))
+                .unwrap_or_else(|| "(uncomputed)".to_string()),
+            stability = item.stability_gate,
         );
     }
+    text.push_str("## Result gates (independent; PN-FR-032)\n\n");
+    for (name, value) in [
+        ("acquisition validity", &report.gates.acquisition_validity),
+        ("computation", &report.gates.computation),
+        (
+            "diagnostic qualification",
+            &report.gates.diagnostic_qualification,
+        ),
+        ("model adequacy", &report.gates.model_adequacy),
+        ("numeric benefit", &report.gates.numeric_benefit),
+        ("dynamic fidelity", &report.gates.dynamic_fidelity),
+        ("scientific", &report.gates.scientific),
+        ("default promotion", &report.gates.default_promotion),
+    ] {
+        let _ = writeln!(text, "- {name}: `{value}`");
+    }
+    for reason in &report.gates.reasons {
+        let _ = writeln!(text, "  - {reason}");
+    }
+    text.push_str("\n## Fidelity controls (PN-FR-030)\n\n");
+    let _ = writeln!(
+        text,
+        "- status: `{status}` — {reason}\n\
+         - output resolution: {centers} centers; boundary windows: {boundary}, cross-regime windows: {cross}\n\
+         - switch jump RMS: {switch:?}, interior jump RMS: {interior:?}\n\
+         - tolerance authority: {authority:?}\n",
+        status = report.fidelity.status,
+        reason = report.fidelity.reason,
+        centers = report.fidelity.output_resolution_centers,
+        boundary = report.fidelity.boundary_windows,
+        cross = report.fidelity.cross_regime_windows,
+        switch = report.fidelity.switch_jump_rms,
+        interior = report.fidelity.interior_jump_rms,
+        authority = report.fidelity.tolerance_authority,
+    );
+    for note in &report.fidelity.notes {
+        let _ = writeln!(text, "- {note}");
+    }
+    text.push_str("\n## Requested method x channel x region accounting (PN-FR-026)\n\n");
+    let _ = writeln!(
+        text,
+        "- complete: {complete}; rows: {rows}\n",
+        complete = report.accounting_complete,
+        rows = report.accounting.len(),
+    );
+    for row in &report.accounting {
+        let _ = writeln!(
+            text,
+            "- `{method}` ch{channel} {region}: {outcome}{reason}\n",
+            method = row.method,
+            channel = row.channel,
+            region = row.region,
+            outcome = row.outcome,
+            reason = row
+                .reason
+                .as_deref()
+                .map(|reason| format!(" — {reason}"))
+                .unwrap_or_default(),
+        );
+    }
+    text.push_str("\n## Statistics policy (PN-NFR-006)\n\n");
+    let _ = writeln!(
+        text,
+        "- primary `{primary}`: {primary_formula}\n\
+         - secondary `{secondary}`: {secondary_formula}\n\
+         - evaluate-lockin identity: `{evaluate}` (distinct statistic, never substituted)\n\
+         - resampling unit: `{unit}`, stratification: `{strata}`, pairing: `{pairing}`\n\
+         - overlap policy: `{overlap}`\n\
+         - rng: `{rng}`, replicates: {reps}, seed: {seed}, confidence: {confidence}\n\
+         - multiplicity: `{multiplicity}` (requested {requested}, compared {compared}, selection performed: {selection})\n\
+         - stability policy: `{stability}` (max single-block share {max_share}, min improved fraction {min_fraction})\n",
+        primary = report.statistics.primary_statistic_id,
+        primary_formula = report.statistics.primary_formula,
+        secondary = report.statistics.secondary_statistic_id,
+        secondary_formula = report.statistics.secondary_formula,
+        evaluate = report.statistics.evaluate_lockin_statistic_id,
+        unit = report.statistics.resampling_unit,
+        strata = report.statistics.stratification,
+        pairing = report.statistics.pairing,
+        overlap = report.statistics.overlap_policy,
+        rng = report.statistics.rng_id,
+        reps = report.statistics.bootstrap_replicates,
+        seed = report.statistics.bootstrap_seed,
+        confidence = report.statistics.confidence_level,
+        multiplicity = report.statistics.multiplicity_policy_id,
+        requested = report.statistics.candidates_requested,
+        compared = report.statistics.candidates_compared,
+        selection = report.statistics.selection_performed,
+        stability = report.statistics.stability_policy_id,
+        max_share = COMPARE_STABILITY_MAX_CONCENTRATION,
+        min_fraction = COMPARE_STABILITY_MIN_IMPROVED_FRACTION,
+    );
     text.push_str(
         "\n## Provenance\n\n\
          - `request.source.toml`: exact request bytes\n\
@@ -3497,3 +4368,11 @@ fn write_report_md(
 #[cfg(test)]
 #[path = "compare_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "m4_tests.rs"]
+mod m4_tests;
+
+#[cfg(test)]
+#[path = "m4_e2e_tests.rs"]
+mod m4_e2e_tests;

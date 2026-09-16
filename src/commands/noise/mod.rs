@@ -4,7 +4,11 @@ pub mod bank;
 pub mod compare;
 pub mod diagnose;
 pub mod diagnostics;
+#[cfg(test)]
+pub(crate) mod fidelity;
 pub mod plan;
+#[cfg(test)]
+pub(crate) mod qualification;
 pub mod replay;
 
 use crate::cli::NoiseCommand;
