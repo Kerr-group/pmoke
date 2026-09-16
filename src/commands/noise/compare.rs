@@ -51,6 +51,7 @@ use crate::utils::recorded_source::{
     RecordedSourceRequest,
 };
 
+use super::bank::{self, BankLegRow, BoundaryStats};
 use super::diagnostics::run_signal_diagnostics;
 use super::plan::{GuardSpec, ResolvedPlan, resolve_role_plan};
 
@@ -78,6 +79,10 @@ pub const MAX_COMPARE_MODELS_PER_CHANNEL: usize = 8;
 pub const MAX_COMPARE_MODEL_BYTES: usize = 1024 * 1024;
 pub const MAX_COMPARE_TOTAL_MODEL_BYTES_PER_CHANNEL: usize = 8 * 1024 * 1024;
 
+/// Retained bank-row cap before solving (PN-FR-037): the bank lane fails
+/// explicitly instead of retaining unbounded per-row records.
+pub const MAX_BANK_RETAINED_ROWS: usize = 50_000;
+
 /// Versioned compare request (deny_unknown_fields: no silent options).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,7 +102,67 @@ pub struct CompareRequest {
     pub candidates: CompareCandidatesToml,
     pub statistics: Option<CompareStatisticsToml>,
     pub resources: Option<CompareResourcesToml>,
+    /// Opt-in frozen condition-specific bank (PN-M3, PN-FR-018/019):
+    /// absent means the frozen global path. Presence switches the workflow
+    /// to an explicit regime schedule resolved before inference.
+    pub bank: Option<CompareBankToml>,
     pub output: String,
+}
+
+/// Opt-in regime bank request (bank/schedule schema v1, PN-A-004/PN-FR-018).
+/// Regimes come from an external schedule or declared training context;
+/// nothing here may be optimized on final MOKE noise or transitions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompareBankToml {
+    pub schema_version: u32,
+    pub selection_provenance: CompareBankSelectionProvenance,
+    /// Deterministic schedule spans in original sample indices; every
+    /// output center must lie inside exactly one span (PN-FR-019).
+    pub schedule: Vec<CompareBankScheduleSpanToml>,
+    pub regimes: Vec<CompareBankRegimeToml>,
+    /// Worker threads for the bank apply (deterministic output regardless).
+    pub workers: Option<usize>,
+    /// Output chunk size for the bank apply (bounded per-worker scratch).
+    pub chunk_size: Option<usize>,
+}
+
+/// Why the bank regime split exists: an external schedule, or declared
+/// training/validation context. Both are chosen without reading final
+/// target windows (PN-FR-018/019).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompareBankSelectionProvenance {
+    ExternalSchedule,
+    DeclaredTrainingContext,
+}
+
+/// One regime: a portable name, a declared condition label, and the
+/// half-open training intervals the regime model is fitted from.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompareBankRegimeToml {
+    pub name: String,
+    pub condition: String,
+    /// Optional explicit channel binding; must match the resolved detector.
+    pub channel: Option<u8>,
+    pub intervals: Vec<CompareBankIntervalToml>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompareBankIntervalToml {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// One schedule span: half-open original-index range assigned to a regime.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompareBankScheduleSpanToml {
+    pub regime: String,
+    pub start: u64,
+    pub end: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -369,6 +434,9 @@ pub struct CompareReport {
     pub diagnostic_finding: String,
     pub context: FrozenContext,
     pub models: Vec<FrozenModelRecord>,
+    /// Bank summary (PN-M3): absent for the frozen global lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bank: Option<BankReport>,
     pub reserved: ReservedEvidence,
     pub legs: Vec<CompareLeg>,
     pub evidence: Vec<CandidateEvidence>,
@@ -379,6 +447,9 @@ pub struct CompareReport {
 }
 
 /// Staging manifest binding restart/resume to hashes (PN-FR-031).
+/// Schema v2 (PN-M3) adds the full retained-file digest closure, the
+/// bank/schedule digests and the row-mapping record; v1 manifests stay
+/// readable with their historical meaning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StagingManifest {
     pub schema_version: u32,
@@ -388,6 +459,69 @@ pub struct StagingManifest {
     pub model_digests: BTreeMap<String, String>,
     pub phase: String,
     pub completed_phases: Vec<String>,
+    /// SHA-256 of every staged file, keyed by destination-relative path
+    /// (schema v2). Empty for v1 manifests.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub file_digests: BTreeMap<String, String>,
+    /// Distinct-model bank hash (schema v2, bank lane only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bank_sha256: Option<String>,
+    /// Resolved center -> regime schedule hash (schema v2, bank lane only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_sha256: Option<String>,
+    /// Row-mapping record: per-leg retained row counts and the schedule row
+    /// count (schema v2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_mapping: Option<serde_json::Value>,
+}
+
+/// Resolved bank plan plus destination bookkeeping for one compare run
+/// (PN-FR-018/019/023). Slots are the deduplicated distinct models; links
+/// bind every regime to its mode-specific slot.
+struct BankState {
+    resolved: bank::ResolvedBank,
+    slots: Vec<bank::BankModelSlot>,
+    links: Vec<bank::BankRegimeLink>,
+    regime_to_slot: BTreeMap<String, Vec<usize>>,
+    reduction: BTreeMap<String, String>,
+    bank_sha256: String,
+    schedule_sha256: String,
+    schedule_rows: Vec<bank::BankScheduleRow>,
+    primary_sha: String,
+    primary_variance: PhaseVarianceOutput,
+    evidence: Vec<BankLegEvidence>,
+}
+
+/// Per-leg bank application evidence retained in `bank-evidence.json`.
+#[derive(Debug, Clone, Serialize)]
+struct BankLegEvidence {
+    leg: String,
+    mode: String,
+    rows: usize,
+    window_failures: usize,
+    prepared_plans: usize,
+    prepare_ms: f64,
+    apply_ms: f64,
+    direct_reference_rows: usize,
+    max_abs_error_v: f64,
+    boundary: BoundaryStats,
+}
+
+/// Bank summary carried in the comparison report (PN-FR-023): identity of
+/// the frozen schedule and model bank, the identical-model reduction state,
+/// and the boundary coverage counts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BankReport {
+    pub schema_version: u32,
+    pub selection_provenance: String,
+    pub bank_sha256: String,
+    pub schedule_sha256: String,
+    pub reduction: BTreeMap<String, String>,
+    pub distinct_models: BTreeMap<String, usize>,
+    pub schedule_spans: usize,
+    pub boundary_windows: usize,
+    pub cross_regime_windows: usize,
+    pub row_mapping_ok: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -587,19 +721,16 @@ fn freeze_context(request: &CompareRequest) -> Result<FrozenContext> {
 // Training / reserved data reads.
 // ---------------------------------------------------------------------------
 
-struct TrainingData {
+pub(super) struct TrainingData {
     block_times: Vec<Vec<f64>>,
     block_residuals: Vec<Vec<f64>>,
     block_phases: Vec<Vec<f64>>,
 }
 
-fn read_training_blocks(
-    source: &RecordedSource,
-    resolved: &ResolvedPlan,
-    reference_frequency_hz: f64,
-    reference_phase_rad: f64,
-    sample_interval_s: f64,
-) -> Result<TrainingData> {
+/// Training spans nominated for the global lane: every `Training` role
+/// block from the resolved role plan (PN-FR-006), sorted. Bank regimes
+/// call [`read_training_blocks`] with their own explicit intervals.
+pub(super) fn training_spans(resolved: &ResolvedPlan) -> Vec<(u64, u64)> {
     let mut spans: Vec<(u64, u64)> = resolved
         .role_plan
         .blocks
@@ -608,6 +739,20 @@ fn read_training_blocks(
         .map(|block| (block.start, block.end))
         .collect();
     spans.sort_unstable();
+    spans
+}
+
+/// Reads the nominated training spans and fits the shared nuisance model on
+/// each one (PN-FR-010/015). Non-finite samples fail closed; the caller
+/// supplies spans from the resolved role plan or from explicit bank regime
+/// intervals.
+pub(super) fn read_training_blocks(
+    source: &RecordedSource,
+    spans: &[(u64, u64)],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    sample_interval_s: f64,
+) -> Result<TrainingData> {
     if spans.is_empty() {
         bail!("noise compare plan holds no training blocks (code=insufficient_calibration)");
     }
@@ -616,7 +761,7 @@ fn read_training_blocks(
     let mut block_times = Vec::with_capacity(spans.len());
     let mut block_residuals = Vec::with_capacity(spans.len());
     let mut block_phases = Vec::with_capacity(spans.len());
-    for (start, end) in &spans {
+    for (start, end) in spans {
         let block = source.read_block(*start, *end).with_context(|| {
             format!("noise compare cannot read training block [{start}, {end})")
         })?;
@@ -740,7 +885,7 @@ fn read_reserved_blocks(
 // Mode-specific calibration (PN-FR-015/016).
 // ---------------------------------------------------------------------------
 
-struct ModeBuild {
+pub(super) struct ModeBuild {
     record: FrozenModelRecord,
     artifact_json: Vec<u8>,
     variance: PhaseVarianceOutput,
@@ -748,8 +893,9 @@ struct ModeBuild {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_mode_artifact(
+pub(super) fn build_mode_artifact(
     mode: CompareJointMode,
+    model_prefix: &str,
     training: &TrainingData,
     plan_request: &BlockPlanRequest,
     source_digests: Vec<String>,
@@ -832,7 +978,7 @@ fn build_mode_artifact(
     let plan = pmoke_analysis_core::calibration::plan_blocks(plan_request)?;
     let max_model_bytes = MAX_COMPARE_MODEL_BYTES;
     let artifact_request = ArtifactRequest {
-        model_id: format!("noise-compare-global-{mode_str}"),
+        model_id: format!("noise-compare-{model_prefix}-{mode_str}"),
         pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
         backend_versions: BTreeMap::new(),
         binding: ModelBinding {
@@ -934,6 +1080,13 @@ struct LegSignal {
     output_rows: Option<usize>,
     window_failures: usize,
     series: Vec<(u64, f64)>,
+    /// Retained per-row bank records (PN-M3): attribution, XY and the
+    /// policy-serialized covariance for every completed center.
+    bank_rows: Vec<BankLegRow>,
+    /// Boundary/switch diagnostics for this leg (bank lane only).
+    bank_stats: Option<BoundaryStats>,
+    /// Frozen schedule digest the leg's row mapping is bound to.
+    bank_schedule_sha256: Option<String>,
 }
 
 /// Fixed demodulation window: one tap support shared by every leg, with
@@ -1102,15 +1255,16 @@ fn joint_fundamental(
         sample_rate_hz,
         &settings,
     )?;
-    // XY layout is [X1..X6, Y1..Y6]; the fundamental magnitude is the
-    // shared scalar contrast every leg reports.
+    // XY layout is [X1, Y1, X2, Y2, ...] (the JointEstimate contract, and the
+    // layout the lockin/phase/MOKE stages consume); the fundamental
+    // magnitude is hypot(X1, Y1).
     if estimate.xy.len() < 12 {
         bail!(
             "joint estimate holds {} XY values, need 12 (code=dimension_mismatch)",
             estimate.xy.len()
         );
     }
-    Ok(estimate.xy[0].hypot(estimate.xy[6]))
+    Ok(estimate.xy[0].hypot(estimate.xy[1]))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1139,6 +1293,9 @@ fn run_leg_series(
         output_rows: None,
         window_failures: 0,
         series: Vec::new(),
+        bank_rows: Vec::new(),
+        bank_stats: None,
+        bank_schedule_sha256: None,
     };
     let sample_rate_hz = 1.0 / request.sample_interval_s;
     let mut series = Vec::with_capacity(centers.len());
@@ -1214,6 +1371,9 @@ fn run_leg_series(
         output_rows: Some(series.len()),
         window_failures,
         series,
+        bank_rows: Vec::new(),
+        bank_stats: None,
+        bank_schedule_sha256: None,
     }
 }
 
@@ -1536,6 +1696,7 @@ pub fn run_compare(
     // only after digest checks (PN-FR-031). Mixing generations silently is
     // still refused below.
     let staging = output.with_extension("staging");
+    let mut prior_manifest: Option<StagingManifest> = None;
     if staging.exists() && !staging.join("staging-manifest.json").is_file() {
         std::fs::remove_dir_all(&staging).with_context(|| {
             format!("cannot clear stale compare staging: {}", staging.display())
@@ -1544,7 +1705,9 @@ pub fn run_compare(
     if staging.exists() {
         // Resume evidence: a prior staging dir with a matching manifest may
         // be replayed only after digest checks; a mismatched manifest is a
-        // hard error, never a silent reuse (PN-FR-031).
+        // hard error, never a silent reuse (PN-FR-031). Schema v2 generations
+        // additionally verify their full file-digest closure and semantic
+        // ownership before any file is rewritten (PN-FR-023 addendum).
         let manifest_path = staging.join("staging-manifest.json");
         if manifest_path.is_file() {
             let text = std::fs::read_to_string(&manifest_path).with_context(|| {
@@ -1553,12 +1716,22 @@ pub fn run_compare(
             let manifest: StagingManifest = serde_json::from_str(&text).with_context(|| {
                 format!("invalid staging manifest: {}", manifest_path.display())
             })?;
+            if manifest.schema_version > 2 {
+                bail!(
+                    "noise compare staging manifest schema_version {} is unsupported (code=staging_mismatch)",
+                    manifest.schema_version
+                );
+            }
             if manifest.request_sha256 != request_sha {
                 bail!(
                     "noise compare staging manifest binds a different request (code=staging_mismatch); remove {} and retry",
                     staging.display()
                 );
             }
+            if manifest.schema_version >= 2 {
+                verify_manifest_closure(&staging, &manifest)?;
+            }
+            prior_manifest = Some(manifest);
         } else {
             bail!(
                 "noise compare staging directory already exists: {} (remove it or recover explicitly; refusing to mix generations)",
@@ -1576,6 +1749,7 @@ pub fn run_compare(
         request_path,
         &request_sha,
         &staging,
+        prior_manifest.as_ref(),
         cancel,
     );
     match outcome {
@@ -1620,6 +1794,7 @@ fn run_compare_staged(
     request_path: &Path,
     request_sha: &str,
     staging: &Path,
+    prior: Option<&StagingManifest>,
     cancel: Option<&AtomicBool>,
 ) -> Result<CompareReport> {
     if check_cancel(cancel) {
@@ -1642,6 +1817,14 @@ fn run_compare_staged(
             .context("cannot encode frozen inputs")?
             .as_slice(),
     );
+    if let Some(prior) = prior
+        && prior.source_digest != source_digest
+    {
+        bail!(
+            "noise compare staging manifest binds a different source digest (code=staging_mismatch); remove {} and retry",
+            staging.display()
+        );
+    }
 
     // --- Phase 2: role plan + leakage guard (PN-FR-006/007).
     let role_intervals: Vec<RoleInterval> = request
@@ -1713,7 +1896,7 @@ fn run_compare_staged(
     check_resources(request, request.candidates.joint_modes.len())?;
     let training = read_training_blocks(
         &source,
-        &resolved,
+        &training_spans(&resolved),
         request.reference_frequency_hz,
         request.reference_phase_rad,
         request.sample_interval_s,
@@ -1736,6 +1919,7 @@ fn run_compare_staged(
         }
         match build_mode_artifact(
             *mode,
+            "global",
             &training,
             &plan_request,
             source_digests.clone(),
@@ -1803,6 +1987,236 @@ fn run_compare_staged(
         }
     }
 
+    // --- Phase 5b: opt-in frozen regime bank (PN-FR-018/019). Regimes are
+    // nominated explicitly; each builds its own mode-specific model from its
+    // own training intervals. Identical estimated content is reduced to one
+    // distinct model *before* inference, so an identical-model bank
+    // reproduces the frozen global path exactly (PN-FR-021), and the
+    // complete center -> model schedule is resolved and hashed before any
+    // evaluation window is read (PN-FR-019).
+    let mut bank_state: Option<BankState> = None;
+    if let Some(bank_toml) = request.bank.as_ref() {
+        let resolved_bank = bank::validate_bank_request(bank_toml, detector, total_samples)?;
+        let mut slots: Vec<bank::BankModelSlot> = Vec::new();
+        let mut links: Vec<bank::BankRegimeLink> = Vec::new();
+        let mut regime_to_slot: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut reduction: BTreeMap<String, String> = BTreeMap::new();
+        let mut primary: Option<(String, PhaseVarianceOutput)> = None;
+        for mode in &request.candidates.joint_modes {
+            if check_cancel(cancel) {
+                bail!(
+                    "noise compare cancelled during bank calibration (code=cancelled_before_commit)"
+                );
+            }
+            let mut per_regime_slot: Vec<usize> = Vec::with_capacity(resolved_bank.regimes.len());
+            let mut distinct: Vec<(String, usize)> = Vec::new();
+            for (regime_index, regime) in resolved_bank.regimes.iter().enumerate() {
+                let regime_plan = BlockPlanRequest {
+                    intervals: regime
+                        .intervals
+                        .iter()
+                        .map(|(start, end)| RoleInterval {
+                            role: CalibrationRole::Training,
+                            start: *start,
+                            end: *end,
+                        })
+                        .collect(),
+                    block_len: request.block_len,
+                    total_samples,
+                    reference_frequency_hz: request.reference_frequency_hz,
+                    sample_interval_s: request.sample_interval_s,
+                    min_reference_cycles_per_block:
+                        pmoke_analysis_core::calibration::DEFAULT_MIN_CYCLES_PER_BLOCK,
+                    min_training_blocks: request
+                        .calibration
+                        .min_training_blocks
+                        .unwrap_or(pmoke_analysis_core::calibration::DEFAULT_MIN_TRAINING_BLOCKS),
+                    min_training_intervals: request.calibration.min_training_intervals.unwrap_or(
+                        pmoke_analysis_core::calibration::DEFAULT_MIN_TRAINING_INTERVALS,
+                    ),
+                };
+                // Regime training reads the same resolved block geometry as
+                // the global lane (each nominated interval is split into
+                // block_len blocks), so a long regime interval contributes
+                // its full block set instead of one giant block.
+                let regime_spans: Vec<(u64, u64)> =
+                    pmoke_analysis_core::calibration::plan_blocks(&regime_plan)?
+                        .blocks
+                        .iter()
+                        .filter(|block| block.role == CalibrationRole::Training)
+                        .map(|block| (block.start, block.end))
+                        .collect();
+                let training_regime = read_training_blocks(
+                    &source,
+                    &regime_spans,
+                    request.reference_frequency_hz,
+                    request.reference_phase_rad,
+                    request.sample_interval_s,
+                )
+                .with_context(|| {
+                    format!(
+                        "noise compare bank regime '{}' training read failed (code=insufficient_calibration)",
+                        regime.name
+                    )
+                })?;
+                let build = build_mode_artifact(
+                    *mode,
+                    &format!("bank-{}", regime.name),
+                    &training_regime,
+                    &regime_plan,
+                    source_digests.clone(),
+                    u32::from(detector),
+                    request.sample_interval_s,
+                    request.reference_frequency_hz,
+                    request.reference_phase_rad,
+                    phase_recipe,
+                    correlation_recipe,
+                )
+                .with_context(|| {
+                    format!(
+                        "noise compare bank regime '{}' cannot build its {} model (code=insufficient_calibration)",
+                        regime.name,
+                        mode_name(*mode)
+                    )
+                })?;
+                let lags = build.correlation.as_ref().map(|output| output.lags.clone());
+                let fingerprint = bank::estimation_fingerprint(
+                    &build.record.correlation_basis,
+                    build.variance.v0,
+                    &build.variance.variances,
+                    lags.as_deref(),
+                    lags.as_ref().map(|_| request.sample_interval_s),
+                    request.reference_frequency_hz,
+                    request.sample_interval_s,
+                );
+                let slot_index = match distinct
+                    .iter()
+                    .find(|(existing, _)| existing == &fingerprint)
+                {
+                    Some((_, index)) => *index,
+                    None => {
+                        if distinct.len() >= bank::MAX_BANK_REGIMES_PER_MODE {
+                            bail!(
+                                "noise compare bank holds more than {} distinct {} models (code=resource_limit_exceeded)",
+                                bank::MAX_BANK_REGIMES_PER_MODE,
+                                mode_name(*mode)
+                            );
+                        }
+                        let index = slots.len();
+                        let artifact_path = format!(
+                            "calibrations/ch{detector}/{}/bank-{}/model.json",
+                            mode_name(*mode),
+                            regime.name
+                        );
+                        let absolute = staging.join(&artifact_path);
+                        if let Some(parent) = absolute.parent() {
+                            std::fs::create_dir_all(parent)
+                                .with_context(|| format!("cannot create {}", parent.display()))?;
+                        }
+                        std::fs::write(&absolute, &build.artifact_json)
+                            .with_context(|| format!("cannot stage {}", absolute.display()))?;
+                        total_model_bytes += build.artifact_json.len();
+                        let cap = request
+                            .resources
+                            .as_ref()
+                            .and_then(|r| r.max_total_model_bytes_per_channel)
+                            .unwrap_or(MAX_COMPARE_TOTAL_MODEL_BYTES_PER_CHANNEL);
+                        if total_model_bytes > cap.min(MAX_COMPARE_TOTAL_MODEL_BYTES_PER_CHANNEL) {
+                            bail!(
+                                "noise compare model bytes {total_model_bytes} exceed the per-channel cap {} (code=resource_limit_exceeded)",
+                                cap.min(MAX_COMPARE_TOTAL_MODEL_BYTES_PER_CHANNEL)
+                            );
+                        }
+                        if primary.is_none() {
+                            primary = Some((build.record.sha256.clone(), build.variance.clone()));
+                        }
+                        slots.push(bank::BankModelSlot {
+                            slot: index,
+                            mode: mode_name(*mode).to_string(),
+                            model_id: build.record.model_id.clone(),
+                            sha256: build.record.sha256.clone(),
+                            bytes: build.artifact_json.len(),
+                            artifact_path: artifact_path.clone(),
+                            estimation_sha256: fingerprint.clone(),
+                            noise: noise_model_for(*mode, &build, request.sample_interval_s)?,
+                            regime: regime.name.clone(),
+                        });
+                        distinct.push((fingerprint, index));
+                        index
+                    }
+                };
+                per_regime_slot.push(slot_index);
+                links.push(bank::BankRegimeLink {
+                    regime_index,
+                    mode: mode_name(*mode).to_string(),
+                    slot: slot_index,
+                    model_id: slots[slot_index].model_id.clone(),
+                    sha256: slots[slot_index].sha256.clone(),
+                    artifact_path: slots[slot_index].artifact_path.clone(),
+                });
+            }
+            let status = if distinct.len() == 1 {
+                if resolved_bank.regimes.len() == 1 {
+                    "single_model"
+                } else {
+                    "identical_model"
+                }
+            } else {
+                "distinct_models"
+            };
+            reduction.insert(mode_name(*mode).to_string(), status.to_string());
+            regime_to_slot.insert(mode_name(*mode).to_string(), per_regime_slot);
+        }
+        let (primary_sha, primary_variance) = primary.ok_or_else(|| {
+            anyhow::anyhow!(
+                "noise compare bank built no frozen models (code=insufficient_calibration)"
+            )
+        })?;
+        bank_state = Some(BankState {
+            resolved: resolved_bank,
+            slots,
+            links,
+            regime_to_slot,
+            reduction,
+            bank_sha256: String::new(),
+            schedule_sha256: String::new(),
+            schedule_rows: Vec::new(),
+            primary_sha,
+            primary_variance,
+            evidence: Vec::new(),
+        });
+    }
+
+    // Resume digest check (PN-FR-023 addendum): a prior generation bound to
+    // the same request must reproduce the same model digests; any mismatch
+    // is a cross-generation mix and fails closed.
+    if let Some(prior) = prior {
+        let mut current: BTreeMap<String, String> = BTreeMap::new();
+        for record in &model_records {
+            if !record.sha256.is_empty() {
+                current.insert(record.mode.clone(), record.sha256.clone());
+            }
+        }
+        if let Some(state) = bank_state.as_ref() {
+            for slot in &state.slots {
+                current.insert(
+                    format!("{}/bank-{}", slot.mode, slot.regime),
+                    slot.sha256.clone(),
+                );
+            }
+        }
+        for (key, digest) in &current {
+            if let Some(prior_digest) = prior.model_digests.get(key)
+                && prior_digest != digest
+            {
+                bail!(
+                    "noise compare staging manifest binds a different {key} model (code=staging_mismatch); remove {} and retry",
+                    staging.display()
+                );
+            }
+        }
+    }
+
     // --- Phase 6: measured reserved evidence (PN-FR-014).
     let mut reserved = ReservedEvidence {
         schema_version: NOISE_COMPARE_SCHEMA_VERSION,
@@ -1817,15 +2231,21 @@ fn run_compare_staged(
         warnings: Vec::new(),
         eligibility: "unverified".to_string(),
     };
-    if let Some((_, first)) = builds.first() {
-        reserved.training_model_sha256 = first.record.sha256.clone();
+    let primary: Option<(String, PhaseVarianceOutput)> = match (builds.first(), bank_state.as_ref())
+    {
+        (Some((_, first)), _) => Some((first.record.sha256.clone(), first.variance.clone())),
+        (None, Some(state)) => Some((state.primary_sha.clone(), state.primary_variance.clone())),
+        (None, None) => None,
+    };
+    if let Some((primary_sha, primary_variance)) = primary.as_ref() {
+        reserved.training_model_sha256 = primary_sha.clone();
         match read_reserved_blocks(
             &source,
             &resolved,
             request.reference_frequency_hz,
             request.reference_phase_rad,
             request.sample_interval_s,
-            &first.variance,
+            primary_variance,
         ) {
             Ok(reserved_data) => {
                 reserved.reserved_blocks = reserved_data.reserved_blocks;
@@ -1837,7 +2257,7 @@ fn run_compare_staged(
                     .zip(training.block_phases.iter())
                     .map(|(residuals, phases)| {
                         let mean = residuals.iter().sum::<f64>() / residuals.len() as f64;
-                        let scale = first.variance.v0.sqrt();
+                        let scale = primary_variance.v0.sqrt();
                         AdequacyGroup {
                             standardized: residuals
                                 .iter()
@@ -1896,6 +2316,14 @@ fn run_compare_staged(
 
     // --- Phase 7: freeze the shared context (PN-FR-005).
     let context = freeze_context(request)?;
+    if let Some(prior) = prior
+        && prior.context_sha256 != context.context_sha256
+    {
+        bail!(
+            "noise compare staging manifest binds a different frozen context (code=staging_mismatch); remove {} and retry",
+            staging.display()
+        );
+    }
 
     // --- Phase 8: controlled legs on the fixed grid (PN-FR-022/026).
     let evaluation_spans: Vec<(u64, u64)> = {
@@ -2000,62 +2428,223 @@ fn run_compare_staged(
     );
     baseline.grid_fingerprint = Some(fingerprint.clone());
     legs.push(baseline);
-    for (mode, build) in &builds {
-        if check_cancel(cancel) {
-            bail!("noise compare cancelled during legs (code=cancelled_before_commit)");
-        }
-        let noise = match noise_model_for(*mode, build, request.sample_interval_s) {
-            Ok(noise) => noise,
-            Err(error) => {
-                legs.push(LegSignal {
-                    name: format!("{}_candidate", mode_name(*mode)),
-                    estimator: format!("joint_{}", mode_name(*mode)),
-                    mode: Some(mode_name(*mode).to_string()),
-                    state: LegState::Failed,
-                    code: Some("model_mismatch".to_string()),
-                    message: Some(format!("{error:#}")),
-                    model_sha256: Some(build.record.sha256.clone()),
-                    grid_fingerprint: Some(fingerprint.clone()),
-                    output_rows: None,
-                    window_failures: 0,
-                    series: Vec::new(),
-                });
-                continue;
-            }
-        };
-        let label = format!("{}_candidate", mode_name(*mode));
-        let estimator = format!("joint_{}", mode_name(*mode));
-        let mut leg = run_leg_series(
-            &label,
-            &estimator,
-            Some(*mode),
-            Some(build),
-            Some(noise),
-            &eval_signal,
-            &eval_times,
-            &centers,
-            &grid,
-            request,
-            &sorted_fit,
+    // Bank lane (PN-M3): the complete center -> model schedule is resolved
+    // and hashed here, before any evaluation window is demodulated, and each
+    // requested mode runs one model per center from the frozen bank. The
+    // labeled boxcar baseline above stays the comparison anchor.
+    if let Some(state) = bank_state.as_mut() {
+        let absolute_centers: Vec<u64> = centers.iter().map(|center| center + origin).collect();
+        let schedule_rows = bank::resolve_bank_schedule(
+            &absolute_centers,
+            half_taps as u64 + 1,
+            &state.resolved.spans,
+        )?;
+        let schedule_sha = bank::schedule_sha256(&state.resolved.spans, &schedule_rows);
+        let bank_sha = bank::bank_sha256(
+            state.resolved.provenance,
+            &state.resolved.regimes,
+            &state.slots,
+            &schedule_sha,
         );
-        leg.grid_fingerprint = Some(fingerprint.clone());
-        // Scientific qualification (PN-FR-032): a completed leg whose
-        // reserved adequacy failed is unqualified unless the request
-        // explicitly allows exploratory execution (never a pass verdict).
-        if leg.state == LegState::Complete && !reserved.adequate && !allow_exploratory {
-            leg.state = LegState::Unqualified;
-            leg.code = Some("unqualified".to_string());
-            leg.message = Some(format!(
-                "reserved adequacy failed ({}); leg withheld from pass verdicts",
-                reserved.reason
-            ));
-        } else if leg.state == LegState::Complete && !reserved.adequate {
-            leg.message = Some(format!(
-                "exploratory only: reserved adequacy failed ({})",
-                reserved.reason
-            ));
+        let retained = schedule_rows
+            .len()
+            .saturating_mul(request.candidates.joint_modes.len());
+        if retained > MAX_BANK_RETAINED_ROWS {
+            bail!(
+                "noise compare bank would retain {retained} rows above the declared cap {MAX_BANK_RETAINED_ROWS} (code=resource_limit_exceeded)"
+            );
         }
-        legs.push(leg);
+        state.schedule_rows = schedule_rows.clone();
+        state.schedule_sha256 = schedule_sha;
+        state.bank_sha256 = bank_sha;
+        if let Some(prior) = prior {
+            if let Some(prior_bank) = prior.bank_sha256.as_deref()
+                && prior_bank != state.bank_sha256
+            {
+                bail!(
+                    "noise compare staging manifest binds a different bank generation (code=staging_mismatch); remove {} and retry",
+                    staging.display()
+                );
+            }
+            if let Some(prior_schedule) = prior.schedule_sha256.as_deref()
+                && prior_schedule != state.schedule_sha256
+            {
+                bail!(
+                    "noise compare staging manifest binds a different schedule generation (code=staging_mismatch); remove {} and retry",
+                    staging.display()
+                );
+            }
+        }
+        let regime_names: Vec<String> = state
+            .resolved
+            .regimes
+            .iter()
+            .map(|regime| regime.name.clone())
+            .collect();
+        for mode in &request.candidates.joint_modes {
+            if check_cancel(cancel) {
+                bail!("noise compare cancelled during bank legs (code=cancelled_before_commit)");
+            }
+            let mode_key = mode_name(*mode).to_string();
+            let regime_map = state
+                .regime_to_slot
+                .get(&mode_key)
+                .cloned()
+                .unwrap_or_default();
+            let label = format!("{mode_key}_candidate");
+            let estimator = format!("joint_{mode_key}");
+            let outcome = bank::apply_bank_leg(
+                &label,
+                &state.slots,
+                &regime_names,
+                &regime_map,
+                &state.schedule_rows,
+                origin,
+                half_taps,
+                &eval_times,
+                &eval_signal,
+                request.reference_frequency_hz,
+                request.reference_phase_rad,
+                request.sample_interval_s,
+                &sorted_fit,
+                requested_covariance,
+                state.resolved.workers,
+                state.resolved.chunk_size,
+                4,
+            );
+            match outcome {
+                Ok(output) => {
+                    let stats = bank::boundary_stats(&output.rows);
+                    let series: Vec<(u64, f64)> = output
+                        .rows
+                        .iter()
+                        .map(|row| (row.center - origin, row.magnitude))
+                        .collect();
+                    let mut leg = LegSignal {
+                        name: label.clone(),
+                        estimator: estimator.clone(),
+                        mode: Some(mode_key.clone()),
+                        state: LegState::Complete,
+                        code: None,
+                        message: None,
+                        model_sha256: None,
+                        grid_fingerprint: Some(fingerprint.clone()),
+                        output_rows: Some(series.len()),
+                        window_failures: output.window_failures,
+                        series,
+                        bank_rows: output.rows.clone(),
+                        bank_stats: Some(stats.clone()),
+                        bank_schedule_sha256: Some(state.schedule_sha256.clone()),
+                    };
+                    if !reserved.adequate && !allow_exploratory {
+                        leg.state = LegState::Unqualified;
+                        leg.code = Some("unqualified".to_string());
+                        leg.message = Some(format!(
+                            "reserved adequacy failed ({}); leg withheld from pass verdicts",
+                            reserved.reason
+                        ));
+                    } else if !reserved.adequate {
+                        leg.message = Some(format!(
+                            "exploratory only: reserved adequacy failed ({})",
+                            reserved.reason
+                        ));
+                    }
+                    state.evidence.push(BankLegEvidence {
+                        leg: label,
+                        mode: mode_key,
+                        rows: output.rows.len(),
+                        window_failures: output.window_failures,
+                        prepared_plans: output.prepared_plans,
+                        prepare_ms: output.prepare_ms,
+                        apply_ms: output.apply_ms,
+                        direct_reference_rows: output.direct_reference_rows,
+                        max_abs_error_v: output.max_abs_error_v,
+                        boundary: stats,
+                    });
+                    legs.push(leg);
+                }
+                Err(error) => {
+                    legs.push(LegSignal {
+                        name: label,
+                        estimator,
+                        mode: Some(mode_key),
+                        state: LegState::Failed,
+                        code: Some("bank_apply_failed".to_string()),
+                        message: Some(format!("{error:#}")),
+                        model_sha256: None,
+                        grid_fingerprint: Some(fingerprint.clone()),
+                        output_rows: None,
+                        window_failures: 0,
+                        series: Vec::new(),
+                        bank_rows: Vec::new(),
+                        bank_stats: None,
+                        bank_schedule_sha256: Some(state.schedule_sha256.clone()),
+                    });
+                }
+            }
+        }
+    }
+    if bank_state.is_none() {
+        for (mode, build) in &builds {
+            if check_cancel(cancel) {
+                bail!("noise compare cancelled during legs (code=cancelled_before_commit)");
+            }
+            let noise = match noise_model_for(*mode, build, request.sample_interval_s) {
+                Ok(noise) => noise,
+                Err(error) => {
+                    legs.push(LegSignal {
+                        name: format!("{}_candidate", mode_name(*mode)),
+                        estimator: format!("joint_{}", mode_name(*mode)),
+                        mode: Some(mode_name(*mode).to_string()),
+                        state: LegState::Failed,
+                        code: Some("model_mismatch".to_string()),
+                        message: Some(format!("{error:#}")),
+                        model_sha256: Some(build.record.sha256.clone()),
+                        grid_fingerprint: Some(fingerprint.clone()),
+                        output_rows: None,
+                        window_failures: 0,
+                        series: Vec::new(),
+                        bank_rows: Vec::new(),
+                        bank_stats: None,
+                        bank_schedule_sha256: None,
+                    });
+                    continue;
+                }
+            };
+            let label = format!("{}_candidate", mode_name(*mode));
+            let estimator = format!("joint_{}", mode_name(*mode));
+            let mut leg = run_leg_series(
+                &label,
+                &estimator,
+                Some(*mode),
+                Some(build),
+                Some(noise),
+                &eval_signal,
+                &eval_times,
+                &centers,
+                &grid,
+                request,
+                &sorted_fit,
+            );
+            leg.grid_fingerprint = Some(fingerprint.clone());
+            // Scientific qualification (PN-FR-032): a completed leg whose
+            // reserved adequacy failed is unqualified unless the request
+            // explicitly allows exploratory execution (never a pass verdict).
+            if leg.state == LegState::Complete && !reserved.adequate && !allow_exploratory {
+                leg.state = LegState::Unqualified;
+                leg.code = Some("unqualified".to_string());
+                leg.message = Some(format!(
+                    "reserved adequacy failed ({}); leg withheld from pass verdicts",
+                    reserved.reason
+                ));
+            } else if leg.state == LegState::Complete && !reserved.adequate {
+                leg.message = Some(format!(
+                    "exploratory only: reserved adequacy failed ({})",
+                    reserved.reason
+                ));
+            }
+            legs.push(leg);
+        }
     }
     // Explicit unavailable legs: requested modes with no built model stay
     // recorded (PN-FR-026), never filled from another mode.
@@ -2075,6 +2664,9 @@ fn run_compare_staged(
             output_rows: None,
             window_failures: 0,
             series: Vec::new(),
+            bank_rows: Vec::new(),
+            bank_stats: None,
+            bank_schedule_sha256: None,
         });
     }
 
@@ -2180,9 +2772,162 @@ fn run_compare_staged(
     )?;
     let models_json: Vec<FrozenModelRecord> = model_records.clone();
     write_json(&staging.join("models.json"), &models_json, "frozen models")?;
-    // Per-leg output series (centers + fundamental magnitudes) for replay.
+    // Bank artifacts (PN-FR-023): the frozen bank, the resolved center
+    // schedule, and the measured boundary/resource/acceleration evidence.
+    let mut referenced_files: Vec<String> = Vec::new();
+    for path in [
+        "request.source.toml",
+        "request.resolved.json",
+        "inputs.json",
+        "diagnostics.json",
+        "context.json",
+        "role-plan.json",
+        "reserved.json",
+        "models.json",
+        "schedule.json",
+        "comparison.json",
+        "report.md",
+    ] {
+        referenced_files.push(path.to_string());
+    }
+    for record in &model_records {
+        if !record.artifact_path.is_empty() {
+            referenced_files.push(record.artifact_path.clone());
+        }
+    }
+    if let Some(state) = bank_state.as_ref() {
+        for slot in &state.slots {
+            referenced_files.push(slot.artifact_path.clone());
+        }
+    }
+    if let Some(state) = bank_state.as_ref() {
+        let mut regime_records: Vec<serde_json::Value> = Vec::new();
+        for (regime_index, regime) in state.resolved.regimes.iter().enumerate() {
+            let mut models = serde_json::Map::new();
+            for link in state
+                .links
+                .iter()
+                .filter(|link| link.regime_index == regime_index)
+            {
+                models.insert(
+                    link.mode.clone(),
+                    serde_json::json!({
+                        "slot": link.slot,
+                        "model_id": link.model_id,
+                        "sha256": link.sha256,
+                        "artifact_path": link.artifact_path,
+                    }),
+                );
+            }
+            regime_records.push(serde_json::json!({
+                "name": regime.name,
+                "condition": regime.condition,
+                "channel": regime.channel,
+                "intervals": regime
+                    .intervals
+                    .iter()
+                    .map(|(start, end)| serde_json::json!({"start": start, "end": end}))
+                    .collect::<Vec<_>>(),
+                "models": models,
+            }));
+        }
+        let model_entries: Vec<serde_json::Value> = state
+            .slots
+            .iter()
+            .map(|slot| {
+                serde_json::json!({
+                    "slot": slot.slot,
+                    "mode": slot.mode,
+                    "model_id": slot.model_id,
+                    "sha256": slot.sha256,
+                    "bytes": slot.bytes,
+                    "artifact_path": slot.artifact_path,
+                    "estimation_sha256": slot.estimation_sha256,
+                    "representative_regime": slot.regime,
+                })
+            })
+            .collect();
+        let model_bank = serde_json::json!({
+            "schema_version": 1,
+            "selection_provenance": state.resolved.provenance,
+            "bank_sha256": state.bank_sha256,
+            "schedule_sha256": state.schedule_sha256,
+            "reduction": state.reduction,
+            "regimes": regime_records,
+            "models": model_entries,
+        });
+        write_json(&staging.join("model-bank.json"), &model_bank, "model bank")?;
+        referenced_files.push("model-bank.json".to_string());
+        let mut distinct_models = BTreeMap::new();
+        for mode in &request.candidates.joint_modes {
+            let distinct = state
+                .regime_to_slot
+                .get(mode_name(*mode))
+                .map(|mapping| {
+                    mapping
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                })
+                .unwrap_or(0);
+            distinct_models.insert(mode_name(*mode).to_string(), distinct);
+        }
+        let retained_rows: usize = state.evidence.iter().map(|item| item.rows).sum();
+        let prepared_plans: usize = state.evidence.iter().map(|item| item.prepared_plans).sum();
+        let prepare_ms: f64 = state.evidence.iter().map(|item| item.prepare_ms).sum();
+        let apply_ms: f64 = state.evidence.iter().map(|item| item.apply_ms).sum();
+        let direct_rows: usize = state
+            .evidence
+            .iter()
+            .map(|item| item.direct_reference_rows)
+            .sum();
+        let max_error = state
+            .evidence
+            .iter()
+            .fold(0.0_f64, |max, item| max.max(item.max_abs_error_v));
+        let peak_rss = bank::peak_rss_kib().unwrap_or(None);
+        let bank_evidence = serde_json::json!({
+            "schema_version": 1,
+            "bank_sha256": state.bank_sha256,
+            "schedule_sha256": state.schedule_sha256,
+            "selection_provenance": state.resolved.provenance,
+            "reduction": state.reduction,
+            "distinct_models": distinct_models,
+            "schedule_spans": state.resolved.spans.len(),
+            "retained_rows": retained_rows,
+            "retained_rows_cap": MAX_BANK_RETAINED_ROWS,
+            "workers": state.resolved.workers,
+            "chunk_size": state.resolved.chunk_size,
+            "peak_rss_kib": peak_rss,
+            "peak_rss_source": if peak_rss.is_some() {
+                "measured"
+            } else {
+                "unavailable on this platform"
+            },
+            "legs": state.evidence,
+            "acceleration": {
+                "prepared_plans": prepared_plans,
+                "prepare_ms_total": prepare_ms,
+                "apply_ms_total": apply_ms,
+                "direct_reference_rows": direct_rows,
+                "max_abs_error_v": max_error,
+                "equivalence_bound": "abs(error) <= 1e-8 V + 1e-8 * abs(reference)",
+                "core_equivalence_tests": "crates/pmoke-analysis-core/tests/joint_gls_prepared.rs",
+            },
+        });
+        write_json(
+            &staging.join("bank-evidence.json"),
+            &bank_evidence,
+            "bank evidence",
+        )?;
+        referenced_files.push("bank-evidence.json".to_string());
+    }
+    // Per-leg output series (centers + fundamental magnitudes) for replay;
+    // bank legs additionally retain the per-row model attribution, XY
+    // quadratures and the policy-serialized covariance (PN-FR-023/025).
     for leg in &legs {
-        let leg_json = serde_json::json!({
+        let mut leg_json = serde_json::json!({
             "schema_version": NOISE_COMPARE_SCHEMA_VERSION,
             "name": leg.name,
             "estimator": leg.estimator,
@@ -2198,14 +2943,25 @@ fn run_compare_staged(
             "centers": leg.series.iter().map(|(center, _)| center + origin).collect::<Vec<_>>(),
             "fundamental_magnitude": leg.series.iter().map(|(_, value)| value).collect::<Vec<_>>(),
         });
+        if !leg.bank_rows.is_empty() {
+            leg_json["bank_schedule_sha256"] = serde_json::json!(leg.bank_schedule_sha256);
+            leg_json["row_count"] = serde_json::json!(leg.bank_rows.len());
+            leg_json["rows"] =
+                serde_json::to_value(&leg.bank_rows).context("cannot encode bank leg rows")?;
+            if let Some(stats) = leg.bank_stats.as_ref() {
+                leg_json["boundary"] =
+                    serde_json::to_value(stats).context("cannot encode bank boundary stats")?;
+            }
+        }
         let leg_path = staging.join(format!("legs/{}.json", leg.name));
         if let Some(parent) = leg_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("cannot create {}", parent.display()))?;
         }
         write_json(&leg_path, &leg_json, "leg output")?;
+        referenced_files.push(format!("legs/{}.json", leg.name));
     }
-    let grid_json = serde_json::json!({
+    let mut grid_json = serde_json::json!({
         "schema_version": NOISE_COMPARE_SCHEMA_VERSION,
         "half_taps": grid.half_taps,
         "stride": grid.stride,
@@ -2215,6 +2971,39 @@ fn run_compare_staged(
         "fingerprint": fingerprint,
         "context_sha256": context.context_sha256,
     });
+    if let Some(state) = bank_state.as_ref() {
+        let rows_json: Vec<serde_json::Value> = state
+            .schedule_rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "center": row.center,
+                    "regime": state.resolved.regimes[row.regime_index].name,
+                    "regime_index": row.regime_index,
+                    "boundary": row.boundary,
+                })
+            })
+            .collect();
+        let spans_json: Vec<serde_json::Value> = state
+            .resolved
+            .spans
+            .iter()
+            .map(|span| {
+                serde_json::json!({
+                    "regime": span.regime,
+                    "start": span.start,
+                    "end": span.end,
+                })
+            })
+            .collect();
+        grid_json["bank"] = serde_json::json!({
+            "schema_version": 1,
+            "bank_sha256": state.bank_sha256,
+            "schedule_sha256": state.schedule_sha256,
+            "spans": spans_json,
+            "rows": rows_json,
+        });
+    }
     write_json(&staging.join("schedule.json"), &grid_json, "grid schedule")?;
 
     let completed_legs = legs
@@ -2222,14 +3011,37 @@ fn run_compare_staged(
         .filter(|leg| leg.state == LegState::Complete)
         .count();
     let requested_modes = request.candidates.joint_modes.len();
-    let built_modes = builds.len();
+    let built_modes = if bank_state.is_some() {
+        requested_modes
+    } else {
+        builds.len()
+    };
     let grid_equal = legs
         .iter()
         .filter_map(|leg| leg.grid_fingerprint.as_deref())
         .collect::<std::collections::HashSet<_>>()
         .len()
         <= 1;
-    let computation_complete = completed_legs >= 1 && built_modes == requested_modes && grid_equal;
+    // Row-mapping agreement (PN-FR-023): every bank leg's retained rows must
+    // match the resolved schedule one-to-one, in order and identity.
+    let row_mapping_ok = match bank_state.as_ref() {
+        None => true,
+        Some(state) => legs
+            .iter()
+            .filter(|leg| !leg.bank_rows.is_empty())
+            .all(|leg| {
+                leg.bank_rows.len() == state.schedule_rows.len()
+                    && leg.bank_rows.iter().zip(state.schedule_rows.iter()).all(
+                        |(row, schedule)| {
+                            row.center == schedule.center
+                                && row.regime_index == schedule.regime_index
+                                && row.boundary == schedule.boundary
+                        },
+                    )
+            }),
+    };
+    let computation_complete =
+        completed_legs >= 1 && built_modes == requested_modes && grid_equal && row_mapping_ok;
     let operation_status = if completed_legs == legs.len() && built_modes == requested_modes {
         "complete"
     } else if completed_legs >= 1 {
@@ -2242,6 +3054,47 @@ fn run_compare_staged(
     } else {
         "unverified"
     };
+    let bank_report = bank_state.as_ref().map(|state| {
+        let mut distinct = BTreeMap::new();
+        for mode in &request.candidates.joint_modes {
+            let count = state
+                .regime_to_slot
+                .get(mode_name(*mode))
+                .map(|mapping| {
+                    mapping
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                })
+                .unwrap_or(0);
+            distinct.insert(mode_name(*mode).to_string(), count);
+        }
+        let boundary_windows = state
+            .evidence
+            .iter()
+            .map(|item| item.boundary.boundary_windows)
+            .max()
+            .unwrap_or(0);
+        let cross_regime_windows = state
+            .evidence
+            .iter()
+            .map(|item| item.boundary.cross_regime_windows)
+            .max()
+            .unwrap_or(0);
+        BankReport {
+            schema_version: 1,
+            selection_provenance: state.resolved.provenance.to_string(),
+            bank_sha256: state.bank_sha256.clone(),
+            schedule_sha256: state.schedule_sha256.clone(),
+            reduction: state.reduction.clone(),
+            distinct_models: distinct,
+            schedule_spans: state.resolved.spans.len(),
+            boundary_windows,
+            cross_regime_windows,
+            row_mapping_ok,
+        }
+    });
     let report = CompareReport {
         schema_version: NOISE_COMPARE_SCHEMA_VERSION,
         operation: "compare".to_string(),
@@ -2262,6 +3115,7 @@ fn run_compare_staged(
         diagnostic_finding: finding,
         context,
         models: model_records.clone(),
+        bank: bank_report,
         reserved,
         legs: legs
             .iter()
@@ -2287,15 +3141,43 @@ fn run_compare_staged(
     write_json(&staging.join("comparison.json"), &report, "compare report")?;
     write_report_md(staging, &report, request_path, bins_explicit)?;
     // Restart manifest last: its presence with matching digests is the
-    // resume gate (PN-FR-031).
+    // resume gate (PN-FR-031). Schema v2 closes the retained-file digest
+    // set, adds the bank/schedule digests and the row mapping, and audits
+    // that staging holds no unreferenced file (PN-FR-023 addendum).
     let mut model_digests = BTreeMap::new();
     for record in &model_records {
         if !record.sha256.is_empty() {
             model_digests.insert(record.mode.clone(), record.sha256.clone());
         }
     }
+    if let Some(state) = bank_state.as_ref() {
+        for slot in &state.slots {
+            model_digests.insert(
+                format!("{}/bank-{}", slot.mode, slot.regime),
+                slot.sha256.clone(),
+            );
+        }
+    }
+    let mut file_digests = BTreeMap::new();
+    for path in &referenced_files {
+        let absolute = staging.join(path);
+        let bytes = std::fs::read(&absolute)
+            .with_context(|| format!("cannot read staged {}", absolute.display()))?;
+        file_digests.insert(path.clone(), crate::utils::checksum::sha256_hex(&bytes));
+    }
+    let row_mapping = serde_json::json!({
+        "schedule_rows": bank_state
+            .as_ref()
+            .map(|state| state.schedule_rows.len())
+            .unwrap_or(0),
+        "legs": legs
+            .iter()
+            .map(|leg| (leg.name.clone(), leg.output_rows))
+            .collect::<BTreeMap<_, _>>(),
+        "rows_agree": row_mapping_ok,
+    });
     let manifest = StagingManifest {
-        schema_version: NOISE_COMPARE_SCHEMA_VERSION,
+        schema_version: 2,
         request_sha256: request_sha.to_string(),
         source_digest,
         context_sha256: report.context.context_sha256.clone(),
@@ -2311,14 +3193,104 @@ fn run_compare_staged(
             "legs".to_string(),
             "evidence".to_string(),
         ],
+        file_digests,
+        bank_sha256: bank_state.as_ref().map(|state| state.bank_sha256.clone()),
+        schedule_sha256: bank_state
+            .as_ref()
+            .map(|state| state.schedule_sha256.clone()),
+        row_mapping: Some(row_mapping),
     };
+    // Closure audit before publication: staging must hold only files this
+    // generation references (no stale leg or model from an earlier attempt).
+    for path in collect_staged_files(staging)? {
+        if path == "staging-manifest.json" {
+            continue;
+        }
+        if !referenced_files.contains(&path) {
+            bail!(
+                "noise compare staging holds an unreferenced file '{path}' (code=staging_unreferenced_file); refusing to publish a mixed generation"
+            );
+        }
+    }
     write_json(
         &staging.join("staging-manifest.json"),
         &manifest,
         "staging manifest",
     )?;
+    verify_manifest_closure(staging, &manifest)?;
     source.verify_live()?;
     Ok(report)
+}
+
+/// Recursive sorted list of regular files under `dir` (staging-relative
+/// portable paths), for the retained-closure audit.
+fn collect_staged_files(dir: &Path) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    collect_staged_files_into(dir, Path::new(""), &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_staged_files_into(dir: &Path, prefix: &Path, files: &mut Vec<String>) -> Result<()> {
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("cannot list staging directory {}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("cannot list staging {}", dir.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("cannot stat staged entry {}", path.display()))?;
+        let relative = prefix.join(entry.file_name());
+        if file_type.is_dir() {
+            collect_staged_files_into(&path, &relative, files)?;
+        } else if file_type.is_file() {
+            files.push(
+                relative
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("non-UTF8 staged path: {}", path.display()))?
+                    .to_string(),
+            );
+        } else {
+            bail!(
+                "staging holds a non-regular entry (code=staging_unreferenced_file): {}",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Verifies the manifest's digest closure: every referenced file exists and
+/// matches, and staging holds nothing else (PN-FR-023 addendum). Digest
+/// integrity and semantic validation stay separate steps.
+pub(super) fn verify_manifest_closure(staging: &Path, manifest: &StagingManifest) -> Result<()> {
+    for (path, digest) in &manifest.file_digests {
+        let absolute = staging.join(path);
+        let bytes = std::fs::read(&absolute)
+            .with_context(|| format!("cannot read staged {}", absolute.display()))?;
+        let actual = crate::utils::checksum::sha256_hex(&bytes);
+        if &actual != digest {
+            bail!(
+                "noise compare staged file '{path}' digest mismatch (code=staging_mismatch); refusing to publish a mixed generation"
+            );
+        }
+    }
+    // v1 manifests predate the retained-file closure and carry no digest
+    // inventory; the unreferenced-file audit applies to v2 generations.
+    if manifest.schema_version < 2 {
+        return Ok(());
+    }
+    for path in collect_staged_files(staging)? {
+        if path == "staging-manifest.json" {
+            continue;
+        }
+        if !manifest.file_digests.contains_key(&path) {
+            bail!(
+                "noise compare staging holds an unreferenced file '{path}' (code=staging_unreferenced_file)"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Mechanism-agnostic Markdown report (PN-FR-035): what was measured,
@@ -2391,6 +3363,27 @@ fn write_report_md(
                 "unqualified"
             },
         );
+    }
+    if let Some(bank) = report.bank.as_ref() {
+        let _ = writeln!(
+            text,
+            "## Frozen regime bank\n\n\
+             - selection: `{prov}`, spans: {spans}, row mapping ok: {ok}\n\
+             - bank sha256 `{bank_sha}`, schedule sha256 `{schedule_sha}`\n\
+             - boundary windows: {boundary}, cross-regime windows: {cross}\n",
+            prov = bank.selection_provenance,
+            spans = bank.schedule_spans,
+            ok = bank.row_mapping_ok,
+            bank_sha = bank.bank_sha256,
+            schedule_sha = bank.schedule_sha256,
+            boundary = bank.boundary_windows,
+            cross = bank.cross_regime_windows,
+        );
+        for (mode, status) in &bank.reduction {
+            let distinct = bank.distinct_models.get(mode).copied().unwrap_or(0);
+            let _ = writeln!(text, "- `{mode}`: {status} ({distinct} distinct model(s))");
+        }
+        text.push('\n');
     }
     text.push_str("## Legs\n\n");
     for leg in &report.legs {
