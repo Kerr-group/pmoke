@@ -367,7 +367,9 @@ fn v7_gls_rejects_unknown_calibration_source() {
     );
     let diagnostics = diagnostic_paths(&text);
     assert!(
-        diagnostics.join("\n").contains("expected `artifact` or `prepulse`"),
+        diagnostics
+            .join("\n")
+            .contains("expected `artifact` or `prepulse`"),
         "unexpected diagnostics: {diagnostics:?}"
     );
 }
