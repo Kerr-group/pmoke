@@ -1436,7 +1436,7 @@
       {
         "name": "analyze",
         "path": "pmoke analyze",
-        "summary": "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke",
+        "summary": "Run all analysis steps: sensor, reference, signal, lock-in, phase, moke",
         "required_feature": null,
         "arguments": [
           {
@@ -1714,6 +1714,209 @@
                 ],
                 "help": "Path to the TOML applicability context file",
                 "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "noise",
+        "path": "pmoke noise",
+        "summary": "Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "diagnose",
+            "path": "pmoke noise diagnose",
+            "summary": "Plan a recorded-only noise diagnosis into a new destination",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "request",
+                "kind": "option",
+                "short": null,
+                "long": "request",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the noise diagnose request file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Override the output directory from the request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "compare",
+            "path": "pmoke noise compare",
+            "summary": "Run the frozen global calibration plus controlled comparison workflow",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "request",
+                "kind": "option",
+                "short": null,
+                "long": "request",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the noise compare request file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Override the output directory from the request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "replay",
+            "path": "pmoke noise replay",
+            "summary": "Verify a committed compare generation and replay phase -> MOKE -> NPY",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "destination",
+                "kind": "option",
+                "short": null,
+                "long": "destination",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Committed noise compare destination directory",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Replay destination (defaults to <destination>/replay)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "verify_only",
+                "kind": "flag",
+                "short": null,
+                "long": "verify-only",
+                "value_names": [],
+                "help": "Verify digests and semantic schemas only; write nothing",
+                "required": false,
                 "global": false,
                 "repeatable": false,
                 "default_values": [],

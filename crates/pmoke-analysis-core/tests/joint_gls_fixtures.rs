@@ -124,7 +124,7 @@ fn convention_signals_match_closed_form_mixture() {
                 &format!("{}[{index}]", case.name),
             );
         }
-        // Beta order [DC, a1, b1, ...] and legacy half-amplitude XY mapping.
+        // Beta order [DC, a1, b1, ...] and peak-amplitude XY mapping.
         assert_eq!(case.expected_beta[0], case.dc, "{}", case.name);
         for key in case.output_harmonics.iter().map(usize::to_string) {
             let position = case
@@ -137,8 +137,8 @@ fn convention_signals_match_closed_form_mixture() {
                 case.expected_beta[2 + 2 * position],
             );
             let xy = case.expected_xy.get(&key).unwrap();
-            close(xy.x, b / 2.0, 1.0e-15, &format!("{} X{key}", case.name));
-            close(xy.y, a / 2.0, 1.0e-15, &format!("{} Y{key}", case.name));
+            close(xy.x, b, 1.0e-15, &format!("{} X{key}", case.name));
+            close(xy.y, a, 1.0e-15, &format!("{} Y{key}", case.name));
         }
     }
 }

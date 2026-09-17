@@ -10,10 +10,13 @@ This is pulsed-field MOKE: the magnetic-field pulse is the measurement event. It
 ## Pipeline
 
 1. Trigger acquisition and capture oscilloscope channels with metadata.
-2. Fit the recorded function-generator sine wave sent to the Sagnac EOM.
-3. Integrate sensor channels.
-4. Demodulate signals with the configured `boxcar_legacy` lock-in filter.
-5. Align the phase and extract the Kerr angle.
+2. Integrate sensor channels.
+3. Fit the recorded function-generator sine wave sent to the Sagnac EOM and
+   prepare the shared analysis window/output grid once.
+4. Average the configured raw `[[signals]]` channels over the lock-in window and
+   save the combined `signal/mean.png` figure.
+5. Demodulate signals with the configured `boxcar_legacy` lock-in filter.
+6. Align the phase and extract the Kerr angle.
 
 Here, `reference` means the oscilloscope recording of the function-generator
 sine wave that drives the electro-optic modulator (EOM) in the zero-area Sagnac

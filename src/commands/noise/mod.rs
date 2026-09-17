@@ -1,0 +1,31 @@
+//! `pmoke noise` command surface (PN-M1/M2, Issue #246).
+
+pub mod bank;
+pub mod compare;
+pub mod diagnose;
+pub mod diagnostics;
+#[cfg(test)]
+pub(crate) mod fidelity;
+pub mod plan;
+#[cfg(test)]
+pub(crate) mod qualification;
+pub mod replay;
+
+use crate::cli::NoiseCommand;
+
+/// Dispatches the `noise` subcommands.
+pub fn run(command: &NoiseCommand) -> Result<(), anyhow::Error> {
+    match command {
+        NoiseCommand::Diagnose { request, output } => {
+            diagnose::run_diagnose(request, output.as_deref())
+        }
+        NoiseCommand::Compare { request, output } => {
+            compare::run_compare(request, output.as_deref(), None)
+        }
+        NoiseCommand::Replay {
+            destination,
+            output,
+            verify_only,
+        } => replay::run_replay(destination, output.as_deref(), *verify_only),
+    }
+}

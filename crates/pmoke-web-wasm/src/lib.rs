@@ -236,7 +236,7 @@ fn analysis_error(error: pmoke_analysis_core::AnalysisError) -> JsError {
 ///
 /// Layout: `[xy (2 * outputs) | residual_rms | rank | condition |
 /// jitter_applied_v2 | covariance diagonal (2 * outputs)]`. The covariance
-/// is the half-amplitude-scaled design-model XY covariance (FR-040).
+/// is the peak-amplitude design-model XY covariance (FR-040).
 /// Native-testable core of [`analyze_joint_window_packed`]: identical logic,
 /// `String` errors (JsError messages are unreadable off-wasm targets).
 #[allow(clippy::too_many_arguments)]
@@ -649,8 +649,8 @@ mod joint_window_tests {
             // 12 xy + 4 diagnostics + 12 diagonal = 28 values.
             assert_eq!(packed.len(), 28, "mode {mode}");
             assert!(packed.iter().all(|value| value.is_finite()), "mode {mode}");
-            // Phase-zero unit tone: X1 is the 1/2 half-amplitude.
-            assert!((packed[0] - 0.5).abs() < 1e-9, "mode {mode}: {}", packed[0]);
+            // Phase-zero unit tone: X1 is the peak amplitude 1.0.
+            assert!((packed[0] - 1.0).abs() < 1e-9, "mode {mode}: {}", packed[0]);
             assert!(packed[1].abs() < 1e-9, "mode {mode}: {}", packed[1]);
             // Rank is full (25) and no jitter was needed on clean data.
             assert_eq!(packed[13], 25.0, "mode {mode}");

@@ -33,10 +33,11 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke signal`](#pmoke-signal) | Average raw signal channels over the lock-in window | core |
 | [`pmoke phase`](#pmoke-phase) | Rotate the reference phase for lock-in analysis | core |
 | [`pmoke moke`](#pmoke-moke) | Calculate the Kerr angle | core |
-| [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: reference, sensor, lock-in, signal, phase, moke | core |
+| [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: sensor, reference, signal, lock-in, phase, moke | core |
 | [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data and grid into a new directory | core |
 | [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | Run the frozen paired-block M6 evaluation protocol and write a JSON report | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | Build, inspect, or validate a recorded-only calibration artifact | core |
+| [`pmoke noise`](#pmoke-noise) | Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246) | core |
 | [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
 | [`pmoke completions`](#pmoke-completions) | Generate shell completion script | core |
@@ -519,7 +520,7 @@ pmoke moke [-h, --help]
 
 ## `pmoke analyze`
 
-Run all analysis steps: reference, sensor, lock-in, signal, phase, moke
+Run all analysis steps: sensor, reference, signal, lock-in, phase, moke
 
 ```text
 pmoke analyze [-h, --help]
@@ -614,6 +615,65 @@ pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
 | --- | :---: | --- | --- | --- |
 | `--artifact <FILE>` | yes | - | Path to the calibration artifact JSON file | - |
 | `--context <FILE>` | yes | - | Path to the TOML applicability context file | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+## `pmoke noise`
+
+Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)
+
+```text
+pmoke noise [-h, --help] <COMMAND>
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | Print help | - |
+
+
+### `pmoke noise diagnose`
+
+Plan a recorded-only noise diagnosis into a new destination
+
+```text
+pmoke noise diagnose --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | yes | - | Path to the noise diagnose request file | - |
+| `--output <DIR>` | - | - | Override the output directory from the request | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+### `pmoke noise compare`
+
+Run the frozen global calibration plus controlled comparison workflow
+
+```text
+pmoke noise compare --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | yes | - | Path to the noise compare request file | - |
+| `--output <DIR>` | - | - | Override the output directory from the request | - |
+| `-h, --help` | - | - | Print help | - |
+
+
+### `pmoke noise replay`
+
+Verify a committed compare generation and replay phase -> MOKE -> NPY
+
+```text
+pmoke noise replay --destination <DIR> [--output <DIR>] [--verify-only] [-h, --help]
+```
+
+| Option | Required | Default / values | Description | Conflicts |
+| --- | :---: | --- | --- | --- |
+| `--destination <DIR>` | yes | - | Committed noise compare destination directory | - |
+| `--output <DIR>` | - | - | Replay destination (defaults to &lt;destination&gt;/replay) | - |
+| `--verify-only` | - | - | Verify digests and semantic schemas only; write nothing | - |
 | `-h, --help` | - | - | Print help | - |
 
 

@@ -456,7 +456,7 @@ fn covariance_contracts_hold() {
     assert_eq!(system.variance_scale, 1.0);
     assert_eq!(system.jitter_applied_v2, 0.0);
     let covariance = covariance_from_qr(&system.design, system.variance_scale).unwrap();
-    // Symmetry and 1/4 XY scaling against the mapped blocks.
+    // Symmetry and unscaled XY mapping against the mapped blocks.
     for i in 0..covariance.nrows() {
         for j in 0..covariance.ncols() {
             close(covariance[(i, j)], covariance[(j, i)], 1.0e-12, "symmetry");
@@ -465,14 +465,9 @@ fn covariance_contracts_hold() {
     let mapped = map_covariance_to_xy(&covariance, &model).unwrap();
     assert_eq!((mapped.nrows(), mapped.ncols()), (12, 12));
     // X3 block: beta indices a3 = 1 + 2*2 = 5, b3 = 6; XY positions 4, 5.
-    close(mapped[(4, 4)], covariance[(6, 6)] / 4.0, 1.0e-12, "X3 var");
-    close(mapped[(5, 5)], covariance[(5, 5)] / 4.0, 1.0e-12, "Y3 var");
-    close(
-        mapped[(4, 5)],
-        covariance[(6, 5)] / 4.0,
-        1.0e-12,
-        "X3Y3 cov",
-    );
+    close(mapped[(4, 4)], covariance[(6, 6)], 1.0e-12, "X3 var");
+    close(mapped[(5, 5)], covariance[(5, 5)], 1.0e-12, "Y3 var");
+    close(mapped[(4, 5)], covariance[(6, 5)], 1.0e-12, "X3Y3 cov");
     let packed = pack_upper_triangle(&mapped).unwrap();
     assert_eq!(packed.len(), 78);
     assert_eq!(packed[0], mapped[(0, 0)]);
@@ -1019,10 +1014,10 @@ fn reported_target_variance_matches_theory() {
         &settings(&model, &identity_noise()),
     )
     .unwrap();
-    // X3 selector in beta order with the 1/2 amplitude mapping.
+    // X3 selector in beta order with the peak-amplitude mapping.
     let parameters = gram_inverse.nrows();
     let mut selector = vec![0.0; parameters];
-    selector[2 + 2 * 2] = 0.5;
+    selector[2 + 2 * 2] = 1.0;
     let mut theory = 0.0;
     for (i, &ci) in selector.iter().enumerate() {
         for (j, &cj) in selector.iter().enumerate() {

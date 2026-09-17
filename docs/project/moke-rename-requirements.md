@@ -63,6 +63,11 @@ artifact kind / `published_through` value `"kerr"`, `analysis/kerr/` directory,
     kind and `LI*_in` are lock-in in-phase harmonic amplitudes.
   - `Vm` (harmonics) = `0.5 * sqrt((LI3_in/jn(3,x0))^2 + (LI2_in/jn(2,x0))^2)`
     with x0 = representative modulation depth.
+  - Convention note: `LI*_in` are peak harmonic amplitudes (`Xk = b_k`,
+    `Yk = a_k`); before this change they were half-amplitudes (`/2`). The
+    formulas above are unchanged: with peak-amplitude inputs they now yield
+    the true `Vm` (previously `Vm/2`, the 1/2 was double-counted against the
+    Bessel-expansion factor 2). `angle` is scale-free and unchanged.
 
 ## 3. Provisional defaults (confirm: A)
 

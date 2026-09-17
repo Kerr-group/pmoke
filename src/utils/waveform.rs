@@ -884,6 +884,169 @@ fn verify_raw_channel_checksum(spec: &RawChannelSpec) -> Result<()> {
 }
 
 #[doc(hidden)]
+pub struct NoiseRawChannel {
+    pub channel: u8,
+    pub file: String,
+    pub sha256: Option<String>,
+    pub sample_count: usize,
+    pub x_increment: f64,
+    pub x_origin: f64,
+    pub x_reference: f64,
+    pub y_increment: f64,
+    pub y_origin: f64,
+    pub y_reference: f64,
+}
+
+#[doc(hidden)]
+pub struct NoiseRawDescription {
+    pub channels: Vec<NoiseRawChannel>,
+}
+
+/// Validates RAW metadata/timebase/voltage geometry for the noise workflow
+/// without loading waveform samples (bounded-read friendly).
+#[doc(hidden)]
+pub fn describe_raw_dir_for_noise(base_dir: &Path) -> Result<NoiseRawDescription> {
+    let metadata = read_raw_metadata(base_dir)?;
+    validate_raw_format(&metadata)?;
+    let keys: Vec<String> = metadata.channels.keys().cloned().collect();
+    let mut channels = Vec::with_capacity(keys.len());
+    let mut expected_axis: Option<RawTimeAxis> = None;
+    for key in &keys {
+        let number = key
+            .strip_prefix("ch")
+            .and_then(|digits| digits.parse::<u8>().ok())
+            .ok_or_else(|| anyhow!("raw channel metadata key must start with ch: {key}"))?;
+        let channel = metadata
+            .channels
+            .get(key)
+            .ok_or_else(|| anyhow!("raw channel missing in metadata: {key}"))?;
+        validate_finite("x_increment", channel.x_increment, key)?;
+        validate_finite("x_origin", channel.x_origin, key)?;
+        validate_finite("x_reference", channel.x_reference, key)?;
+        validate_finite("y_increment", channel.y_increment, key)?;
+        validate_finite("y_origin", channel.y_origin, key)?;
+        validate_finite("y_reference", channel.y_reference, key)?;
+        validate_voltage_range_noise(
+            channel.y_increment,
+            channel.y_origin,
+            channel.y_reference,
+            key,
+        )?;
+        let axis = RawTimeAxis {
+            sample_count: channel.sample_count,
+            x_increment: channel.x_increment,
+            x_origin: channel.x_origin,
+            x_reference: channel.x_reference,
+        };
+        validate_raw_time_axis_noise(axis, key)?;
+        match expected_axis {
+            Some(expected) => validate_time_axis_noise(expected, axis, key)?,
+            None => expected_axis = Some(axis),
+        }
+        // Reuse the shared safe path resolution so channel files can never
+        // escape the source directory.
+        let _ = resolve_raw_channel_path(base_dir, &channel.file, key)?;
+        channels.push(NoiseRawChannel {
+            channel: number,
+            file: channel.file.clone(),
+            sha256: channel.sha256.clone(),
+            sample_count: channel.sample_count,
+            x_increment: channel.x_increment,
+            x_origin: channel.x_origin,
+            x_reference: channel.x_reference,
+            y_increment: channel.y_increment,
+            y_origin: channel.y_origin,
+            y_reference: channel.y_reference,
+        });
+    }
+    if channels.is_empty() {
+        bail!("raw metadata contains no channels");
+    }
+    Ok(NoiseRawDescription { channels })
+}
+
+/// Manifest path probe shared with the noise freeze (no loading).
+#[doc(hidden)]
+pub fn raw_manifest_path_for_noise(base_dir: &Path) -> Option<PathBuf> {
+    let canonical = base_dir.join("manifest.toml");
+    if canonical.exists() {
+        Some(canonical)
+    } else {
+        let legacy = base_dir.join(RAW_METADATA_FNAME);
+        legacy.exists().then_some(legacy)
+    }
+}
+
+// Private validators for the noise descriptor: same acceptance rules as the
+// sibling private helpers, kept separate so the noise boundary never depends
+// on non-pub internals.
+fn validate_raw_time_axis_noise(axis: RawTimeAxis, key: &str) -> Result<()> {
+    match axis.validate_geometry() {
+        Ok(()) => Ok(()),
+        Err(TimeAxisError::Empty) => {
+            bail!("raw channel sample_count must be positive for {key}")
+        }
+        Err(TimeAxisError::NonPositiveIncrement(value)) => {
+            bail!("raw metadata x_increment must be positive for {key}: {value}")
+        }
+        Err(TimeAxisError::NonFiniteTime { index, value }) => {
+            bail!("raw metadata produces non-finite time for {key} at sample {index}: {value}")
+        }
+        Err(TimeAxisError::NonIncreasing { left, right }) => {
+            bail!(
+                "raw metadata time axis does not advance for {key} between samples {left} and {right}"
+            )
+        }
+    }
+}
+
+fn validate_time_axis_noise(expected: RawTimeAxis, actual: RawTimeAxis, key: &str) -> Result<()> {
+    match expected.compare(actual) {
+        Ok(()) => Ok(()),
+        Err(TimeAxisMismatch::SampleCount { expected, actual }) => {
+            bail!("raw timebase mismatch for {key}: sample_count {actual} != {expected}")
+        }
+        Err(TimeAxisMismatch::NonFinite { name }) => {
+            bail!("raw metadata value must be finite for {key}: {name}=non-finite")
+        }
+        Err(TimeAxisMismatch::Value {
+            name,
+            expected,
+            actual,
+        }) => bail!("raw timebase mismatch for {key}: {name} {actual} != {expected}"),
+    }
+}
+
+fn validate_voltage_range_noise(
+    y_increment: f64,
+    y_origin: f64,
+    y_reference: f64,
+    key: &str,
+) -> Result<()> {
+    let scale = RawVoltageScale {
+        y_increment,
+        y_origin,
+        y_reference,
+    };
+    match scale.validate_geometry() {
+        Ok(()) => Ok(()),
+        Err(VoltageScaleError::InvalidIncrement(value)) => {
+            bail!("raw metadata y_increment must be positive for {key}: {value}")
+        }
+        Err(VoltageScaleError::NonFinite { word, value }) => {
+            bail!(
+                "raw metadata produces non-finite voltage for {key} at WORD value {word}: {value}"
+            )
+        }
+        Err(VoltageScaleError::Indistinguishable { left, right }) => {
+            bail!(
+                "raw metadata voltage scaling does not distinguish adjacent WORD values {left} and {right} for {key}"
+            )
+        }
+    }
+}
+
+#[doc(hidden)]
 pub fn convert_raw_word_to_voltages(
     data: &[u8],
     y_increment: f64,

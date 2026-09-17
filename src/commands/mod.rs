@@ -19,6 +19,7 @@ pub mod instruments;
 pub mod li;
 pub mod moke;
 pub mod monitor;
+pub mod noise;
 pub mod phase;
 #[cfg(feature = "hw-core")]
 pub mod process;

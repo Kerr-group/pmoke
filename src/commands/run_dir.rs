@@ -1891,6 +1891,91 @@ config_resolved_sha256 = "{resolved_hash}"
     }
 
     #[test]
+    fn historical_manifest_v3_and_v4_readers_round_trip() {
+        // PN-AT-016: retained v3/v4 analysis manifests keep their meaning
+        // in the historical readers; unsupported future versions and
+        // altered recorded bytes are refused by name.
+        let directory = temporary_directory();
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        write_analysis_config_snapshots(&cfg).unwrap();
+        let source_hash =
+            crate::utils::checksum::file_sha256(&cfg.paths().analysis_source_config()).unwrap();
+        let resolved_hash =
+            crate::utils::checksum::file_sha256(&cfg.paths().analysis_resolved_config()).unwrap();
+
+        // v3 legacy shape: only the resolved-config key exists; the
+        // source key is optional but verified when present.
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!("schema_version = 3\nconfig_sha256 = \"{resolved_hash}\"\n"),
+        )
+        .unwrap();
+        verify_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                "schema_version = 3\nconfig_sha256 = \"{resolved_hash}\"\nconfig_source_sha256 = \"{source_hash}\"\n"
+            ),
+        )
+        .unwrap();
+        verify_analysis_config_snapshots(&cfg).unwrap();
+
+        // A v3 manifest whose recorded bytes moved is refused.
+        fs::write(cfg.paths().analysis_resolved_config(), b"tampered\n").unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(
+            error.to_string().contains("checksum mismatch"),
+            "got: {error}"
+        );
+
+        // Restore the snapshots and round-trip the current strict v4 shape.
+        write_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                "schema_version = 4\nconfig_source_sha256 = \"{source_hash}\"\nconfig_resolved_sha256 = \"{resolved_hash}\"\n"
+            ),
+        )
+        .unwrap();
+        verify_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(cfg.paths().analysis_source_config(), b"tampered\n").unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(
+            error.to_string().contains("checksum mismatch"),
+            "got: {error}"
+        );
+
+        // v4 requires both strict keys (with untampered snapshots).
+        write_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!("schema_version = 4\nconfig_source_sha256 = \"{source_hash}\"\n"),
+        )
+        .unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires config_resolved_sha256"),
+            "got: {error}"
+        );
+
+        // A future/reserved manifest version fails in this reader.
+        fs::write(cfg.paths().analysis_manifest(), "schema_version = 5\n").unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported analysis manifest schema_version: 5"),
+            "got: {error}"
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn sync_parent_handles_bare_file_paths() {
         assert!(sync_parent(Path::new("output.csv")).is_ok());
         assert!(sync_parent(Path::new("./output.csv")).is_ok());

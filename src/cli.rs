@@ -108,7 +108,7 @@ pub enum Command {
     /// Deprecated alias for `moke`
     #[command(hide = true)]
     Kerr,
-    /// Run all analysis steps: reference, sensor, lock-in, signal, phase, moke
+    /// Run all analysis steps: sensor, reference, signal, lock-in, phase, moke
     Analyze,
     /// Compare lock-in estimators on shared data and grid into a new directory
     CompareLockin {
@@ -132,6 +132,11 @@ pub enum Command {
     Calibrate {
         #[command(subcommand)]
         command: CalibrateCommand,
+    },
+    /// Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)
+    Noise {
+        #[command(subcommand)]
+        command: NoiseCommand,
     },
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
     #[cfg(feature = "hw-core")]
@@ -350,6 +355,40 @@ pub enum CalibrateCommand {
         /// Path to the TOML applicability context file
         #[arg(long, value_name = "FILE")]
         context: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NoiseCommand {
+    /// Plan a recorded-only noise diagnosis into a new destination
+    Diagnose {
+        /// Path to the noise diagnose request file
+        #[arg(long, value_name = "FILE")]
+        request: PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
+    /// Run the frozen global calibration plus controlled comparison workflow
+    Compare {
+        /// Path to the noise compare request file
+        #[arg(long, value_name = "FILE")]
+        request: PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
+    /// Verify a committed compare generation and replay phase -> MOKE -> NPY
+    Replay {
+        /// Committed noise compare destination directory
+        #[arg(long, value_name = "DIR")]
+        destination: PathBuf,
+        /// Replay destination (defaults to <destination>/replay)
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Verify digests and semantic schemas only; write nothing
+        #[arg(long)]
+        verify_only: bool,
     },
 }
 

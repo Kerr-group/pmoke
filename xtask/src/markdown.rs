@@ -355,8 +355,8 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Average raw signal channels over the lock-in window" => "lock-in窓での生信号channel平均",
         "Rotate the reference phase for lock-in analysis" => "lock-in解析の参照位相回転",
         "Calculate the Kerr angle" => "Kerr角度を計算",
-        "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke" => {
-            "reference・sensor・lock-in・signal・phase・mokeの全解析"
+        "Run all analysis steps: sensor, reference, signal, lock-in, phase, moke" => {
+            "sensor・reference・signal・lock-in・phase・mokeの全解析"
         }
         "Compare lock-in estimators on shared data and grid into a new directory" => {
             "共有データ・gridでのlock-in推定器比較（新規directoryへ）"
@@ -371,6 +371,32 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Build, inspect, or validate a recorded-only calibration artifact" => {
             "記録済みデータからの較正artifactのbuild・inspect・validate"
         }
+        "Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)" => {
+            "記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246）"
+        }
+        "Recorded-only pulse-noise comparison (PN-M2, Issue #246)" => {
+            "記録済みデータのパルスノイズ比較（PN-M2、Issue #246）"
+        }
+        "Run the frozen global calibration plus controlled comparison workflow" => {
+            "凍結グローバル較正と比較ワークフローの実行"
+        }
+        "Verify a committed compare generation and replay phase -> MOKE -> NPY" => {
+            "コミット済み比較世代の検証とphase → MOKE → NPY replay"
+        }
+        "Committed noise compare destination directory" => {
+            "コミット済みノイズ比較destination directory"
+        }
+        "Replay destination (defaults to <destination>/replay)" => {
+            "replay先（既定: <destination>/replay）"
+        }
+        "Verify digests and semantic schemas only; write nothing" => {
+            "digestと意味スキーマの検証のみ（書き込みなし）"
+        }
+        "Path to the noise compare request file" => "ノイズ比較requestファイルのpath",
+        "Plan a recorded-only noise diagnosis into a new destination" => {
+            "記録済みデータのノイズ診断計画（新規destinationへ）"
+        }
+        "Path to the noise diagnose request file" => "ノイズ診断requestファイルのpath",
         "Build an immutable calibration artifact from a recorded waveform CSV" => {
             "記録済み波形CSVからの不変較正artifactのbuild"
         }
