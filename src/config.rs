@@ -483,7 +483,19 @@ pub struct JointHarmonicGlsConfig {
     pub noise_mode: GlsNoiseMode,
     pub covariance_output: GlsCovarianceOutput,
     pub failure_policy: GlsFailurePolicy,
+    pub calibration_source: GlsCalibrationSource,
     pub calibrations: Vec<EstimatorCalibration>,
+}
+
+/// Where the joint GLS noise model comes from (FR-01). `Artifact` is the
+/// historical file-bound behavior and the default; `Prepulse` derives the
+/// per-channel model once per LI run from `pulse.background_before`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GlsCalibrationSource {
+    #[default]
+    Artifact,
+    Prepulse,
 }
 
 /// GLS noise mode (NUMERICS section 4 names).
@@ -902,6 +914,15 @@ impl From<EstimatorCalibrationV7> for EstimatorCalibration {
     }
 }
 
+impl From<GlsCalibrationSourceV7> for GlsCalibrationSource {
+    fn from(value: GlsCalibrationSourceV7) -> Self {
+        match value {
+            GlsCalibrationSourceV7::Artifact => Self::Artifact,
+            GlsCalibrationSourceV7::Prepulse => Self::Prepulse,
+        }
+    }
+}
+
 impl From<JointHarmonicGlsConfigV7> for JointHarmonicGlsConfig {
     fn from(value: JointHarmonicGlsConfigV7) -> Self {
         Self {
@@ -911,6 +932,7 @@ impl From<JointHarmonicGlsConfigV7> for JointHarmonicGlsConfig {
             noise_mode: value.noise_mode.into(),
             covariance_output: value.covariance_output.into(),
             failure_policy: value.failure_policy.into(),
+            calibration_source: value.calibration_source.into(),
             calibrations: value.calibrations.into_iter().map(Into::into).collect(),
         }
     }

@@ -175,9 +175,20 @@
             {
               "additionalProperties": false,
               "properties": {
+                "calibration_source": {
+                  "default": "artifact",
+                  "description": "Calibration source for the joint estimator. artifact keeps the file-bound behavior: one immutable calibration artifact per lock-in channel. prepulse derives each channel noise model once per LI run from pulse.background_before and records prepulse_calibration_digest in the LI provenance; calibrations must be empty alongside prepulse.",
+                  "enum": [
+                    "artifact",
+                    "prepulse"
+                  ],
+                  "title": "Calibration source for the joint estimator",
+                  "type": "string",
+                  "x-pmoke-path": "lockin.estimator.calibration_source"
+                },
                 "calibrations": {
                   "default": [],
-                  "description": "Immutable calibration bindings, one per lock-in channel. Each entry binds a channel to a calibration artifact path plus its expected SHA-256 digest. Unexpanded template placeholders are rejected.",
+                  "description": "Immutable calibration bindings, one per lock-in channel. Each entry binds a channel to a calibration artifact path plus its expected SHA-256 digest. Unexpanded template placeholders are rejected. Required exactly once per channel in artifact mode; must be empty when calibration_source is prepulse.",
                   "items": {
                     "additionalProperties": false,
                     "properties": {
@@ -205,7 +216,7 @@
                   "title": "Immutable calibration bindings, one per lock-in channel",
                   "type": "array",
                   "x-constraints": [
-                    "exactly one entry per lockin.channels value"
+                    "exactly one entry per lockin.channels value (artifact mode)"
                   ],
                   "x-pmoke-path": "lockin.estimator.calibrations"
                 },
@@ -1752,12 +1763,30 @@
         "value_type": "string enum"
       },
       {
+        "constraints": [],
+        "default": "artifact",
+        "details_en": "artifact keeps the file-bound behavior: one immutable calibration artifact per lock-in channel. prepulse derives each channel noise model once per LI run from pulse.background_before and records prepulse_calibration_digest in the LI provenance; calibrations must be empty alongside prepulse.",
+        "details_ja": "artifactはファイル束縛の現行動作。prepulseはpulse.background_beforeからLI実行毎にchannel毎の雑音モデルを一度だけ導出し、LI provenanceにprepulse_calibration_digestを記録。prepulse選択時はcalibrationsは空でなければならない。",
+        "id": "lockin.estimator.calibration_source",
+        "path": "lockin.estimator.calibration_source",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Calibration source for the joint estimator.",
+        "summary_ja": "joint推定器のcalibration取得元",
+        "units": null,
+        "valid_values": [
+          "artifact",
+          "prepulse"
+        ],
+        "value_type": "string enum"
+      },
+      {
         "constraints": [
-          "exactly one entry per lockin.channels value"
+          "exactly one entry per lockin.channels value (artifact mode)"
         ],
         "default": "[]",
-        "details_en": "Each entry binds a channel to a calibration artifact path plus its expected SHA-256 digest. Unexpanded template placeholders are rejected.",
-        "details_ja": "channelとcalibration成果物パス＋期待SHA-256の束縛。未展開テンプレートは拒否。",
+        "details_en": "Each entry binds a channel to a calibration artifact path plus its expected SHA-256 digest. Unexpanded template placeholders are rejected. Required exactly once per channel in artifact mode; must be empty when calibration_source is prepulse.",
+        "details_ja": "channelとcalibration成果物パス＋期待SHA-256の束縛。未展開テンプレートは拒否。artifact方式ではchannel毎に1件必須。calibration_sourceがprepulseの場合は空でなければならない。",
         "id": "lockin.estimator.calibrations",
         "path": "lockin.estimator.calibrations",
         "required": "optional",

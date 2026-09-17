@@ -254,7 +254,19 @@ pub(crate) struct JointHarmonicGlsConfigV7 {
     #[serde(default)]
     pub failure_policy: GlsFailurePolicyV7,
     #[serde(default)]
+    pub calibration_source: GlsCalibrationSourceV7,
+    #[serde(default)]
     pub calibrations: Vec<EstimatorCalibrationV7>,
+}
+
+/// Pre-pulse calibration source (FR-01 mirror): `artifact` (default) keeps
+/// file-bound behavior; `prepulse` derives from `pulse.background_before`.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GlsCalibrationSourceV7 {
+    #[default]
+    Artifact,
+    Prepulse,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]

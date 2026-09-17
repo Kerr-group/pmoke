@@ -389,6 +389,7 @@ fn joint_end_to_end_through_run_li() {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![EstimatorCalibration {
             channel: CHANNEL,
             path: "ch3.json".to_string(),
@@ -535,6 +536,7 @@ fn retained_calibration_survives_external_removal() {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![EstimatorCalibration {
             channel: CHANNEL,
             path: "ch3.json".to_string(),

@@ -5,8 +5,9 @@ mod model;
 
 use connection::{ConnectionDefaults, ConnectionUri};
 use model::{
-    ConfigV6, ConfigV7, Filter, Generator, JointHarmonicGlsConfigV7, LockinEstimatorV7, LockinV7,
-    Moke, Phase, Plot, Pulse, Reference, Scope, Sensor, SensorScale, Signal, Window,
+    ConfigV6, ConfigV7, Filter, Generator, GlsCalibrationSourceV7, JointHarmonicGlsConfigV7,
+    LockinEstimatorV7, LockinV7, Moke, Phase, Plot, Pulse, Reference, Scope, Sensor, SensorScale,
+    Signal, Window,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -803,6 +804,22 @@ fn validate_estimator_calibrations(
     lockin_channels: &[u8],
     report: &mut ValidationReport,
 ) {
+    // FR-05/08 mirror: prepulse derives every channel model, so file bindings
+    // alongside it are ambiguous; the per-channel rule below is artifact-only.
+    if matches!(config.calibration_source, GlsCalibrationSourceV7::Prepulse) {
+        if !config.calibrations.is_empty() {
+            error(
+                report,
+                DiagnosticCode::MutuallyExclusive,
+                "lockin.estimator.calibration_source",
+                format!(
+                    "lockin.estimator.calibration_source is prepulse, so lockin.estimator.calibrations must be empty (got {} entries)",
+                    config.calibrations.len()
+                ),
+            );
+        }
+        return;
+    }
     let mut seen: Vec<u8> = Vec::with_capacity(config.calibrations.len());
     for (index, calibration) in config.calibrations.iter().enumerate() {
         if !lockin_channels.contains(&calibration.channel) {
@@ -1203,6 +1220,33 @@ factor = -1.0
         );
         let report = validate_config_toml(&output);
         assert!(!report.valid);
+    }
+
+    #[test]
+    fn v7_prepulse_matches_native_validation() {
+        // AT-08: prepulse with empty calibrations is valid here exactly when
+        // it is valid natively; mixing file bindings with prepulse is a
+        // mutual-exclusion error on both sides (FR-05/FR-08).
+        let prepulse = VALID_V7_LEGACY.replace(
+            "[lockin.estimator]\nkind = \"boxcar_legacy\"",
+            "[lockin.estimator]\nkind = \"joint_harmonic_gls\"\nfit_harmonics = [1, 2, 3, 4, 5, 6]\noutput_harmonics = [1, 2, 3, 4, 5, 6]\nnoise_mode = \"identity\"\ncalibration_source = \"prepulse\"",
+        );
+        let report = validate_config_toml(&prepulse);
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        let mixed = prepulse.replace(
+            "calibration_source = \"prepulse\"",
+            &format!(
+                "calibration_source = \"prepulse\"\n[[lockin.estimator.calibrations]]\nchannel = 3\npath = \"calibration/ch3.json\"\nsha256 = \"{SHA_A}\""
+            ),
+        );
+        let report = validate_config_toml(&mixed);
+        assert!(!report.valid);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|item| item.code == DiagnosticCode::MutuallyExclusive)
+        );
     }
 
     #[test]

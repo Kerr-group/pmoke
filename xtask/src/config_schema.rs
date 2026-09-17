@@ -404,6 +404,13 @@ fn estimator(reference: &ConfigReference) -> Value {
                 ),
             ),
             (
+                "calibration_source",
+                with_default(
+                    enum_string(reference, "lockin.estimator.calibration_source"),
+                    "artifact",
+                ),
+            ),
+            (
                 "calibrations",
                 annotate(
                     reference,
