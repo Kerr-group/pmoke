@@ -228,6 +228,37 @@ fn leg_centers(destination: &Path, leg: &str) -> Vec<u64> {
 // PN-AT-013/021: identical regime models reduce to one distinct model and
 // the bank reproduces the frozen global path exactly.
 #[test]
+fn bank_reserved_schema_version_fails_in_the_current_reader() {
+    // PN-AT-016: new bank artifacts use reserved versions; a bank request
+    // claiming an unknown version fails by name in this reader instead of
+    // being interpreted with today's semantics.
+    let dir = unique_test_dir("bank_version");
+    let total = 200_000u64;
+    synthetic_csv(&dir.join("wave.csv"), total as usize, 0x1234_5678_9abc_def1);
+    let bank = identical_bank(total).replace("schema_version = 1", "schema_version = 2");
+    let request_path = dir.join("request.toml");
+    fs::write(
+        &request_path,
+        request_text(
+            "wave.csv",
+            "comparison",
+            total,
+            &bank,
+            "diagonal",
+            SMALL_CALIBRATION,
+        ),
+    )
+    .unwrap();
+    let error = format!("{:?}", run_compare(&request_path, None, None).unwrap_err());
+    assert!(
+        error.contains("unsupported noise compare bank schema_version 2"),
+        "got: {error}"
+    );
+    assert!(!dir.join("comparison").exists());
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn bank_identical_models_reduce_and_reproduce_global_path() {
     let dir = unique_test_dir("identical");
     let total = 200_000u64;

@@ -184,3 +184,140 @@ fn oversized_reads_are_bounded() {
     assert!(error.to_string().contains("exceeds recorded length"));
     fs::remove_dir_all(&dir).unwrap();
 }
+
+/// RAW fixture whose ch3 words sit on both rail codes plus in-range codes.
+fn rail_fixture_dir(name: &str) -> PathBuf {
+    let dir = unique_test_dir(name);
+    let mut ch3 = Vec::new();
+    for word in [0_u16, 65_535, 5, 10] {
+        ch3.extend_from_slice(&word.to_le_bytes());
+    }
+    let mut ch1 = Vec::new();
+    for word in [7_u16, 0, 65_535, 9] {
+        ch1.extend_from_slice(&word.to_le_bytes());
+    }
+    fs::write(dir.join("ch3.u16le"), ch3).unwrap();
+    fs::write(dir.join("ch1.u16le"), ch1).unwrap();
+    fs::write(
+        dir.join("manifest.toml"),
+        r#"
+version = 1
+
+[oscilloscope]
+waveform_format = "WORD"
+byte_order = "little-endian"
+
+[channels.ch3]
+file = "ch3.u16le"
+sample_count = 4
+x_increment = 0.5
+x_origin = -1.0
+x_reference = 2.0
+y_increment = 1.0
+y_origin = 0.0
+y_reference = 0.0
+
+[channels.ch1]
+file = "ch1.u16le"
+sample_count = 4
+x_increment = 0.5
+x_origin = -1.0
+x_reference = 2.0
+y_increment = 1.0
+y_origin = 0.0
+y_reference = 0.0
+"#,
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn raw_rail_codes_are_reported_without_repairing_values() {
+    // PN-AT-001 rail control: saturating rail codes are reported as
+    // evidence and the decoded values are preserved bit-for-bit (raw
+    // codes are never clipped, replaced or repaired).
+    let dir = rail_fixture_dir("rails");
+    let parent = dir.parent().unwrap().to_path_buf();
+    let name = dir.file_name().unwrap().to_str().unwrap().to_owned();
+
+    let source = RecordedSource::open(&parent, &raw_request(&name)).unwrap();
+    let block = source.read_block(0, 4).unwrap();
+    // y_increment 1.0 with zero origin/reference: value == raw code.
+    assert_eq!(block.detector, vec![0.0, 65_535.0, 5.0, 10.0]);
+    assert_eq!(
+        block.detector_rails,
+        Some(RailCounts { low: 1, high: 1 }),
+        "one sample per rail code must be reported"
+    );
+    assert_eq!(
+        block.reference_rails,
+        Some(RailCounts { low: 1, high: 1 }),
+        "reference rail codes are reported too"
+    );
+    assert_eq!(RailCounts { low: 1, high: 1 }.total(), 2);
+
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn csv_sources_report_no_rail_codes() {
+    // CSV carries decoded voltages and no ADC codes: rail evidence is
+    // explicitly absent, never invented.
+    let dir = unique_test_dir("csv_rails");
+    fs::write(dir.join("wave.csv"), "time (s),ch3\n0.0,1.0\n1.0,2.0\n").unwrap();
+    let request = RecordedSourceRequest {
+        kind: RecordedSourceKind::RecordedCsv,
+        path: "wave.csv".to_owned(),
+        channels: ChannelBinding {
+            detector: 3,
+            reference: None,
+            witness: None,
+        },
+        grid: GridBinding { stride: 100 },
+    };
+    let source = RecordedSource::open(&dir, &request).unwrap();
+    let block = source.read_block(0, 2).unwrap();
+    assert_eq!(block.detector_rails, None);
+    assert_eq!(block.reference_rails, None);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn csv_non_finite_and_non_monotonic_inputs_are_refused() {
+    // PN-AT-001 NaN control: non-finite detector values are a named
+    // refusal, never replaced or dropped.
+    let dir = unique_test_dir("csv_nan");
+    let request = RecordedSourceRequest {
+        kind: RecordedSourceKind::RecordedCsv,
+        path: "wave.csv".to_owned(),
+        channels: ChannelBinding {
+            detector: 3,
+            reference: None,
+            witness: None,
+        },
+        grid: GridBinding { stride: 100 },
+    };
+    fs::write(
+        dir.join("wave.csv"),
+        "time (s),ch3\n0.0,1.0\n1.0e-3,nan\n2.0e-3,3.0\n",
+    )
+    .unwrap();
+    let source = RecordedSource::open(&dir, &request).unwrap();
+    let error = source.read_block(0, 3).unwrap_err();
+    assert!(
+        error.to_string().contains("non-finite"),
+        "unexpected error: {error:#}"
+    );
+
+    // Duplicated (non-increasing) timestamps are refused as well.
+    fs::write(dir.join("wave.csv"), "time (s),ch3\n0.0,1.0\n0.0,2.0\n").unwrap();
+    let source = RecordedSource::open(&dir, &request).unwrap();
+    let error = source.read_block(0, 2).unwrap_err();
+    assert!(
+        error.to_string().contains("not strictly increasing"),
+        "unexpected error: {error:#}"
+    );
+
+    fs::remove_dir_all(&dir).unwrap();
+}

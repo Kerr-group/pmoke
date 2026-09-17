@@ -370,3 +370,123 @@ fn diagnostics_report_insufficient_on_single_block() {
         );
     }
 }
+
+/// PN-AT-001 rail control on the recorded RAW route: saturating ADC rail
+/// codes are reported in the acquisition QC and the source bytes stay
+/// untouched (no clipping, no repair).
+#[test]
+fn diagnose_reports_rail_saturation_on_recorded_raw() {
+    let dir = unique_test_dir("rails_raw");
+    let source_dir = dir.join("rawsrc");
+    fs::create_dir_all(&source_dir).unwrap();
+    let blocks = 10_usize;
+    let block_len = 12_800_usize;
+    let total = blocks * block_len;
+    let mut bytes = Vec::with_capacity(total * 2);
+    for index in 0..total {
+        let word: u16 = match index {
+            100 => 0,
+            200 => u16::MAX,
+            12_900 => 0,
+            _ => {
+                let time = index as f64 * 1.0e-5;
+                let value = 8_000.0 * (2.0 * std::f64::consts::PI * 1_000.0 * time + 0.3).sin();
+                (32_768.0 + value).round().clamp(1.0, 65_534.0) as u16
+            }
+        };
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    fs::write(source_dir.join("ch3.u16le"), &bytes).unwrap();
+    fs::write(
+        source_dir.join("manifest.toml"),
+        format!(
+            r#"
+version = 1
+
+[oscilloscope]
+waveform_format = "WORD"
+byte_order = "little-endian"
+
+[channels.ch3]
+file = "ch3.u16le"
+sample_count = {total}
+x_increment = 0.00001
+x_origin = 0.0
+x_reference = 0.0
+y_increment = 0.001
+y_origin = 32768.0
+y_reference = 0.0
+"#
+        ),
+    )
+    .unwrap();
+    let frozen_before = fs::read(source_dir.join("ch3.u16le")).unwrap();
+    let request_path = dir.join("request.toml");
+    fs::write(
+        &request_path,
+        r#"schema_version = 1
+operation = "diagnose"
+reference_frequency_hz = 1000.0
+reference_phase_rad = 0.0
+sample_interval_s = 0.00001
+block_len = 12800
+output = "diagnosis"
+
+[source]
+kind = "recorded_raw"
+path = "rawsrc"
+
+[source.channels]
+detector = 3
+
+[source.grid]
+stride = 100
+
+[study]
+classification = "exploratory"
+
+[[roles]]
+role = "training"
+start = 0
+end = 51200
+
+[[roles]]
+role = "training"
+start = 51200
+end = 102400
+
+[[roles]]
+role = "evaluation"
+start = 102400
+end = 128000
+"#,
+    )
+    .unwrap();
+    run_diagnose(&request_path, None).unwrap();
+
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("diagnosis/diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["measurements_available"], true);
+    let qc = &report["measurements"]["acquisition_qc"];
+    assert_eq!(
+        qc["rail_saturation"], true,
+        "rail saturation must be reported"
+    );
+    assert_eq!(qc["detector_rail_low"], 2);
+    assert_eq!(qc["detector_rail_high"], 1);
+    assert_eq!(qc["reference_rail_low"], 0);
+    assert_eq!(qc["reference_rail_high"], 0);
+    let reason = report["finding_reason"].as_str().unwrap();
+    assert!(
+        reason.contains("rail saturation reported"),
+        "rail evidence must be named in the finding reason: {reason}"
+    );
+    // The recorded source bytes are preserved exactly: no clipping or
+    // repair of the saturated samples.
+    assert_eq!(
+        fs::read(source_dir.join("ch3.u16le")).unwrap(),
+        frozen_before
+    );
+    fs::remove_dir_all(&dir).unwrap();
+}

@@ -436,3 +436,97 @@ fn compare_request_cancelled_before_commit_flag_refuses() {
     assert!(!dir.join("comparison").exists());
     fs::remove_dir_all(&dir).unwrap();
 }
+
+/// PN-AT-005: the shared downstream context is frozen once and shared
+/// verbatim; a resumed attempt that binds a different context (or a
+/// different request after the freeze) is refused by name instead of
+/// silently mixing generations.
+#[test]
+fn compare_frozen_context_is_shared_and_post_freeze_mutation_is_refused() {
+    let dir = unique_test_dir("context_freeze");
+    let total = 200_000usize;
+    synthetic_csv(&dir.join("wave.csv"), total, 0.05, 0x0c0f_fee1_2345_6789);
+    let base = compare_request_text("wave.csv", "comparison", total as u64, 12_800, "").replace(
+        "[calibration]\n",
+        "[calibration]\nphase_bins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 1\nmin_contributing_blocks = 2\nmin_training_blocks = 2\nmin_training_intervals = 1\n",
+    );
+    let request_path = dir.join("request.toml");
+    fs::write(&request_path, &base).unwrap();
+    run_compare(&request_path, None, None).unwrap();
+
+    // Exactly one frozen context is written and every retained record
+    // agrees on its digest: no per-leg context copies can diverge.
+    let destination = dir.join("comparison");
+    let context: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(destination.join("context.json")).unwrap())
+            .unwrap();
+    let context_sha = context["context_sha256"].as_str().unwrap().to_owned();
+    let comparison: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(destination.join("comparison.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        comparison["context"]["context_sha256"],
+        context_sha.as_str()
+    );
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(destination.join("staging-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["context_sha256"], context_sha.as_str());
+
+    // Simulate an interrupted attempt: the committed generation becomes the
+    // resume candidate for the same request.
+    let staging = dir.join("comparison.staging");
+    fs::rename(&destination, &staging).unwrap();
+    run_compare(&request_path, None, None).unwrap();
+    assert!(
+        dir.join("comparison/comparison.json").is_file(),
+        "unchanged request must resume the frozen snapshot"
+    );
+
+    // Post-freeze mutation of the frozen inputs (rotation, depth,
+    // reference phase) is refused by name, never mixed into the old
+    // generation.
+    for (old, new) in [
+        ("rotation_rad = 0.0", "rotation_rad = 0.25"),
+        ("modulation_depth = 1.0", "modulation_depth = 0.9"),
+        ("reference_phase_rad = 0.0", "reference_phase_rad = 0.3"),
+    ] {
+        if dir.join("comparison").exists() {
+            fs::rename(dir.join("comparison"), dir.join("comparison.staging")).unwrap();
+        }
+        let mutated = base.replace(old, new);
+        fs::write(&request_path, &mutated).unwrap();
+        let error = format!("{:?}", run_compare(&request_path, None, None).unwrap_err());
+        assert!(
+            error.contains("staging_mismatch"),
+            "mutating `{old}` after the freeze must refuse by name, got: {error}"
+        );
+        assert!(
+            !dir.join("comparison").exists(),
+            "refused resume must leave no destination"
+        );
+    }
+
+    // A prior generation whose frozen context disagrees with the request
+    // (tampered manifest digest) is refused by the dedicated context gate.
+    fs::write(&request_path, &base).unwrap();
+    let manifest_path = dir.join("comparison.staging/staging-manifest.json");
+    let mut tampered: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    tampered["context_sha256"] =
+        serde_json::json!("0000000000000000000000000000000000000000000000000000000000000000");
+    fs::write(
+        &manifest_path,
+        format!("{}\n", serde_json::to_string_pretty(&tampered).unwrap()),
+    )
+    .unwrap();
+    let error = format!("{:?}", run_compare(&request_path, None, None).unwrap_err());
+    assert!(
+        error.contains("different frozen context"),
+        "context disagreement must be named, got: {error}"
+    );
+    assert!(!dir.join("comparison").exists());
+
+    fs::remove_dir_all(&dir).unwrap();
+}

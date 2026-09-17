@@ -104,6 +104,21 @@ pub struct SourceTimebase {
     pub sample_interval_s: f64,
 }
 
+/// Counts of samples sitting on the raw ADC rail codes (WORD format:
+/// 0 and `u16::MAX`). Reported as evidence only: decoded values are
+/// preserved unchanged and never clipped or replaced (PN-FR-009).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RailCounts {
+    pub low: usize,
+    pub high: usize,
+}
+
+impl RailCounts {
+    pub fn total(self) -> usize {
+        self.low + self.high
+    }
+}
+
 /// One decoded block over original indices `[start, end)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceBlock {
@@ -113,6 +128,11 @@ pub struct SourceBlock {
     pub detector: Vec<f64>,
     pub reference: Option<Vec<f64>>,
     pub witness: Option<Vec<f64>>,
+    /// Rail-code counts for the detector channel. `None` for CSV sources,
+    /// which carry decoded voltages and no ADC codes.
+    pub detector_rails: Option<RailCounts>,
+    /// Rail-code counts for the reference channel when one is bound.
+    pub reference_rails: Option<RailCounts>,
 }
 
 enum SourceBackend {
@@ -397,31 +417,37 @@ impl RecordedSource {
         let times: Vec<f64> = (start..end)
             .map(|index| timebase.axis.value_at(index as usize))
             .collect();
-        let detector = read_raw_range(
+        let (detector, detector_rails) = read_raw_range(
             channels
                 .get(&self.binding.detector)
                 .ok_or_else(|| anyhow::anyhow!("frozen source lost detector channel"))?,
             start,
             end,
         )?;
-        let reference = match self.binding.reference {
-            Some(channel) => Some(read_raw_range(
-                channels
-                    .get(&channel)
-                    .ok_or_else(|| anyhow::anyhow!("frozen source lost reference channel"))?,
-                start,
-                end,
-            )?),
-            None => None,
+        let (reference, reference_rails) = match self.binding.reference {
+            Some(channel) => {
+                let (values, rails) = read_raw_range(
+                    channels
+                        .get(&channel)
+                        .ok_or_else(|| anyhow::anyhow!("frozen source lost reference channel"))?,
+                    start,
+                    end,
+                )?;
+                (Some(values), Some(rails))
+            }
+            None => (None, None),
         };
         let witness = match self.binding.witness {
-            Some(channel) => Some(read_raw_range(
-                channels
-                    .get(&channel)
-                    .ok_or_else(|| anyhow::anyhow!("frozen source lost witness channel"))?,
-                start,
-                end,
-            )?),
+            Some(channel) => Some(
+                read_raw_range(
+                    channels
+                        .get(&channel)
+                        .ok_or_else(|| anyhow::anyhow!("frozen source lost witness channel"))?,
+                    start,
+                    end,
+                )?
+                .0,
+            ),
             None => None,
         };
         Ok(SourceBlock {
@@ -431,6 +457,8 @@ impl RecordedSource {
             detector,
             reference,
             witness,
+            detector_rails: Some(detector_rails),
+            reference_rails,
         })
     }
 
@@ -508,6 +536,8 @@ impl RecordedSource {
             detector,
             reference,
             witness,
+            detector_rails: None,
+            reference_rails: None,
         })
     }
 }
@@ -872,7 +902,7 @@ fn verify_raw_channel_digest(spec: &RawChannelFile) -> Result<()> {
     Ok(())
 }
 
-fn read_raw_range(spec: &RawChannelFile, start: u64, end: u64) -> Result<Vec<f64>> {
+fn read_raw_range(spec: &RawChannelFile, start: u64, end: u64) -> Result<(Vec<f64>, RailCounts)> {
     let actual = std::fs::symlink_metadata(&spec.path)
         .with_context(|| format!("raw channel file not found: {}", spec.path.display()))?;
     if !actual.file_type().is_file() {
@@ -903,15 +933,18 @@ fn read_raw_range(spec: &RawChannelFile, start: u64, end: u64) -> Result<Vec<f64
     let mut bytes = vec![0_u8; count * 2];
     file.read_exact(&mut bytes)
         .with_context(|| format!("cannot read raw channel range: {}", spec.path.display()))?;
-    Ok(bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|word| {
-            let raw = u16::from_le_bytes([word[0], word[1]]);
-            spec.scale.value_at(raw)
-        })
-        .collect())
+    let mut values = Vec::with_capacity(count);
+    let mut rails = RailCounts::default();
+    for word in bytes.as_chunks::<2>().0 {
+        let raw = u16::from_le_bytes([word[0], word[1]]);
+        match raw {
+            0 => rails.low += 1,
+            u16::MAX => rails.high += 1,
+            _ => {}
+        }
+        values.push(spec.scale.value_at(raw));
+    }
+    Ok((values, rails))
 }
 
 #[cfg(test)]
