@@ -30,6 +30,15 @@
   longer generated, including for a single entry) and reports exactly one
   signal plot completion line with the measured elapsed time.
 
+- Lock-in quadratures now use the peak-amplitude convention (`Xk = b_k`,
+  `Yk = a_k` for `s = DC + sum_k [a_k*cos(k*phi) + b_k*sin(k*phi)]`) instead
+  of the legacy half-amplitude (`/2`). XY columns double, XY covariance
+  quadruples, and `Vm` now reports the true carrier amplitude (previously
+  half); `angle`, modulation depth, and all ratio-based quantities are
+  unchanged. The D8 formulas are untouched — only the `LI*_in` scale
+  changed. Artifacts written before this change keep the old values and
+  must not be mixed with new ones by shape alone.
+
 - Native joint GLS now prepares one immutable geometry/resource plan per run,
   executes output windows in bounded chunks on the configured worker pool, and
   preserves deterministic output order. `covariance_output=none` validates

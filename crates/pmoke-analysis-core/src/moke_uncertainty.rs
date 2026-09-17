@@ -8,8 +8,8 @@
 //! `(a1, a2)` point — no linearization of the phase-delta estimation
 //! itself, which stays outside the conditional claim.
 //!
-//! The estimator publishes the already half-amplitude scaled XY covariance
-//! (1/4 by the core mapper); the (a1, a2) marginal is read off the rotated
+//! The estimator publishes the XY covariance in peak-amplitude units
+//! (no rescaling by the core mapper); the (a1, a2) marginal is read off the rotated
 //! `x1/x2` block. Degenerate Bessel denominators and non-finite inputs are
 //! fail-closed (FR-041): unknown is never published as zero.
 
@@ -41,7 +41,7 @@ pub fn moke_standard_angle(a1: f64, a2: f64, phim: f64) -> Result<f64> {
 
 /// Delta-method conditional variance of the standard MOKE angle at one
 /// `(a1, a2)` point with its 2x2 `(x1, x2)` marginal covariance
-/// `[[v11, v12], [v12, v22]]` (already half-amplitude scaled).
+/// `[[v11, v12], [v12, v22]]` (peak-amplitude XY units).
 pub fn moke_standard_angle_variance(
     a1: f64,
     a2: f64,
