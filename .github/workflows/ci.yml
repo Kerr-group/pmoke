@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYO3_PYTHON: python
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
 
     steps:
       - name: Checkout
@@ -77,6 +79,11 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Enable sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.14.0"
+
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
@@ -106,6 +113,8 @@ jobs:
     env:
       PYO3_PYTHON: python
       PYTHONDONTWRITEBYTECODE: "1"
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
 
     steps:
       - name: Checkout
@@ -127,6 +136,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
 
+      - name: Enable sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.14.0"
+
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
@@ -141,6 +155,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYO3_PYTHON: python
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
 
     steps:
       - name: Checkout
@@ -191,6 +207,11 @@ jobs:
         with:
           components: clippy
 
+      - name: Enable sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.14.0"
+
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
@@ -223,6 +244,8 @@ jobs:
     runs-on: windows-latest
     env:
       PYO3_PYTHON: python
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
 
     steps:
       - name: Checkout
@@ -240,6 +263,11 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
         with:
           components: clippy
+
+      - name: Enable sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.14.0"
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
@@ -285,31 +313,53 @@ jobs:
               prologix-rs|serial|--no-default-features --features serial
               prologix-rs|tcp|--no-default-features --features tcp
           - os: macos-14
-            suite: all profiles
-            cache-key: all-profiles
+            suite: pmoke hw
+            cache-key: macos-pmoke-hw
             profiles: |
               pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
               pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
               pmoke|macOS hardware bundle|--no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
+          - os: macos-14
+            suite: instruments transport
+            cache-key: macos-instruments
+            profiles: |
               instruments|prologix-serial|--no-default-features --features prologix-serial
               instruments|prologix-tcp|--no-default-features --features prologix-tcp
+          - os: macos-14
+            suite: prologix transport
+            cache-key: macos-prologix
+            profiles: |
               prologix-rs|tcp|--no-default-features --features tcp
               prologix-rs|serial|--no-default-features --features serial
           - os: ubuntu-latest
-            suite: all profiles
-            cache-key: all-profiles
+            suite: pmoke hw
+            cache-key: ubuntu-pmoke-hw
             profiles: |
               pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
               pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
+          - os: ubuntu-latest
+            suite: transport-a
+            cache-key: ubuntu-transport-a
+            profiles: |
               prologix-rs|tcp|--no-default-features --features tcp
               prologix-rs|no-default|--no-default-features
+          - os: ubuntu-latest
+            suite: transport-b
+            cache-key: ubuntu-transport-b
+            profiles: |
               instruments|no-default|--no-default-features
               instruments|prologix-serial|--no-default-features --features prologix-serial
+          - os: ubuntu-latest
+            suite: transport-c
+            cache-key: ubuntu-transport-c
+            profiles: |
               prologix-rs|serial|--no-default-features --features serial
               instruments|prologix-tcp|--no-default-features --features prologix-tcp
     env:
       PYO3_PYTHON: python
       PYTHONDONTWRITEBYTECODE: "1"
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
 
     steps:
       - name: Checkout
@@ -334,6 +384,11 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
         with:
           components: clippy
+
+      - name: Enable sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.14.0"
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
@@ -387,6 +442,8 @@ jobs:
     env:
       PYO3_PYTHON: python
       PYTHONDONTWRITEBYTECODE: "1"
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
 
     steps:
       - name: Checkout
@@ -411,6 +468,11 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
         with:
           components: clippy
+
+      - name: Enable sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.14.0"
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
