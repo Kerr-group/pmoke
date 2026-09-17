@@ -632,7 +632,144 @@ fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 pub fn publish_staged_directory(staging: &Path, destination: &Path, force: bool) -> Result<()> {
-    if !destination.exists() {
+    publish_staged_directory_with_cancel(staging, destination, force, None).map(|_| ())
+}
+
+/// Publishes a staged directory and returns the durable publication outcome.
+/// `cancel_requested` is checked immediately before the first rename. A
+/// cancellation accepted there records `cancelled` and leaves the destination
+/// untouched; once the visibility rename has happened the result is committed
+/// and cancellation is necessarily too late.
+pub fn publish_staged_directory_with_cancel(
+    staging: &Path,
+    destination: &Path,
+    force: bool,
+    cancel_requested: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<crate::commands::recovery::PublishOutcome> {
+    let backup = replacement_backup_path(destination);
+    match crate::commands::recovery::recover_interrupted_publish(destination, &backup, staging)? {
+        crate::commands::recovery::RecoveryDecision::Clean => {}
+        crate::commands::recovery::RecoveryDecision::IntentOnly { .. } => {
+            // The old destination was never displaced. The old intent is no
+            // longer needed for this fresh attempt; staging remains owned by
+            // the caller and is never deleted by recovery.
+            crate::commands::recovery::clear_publish_journal(destination)?;
+        }
+        crate::commands::recovery::RecoveryDecision::CompletedSecondRename {
+            committed_generation,
+            ..
+        } => {
+            archive_recovered_backup(&backup, destination)?;
+            crate::commands::recovery::clear_publish_journal(destination)?;
+            crate::ui::warn(format!(
+                "completed an interrupted publish of generation {committed_generation:?} before republishing"
+            ));
+        }
+        crate::commands::recovery::RecoveryDecision::RestoredPreviousGeneration {
+            restored_generation,
+            attempted_generation,
+        } => {
+            crate::commands::recovery::clear_publish_journal(destination)?;
+            crate::ui::warn(format!(
+                "restored generation {restored_generation:?} after abandoning interrupted attempt {attempted_generation:?}"
+            ));
+        }
+        crate::commands::recovery::RecoveryDecision::DestinationAuthoritativeUncertain {
+            committed_generation,
+            ..
+        } => {
+            archive_recovered_backup(&backup, destination)?;
+            crate::commands::recovery::clear_publish_journal(destination)?;
+            crate::ui::warn(format!(
+                "previous publish of generation {committed_generation:?} has uncertain durability; retaining its backup for inspection"
+            ));
+        }
+    }
+
+    // A prior committed publication may have left its backup because cleanup
+    // itself failed. Preserve it under an inspection name before starting a
+    // new transaction; never overwrite an unknown backup in place.
+    if backup.exists() {
+        archive_recovered_backup(&backup, destination)?;
+    }
+    if !staging.is_dir() {
+        bail!(
+            "publication staging directory does not exist: {}",
+            staging.display()
+        );
+    }
+    if destination.exists() && !force {
+        bail!("output directory already exists: {}", destination.display());
+    }
+    let destination_was_present = destination.exists();
+    if destination_was_present && !destination.is_dir() {
+        bail!(
+            "publication destination is not a directory: {}",
+            destination.display()
+        );
+    }
+    if backup.exists() {
+        bail!(
+            "publication backup already exists: {}; refusing to overwrite it",
+            backup.display()
+        );
+    }
+
+    let staging_digest = crate::commands::recovery::staging_tree_digest(staging)?;
+    let staging_generation = crate::commands::recovery::staging_generation(staging)?;
+    let previous_generation = if destination.is_dir() {
+        crate::commands::recovery::published_generation(destination)?
+    } else {
+        None
+    };
+    let previous_digest = if destination.is_dir() {
+        Some(crate::commands::recovery::staging_tree_digest(destination)?)
+    } else {
+        None
+    };
+
+    crate::commands::recovery::write_publish_intent(
+        destination,
+        staging_generation,
+        &staging_digest,
+        previous_generation,
+        previous_digest.as_deref(),
+    )?;
+
+    if cancel_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+        crate::commands::recovery::record_publish_outcome(
+            destination,
+            crate::commands::recovery::PublishOutcome::Cancelled,
+        )?;
+        crate::commands::recovery::clear_publish_journal(destination)?;
+        return Ok(crate::commands::recovery::PublishOutcome::Cancelled);
+    }
+
+    // Re-read the destination immediately before either visibility change.
+    // The run lock prevents pmoke writers from racing, but this also fails
+    // closed against an unrelated external mutation.
+    if destination_was_present {
+        if !destination.is_dir() {
+            bail!(
+                "publication destination changed type during publish: {}",
+                destination.display()
+            );
+        }
+        let current_digest = crate::commands::recovery::staging_tree_digest(destination)?;
+        if previous_digest.as_deref() != Some(current_digest.as_str()) {
+            bail!(
+                "publication destination changed during publish: {}",
+                destination.display()
+            );
+        }
+    } else if destination.exists() {
+        bail!(
+            "publication destination appeared during publish: {}",
+            destination.display()
+        );
+    }
+
+    if !destination_was_present {
         fs::rename(staging, destination).with_context(|| {
             format!(
                 "failed to publish {} as {}",
@@ -640,46 +777,105 @@ pub fn publish_staged_directory(staging: &Path, destination: &Path, force: bool)
                 destination.display()
             )
         })?;
-        return sync_parent(destination);
-    }
-    if !force {
-        bail!("output directory already exists: {}", destination.display());
+        if let Err(error) = sync_parent(destination) {
+            let _ = crate::commands::recovery::record_publish_outcome(
+                destination,
+                crate::commands::recovery::PublishOutcome::UncertainDurability,
+            );
+            return Err(error).context("published output but could not sync its parent directory");
+        }
+    } else {
+        fs::rename(destination, &backup).with_context(|| {
+            format!(
+                "failed to move existing output {} to {}",
+                destination.display(),
+                backup.display()
+            )
+        })?;
+        if let Err(error) = sync_parent(&backup) {
+            return Err(error)
+                .context("moved previous output but could not sync the backup rename");
+        }
+        if let Err(error) = fs::rename(staging, destination) {
+            match fs::rename(&backup, destination) {
+                Ok(()) => {
+                    let _ = sync_parent(destination);
+                    let _ = crate::commands::recovery::clear_publish_journal(destination);
+                    return Err(error).with_context(|| {
+                        format!(
+                            "failed to publish staged output {}; previous output restored",
+                            staging.display()
+                        )
+                    });
+                }
+                Err(rollback) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "failed to publish {}; additionally failed to restore {}: {rollback}",
+                            staging.display(),
+                            backup.display()
+                        )
+                    });
+                }
+            }
+        }
+        if let Err(error) = sync_parent(destination) {
+            let _ = crate::commands::recovery::record_publish_outcome(
+                destination,
+                crate::commands::recovery::PublishOutcome::UncertainDurability,
+            );
+            return Err(error)
+                .context("published replacement but could not sync its parent directory");
+        }
     }
 
-    let backup = replacement_backup_path(destination);
+    crate::commands::recovery::record_publish_outcome(
+        destination,
+        crate::commands::recovery::PublishOutcome::Committed,
+    )?;
+    crate::commands::recovery::clear_publish_journal(destination)?;
+
     if backup.exists() {
-        bail!("replacement backup already exists: {}", backup.display());
+        if let Err(error) = fs::remove_dir_all(&backup) {
+            crate::ui::warn(format!(
+                "published output is committed, but backup could not be removed: {error}; backup remains at {}",
+                backup.display()
+            ));
+        } else {
+            sync_parent(destination)?;
+        }
     }
-    fs::rename(destination, &backup).with_context(|| {
+    Ok(crate::commands::recovery::PublishOutcome::Committed)
+}
+
+fn archive_recovered_backup(backup: &Path, destination: &Path) -> Result<()> {
+    if !backup.exists() {
+        return Ok(());
+    }
+    let parent = backup.parent().unwrap_or_else(|| Path::new("."));
+    let base = destination.file_name().unwrap_or_default().to_os_string();
+    let mut archive = parent.join({
+        let mut name = base.clone();
+        name.push(".publish-backup.recovered");
+        name
+    });
+    let mut index = 0u32;
+    while archive.exists() {
+        index = index
+            .checked_add(1)
+            .context("recovered backup archive name overflow")?;
+        let mut name = base.clone();
+        name.push(format!(".publish-backup.recovered.{index}"));
+        archive = parent.join(name);
+    }
+    fs::rename(backup, &archive).with_context(|| {
         format!(
-            "failed to move existing output {} to {}",
-            destination.display(),
-            backup.display()
+            "failed to archive recovered backup {} as {}",
+            backup.display(),
+            archive.display()
         )
     })?;
-    if let Err(error) = fs::rename(staging, destination) {
-        return match fs::rename(&backup, destination) {
-            Ok(()) => Err(error).with_context(|| {
-                format!(
-                    "failed to publish staged output {}; previous output restored",
-                    staging.display()
-                )
-            }),
-            Err(rollback) => Err(error).with_context(|| {
-                format!(
-                    "failed to publish {}; additionally failed to restore {}: {rollback}",
-                    staging.display(),
-                    backup.display()
-                )
-            }),
-        };
-    }
-    if let Err(error) = fs::remove_dir_all(&backup) {
-        crate::ui::warn(format!(
-            "analysis was published, but stale backup could not be removed: {error}"
-        ));
-    }
-    sync_parent(destination)
+    sync_parent(&archive)
 }
 
 pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Result<Config> {
@@ -733,6 +929,32 @@ pub(crate) fn prepare_analysis_staging(cfg: &Config, stage: AnalysisStage) -> Re
         copy_optional_file(
             &resolver.lockin_xy_npy(channel),
             &staging.lockin_xy_npy(channel),
+        )?;
+        // Retained GLS dependency closure: quality, estimator snapshot,
+        // conditional covariance, and the exact calibration bytes travel
+        // with the XY results so staged reruns reconstruct uncertainty
+        // without the external model files. Missing companions stay
+        // optional here (boxcar stages publish none); the manifest refresh
+        // registers whatever is present.
+        copy_optional_file(
+            &resolver.lockin_quality_csv(channel),
+            &staging.lockin_quality_csv(channel),
+        )?;
+        copy_optional_file(
+            &resolver.lockin_estimator_json(channel),
+            &staging.lockin_estimator_json(channel),
+        )?;
+        copy_optional_file(
+            &resolver.lockin_calibration_json(channel),
+            &staging.lockin_calibration_json(channel),
+        )?;
+        copy_optional_file(
+            &resolver.lockin_covariance_csv(channel),
+            &staging.lockin_covariance_csv(channel),
+        )?;
+        copy_optional_file(
+            &resolver.lockin_covariance_npy(channel),
+            &staging.lockin_covariance_npy(channel),
         )?;
         if stage == AnalysisStage::Moke {
             copy_required_file(
@@ -933,9 +1155,7 @@ fn copy_optional_tree(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn replacement_backup_path(destination: &Path) -> PathBuf {
-    let mut name = destination.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".backup.{}", std::process::id()));
-    destination.with_file_name(name)
+    crate::commands::recovery::deterministic_backup_path(destination)
 }
 
 pub(crate) fn sync_parent(path: &Path) -> Result<()> {
@@ -1131,6 +1351,55 @@ mod tests {
         assert!(!destination.join("old.txt").exists());
         assert!(!staging.exists());
         assert!(!replacement_backup_path(&destination).exists());
+        assert!(!crate::commands::recovery::journal_path(&destination).exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn publish_without_previous_generation_records_and_clears_commit_journal() {
+        let directory = temporary_directory();
+        fs::create_dir(&directory).unwrap();
+        let staging = directory.join("analysis.incomplete");
+        let destination = directory.join("analysis");
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join("new.txt"), b"new").unwrap();
+
+        let outcome =
+            publish_staged_directory_with_cancel(&staging, &destination, false, None).unwrap();
+
+        assert_eq!(
+            outcome,
+            crate::commands::recovery::PublishOutcome::Committed
+        );
+        assert_eq!(fs::read(destination.join("new.txt")).unwrap(), b"new");
+        assert!(!crate::commands::recovery::journal_path(&destination).exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn precommit_cancel_leaves_destination_and_staging_untouched() {
+        let directory = temporary_directory();
+        fs::create_dir(&directory).unwrap();
+        let staging = directory.join("analysis.incomplete");
+        let destination = directory.join("analysis");
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join("new.txt"), b"new").unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("old.txt"), b"old").unwrap();
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+
+        let outcome =
+            publish_staged_directory_with_cancel(&staging, &destination, true, Some(&cancelled))
+                .unwrap();
+
+        assert_eq!(
+            outcome,
+            crate::commands::recovery::PublishOutcome::Cancelled
+        );
+        assert_eq!(fs::read(destination.join("old.txt")).unwrap(), b"old");
+        assert!(staging.join("new.txt").is_file());
+        assert!(!replacement_backup_path(&destination).exists());
+        assert!(!crate::commands::recovery::journal_path(&destination).exists());
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1622,8 +1891,173 @@ config_resolved_sha256 = "{resolved_hash}"
     }
 
     #[test]
+    fn historical_manifest_v3_and_v4_readers_round_trip() {
+        // PN-AT-016: retained v3/v4 analysis manifests keep their meaning
+        // in the historical readers; unsupported future versions and
+        // altered recorded bytes are refused by name.
+        let directory = temporary_directory();
+        fs::create_dir_all(directory.join("analysis")).unwrap();
+        let mut cfg = crate::test_support::test_config(vec![1], vec![2]);
+        cfg.set_artifact_root(directory.clone());
+        write_analysis_config_snapshots(&cfg).unwrap();
+        let source_hash =
+            crate::utils::checksum::file_sha256(&cfg.paths().analysis_source_config()).unwrap();
+        let resolved_hash =
+            crate::utils::checksum::file_sha256(&cfg.paths().analysis_resolved_config()).unwrap();
+
+        // v3 legacy shape: only the resolved-config key exists; the
+        // source key is optional but verified when present.
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!("schema_version = 3\nconfig_sha256 = \"{resolved_hash}\"\n"),
+        )
+        .unwrap();
+        verify_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                "schema_version = 3\nconfig_sha256 = \"{resolved_hash}\"\nconfig_source_sha256 = \"{source_hash}\"\n"
+            ),
+        )
+        .unwrap();
+        verify_analysis_config_snapshots(&cfg).unwrap();
+
+        // A v3 manifest whose recorded bytes moved is refused.
+        fs::write(cfg.paths().analysis_resolved_config(), b"tampered\n").unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(
+            error.to_string().contains("checksum mismatch"),
+            "got: {error}"
+        );
+
+        // Restore the snapshots and round-trip the current strict v4 shape.
+        write_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!(
+                "schema_version = 4\nconfig_source_sha256 = \"{source_hash}\"\nconfig_resolved_sha256 = \"{resolved_hash}\"\n"
+            ),
+        )
+        .unwrap();
+        verify_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(cfg.paths().analysis_source_config(), b"tampered\n").unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(
+            error.to_string().contains("checksum mismatch"),
+            "got: {error}"
+        );
+
+        // v4 requires both strict keys (with untampered snapshots).
+        write_analysis_config_snapshots(&cfg).unwrap();
+        fs::write(
+            cfg.paths().analysis_manifest(),
+            format!("schema_version = 4\nconfig_source_sha256 = \"{source_hash}\"\n"),
+        )
+        .unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires config_resolved_sha256"),
+            "got: {error}"
+        );
+
+        // A future/reserved manifest version fails in this reader.
+        fs::write(cfg.paths().analysis_manifest(), "schema_version = 5\n").unwrap();
+        let error = verify_analysis_config_snapshots(&cfg).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported analysis manifest schema_version: 5"),
+            "got: {error}"
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn sync_parent_handles_bare_file_paths() {
         assert!(sync_parent(Path::new("output.csv")).is_ok());
         assert!(sync_parent(Path::new("./output.csv")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod staging_closure_tests {
+    use super::AnalysisStage;
+    use crate::test_support::test_config;
+
+    fn staging_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pmoke_staging_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn phase_staging_carries_gls_dependency_closure() {
+        // R2b: phase staging copies the full GLS companion set (quality,
+        // estimator, retained calibration, covariance) alongside XY, so
+        // staged reruns reconstruct uncertainty without external files.
+        let dir = staging_dir("closure");
+        let mut cfg = test_config(vec![1], vec![3]);
+        cfg.source_path = dir.join("config.toml");
+        cfg.set_artifact_root(dir.clone());
+        let paths = cfg.paths();
+        let lockin = paths.analysis_dir().join("lockin");
+        std::fs::create_dir_all(&lockin).unwrap();
+        for name in [
+            "ch3_xy.csv",
+            "ch3_xy.npy",
+            "ch3_quality.csv",
+            "ch3_estimator.json",
+            "ch3_calibration.json",
+            "ch3_covariance.csv",
+            "ch3_covariance.npy",
+        ] {
+            std::fs::write(lockin.join(name), b"staged-bytes").unwrap();
+        }
+        std::fs::write(paths.analysis_manifest(), "schema_version = 4\n").unwrap();
+        let staging_cfg = super::prepare_analysis_staging(&cfg, AnalysisStage::Phase).unwrap();
+        let staging = staging_cfg.paths();
+        for name in [
+            "ch3_xy.csv",
+            "ch3_xy.npy",
+            "ch3_quality.csv",
+            "ch3_estimator.json",
+            "ch3_calibration.json",
+            "ch3_covariance.csv",
+            "ch3_covariance.npy",
+        ] {
+            assert!(
+                staging.analysis_dir().join("lockin").join(name).is_file(),
+                "{name} missing from phase staging"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn phase_staging_stays_boxcar_compatible_without_companions() {
+        // Missing companions stay optional: a boxcar-only stage still
+        // prepares with XY alone.
+        let dir = staging_dir("boxcar");
+        let mut cfg = test_config(vec![1], vec![3]);
+        cfg.source_path = dir.join("config.toml");
+        cfg.set_artifact_root(dir.clone());
+        let paths = cfg.paths();
+        let lockin = paths.analysis_dir().join("lockin");
+        std::fs::create_dir_all(&lockin).unwrap();
+        std::fs::write(lockin.join("ch3_xy.csv"), b"x,y\n").unwrap();
+        std::fs::write(paths.analysis_manifest(), "schema_version = 4\n").unwrap();
+        let staging_cfg = super::prepare_analysis_staging(&cfg, AnalysisStage::Phase).unwrap();
+        assert!(
+            staging_cfg
+                .paths()
+                .analysis_dir()
+                .join("lockin/ch3_xy.csv")
+                .is_file()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

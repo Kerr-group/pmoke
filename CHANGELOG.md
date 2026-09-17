@@ -4,6 +4,70 @@
 
 ### Changes
 
+- New recorded-only `pmoke noise` workflow (Issue #246). `pmoke noise diagnose`
+  plans and publishes a mechanism-agnostic diagnosis of a recorded RAW/CSV
+  source (acquisition QC, phase-binned residual variance, residual
+  autocorrelation, nuisance observability, identifiability) without requiring a
+  physical noise theory. `pmoke noise compare` freezes mode-specific calibration
+  artifacts with exact SHA-256 digests from an explicit role plan and
+  demodulates a labeled boxcar baseline plus the requested joint-GLS candidates
+  on one shared grid, reporting paired residual-scatter evidence, the distinct
+  evaluate-lockin mean-block-SD statistic, stratified paired bootstrap, complete
+  method x channel x region accounting, and separate result gates. An opt-in
+  frozen regime bank with a deterministic center schedule plus
+  `pmoke noise replay` (digest/semantic verification and phase -> MOKE -> NPY
+  replay) cover prepared conditions. The workflow never performs acquisition,
+  never mutates configuration or sources, reports failed/unavailable/unqualified
+  legs explicitly, never promotes a default, and a numeric SD improvement cannot
+  override unverified fidelity or applicability controls.
+
+- `pmoke analyze` now executes its stages in the real order — sensor,
+  reference/window preparation, signal, lock-in, phase, MOKE — instead of
+  demodulating before the signal readout. The reference fit and the shared
+  output grid are prepared once and reused by the signal readout and the
+  lock-in stage. The signal readout publishes only the combined
+  `signal/mean.png` figure (per-channel `signal/ch{N}_mean.png` figures are no
+  longer generated, including for a single entry) and reports exactly one
+  signal plot completion line with the measured elapsed time.
+
+- Lock-in quadratures now use the peak-amplitude convention (`Xk = b_k`,
+  `Yk = a_k` for `s = DC + sum_k [a_k*cos(k*phi) + b_k*sin(k*phi)]`) instead
+  of the legacy half-amplitude (`/2`). XY columns double, XY covariance
+  quadruples, and `Vm` now reports the true carrier amplitude (previously
+  half); `angle`, modulation depth, and all ratio-based quantities are
+  unchanged. The D8 formulas are untouched — only the `LI*_in` scale
+  changed. Artifacts written before this change keep the old values and
+  must not be mixed with new ones by shape alone.
+
+- Native joint GLS now prepares one immutable geometry/resource plan per run,
+  executes output windows in bounded chunks on the configured worker pool, and
+  preserves deterministic output order. `covariance_output=none` validates
+  solver covariance per window without retaining unused 12x12 matrices.
+
+- The browser waveform worker now exposes and executes the bounded
+  `joint_harmonic_gls` route alongside the legacy boxcar route. Joint requests
+  enforce window/model/output budgets before solving, preserve request
+  generations across worker restart, and report estimator capabilities; the
+  analyzer UI keeps boxcar as the default and adds an explicit estimator
+  control.
+
+- Staged publication now records a durable destination-side journal and
+  content digest before replacement. Restart recovery distinguishes an
+  unpublished/cancelled attempt, a completed generation with uncertain
+  durability, and an old-generation restore; pre-commit cancellation leaves
+  the published destination untouched.
+
+- Added the native-only `evaluate-lockin` M6 protocol report. It freezes the
+  declared reference/rotation/depth/field context, interval, detrending,
+  paired-block bootstrap, source fingerprint, and gate version; reports the
+  accepted SD-ratio gate, inconclusive insufficient-block cases, and explicit
+  unverified known-noise/dynamic/private-control states without promoting a
+  default or attributing residual variance to a physical mechanism.
+
+- Comparison method names cannot alias internal staging directories or each
+  other on case-insensitive filesystems. Calibration tail metadata is checked
+  without overflowing at the integer boundary.
+
 - `pmoke sensor` no longer requires a reference channel: it emits
   `sensor/sensor.csv` (stride-decimated rate/integral series shared with the
   sensor plots) with NPY export, and a zero reference channel is accepted as

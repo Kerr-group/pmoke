@@ -109,7 +109,7 @@ def legacy_boxcar(signal, t0, dt, f_ref, phase_rad, cycles, stride, harmonic):
     integration_points = (n - 1) // stride + 1
     i_start = 2 + (n_half + 1) // stride
     i_end = integration_points - i_start
-    scale = 1.0 / (2.0 * half_window_s)
+    scale = 1.0 / half_window_s
     edge_dt = half_window_s - n_half * dt
     step_phase = -harmonic * omega * dt
     step_sin = math.sin(step_phase)
@@ -647,7 +647,7 @@ def main():
         xy = {}
         for k in case["output_harmonics"]:
             a, b = case["coeffs"].get(k, (0.0, 0.0))
-            xy[str(k)] = {"x": b / 2.0, "y": a / 2.0}
+            xy[str(k)] = {"x": b, "y": a}
         conventions.append({
             "name": case["name"], "f_ref": case["f_ref"], "dt": case["dt"],
             "t_start": case["t_start"], "samples": case["samples"],

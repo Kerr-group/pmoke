@@ -1436,7 +1436,7 @@
       {
         "name": "analyze",
         "path": "pmoke analyze",
-        "summary": "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke",
+        "summary": "Run all analysis steps: sensor, reference, signal, lock-in, phase, moke",
         "required_feature": null,
         "arguments": [
           {
@@ -1455,6 +1455,492 @@
           }
         ],
         "subcommands": []
+      },
+      {
+        "name": "compare-lockin",
+        "path": "pmoke compare-lockin",
+        "summary": "Compare lock-in estimators on shared data and grid into a new directory",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "request",
+            "kind": "option",
+            "short": null,
+            "long": "request",
+            "value_names": [
+              "FILE"
+            ],
+            "help": "Path to the comparison request file",
+            "required": true,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "output",
+            "kind": "option",
+            "short": null,
+            "long": "output",
+            "value_names": [
+              "DIR"
+            ],
+            "help": "Override the output directory from the request",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "evaluate-lockin",
+        "path": "pmoke evaluate-lockin",
+        "summary": "Run the frozen paired-block M6 evaluation protocol and write a JSON report",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "request",
+            "kind": "option",
+            "short": null,
+            "long": "request",
+            "value_names": [
+              "FILE"
+            ],
+            "help": "Path to the evaluation request file",
+            "required": true,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "output",
+            "kind": "option",
+            "short": null,
+            "long": "output",
+            "value_names": [
+              "FILE"
+            ],
+            "help": "Write the report to FILE instead of beside the request",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          },
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "calibrate",
+        "path": "pmoke calibrate",
+        "summary": "Build, inspect, or validate a recorded-only calibration artifact",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "build",
+            "path": "pmoke calibrate build",
+            "summary": "Build an immutable calibration artifact from a recorded waveform CSV",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "request",
+                "kind": "option",
+                "short": null,
+                "long": "request",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the calibration build request file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Override the output directory from the request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "inspect",
+            "path": "pmoke calibrate inspect",
+            "summary": "Inspect a calibration artifact file (read-only)",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "artifact",
+                "kind": "option",
+                "short": null,
+                "long": "artifact",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the calibration artifact JSON file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "validate",
+            "path": "pmoke calibrate validate",
+            "summary": "Validate a calibration artifact against an inference context (read-only)",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "artifact",
+                "kind": "option",
+                "short": null,
+                "long": "artifact",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the calibration artifact JSON file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "context",
+                "kind": "option",
+                "short": null,
+                "long": "context",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the TOML applicability context file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "noise",
+        "path": "pmoke noise",
+        "summary": "Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)",
+        "required_feature": null,
+        "arguments": [
+          {
+            "id": "help",
+            "kind": "flag",
+            "short": "h",
+            "long": "help",
+            "value_names": [],
+            "help": "Print help",
+            "required": false,
+            "global": false,
+            "repeatable": false,
+            "default_values": [],
+            "possible_values": [],
+            "conflicts_with": []
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "diagnose",
+            "path": "pmoke noise diagnose",
+            "summary": "Plan a recorded-only noise diagnosis into a new destination",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "request",
+                "kind": "option",
+                "short": null,
+                "long": "request",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the noise diagnose request file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Override the output directory from the request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "compare",
+            "path": "pmoke noise compare",
+            "summary": "Run the frozen global calibration plus controlled comparison workflow",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "request",
+                "kind": "option",
+                "short": null,
+                "long": "request",
+                "value_names": [
+                  "FILE"
+                ],
+                "help": "Path to the noise compare request file",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Override the output directory from the request",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "replay",
+            "path": "pmoke noise replay",
+            "summary": "Verify a committed compare generation and replay phase -> MOKE -> NPY",
+            "required_feature": null,
+            "arguments": [
+              {
+                "id": "destination",
+                "kind": "option",
+                "short": null,
+                "long": "destination",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Committed noise compare destination directory",
+                "required": true,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "output",
+                "kind": "option",
+                "short": null,
+                "long": "output",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Replay destination (defaults to <destination>/replay)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "verify_only",
+                "kind": "flag",
+                "short": null,
+                "long": "verify-only",
+                "value_names": [],
+                "help": "Verify digests and semantic schemas only; write nothing",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              },
+              {
+                "id": "help",
+                "kind": "flag",
+                "short": "h",
+                "long": "help",
+                "value_names": [],
+                "help": "Print help",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": []
+              }
+            ],
+            "subcommands": []
+          }
+        ]
       },
       {
         "name": "process",

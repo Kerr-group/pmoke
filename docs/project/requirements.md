@@ -45,9 +45,17 @@ The following surfaces are part of the product contract:
 - The active lock-in LPF is `boxcar_legacy` only. The configuration keeps the
   `kind` discriminator so a future LPF can be added as a separately specified
   schema and runtime contract. The `[[signals]]` readout averages raw channels
-  over that same lock-in support window on the lock-in output grid; a channel
-  listed in `[[signals]]` must not overlap sensor, reference, or lock-in
-  channels.
+  over that same lock-in support window on the lock-in output grid and
+  publishes one combined plot (`signal/mean.png`); per-channel signal figures
+  are not part of the artifact contract. A channel listed in `[[signals]]`
+  must not overlap sensor, reference, or lock-in channels.
+- The native analysis workflow executes sensor, shared reference/window
+  preparation, signal, lock-in, phase, and MOKE in that order. The preparation
+  (reference fit plus the immutable stride/output grid) is computed once after
+  the sensor stage and reused by signal and lock-in; lock-in demodulation is
+  not executed early, and no stage repeats another stage's work. The numerical
+  averaging recipe, support, stride, timestamps, and published values are
+  unchanged by this ordering.
 - The sensor stage needs no reference channel: it writes the stride-decimated
   `sensor/sensor.csv` (time plus `{label} rate` and `{label} integral` columns)
   and returns full-rate series that the lock-in stage strides onto its own
@@ -86,7 +94,11 @@ The following surfaces are part of the product contract:
 - Run artifacts preserve provenance and integrity through isolated directories,
   immutable source/resolved configuration snapshots, checksums, and
   transactional publication. User-controlled paths and labels must remain
-  within their intended artifact boundary.
+  within their intended artifact boundary. Comparison method labels must not
+  alias reserved staging directories or each other on supported filesystems;
+  validate them before creating output. Calibration metadata comparisons must
+  preserve their ordering contract across the full representable integer range
+  without overflow or a process panic.
 - Public branches, Issues, PRs, logs, screenshots, and generated reports must
   contain only redacted, reproducible evidence. Never commit credentials,
   private endpoints, raw captures, personal data, machine-specific paths, or
@@ -95,6 +107,17 @@ The following surfaces are part of the product contract:
   pins, least-privilege permissions, advisory/license/source checks, and
   secret-scanning expectations. Vulnerability reports follow `SECURITY.md` and
   must never be filed with exploit details in a public Issue.
+
+- Scientific estimator comparisons keep the reference frequency, rotation,
+  modulation depth, field factor, evaluation interval, detrending policy,
+  paired block length, confidence method, and gate version explicit in the
+  request/report. The accepted benefit gate is candidate/baseline SD ratio
+  `<= 0.97` with the paired confidence-interval upper endpoint `< 1`; too few
+  independent blocks or an unconfirmed retained physical feature/fidelity
+  tolerance produces `inconclusive`, not a pass. A completed negative result
+  remains a completed report, and residual variance is not assigned a
+  physical noise mechanism. Evaluation reports do not change the estimator
+  default or authorize publication of private measurement evidence.
 
 ## Change acceptance
 

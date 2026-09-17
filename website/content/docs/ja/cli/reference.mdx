@@ -33,7 +33,11 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 | [`pmoke signal`](#pmoke-signal) | lock-in窓での生信号channel平均 | core |
 | [`pmoke phase`](#pmoke-phase) | lock-in解析の参照位相回転 | core |
 | [`pmoke moke`](#pmoke-moke) | Kerr角度を計算 | core |
-| [`pmoke analyze`](#pmoke-analyze) | reference・sensor・lock-in・signal・phase・mokeの全解析 | core |
+| [`pmoke analyze`](#pmoke-analyze) | sensor・reference・signal・lock-in・phase・mokeの全解析 | core |
+| [`pmoke compare-lockin`](#pmoke-compare-lockin) | 共有データ・gridでのlock-in推定器比較（新規directoryへ） | core |
+| [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | 固定済みpaired block M6評価protocolの実行とJSON report出力 | core |
+| [`pmoke calibrate`](#pmoke-calibrate) | 記録済みデータからの較正artifactのbuild・inspect・validate | core |
+| [`pmoke noise`](#pmoke-noise) | 記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246） | core |
 | [`pmoke process`](#pmoke-process) | 手動pulse trigger後のfetch・lock-in・phase・moke自動解析 | hw-core |
 | [`pmoke auto`](#pmoke-auto) | 完全自動測定・解析 | hw-core |
 | [`pmoke completions`](#pmoke-completions) | shell completion scriptの生成 | core |
@@ -516,7 +520,7 @@ pmoke moke [-h, --help]
 
 ## `pmoke analyze`
 
-reference・sensor・lock-in・signal・phase・mokeの全解析
+sensor・reference・signal・lock-in・phase・mokeの全解析
 
 ```text
 pmoke analyze [-h, --help]
@@ -524,6 +528,152 @@ pmoke analyze [-h, --help]
 
 | option | 必須 | 既定値 / 候補 | 説明 | 競合 |
 | --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | help表示 | - |
+
+
+## `pmoke compare-lockin`
+
+共有データ・gridでのlock-in推定器比較（新規directoryへ）
+
+```text
+pmoke compare-lockin --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | 必須 | - | 比較requestファイルのpath | - |
+| `--output <DIR>` | - | - | requestの出力directoryの上書き | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
+## `pmoke evaluate-lockin`
+
+固定済みpaired block M6評価protocolの実行とJSON report出力
+
+```text
+pmoke evaluate-lockin --request <FILE> [--output <FILE>] [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | 必須 | - | 評価requestファイルのpath | - |
+| `--output <FILE>` | - | - | requestと別のFILEへreportを書き出す | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
+## `pmoke calibrate`
+
+記録済みデータからの較正artifactのbuild・inspect・validate
+
+```text
+pmoke calibrate [-h, --help] <COMMAND>
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | help表示 | - |
+
+
+### `pmoke calibrate build`
+
+記録済み波形CSVからの不変較正artifactのbuild
+
+```text
+pmoke calibrate build --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | 必須 | - | 較正build requestファイルのpath | - |
+| `--output <DIR>` | - | - | requestの出力directoryの上書き | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
+### `pmoke calibrate inspect`
+
+較正artifactファイルのinspect（読み取り専用）
+
+```text
+pmoke calibrate inspect --artifact <FILE> [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--artifact <FILE>` | 必須 | - | 較正artifact JSONファイルのpath | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
+### `pmoke calibrate validate`
+
+推論contextに対する較正artifactのvalidate（読み取り専用）
+
+```text
+pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--artifact <FILE>` | 必須 | - | 較正artifact JSONファイルのpath | - |
+| `--context <FILE>` | 必須 | - | 適用性context TOMLファイルのpath | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
+## `pmoke noise`
+
+記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246）
+
+```text
+pmoke noise [-h, --help] <COMMAND>
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `-h, --help` | - | - | help表示 | - |
+
+
+### `pmoke noise diagnose`
+
+記録済みデータのノイズ診断計画（新規destinationへ）
+
+```text
+pmoke noise diagnose --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | 必須 | - | ノイズ診断requestファイルのpath | - |
+| `--output <DIR>` | - | - | requestの出力directoryの上書き | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
+### `pmoke noise compare`
+
+凍結グローバル較正と比較ワークフローの実行
+
+```text
+pmoke noise compare --request <FILE> [--output <DIR>] [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--request <FILE>` | 必須 | - | ノイズ比較requestファイルのpath | - |
+| `--output <DIR>` | - | - | requestの出力directoryの上書き | - |
+| `-h, --help` | - | - | help表示 | - |
+
+
+### `pmoke noise replay`
+
+コミット済み比較世代の検証とphase → MOKE → NPY replay
+
+```text
+pmoke noise replay --destination <DIR> [--output <DIR>] [--verify-only] [-h, --help]
+```
+
+| option | 必須 | 既定値 / 候補 | 説明 | 競合 |
+| --- | :---: | --- | --- | --- |
+| `--destination <DIR>` | 必須 | - | コミット済みノイズ比較destination directory | - |
+| `--output <DIR>` | - | - | replay先（既定: &lt;destination&gt;/replay） | - |
+| `--verify-only` | - | - | digestと意味スキーマの検証のみ（書き込みなし） | - |
 | `-h, --help` | - | - | help表示 | - |
 
 

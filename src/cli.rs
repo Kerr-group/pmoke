@@ -108,8 +108,36 @@ pub enum Command {
     /// Deprecated alias for `moke`
     #[command(hide = true)]
     Kerr,
-    /// Run all analysis steps: reference, sensor, lock-in, signal, phase, moke
+    /// Run all analysis steps: sensor, reference, signal, lock-in, phase, moke
     Analyze,
+    /// Compare lock-in estimators on shared data and grid into a new directory
+    CompareLockin {
+        /// Path to the comparison request file
+        #[arg(long, value_name = "FILE")]
+        request: std::path::PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Run the frozen paired-block M6 evaluation protocol and write a JSON report
+    EvaluateLockin {
+        /// Path to the evaluation request file
+        #[arg(long, value_name = "FILE")]
+        request: std::path::PathBuf,
+        /// Write the report to FILE instead of beside the request
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Build, inspect, or validate a recorded-only calibration artifact
+    Calibrate {
+        #[command(subcommand)]
+        command: CalibrateCommand,
+    },
+    /// Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)
+    Noise {
+        #[command(subcommand)]
+        command: NoiseCommand,
+    },
     /// Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)
     #[cfg(feature = "hw-core")]
     Process,
@@ -299,6 +327,68 @@ pub enum RawCommand {
         /// RAW acquisition directory (defaults to acquisition/ with legacy fallback)
         #[arg(long, value_name = "DIR")]
         input: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CalibrateCommand {
+    /// Build an immutable calibration artifact from a recorded waveform CSV
+    Build {
+        /// Path to the calibration build request file
+        #[arg(long, value_name = "FILE")]
+        request: PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
+    /// Inspect a calibration artifact file (read-only)
+    Inspect {
+        /// Path to the calibration artifact JSON file
+        #[arg(long, value_name = "FILE")]
+        artifact: PathBuf,
+    },
+    /// Validate a calibration artifact against an inference context (read-only)
+    Validate {
+        /// Path to the calibration artifact JSON file
+        #[arg(long, value_name = "FILE")]
+        artifact: PathBuf,
+        /// Path to the TOML applicability context file
+        #[arg(long, value_name = "FILE")]
+        context: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NoiseCommand {
+    /// Plan a recorded-only noise diagnosis into a new destination
+    Diagnose {
+        /// Path to the noise diagnose request file
+        #[arg(long, value_name = "FILE")]
+        request: PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
+    /// Run the frozen global calibration plus controlled comparison workflow
+    Compare {
+        /// Path to the noise compare request file
+        #[arg(long, value_name = "FILE")]
+        request: PathBuf,
+        /// Override the output directory from the request
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
+    /// Verify a committed compare generation and replay phase -> MOKE -> NPY
+    Replay {
+        /// Committed noise compare destination directory
+        #[arg(long, value_name = "DIR")]
+        destination: PathBuf,
+        /// Replay destination (defaults to <destination>/replay)
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Verify digests and semantic schemas only; write nothing
+        #[arg(long)]
+        verify_only: bool,
     },
 }
 

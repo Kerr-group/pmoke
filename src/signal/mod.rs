@@ -136,7 +136,10 @@ pub fn run_signal_analysis<'a>(
         .iter()
         .map(|signal| signal.unit.clone())
         .collect::<Vec<_>>();
-    crate::plot::run_plot(
+    // One combined figure holds every configured signal as its own panel.
+    // Per-channel `signal/ch{N}_mean.png` figures are intentionally never
+    // rendered, including for a single entry (2026-09-16 amendment).
+    crate::plot::run_plot_with_duration(
         &cfg.plot,
         &cfg.paths().signal_combined_plot(),
         "plotting signal means",
@@ -147,26 +150,6 @@ pub fn run_signal_analysis<'a>(
                 .context("failed to plot signal means")
         },
     )?;
-    for (entry, mean) in cfg.signals.iter().zip(means.iter()) {
-        crate::plot::run_plot(
-            &cfg.plot,
-            &cfg.paths().signal_channel_plot(entry.channel),
-            format!("plotting signal ch{}", entry.channel),
-            format!("signal ch{} plot completed", entry.channel),
-            |output| {
-                SignalPlotter {}
-                    .plot(
-                        &cfg.plot,
-                        output,
-                        t_stride,
-                        vec![mean.clone()],
-                        std::slice::from_ref(&entry.label),
-                        std::slice::from_ref(&entry.unit),
-                    )
-                    .context("failed to plot signal means")
-            },
-        )?;
-    }
     Ok(outputs)
 }
 

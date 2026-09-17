@@ -6,9 +6,12 @@ pub mod automeasure;
 #[cfg(feature = "hw-core")]
 pub mod autoshot;
 pub mod bench;
+pub mod calibrate;
+pub mod compare;
 pub mod completions;
 pub mod config;
 pub mod doctor;
+pub mod evaluate;
 pub mod export;
 #[cfg(feature = "hw-core")]
 pub mod fetch;
@@ -16,10 +19,12 @@ pub mod instruments;
 pub mod li;
 pub mod moke;
 pub mod monitor;
+pub mod noise;
 pub mod phase;
 #[cfg(feature = "hw-core")]
 pub mod process;
 pub mod raw;
+pub mod recovery;
 pub mod reference;
 pub mod run_dir;
 #[cfg(feature = "hw-core")]

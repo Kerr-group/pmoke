@@ -19,6 +19,7 @@ const CONCEPTS = [
   ['scope', ['oscilloscope', 'scope', 'dho5108', 'waveform source', 'オシロスコープ', 'オシロ', 'dho5108']],
   ['generator', ['function generator', 'generator', 'wf1946b', 'signal source', 'ファンクションジェネレーター', '信号発生器', 'wf1946b']],
   ['multimeter', ['multimeter', 'keithley', '2010', 'dmm', 'マルチメーター', 'デジタルマルチメーター', 'keithley']],
+  ['noise', ['noise', 'diagnosis', 'diagnostics', 'diagnose', 'signal diagnostics', 'diagnostics report', 'residual', 'ノイズ', 'ノイズ診断', '診断レポート', '信号診断', '診断']],
   ['acquire', ['acquire', 'acquisition', 'fetch data', 'capture', 'record waveform', '測定', '取得', '収録', '波形取得']],
   ['waveform', ['waveform', 'sample rate', 'timebase', 'csv', 'signal data', '波形', 'サンプルレート', '時間軸', 'csv']],
   ['reference', ['reference signal', 'reference fft', 'f_ref', 'frequency reference', 'eom drive', 'eom sine', 'function generator signal', 'fg signal', 'electrical reference', 'sagnac', 'zero-area', 'zero area', 'zero-loop-area', 'loopless sagnac', 'loop-less sagnac', '参照信号', '基準信号', '参照 fft', '基準周波数', 'eom駆動', 'eom正弦波', 'ファンクションジェネレータ信号', '電気基準信号', 'サニャック', 'ゼロエリア']],

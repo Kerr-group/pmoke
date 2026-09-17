@@ -17,9 +17,11 @@ import { basePath } from '@/lib/shared';
 
 type Locale = 'en' | 'ja';
 type SourceMode = 'synthetic' | 'csv';
+type Estimator = 'boxcar_legacy' | 'joint_harmonic_gls';
 type RunState = 'loading' | 'ready' | 'running' | 'complete' | 'error';
 
 type Parameters = {
+  estimator: Estimator;
   samples: number;
   sampleRateHz: number;
   referenceFrequencyHz: number;
@@ -103,6 +105,7 @@ type WorkerMessage =
   | { type: 'error'; generation: number; message: string };
 
 const DEFAULTS: Parameters = {
+  estimator: 'boxcar_legacy',
   samples: 20_000,
   sampleRateHz: 100_000,
   referenceFrequencyHz: 1_000,
@@ -127,6 +130,7 @@ const COPY = {
     complete: 'PARITY VERIFIED', error: 'Analysis unavailable', progress: 'RUN PROGRESS',
     signal: 'INPUT WAVEFORM', lockin: 'LOCK-IN X / Y', polar: 'MAGNITUDE / PHASE',
     kerr: 'KERR ANGLE / FILTER RESPONSE', vm: 'MONITOR VOLTAGE', sigmean: 'SIGNAL MEAN', controls: 'ANALYSIS CONTROL', result: 'RUN METRICS',
+    estimator: 'ESTIMATOR', estimatorBoxcar: 'Boxcar legacy', estimatorJoint: 'Joint harmonic GLS',
     filter: 'FILTER', filterValue: 'Boxcar legacy', parity: 'Native-equivalent', unsupported: 'Outside parity scope',
     export: 'Export CSV', copy: 'Copy summary', copied: 'Summary copied', samples: 'Samples',
     sampleRate: 'Sample rate', frequency: 'Reference', amplitude: 'Amplitude', phase: 'Signal phase',
@@ -151,6 +155,7 @@ const COPY = {
     complete: '数値一致を確認済み', error: '解析機能の利用不可', progress: '実行進捗',
     signal: '入力波形', lockin: 'LOCK-IN X / Y', polar: '振幅 / 位相',
     kerr: 'KERR ANGLE / フィルター応答', vm: 'モニタ電圧', sigmean: '信号平均', controls: '解析制御', result: '実行指標',
+    estimator: '推定器', estimatorBoxcar: '従来型Boxcar', estimatorJoint: 'Joint harmonic GLS',
     filter: 'フィルター', filterValue: '従来型Boxcar', parity: 'ネイティブ版と数値一致',
     unsupported: '数値一致の対象外', export: 'CSVを出力', copy: '要約をコピー', copied: '要約コピー済み',
     samples: 'サンプル数', sampleRate: 'サンプルレート', frequency: '参照周波数', amplitude: '振幅',
@@ -491,9 +496,13 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
         <section className="analyzer-controls" aria-labelledby="analysis-control-heading">
           <div className="analyzer-section-title"><span id="analysis-control-heading">{text.controls}</span><small>{text.local}</small></div>
           <div className="filter-contract">
-            <span>{text.filter}</span><strong>{text.filterValue}</strong><i><Check size={13} />{text.parity}</i>
+            <span>{text.filter}</span><strong>{parameters.estimator === 'joint_harmonic_gls' ? text.estimatorJoint : text.filterValue}</strong><i><Check size={13} />{text.parity}</i>
           </div>
           <fieldset className="parameter-grid" disabled={busy}>
+            <SelectControl label={text.estimator} value={parameters.estimator} options={[
+              ['boxcar_legacy', text.estimatorBoxcar],
+              ['joint_harmonic_gls', text.estimatorJoint],
+            ] as const} onChange={(estimator) => setParameters((current) => ({ ...current, estimator }))} />
             <NumberControl label={text.samples} value={parameters.samples} min={64} max={limits?.max_demo_samples ?? 100_000} step={1_000}
               disabled={sourceMode === 'csv'} onChange={(samples) => setParameters((current) => ({ ...current, samples }))} />
             <NumberControl label={text.sampleRate} value={parameters.sampleRateHz} min={1_000} max={10_000_000} step={1_000} suffix="Hz"
@@ -547,6 +556,17 @@ export function WaveformAnalyzer({ locale = 'en' }: { locale?: Locale }) {
       </div>
     </div>
   );
+}
+
+function SelectControl({ label, value, options, onChange }: {
+  label: string;
+  value: Estimator;
+  options: readonly [Estimator, string][];
+  onChange: (value: Estimator) => void;
+}) {
+  return <label className="number-control"><span>{label}</span><div><select value={value} onChange={(event) => onChange(event.target.value as Estimator)}>
+    {options.map(([option, label]) => <option key={option} value={option}>{label}</option>)}
+  </select></div></label>;
 }
 
 function NumberControl({ label, value, min, max, step, suffix, disabled, onChange }: {

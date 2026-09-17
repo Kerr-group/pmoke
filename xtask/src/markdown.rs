@@ -355,9 +355,62 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Average raw signal channels over the lock-in window" => "lock-in窓での生信号channel平均",
         "Rotate the reference phase for lock-in analysis" => "lock-in解析の参照位相回転",
         "Calculate the Kerr angle" => "Kerr角度を計算",
-        "Run all analysis steps: reference, sensor, lock-in, signal, phase, moke" => {
-            "reference・sensor・lock-in・signal・phase・mokeの全解析"
+        "Run all analysis steps: sensor, reference, signal, lock-in, phase, moke" => {
+            "sensor・reference・signal・lock-in・phase・mokeの全解析"
         }
+        "Compare lock-in estimators on shared data and grid into a new directory" => {
+            "共有データ・gridでのlock-in推定器比較（新規directoryへ）"
+        }
+        "Run the frozen paired-block M6 evaluation protocol and write a JSON report" => {
+            "固定済みpaired block M6評価protocolの実行とJSON report出力"
+        }
+        "Path to the evaluation request file" => "評価requestファイルのpath",
+        "Write the report to FILE instead of beside the request" => {
+            "requestと別のFILEへreportを書き出す"
+        }
+        "Build, inspect, or validate a recorded-only calibration artifact" => {
+            "記録済みデータからの較正artifactのbuild・inspect・validate"
+        }
+        "Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)" => {
+            "記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246）"
+        }
+        "Recorded-only pulse-noise comparison (PN-M2, Issue #246)" => {
+            "記録済みデータのパルスノイズ比較（PN-M2、Issue #246）"
+        }
+        "Run the frozen global calibration plus controlled comparison workflow" => {
+            "凍結グローバル較正と比較ワークフローの実行"
+        }
+        "Verify a committed compare generation and replay phase -> MOKE -> NPY" => {
+            "コミット済み比較世代の検証とphase → MOKE → NPY replay"
+        }
+        "Committed noise compare destination directory" => {
+            "コミット済みノイズ比較destination directory"
+        }
+        "Replay destination (defaults to <destination>/replay)" => {
+            "replay先（既定: <destination>/replay）"
+        }
+        "Verify digests and semantic schemas only; write nothing" => {
+            "digestと意味スキーマの検証のみ（書き込みなし）"
+        }
+        "Path to the noise compare request file" => "ノイズ比較requestファイルのpath",
+        "Plan a recorded-only noise diagnosis into a new destination" => {
+            "記録済みデータのノイズ診断計画（新規destinationへ）"
+        }
+        "Path to the noise diagnose request file" => "ノイズ診断requestファイルのpath",
+        "Build an immutable calibration artifact from a recorded waveform CSV" => {
+            "記録済み波形CSVからの不変較正artifactのbuild"
+        }
+        "Path to the calibration build request file" => "較正build requestファイルのpath",
+        "Path to the calibration artifact JSON file" => "較正artifact JSONファイルのpath",
+        "Path to the TOML applicability context file" => "適用性context TOMLファイルのpath",
+        "Inspect a calibration artifact file (read-only)" => {
+            "較正artifactファイルのinspect（読み取り専用）"
+        }
+        "Validate a calibration artifact against an inference context (read-only)" => {
+            "推論contextに対する較正artifactのvalidate（読み取り専用）"
+        }
+        "Path to the comparison request file" => "比較requestファイルのpath",
+        "Override the output directory from the request" => "requestの出力directoryの上書き",
         "Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke)" => {
             "手動pulse trigger後のfetch・lock-in・phase・moke自動解析"
         }

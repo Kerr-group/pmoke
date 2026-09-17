@@ -113,6 +113,22 @@ impl ArtifactPaths {
             .join(format!("ch{channel}_quality.csv"))
     }
 
+    /// Frozen per-channel estimator snapshot (JSON only, never NPY).
+    pub fn lockin_estimator_json(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_estimator.json"))
+    }
+
+    /// Retained exact calibration model bytes per channel (v4 manifests):
+    /// the validated artifact bytes the loader hashed, so staged reruns
+    /// survive external model removal.
+    pub fn lockin_calibration_json(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_calibration.json"))
+    }
+
     /// Conditional XY covariance artifact (CSV plus NPY mirror).
     pub fn lockin_covariance_csv(&self, channel: u8) -> PathBuf {
         self.analysis_dir()
@@ -140,6 +156,12 @@ impl ArtifactPaths {
             .join(format!("ch{channel}_rotated.csv"))
     }
 
+    pub fn lockin_rotated_covariance_csv(&self, channel: u8) -> PathBuf {
+        self.analysis_dir()
+            .join("lockin")
+            .join(format!("ch{channel}_rotated_covariance.csv"))
+    }
+
     pub fn lockin_rotated_npy(&self, channel: u8) -> PathBuf {
         self.analysis_dir()
             .join("lockin")
@@ -152,6 +174,12 @@ impl ArtifactPaths {
 
     pub fn moke_npy(&self) -> PathBuf {
         self.analysis_dir().join("moke").join("moke.npy")
+    }
+
+    /// Conditional MOKE angle variance per output window (R2c, CSV-only):
+    /// one combined file with one column per channel, beside moke.csv.
+    pub fn moke_variance_csv(&self) -> PathBuf {
+        self.analysis_dir().join("moke").join("moke_variance.csv")
     }
 
     pub fn signal_dir(&self) -> PathBuf {
@@ -170,12 +198,10 @@ impl ArtifactPaths {
         self.plot_dir().join("signal")
     }
 
+    /// One combined plot holding every configured signal as its own panel.
+    /// Per-channel signal figures are not part of the artifact contract.
     pub fn signal_combined_plot(&self) -> PathBuf {
         self.signal_plot_dir().join("mean.png")
-    }
-
-    pub fn signal_channel_plot(&self, channel: u8) -> PathBuf {
-        self.signal_plot_dir().join(format!("ch{channel}_mean.png"))
     }
 
     pub fn sensor_dir(&self) -> PathBuf {
@@ -372,12 +398,24 @@ impl ArtifactResolver {
         self.paths.lockin_quality_csv(channel)
     }
 
+    pub fn lockin_estimator_json(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_estimator_json(channel)
+    }
+
+    pub fn lockin_calibration_json(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_calibration_json(channel)
+    }
+
     pub fn lockin_covariance_csv(&self, channel: u8) -> PathBuf {
         self.paths.lockin_covariance_csv(channel)
     }
 
     pub fn lockin_covariance_npy(&self, channel: u8) -> PathBuf {
         self.paths.lockin_covariance_npy(channel)
+    }
+
+    pub fn lockin_rotated_covariance_csv(&self, channel: u8) -> PathBuf {
+        self.paths.lockin_rotated_covariance_csv(channel)
     }
 
     pub fn lockin_rotated_csv(&self, channel: u8) -> PathBuf {
@@ -445,6 +483,10 @@ impl ArtifactResolver {
             return legacy_path;
         }
         new_path
+    }
+
+    pub fn moke_variance_csv(&self) -> PathBuf {
+        self.paths.moke_variance_csv()
     }
 
     pub fn moke_npy(&self) -> PathBuf {

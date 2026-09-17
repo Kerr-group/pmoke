@@ -61,6 +61,7 @@ fn test_inputs<'a>(
         f_ref: 1_000.0,
         omega_tref: 0.0,
         sample_rate: 100_000.0,
+        tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
     }
 }
 
@@ -134,13 +135,13 @@ fn identity_recovers_tone_matching_boxcar() {
         assert_eq!(row.noise_mode, "identity");
     }
 
-    // h1 recovers the tone amplitude as a half-amplitude (boxcar scale).
+    // h1 recovers the tone peak amplitude (peak-amplitude XY convention).
     let x1 = output.result[0][0][grid / 2];
     let y1 = output.result[0][1][grid / 2];
     let amplitude = (x1 * x1 + y1 * y1).sqrt();
     assert!(
-        (amplitude - 0.5).abs() < 1e-9,
-        "h1 half-amplitude {amplitude}"
+        (amplitude - 1.0).abs() < 1e-9,
+        "h1 peak amplitude {amplitude}"
     );
 }
 
@@ -371,6 +372,29 @@ fn quality_artifact_registers_through_manifest_refresh() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn covariance_none_does_not_retain_per_window_matrices() {
+    let (time, signal) = tone_waveform_with(1_500);
+    let mut lockin = joint_lockin();
+    let LockinEstimator::JointHarmonicGls(gls) = &mut lockin.estimator else {
+        unreachable!()
+    };
+    gls.covariance_output = GlsCovarianceOutput::None;
+    let LockinEstimator::JointHarmonicGls(gls) = &lockin.estimator else {
+        unreachable!()
+    };
+    let inputs = test_inputs(&lockin, gls, &time);
+    let output = run_joint_li(
+        &inputs,
+        &[3],
+        &[signal.as_slice()],
+        &SyntheticNoiseModelSource::identity(0.01),
+    )
+    .unwrap();
+    assert_eq!(output.covariance.len(), 1);
+    assert!(output.covariance[0].is_empty());
+    assert_eq!(output.quality[0].len(), output.result[0][0].len());
+}
 #[test]
 fn window_support_matches_boxcar_taps() {
     // A unit impulse at input j may influence only outputs whose window
@@ -607,8 +631,8 @@ fn covariance_covers_known_noise() {
             let x1 = output.result[0][0][choice];
             let variance = output.covariance[0][choice][0][0];
             assert!(variance > 0.0);
-            // Phase-zero unit tone: X1 truth is the 1/2 half-amplitude.
-            if ((x1 - 0.5) / variance.sqrt()).abs() <= 1.0 {
+            // Phase-zero unit tone: X1 truth is the peak amplitude 1.0.
+            if ((x1 - 1.0) / variance.sqrt()).abs() <= 1.0 {
                 inside += 1;
             }
             total += 1;
@@ -773,4 +797,124 @@ fn quality_writer_rejects_non_finite_rows() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(WindowStatus::for_jitter(0.0), WindowStatus::Ok);
     assert_eq!(WindowStatus::for_jitter(1e-9), WindowStatus::Warning);
+}
+
+#[test]
+fn short_trace_fails_without_partial_output() {
+    // A record shorter than the window cannot yield outputs: the engine
+    // fails during geometry/trimming with a descriptive error instead of
+    // padding, shrinking the window, or publishing rows (insufficient
+    // support, AT-024).
+    let dt = 1.0e-5;
+    let time: Vec<f64> = (0..100).map(|index| index as f64 * dt).collect();
+    let signal = vec![0.0; 100];
+    let lockin = joint_lockin();
+    let gls = match &lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => gls,
+        LockinEstimator::BoxcarLegacy => unreachable!(),
+    };
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, gls, &time);
+    let error = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source)
+        .err()
+        .unwrap();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("edge trim")
+            || message.contains("empty")
+            || message.contains("geometry")
+            || message.contains("support")
+            || message.contains("window"),
+        "unhelpful short-trace error: {message}"
+    );
+}
+
+#[test]
+fn engine_output_is_invariant_to_worker_settings() {
+    // The direct engine processes the full grid in one pass: the workers
+    // setting must not change any output value, quality row, covariance,
+    // or snapshot (AT-012 worker invariance; a future parallel engine must
+    // preserve this contract).
+    let (time, signal) = tone_waveform_with(1_500);
+    let run = |workers: usize| {
+        let mut lockin = joint_lockin();
+        lockin.workers = workers;
+        let gls = match &lockin.estimator {
+            LockinEstimator::JointHarmonicGls(gls) => gls.clone(),
+            LockinEstimator::BoxcarLegacy => unreachable!(),
+        };
+        let source = SyntheticNoiseModelSource::identity(0.01);
+        let inputs = test_inputs(&lockin, &gls, &time);
+        run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap()
+    };
+    let single = run(1);
+    for workers in [2, 6, 32] {
+        let parallel = run(workers);
+        assert_eq!(single.result, parallel.result);
+        assert_eq!(single.quality, parallel.quality);
+        assert_eq!(single.covariance, parallel.covariance);
+        assert_eq!(
+            single.base_index_range, parallel.base_index_range,
+            "workers={workers}"
+        );
+    }
+}
+
+#[test]
+fn quality_center_index_matches_raw_timebase() {
+    // R0: original_center_index must be the original-sample center index,
+    // consistent with time_s. Stride 10, dt=1e-5: the first quality row
+    // must carry a raw index whose time equals its time_s.
+    let (time, signal) = tone_waveform_with(3_000);
+    let lockin = joint_lockin();
+    assert_eq!(lockin.stride_samples, 10);
+    let gls = match &lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => gls,
+        LockinEstimator::BoxcarLegacy => unreachable!(),
+    };
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, gls, &time);
+    let output = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    let rows = &output.quality[0];
+    assert!(!rows.is_empty());
+    let dt = 1.0e-5;
+    for row in rows.iter() {
+        // Index lives in the raw-sample namespace...
+        assert_eq!(time[row.original_center_index], row.time_s);
+        // ...and equals (time - t0) / dt rounded.
+        let expected = ((row.time_s - time[0]) / dt).round() as usize;
+        assert_eq!(row.original_center_index, expected);
+        // A decimated counter would be exactly stride times smaller here.
+        assert_ne!(row.original_center_index * 10, expected);
+    }
+}
+
+#[test]
+fn quality_center_index_matches_raw_timebase_with_origin() {
+    // Same contract with a nonzero time origin: the index still resolves
+    // against the actual raw timebase, not a zero-based assumption.
+    // origin=1000.0 is exactly representable and keeps rounding inside the
+    // timebase tolerance (origin=1e6 would not: its grid rounding exceeds
+    // the uniformity allowance, a validator matter unrelated to R0).
+    let dt = 1.0e-5;
+    let origin = 1000.0;
+    let samples = 3_000usize;
+    let time: Vec<f64> = (0..samples).map(|i| origin + i as f64 * dt).collect();
+    let signal: Vec<f64> = time
+        .iter()
+        .map(|&t| (2.0 * PI * 1_000.0 * t + 0.3).sin())
+        .collect();
+    let lockin = joint_lockin();
+    let gls = match &lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => gls,
+        LockinEstimator::BoxcarLegacy => unreachable!(),
+    };
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, gls, &time);
+    let output = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    let rows = &output.quality[0];
+    assert!(!rows.is_empty());
+    for row in rows.iter() {
+        assert_eq!(time[row.original_center_index], row.time_s);
+    }
 }

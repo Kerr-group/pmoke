@@ -3,11 +3,11 @@
 //! This module runs the joint estimator over the same support grid as the
 //! legacy boxcar path and returns boxcar-shaped outputs so downstream
 //! phase/MOKE stages work unchanged. Noise models arrive through a
-//! [`NoiseModelSource`]; only synthetic sources exist in this slice, so the
-//! file-backed calibration loader (WP-5B) plugs in without touching the
-//! engine.
+//! [`NoiseModelSource`]; production uses the file-backed calibration loader
+//! ([`crate::lockin::model_loading`]), tests use synthetic sources.
 
 use crate::config::{GlsCovarianceOutput, GlsNoiseMode, JointHarmonicGlsConfig, Lockin};
+use crate::lockin::estimator_snapshot::{EstimatorSnapshot, build_estimator_snapshot};
 use crate::lockin::lockin_params::LockinParams;
 use crate::lockin::provenance::LockinProvenance;
 use crate::utils::time_axis::TimeAxisRef;
@@ -16,17 +16,26 @@ use pmoke_analysis_core::{
     CorrelationKernel, HarmonicSignalModel, JointEstimate, JointHarmonicSettings,
     JointSolverTolerances, NoiseModel, estimate_joint,
 };
+use rayon::prelude::*;
+
+/// Upper bound for temporary per-window allocations during native execution.
+/// Final artifacts remain ordered and compatible, while a large record never
+/// creates one temporary vector for the entire output grid.
+const JOINT_OUTPUT_CHUNK: usize = 256;
 
 /// Solver identity recorded in GLS provenance (FR-045).
 pub const JOINT_SOLVER_ID: &str = "joint-direct-qr/1";
 
 /// Immutable model binding receipt: which artifact bytes back a channel.
+/// `bytes` carries the exact validated artifact bytes the loader hashed
+/// (v4 retention); `None` for synthetic sources that hold no file bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelBinding {
     pub channel: u8,
     pub path: String,
     pub sha256: String,
     pub noise_mode: GlsNoiseMode,
+    pub bytes: Option<Vec<u8>>,
 }
 
 /// Noise-model provider seam. The file-backed calibration loader arrives in
@@ -72,6 +81,7 @@ impl NoiseModelSource for SyntheticNoiseModelSource {
             path: format!("synthetic:{}:ch{channel}", self.label),
             sha256: "synthetic".to_string(),
             noise_mode,
+            bytes: None,
         };
         let model = match noise_mode {
             GlsNoiseMode::Identity => NoiseModel {
@@ -133,7 +143,10 @@ impl NoiseModelSource for SyntheticNoiseModelSource {
 /// One quality row per executed window (INTERFACES section 5 contract).
 ///
 /// The CSV column set is fixed: `original_center_index,time_s,
-/// scaled_design_condition,residual_rms_v,rank,status`. `jitter_applied_v2`
+/// scaled_design_condition,residual_rms_v,rank,status`. `original_center_index`
+/// is the original-sample center index (consistent with `time_s`); artifacts
+/// written before this convention carry the decimated output counter instead
+/// and must be interpreted under that old convention. `jitter_applied_v2`
 /// and `noise_mode` ride along in memory for the estimator snapshot (next
 /// slice) but are never CSV columns: a window that needed regularization is
 /// flagged `warning`, and fatal windows abort publication instead of
@@ -195,6 +208,9 @@ pub struct JointRunInputs<'a> {
     pub f_ref: f64,
     pub omega_tref: f64,
     pub sample_rate: f64,
+    /// Effective solver tolerances, recorded verbatim in the estimator
+    /// snapshot (no hidden policy).
+    pub tolerances: JointSolverTolerances,
 }
 
 /// Joint lock-in outputs in boxcar-compatible layout.
@@ -208,10 +224,14 @@ pub struct JointRunOutput {
     /// Per-channel quality rows aligned with the output grid.
     pub quality: Vec<Vec<QualityRow>>,
     /// Per-channel, per-output 12x12 design-model covariance in XY order
-    /// (half-amplitude scaled). Always collected in memory so staged reruns
-    /// can reconstruct cross terms (INTERFACES 5.1a); the none/diagonal/full
-    /// serialization mode only controls which artifact is published.
+    /// (peak-amplitude quantities). `covariance_output=none` deliberately returns
+    /// empty per-channel vectors after validating each solver result, so
+    /// native memory does not retain an unused 144-f64 matrix per output.
     pub covariance: Vec<XyCovariances>,
+    /// Per-channel frozen estimator snapshots for staged reruns.
+    pub snapshots: Vec<EstimatorSnapshot>,
+    /// Per-channel retained calibration bindings (exact validated bytes).
+    pub bindings: Vec<ModelBinding>,
     pub provenance: LockinProvenance,
     pub base_index_range: (usize, usize),
     pub output_index_range: (usize, usize),
@@ -312,8 +332,8 @@ pub fn covariance_csv_header(mode: GlsCovarianceOutput) -> Result<Vec<String>> {
 }
 
 /// Packs one 12x12 XY covariance into a serialized row matching
-/// [`covariance_csv_header`]. Values are already half-amplitude scaled (1/4)
-/// by the core mapper; this function only selects and orders entries.
+/// [`covariance_csv_header`]. Values arrive in peak-amplitude XY units
+/// from the core mapper; this function only selects and orders entries.
 pub fn pack_covariance_row(
     covariance_xy: &[Vec<f64>],
     mode: GlsCovarianceOutput,
@@ -452,6 +472,35 @@ impl std::fmt::Display for GlsFailure {
     }
 }
 
+/// Immutable native execution plan. Geometry and resource bounds are
+/// prepared once per run and shared by every signal channel; per-window
+/// scratch remains bounded by `chunk_size`.
+#[derive(Debug, Clone, Copy)]
+struct PreparedJointPlan {
+    params: LockinParams,
+    workers: usize,
+    chunk_size: usize,
+}
+
+impl PreparedJointPlan {
+    fn prepare(params: LockinParams, lockin: &Lockin) -> Result<Self> {
+        validate_joint_output_range(params, lockin)?;
+        let output_count = params
+            .i_end
+            .checked_sub(params.i_start)
+            .and_then(|span| span.checked_add(1))
+            .context("joint lock-in output count overflow")?;
+        if output_count == 0 {
+            bail!("joint lock-in prepared plan has no output windows");
+        }
+        Ok(Self {
+            params,
+            workers: lockin.workers.max(1),
+            chunk_size: JOINT_OUTPUT_CHUNK,
+        })
+    }
+}
+
 pub fn run_joint_li(
     inputs: &JointRunInputs<'_>,
     signal_ch: &[u8],
@@ -464,6 +513,7 @@ pub fn run_joint_li(
         t,
         f_ref,
         sample_rate: sample_rate_hz,
+        tolerances,
         ..
     } = *inputs;
     if signal_ch.len() != signal_data.len() {
@@ -478,16 +528,22 @@ pub fn run_joint_li(
     }
     let params = LockinParams::from_geometry(t.len(), sample_rate_hz.recip(), f_ref, lockin)
         .context("joint lock-in geometry failed")?;
-    validate_joint_output_range(params, lockin)?;
+    let plan = PreparedJointPlan::prepare(params, lockin)?;
     let model = HarmonicSignalModel {
         fit_harmonics: gls.fit_harmonics.clone(),
         output_harmonics: gls.output_harmonics.clone(),
         envelope_degree: gls.envelope_degree,
     };
 
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(plan.workers)
+        .build()
+        .context("failed to build joint GLS worker pool")?;
+
     let mut result = Vec::with_capacity(signal_data.len());
     let mut quality = Vec::with_capacity(signal_data.len());
     let mut covariance = Vec::with_capacity(signal_data.len());
+    let mut snapshots = Vec::with_capacity(signal_data.len());
     let mut bindings = Vec::with_capacity(signal_data.len());
     for (&channel, signal) in signal_ch.iter().zip(signal_data.iter()) {
         let signal: &[f64] = signal;
@@ -498,24 +554,48 @@ pub fn run_joint_li(
         let settings = JointHarmonicSettings {
             model: model.clone(),
             noise,
-            tolerances: JointSolverTolerances::default(),
+            tolerances,
         };
         let (columns, rows, covariances) =
-            run_joint_channel(inputs, signal, channel, &params, &settings)?;
+            run_joint_channel(inputs, signal, channel, &plan, &settings, &pool)?;
         result.push(columns);
         quality.push(rows);
-        covariance.push(covariances);
+        covariance.push(
+            if matches!(gls.covariance_output, GlsCovarianceOutput::None) {
+                Vec::new()
+            } else {
+                covariances
+            },
+        );
+        snapshots.push(
+            build_estimator_snapshot(
+                channel,
+                gls,
+                &settings.noise,
+                &tolerances,
+                JOINT_SOLVER_ID,
+                f_ref,
+                inputs.omega_tref,
+                sample_rate_hz.recip(),
+                &plan.params,
+                bindings.last().expect("binding just pushed"),
+                quality.last().expect("quality just pushed"),
+            )
+            .with_context(|| format!("joint estimator snapshot failed for channel {channel}"))?,
+        );
     }
 
     let provenance =
-        LockinProvenance::from_joint(params, gls.noise_mode, &bindings, JOINT_SOLVER_ID);
+        LockinProvenance::from_joint(plan.params, gls.noise_mode, &bindings, JOINT_SOLVER_ID);
     Ok(JointRunOutput {
         result,
         quality,
         covariance,
+        snapshots,
+        bindings,
         provenance,
-        base_index_range: (params.i_start, params.i_end),
-        output_index_range: (params.i_start, params.i_end),
+        base_index_range: (plan.params.i_start, plan.params.i_end),
+        output_index_range: (plan.params.i_start, plan.params.i_end),
     })
 }
 
@@ -523,9 +603,11 @@ fn run_joint_channel(
     inputs: &JointRunInputs<'_>,
     signal: &[f64],
     channel: u8,
-    params: &LockinParams,
+    plan: &PreparedJointPlan,
     settings: &JointHarmonicSettings,
+    pool: &rayon::ThreadPool,
 ) -> Result<(XyColumns, Vec<QualityRow>, XyCovariances)> {
+    let params = plan.params;
     let JointRunInputs {
         gls,
         t,
@@ -541,64 +623,104 @@ fn run_joint_channel(
     // Same tap support as the legacy boxcar (edge legacy_trim): centers on
     // the strided grid, samples [center - n_half - 1, center + n_half + 1].
     let half_taps = params.n_half + 1;
-    for (output_index, center_k) in (params.i_start..=params.i_end).enumerate() {
-        let center = center_k * params.stride;
-        let lo = center.checked_sub(half_taps).ok_or_else(|| {
-            anyhow::anyhow!("joint lock-in window underflows for output {output_index}")
-        })?;
-        let hi = center + half_taps;
-        let window_times: Vec<f64> = (lo..=hi).map(|index| t.value_at(index)).collect();
-        let window_signal: Vec<f64> = signal
-            .get(lo..=hi)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "joint lock-in window [{lo}..={hi}] exceeds signal length {}",
-                    signal.len()
-                )
-            })?
-            .to_vec();
-        let estimate: JointEstimate = estimate_joint(
-            &window_times,
-            &window_signal,
-            f_ref,
-            omega_tref,
-            sample_rate_hz,
-            settings,
-        )
-        .map_err(|error| {
-            anyhow::anyhow!(GlsFailure {
-                code: error.code().to_string(),
-                channel,
-                window_index: output_index,
-            })
-        })
-        .with_context(|| {
-            format!(
-                "joint_harmonic_gls estimation failed (stage=lockin, channel={channel}, window={output_index}); refusing to fall back"
-            )
-        })?;
-        if estimate.xy.len() != 12 {
-            bail!(
-                "joint estimator returned {} quadratures, expected 12 (channel={channel}, window={output_index})",
-                estimate.xy.len()
-            );
-        }
-        require_xy_covariance(&estimate.covariance_xy, channel, output_index)?;
-        for (harmonic, column_pair) in columns.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-            column_pair[0].push(estimate.xy[2 * harmonic]);
-            column_pair[1].push(estimate.xy[2 * harmonic + 1]);
-        }
-        rows.push(QualityRow {
-            original_center_index: center_k,
-            time_s: t.value_at(center),
-            scaled_design_condition: estimate.condition,
-            residual_rms_v: estimate.residual_rms,
-            rank: estimate.rank,
-            status: WindowStatus::for_jitter(estimate.jitter_applied_v2),
-            jitter_applied_v2: estimate.jitter_applied_v2,
-            noise_mode: gls_noise_mode_name(gls.noise_mode),
+    for chunk_start in (0..outputs).step_by(plan.chunk_size) {
+        let chunk_end = (chunk_start + plan.chunk_size).min(outputs);
+        let estimates: Vec<(usize, Result<JointEstimate>)> = pool.install(|| {
+            (chunk_start..chunk_end)
+                .into_par_iter()
+                .map(|output_index| {
+                    let center_k = params.i_start + output_index;
+                    let center = center_k.checked_mul(params.stride).ok_or_else(|| {
+                        anyhow::anyhow!("joint lock-in center index overflow for output {output_index}")
+                    });
+                    let result = center.and_then(|center| {
+                        let lo = center.checked_sub(half_taps).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "joint lock-in window underflows for output {output_index}"
+                            )
+                        })?;
+                        let hi = center.checked_add(half_taps).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "joint lock-in window overflows for output {output_index}"
+                            )
+                        })?;
+                        if hi >= t.len() {
+                            bail!(
+                                "joint lock-in window [{lo}..={hi}] exceeds time length {}",
+                                t.len()
+                            );
+                        }
+                        let window_times: Vec<f64> =
+                            (lo..=hi).map(|index| t.value_at(index)).collect();
+                        let window_signal = signal.get(lo..=hi).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "joint lock-in window [{lo}..={hi}] exceeds signal length {}",
+                                signal.len()
+                            )
+                        })?;
+                        estimate_joint(
+                            &window_times,
+                            window_signal,
+                            f_ref,
+                            omega_tref,
+                            sample_rate_hz,
+                            settings,
+                        )
+                        .map_err(|error| {
+                            anyhow::anyhow!(GlsFailure {
+                                code: error.code().to_string(),
+                                channel,
+                                window_index: output_index,
+                            })
+                        })
+                        .with_context(|| {
+                            format!(
+                                "joint_harmonic_gls estimation failed (stage=lockin, channel={channel}, window={output_index}); refusing to fall back"
+                            )
+                        })
+                    });
+                    (output_index, result)
+                })
+                .collect()
         });
-        covariances.push(estimate.covariance_xy);
+
+        // Rayon returns the chunk in index order, but sort explicitly so the
+        // output contract stays deterministic if the execution backend changes.
+        let mut estimates = estimates;
+        estimates.sort_by_key(|(output_index, _)| *output_index);
+        for (output_index, estimate) in estimates {
+            let estimate = estimate?;
+            if estimate.xy.len() != 12 {
+                bail!(
+                    "joint estimator returned {} quadratures, expected 12 (channel={channel}, window={output_index})",
+                    estimate.xy.len()
+                );
+            }
+            require_xy_covariance(&estimate.covariance_xy, channel, output_index)?;
+            for (harmonic, column_pair) in columns.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+                column_pair[0].push(estimate.xy[2 * harmonic]);
+                column_pair[1].push(estimate.xy[2 * harmonic + 1]);
+            }
+            let center = (params.i_start + output_index)
+                .checked_mul(params.stride)
+                .context("joint lock-in center index overflow after estimation")?;
+            rows.push(QualityRow {
+                // Original-sample center index, consistent with time_s above:
+                // the decimated output counter (center_k) is a grid namespace,
+                // not an original-sample index. Pre-R0 artifacts recorded
+                // center_k here; readers must interpret those under the old
+                // convention (see the quality CSV contract docs).
+                original_center_index: center,
+                time_s: t.value_at(center),
+                scaled_design_condition: estimate.condition,
+                residual_rms_v: estimate.residual_rms,
+                rank: estimate.rank,
+                status: WindowStatus::for_jitter(estimate.jitter_applied_v2),
+                jitter_applied_v2: estimate.jitter_applied_v2,
+                noise_mode: gls_noise_mode_name(gls.noise_mode),
+            });
+            covariances.push(estimate.covariance_xy);
+        }
     }
     Ok((columns, rows, covariances))
 }
