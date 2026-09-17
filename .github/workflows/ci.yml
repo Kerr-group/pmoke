@@ -313,30 +313,36 @@ jobs:
               prologix-rs|serial|--no-default-features --features serial
               prologix-rs|tcp|--no-default-features --features tcp
           - os: macos-14
-            suite: pmoke hw
-            cache-key: macos-pmoke-hw
+            suite: pmoke hw tcp
+            cache-key: macos-pmoke-tcp
             profiles: |
               pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
-              pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
-              pmoke|macOS hardware bundle|--no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
-          - os: macos-14
-            suite: instruments transport
-            cache-key: macos-instruments
-            profiles: |
-              instruments|prologix-serial|--no-default-features --features prologix-serial
               instruments|prologix-tcp|--no-default-features --features prologix-tcp
           - os: macos-14
-            suite: prologix transport
-            cache-key: macos-prologix
+            suite: pmoke hw serial
+            cache-key: macos-pmoke-serial
             profiles: |
+              pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
+              instruments|prologix-serial|--no-default-features --features prologix-serial
+          - os: macos-14
+            suite: pmoke bundle + prologix
+            cache-key: macos-bundle-prologix
+            profiles: |
+              pmoke|macOS hardware bundle|--no-default-features --features hw-core,hw-prologix-tcp,hw-prologix-serial
               prologix-rs|tcp|--no-default-features --features tcp
               prologix-rs|serial|--no-default-features --features serial
           - os: ubuntu-latest
-            suite: pmoke hw
-            cache-key: ubuntu-pmoke-hw
+            suite: pmoke hw serial
+            cache-key: ubuntu-pmoke-serial
             profiles: |
               pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
+              instruments|prologix-serial|--no-default-features --features prologix-serial
+          - os: ubuntu-latest
+            suite: pmoke hw tcp
+            cache-key: ubuntu-pmoke-tcp
+            profiles: |
               pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
+              instruments|prologix-tcp|--no-default-features --features prologix-tcp
           - os: ubuntu-latest
             suite: transport-a
             cache-key: ubuntu-transport-a
@@ -348,13 +354,7 @@ jobs:
             cache-key: ubuntu-transport-b
             profiles: |
               instruments|no-default|--no-default-features
-              instruments|prologix-serial|--no-default-features --features prologix-serial
-          - os: ubuntu-latest
-            suite: transport-c
-            cache-key: ubuntu-transport-c
-            profiles: |
               prologix-rs|serial|--no-default-features --features serial
-              instruments|prologix-tcp|--no-default-features --features prologix-tcp
     env:
       PYO3_PYTHON: python
       PYTHONDONTWRITEBYTECODE: "1"
