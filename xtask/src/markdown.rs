@@ -371,8 +371,8 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Build, inspect, or validate a recorded-only calibration artifact" => {
             "記録済みデータからの較正artifactのbuild・inspect・validate"
         }
-        "Recorded-only pulse-noise diagnosis and comparison (PN-M1/M2, Issue #246)" => {
-            "記録済みデータのパルスノイズ診断・比較（PN-M1/M2、Issue #246）"
+        "Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)" => {
+            "記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246）"
         }
         "Recorded-only pulse-noise comparison (PN-M2, Issue #246)" => {
             "記録済みデータのパルスノイズ比較（PN-M2、Issue #246）"

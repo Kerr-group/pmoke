@@ -133,7 +133,7 @@ pub enum Command {
         #[command(subcommand)]
         command: CalibrateCommand,
     },
-    /// Recorded-only pulse-noise diagnosis and comparison (PN-M1/M2, Issue #246)
+    /// Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)
     Noise {
         #[command(subcommand)]
         command: NoiseCommand,

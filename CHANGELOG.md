@@ -4,6 +4,23 @@
 
 ### Changes
 
+- New recorded-only `pmoke noise` workflow (Issue #246). `pmoke noise diagnose`
+  plans and publishes a mechanism-agnostic diagnosis of a recorded RAW/CSV
+  source (acquisition QC, phase-binned residual variance, residual
+  autocorrelation, nuisance observability, identifiability) without requiring a
+  physical noise theory. `pmoke noise compare` freezes mode-specific calibration
+  artifacts with exact SHA-256 digests from an explicit role plan and
+  demodulates a labeled boxcar baseline plus the requested joint-GLS candidates
+  on one shared grid, reporting paired residual-scatter evidence, the distinct
+  evaluate-lockin mean-block-SD statistic, stratified paired bootstrap, complete
+  method x channel x region accounting, and separate result gates. An opt-in
+  frozen regime bank with a deterministic center schedule plus
+  `pmoke noise replay` (digest/semantic verification and phase -> MOKE -> NPY
+  replay) cover prepared conditions. The workflow never performs acquisition,
+  never mutates configuration or sources, reports failed/unavailable/unqualified
+  legs explicitly, never promotes a default, and a numeric SD improvement cannot
+  override unverified fidelity or applicability controls.
+
 - `pmoke analyze` now executes its stages in the real order — sensor,
   reference/window preparation, signal, lock-in, phase, MOKE — instead of
   demodulating before the signal readout. The reference fit and the shared
