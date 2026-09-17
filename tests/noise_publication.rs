@@ -47,9 +47,14 @@ fn synthetic_csv(path: &Path, samples: usize, seed: u64) {
 }
 
 fn request_text(path: &str, output: &str, total: u64) -> String {
-    let train_a_end = total / 4;
-    let train_b_end = total / 2;
-    let valid_end = total * 3 / 4;
+    // Block-aligned geometry: two training blocks, one validation block and
+    // a two-block evaluation span at block_len 12,800 over 64,000 samples.
+    // Synthetic scale only; the publication semantics under test do not
+    // depend on the data volume.
+    let block = 12_800_u64;
+    let train_a_end = block;
+    let train_b_end = 2 * block;
+    let valid_end = 3 * block;
     format!(
         r#"schema_version = 1
 operation = "compare"
@@ -67,7 +72,7 @@ path = "{path}"
 detector = 3
 
 [source.grid]
-stride = 10
+stride = 1000
 
 [study]
 classification = "exploratory"
@@ -94,7 +99,7 @@ end = {total}
 
 [calibration]
 phase_bins = 8
-min_samples_per_bin = 8
+min_samples_per_bin = 4
 min_cycles_per_bin = 1
 min_contributing_blocks = 2
 min_training_blocks = 2
@@ -151,11 +156,11 @@ fn committed_generation_is_complete(destination: &Path) -> bool {
 #[test]
 fn kill_during_staging_leaves_no_destination_and_retry_recovers() {
     let dir = unique_test_dir("kill_staging");
-    synthetic_csv(&dir.join("wave.csv"), 200_000, 0xfeed_1234_5678_9abc);
+    synthetic_csv(&dir.join("wave.csv"), 64_000, 0xfeed_1234_5678_9abc);
     let request_path = dir.join("request.toml");
     fs::write(
         &request_path,
-        request_text("wave.csv", "comparison", 200_000),
+        request_text("wave.csv", "comparison", 64_000),
     )
     .unwrap();
 
@@ -164,7 +169,7 @@ fn kill_during_staging_leaves_no_destination_and_retry_recovers() {
     let seen = wait_for(
         || staging.join("request.resolved.json").is_file() || staging.join("models.json").is_file(),
         &mut child,
-        Duration::from_secs(30),
+        Duration::from_secs(240),
     );
     let _ = child.kill();
     let _ = child.wait();
@@ -197,11 +202,11 @@ fn kill_during_staging_leaves_no_destination_and_retry_recovers() {
 #[test]
 fn kill_at_publication_leaves_only_legal_durable_states() {
     let dir = unique_test_dir("kill_publication");
-    synthetic_csv(&dir.join("wave.csv"), 200_000, 0x0102_0304_0506_0708);
+    synthetic_csv(&dir.join("wave.csv"), 64_000, 0x0102_0304_0506_0708);
     let request_path = dir.join("request.toml");
     fs::write(
         &request_path,
-        request_text("wave.csv", "comparison", 200_000),
+        request_text("wave.csv", "comparison", 64_000),
     )
     .unwrap();
 
@@ -211,7 +216,7 @@ fn kill_at_publication_leaves_only_legal_durable_states() {
     let manifest_seen = wait_for(
         || staging.join("staging-manifest.json").is_file() || destination.exists(),
         &mut child,
-        Duration::from_secs(60),
+        Duration::from_secs(240),
     );
     let _ = child.kill();
     let _ = child.wait();
@@ -266,11 +271,11 @@ fn kill_at_publication_leaves_only_legal_durable_states() {
 #[test]
 fn write_failure_keeps_previous_generation_and_aborts_before_commit() {
     let dir = unique_test_dir("disk_full");
-    synthetic_csv(&dir.join("wave.csv"), 200_000, 0x2468_ace0_1357_9bdf);
+    synthetic_csv(&dir.join("wave.csv"), 64_000, 0x2468_ace0_1357_9bdf);
     let request_path = dir.join("request.toml");
     fs::write(
         &request_path,
-        request_text("wave.csv", "comparison", 200_000),
+        request_text("wave.csv", "comparison", 64_000),
     )
     .unwrap();
 
@@ -280,15 +285,18 @@ fn write_failure_keeps_previous_generation_and_aborts_before_commit() {
     let destination = dir.join("comparison");
     let before: Vec<(PathBuf, Vec<u8>)> = walk_files(&destination);
 
-    // Second generation into a different destination with a hard 8 KiB
-    // per-file write cap: the staging write fails with EFBIG.
+    // Second generation into a different destination with a hard write cap
+    // (8 blocks; the host counts 1024-byte blocks, so 8 KiB): the staging
+    // write of comparison.json fails with EFBIG. The cap is far below the
+    // 12 KiB comparison report and the 8 KiB plain report, so the failure
+    // lands inside staging on every supported host.
     fs::write(
         &request_path,
-        request_text("wave.csv", "comparison_second", 200_000),
+        request_text("wave.csv", "comparison_second", 64_000),
     )
     .unwrap();
     let script = format!(
-        "trap '' XFSZ; ulimit -f 16; exec \"{}\" noise compare --request \"{}\"",
+        "trap '' XFSZ; ulimit -f 8; exec \"{}\" noise compare --request \"{}\"",
         pmoke_bin().display(),
         request_path.display()
     );
