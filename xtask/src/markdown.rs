@@ -358,11 +358,11 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Run all analysis steps: sensor, reference, signal, lock-in, phase, moke" => {
             "sensor・reference・signal・lock-in・phase・mokeの全解析"
         }
-        "Compare lock-in estimators on shared data and grid into a new directory" => {
-            "共有データ・gridでのlock-in推定器比較（新規directoryへ）"
+        "Compare lock-in estimators on shared data over a fixed window grid and write results into a new directory" => {
+            "共有データ・固定window gridでのlock-in推定器比較（結果を新規directoryへ）"
         }
-        "Run the frozen paired-block M6 evaluation protocol and write a JSON report" => {
-            "固定済みpaired block M6評価protocolの実行とJSON report出力"
+        "Evaluate paired lock-in baseline and candidate values under a frozen protocol and write a JSON report" => {
+            "凍結protocolによるpaired lock-in baseline・candidate値の評価とJSON report出力"
         }
         "Path to the evaluation request file" => "評価requestファイルのpath",
         "Write the report to FILE instead of beside the request" => {
@@ -371,11 +371,8 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Build, inspect, or validate a recorded-only calibration artifact" => {
             "記録済みデータからの較正artifactのbuild・inspect・validate"
         }
-        "Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)" => {
-            "記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246）"
-        }
-        "Recorded-only pulse-noise comparison (PN-M2, Issue #246)" => {
-            "記録済みデータのパルスノイズ比較（PN-M2、Issue #246）"
+        "Recorded-only pulse-noise diagnosis, comparison and replay" => {
+            "記録済みデータのパルスノイズ診断・比較・再実行"
         }
         "Run the frozen global calibration plus controlled comparison workflow" => {
             "凍結グローバル較正と比較ワークフローの実行"
@@ -501,8 +498,8 @@ fn japanese(text: &str) -> Option<&'static str> {
         "Save the complete JSON report to a file" => "完全JSON reportのファイル保存",
         "Emit the complete report as JSON" => "完全reportのJSON出力",
         "Emit a machine-readable JSON report" => "machine-readable JSON report出力",
-        "Allow active checks such as stopping the oscilloscope" => {
-            "オシロスコープ停止などのactive check許可"
+        "Allow active checks that stop the oscilloscope (left in stopped state)" => {
+            "オシロスコープを停止するactive checkの許可（停止状態のまま残る）"
         }
         "Override output format from config [fetch].output" => {
             "config [fetch].outputに対する出力形式override"
