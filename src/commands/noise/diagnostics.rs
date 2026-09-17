@@ -49,6 +49,14 @@ pub struct AcquisitionQc {
     pub timebase_drift_max: f64,
     pub timebase_ok: bool,
     pub channel_parity_ok: bool,
+    /// Rail-saturation evidence (PN-FR-009): detector/reference samples
+    /// sitting on a raw ADC rail code. Recorded values stay unchanged;
+    /// nothing is clipped or repaired.
+    pub detector_rail_low: usize,
+    pub detector_rail_high: usize,
+    pub reference_rail_low: usize,
+    pub reference_rail_high: usize,
+    pub rail_saturation: bool,
 }
 
 /// Nuisance-fit observability per analyzed block (PN-FR-010).
@@ -285,6 +293,10 @@ pub fn run_signal_diagnostics(
     let mut detector_blocks: Vec<Vec<f64>> = Vec::with_capacity(training.len());
     let mut samples_expected = 0_usize;
     let mut drift_max = 0.0_f64;
+    let mut detector_rail_low = 0_usize;
+    let mut detector_rail_high = 0_usize;
+    let mut reference_rail_low = 0_usize;
+    let mut reference_rail_high = 0_usize;
     for (start, end) in &training {
         let block = source.read_block(*start, *end).with_context(|| {
             format!("noise diagnostics cannot read training block [{start}, {end})")
@@ -302,6 +314,14 @@ pub fn run_signal_diagnostics(
         let drift = timebase_drift(&block.times, sample_interval_s);
         if drift > drift_max {
             drift_max = drift;
+        }
+        if let Some(rails) = block.detector_rails {
+            detector_rail_low += rails.low;
+            detector_rail_high += rails.high;
+        }
+        if let Some(rails) = block.reference_rails {
+            reference_rail_low += rails.low;
+            reference_rail_high += rails.high;
         }
         samples_expected += (end - start) as usize;
         block_times.push(block.times);
@@ -357,6 +377,15 @@ pub fn run_signal_diagnostics(
         timebase_drift_max: drift_max,
         timebase_ok: drift_max <= 1e-9,
         channel_parity_ok: samples_read == samples_expected,
+        detector_rail_low,
+        detector_rail_high,
+        reference_rail_low,
+        reference_rail_high,
+        rail_saturation: detector_rail_low
+            + detector_rail_high
+            + reference_rail_low
+            + reference_rail_high
+            > 0,
     };
     let nuisance_observability = NuisanceObservability {
         recipe_id: NUISANCE_RECIPE_ID.to_string(),
@@ -504,6 +533,15 @@ fn classify_identifiability(
             qc.timebase_drift_max
         ));
         return ("insufficient_evidence".to_string(), reasons, true);
+    }
+    if qc.rail_saturation {
+        reasons.push(format!(
+            "rail saturation reported: detector low {} / high {} samples, reference low {} / high {} samples sit on raw ADC rail codes (recorded values preserved unchanged, never clipped or repaired)",
+            qc.detector_rail_low,
+            qc.detector_rail_high,
+            qc.reference_rail_low,
+            qc.reference_rail_high
+        ));
     }
     if !nuisance.rank_deficient_blocks.is_empty() {
         reasons.push(format!(
