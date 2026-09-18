@@ -386,133 +386,17 @@ impl NoiseModelSource for FileNoiseModelSource {
                 artifact.schema_version
             );
         }
-        check_artifact_structure(&artifact, channel)?;
-        let name = mode_name(noise_mode);
-        // Capability bridge: WP-3 artifacts predate the stationary runtime
-        // and only advertise identity/phase_diagonal/phase_correlated, but a
-        // present SPD-validated tapered correlation table IS the stationary
-        // capability substance. Accept it explicitly (never silently); the
-        // builder should advertise the mode directly in a later revision.
-        let advertised = artifact.capabilities.modes.iter().any(|mode| mode == name);
-        let bridged_stationary = noise_mode == GlsNoiseMode::StationaryCorrelated
-            && artifact
-                .correlation
-                .as_ref()
-                .is_some_and(|table| table.spd_validated);
-        if !advertised && !bridged_stationary {
-            bail!(
-                "calibration artifact for channel {channel} does not advertise mode {name} \
-                 (capabilities: {:?})",
-                artifact.capabilities.modes
-            );
-        }
-        if artifact.binding.phase_convention != CALIBRATION_PHASE_CONVENTION {
-            bail!(
-                "calibration artifact for channel {channel} uses unknown phase convention {:?}",
-                artifact.binding.phase_convention
-            );
-        }
-        let request = ApplicabilityRequest {
-            channel: u32::from(channel),
-            sample_interval_s: self.sample_interval_s,
-            reference_frequency_hz: self.reference_frequency_hz,
-            voltage_unit: self.voltage_unit.clone(),
-            phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
-            adc_scale_provenance: None,
-            acquisition: pmoke_analysis_core::calibration::AcquisitionMeta {
-                device: None,
-                gain: None,
-                bandwidth_hz: None,
-            },
-        };
-        let report = inspect_applicability(&artifact, &request);
-        for warning in &report.warnings {
+        let (model, warnings) = noise_model_from_artifact(
+            &artifact,
+            channel,
+            noise_mode,
+            self.sample_interval_s,
+            self.reference_frequency_hz,
+            &self.voltage_unit,
+        )?;
+        for warning in &warnings {
             self.warn_once(warning);
         }
-        if !report.compatible {
-            let details = report
-                .errors
-                .iter()
-                .map(|error| format!("{}: {}", error.code, error.message))
-                .collect::<Vec<_>>()
-                .join("; ");
-            bail!("calibration artifact for channel {channel} is not applicable: {details}");
-        }
-        let variance_bins = match noise_mode {
-            GlsNoiseMode::PhaseDiagonal | GlsNoiseMode::PhaseCorrelated => {
-                if artifact.phase.center_convention != EXPECTED_PHASE_CENTER_CONVENTION {
-                    bail!(
-                        "calibration artifact for channel {channel} uses unknown phase center \
-                         convention {:?}",
-                        artifact.phase.center_convention
-                    );
-                }
-                if artifact.phase.interpolation != VARIANCE_INTERP_ID {
-                    bail!(
-                        "calibration artifact for channel {channel} uses unknown variance \
-                         interpolation {:?}",
-                        artifact.phase.interpolation
-                    );
-                }
-                Some(artifact.phase.variances_v2.clone())
-            }
-            GlsNoiseMode::Identity | GlsNoiseMode::StationaryCorrelated => None,
-        };
-        let correlation = match noise_mode {
-            GlsNoiseMode::StationaryCorrelated | GlsNoiseMode::PhaseCorrelated => {
-                let table = artifact.correlation.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "calibration artifact for channel {channel} carries no correlation \
-                         table for mode {name}"
-                    )
-                })?;
-                if !table.spd_validated {
-                    bail!(
-                        "calibration artifact for channel {channel} carries a correlation \
-                         table without SPD evidence"
-                    );
-                }
-                if table.taper != pmoke_analysis_core::calibration::CORRELATION_TAPER_ID {
-                    bail!(
-                        "calibration artifact for channel {channel} uses unknown correlation \
-                         taper {:?}",
-                        table.taper
-                    );
-                }
-                let lag_detail =
-                    (table.lag_step_s - self.sample_interval_s).abs() / self.sample_interval_s;
-                if !lag_detail.is_finite() || lag_detail > artifact.binding.sample_interval_rel_tol
-                {
-                    bail!(
-                        "calibration artifact for channel {channel} has lag step relative \
-                         deviation {lag_detail:.3e} beyond the binding tolerance"
-                    );
-                }
-                Some(CorrelationKernel {
-                    lags: table.lags.clone(),
-                    lag_step_s: table.lag_step_s,
-                })
-            }
-            GlsNoiseMode::Identity | GlsNoiseMode::PhaseDiagonal => None,
-        };
-        let core_mode = match noise_mode {
-            GlsNoiseMode::Identity => NoiseMode::Identity,
-            GlsNoiseMode::PhaseDiagonal => NoiseMode::PhaseDiagonal,
-            GlsNoiseMode::StationaryCorrelated => NoiseMode::StationaryCorrelated,
-            GlsNoiseMode::PhaseCorrelated => NoiseMode::PhaseCorrelated,
-        };
-        let model = NoiseModel {
-            mode: core_mode,
-            reference_variance_v2: artifact.reference_variance_v2,
-            variance_bins,
-            correlation,
-        };
-        validate_noise_model(&model).map_err(|error| {
-            anyhow::anyhow!(
-                "calibration artifact for channel {channel} yields an invalid noise model: {}",
-                error.message()
-            )
-        })?;
         Ok((
             model,
             ModelBinding {
@@ -524,6 +408,145 @@ impl NoiseModelSource for FileNoiseModelSource {
             },
         ))
     }
+}
+
+/// Shared artifact-to-noise-model reduction for file-backed artifacts and
+/// pre-pulse derivation over in-memory built artifacts: structural checks,
+/// capability gating, applicability against the run context, and the
+/// per-mode reduction to a validated [`NoiseModel`]. Applicability warnings
+/// ride along for the caller to surface; incompatibility is an error, never
+/// a silent fallback.
+pub(crate) fn noise_model_from_artifact(
+    artifact: &CalibrationArtifact,
+    channel: u8,
+    noise_mode: GlsNoiseMode,
+    sample_interval_s: f64,
+    reference_frequency_hz: f64,
+    voltage_unit: &str,
+) -> Result<(NoiseModel, Vec<String>)> {
+    check_artifact_structure(artifact, channel)?;
+    let name = mode_name(noise_mode);
+    // Capability bridge: WP-3 artifacts predate the stationary runtime
+    // and only advertise identity/phase_diagonal/phase_correlated, but a
+    // present SPD-validated tapered correlation table IS the stationary
+    // capability substance. Accept it explicitly (never silently); the
+    // builder should advertise the mode directly in a later revision.
+    let advertised = artifact.capabilities.modes.iter().any(|mode| mode == name);
+    let bridged_stationary = noise_mode == GlsNoiseMode::StationaryCorrelated
+        && artifact
+            .correlation
+            .as_ref()
+            .is_some_and(|table| table.spd_validated);
+    if !advertised && !bridged_stationary {
+        bail!(
+            "calibration artifact for channel {channel} does not advertise mode {name} \
+                 (capabilities: {:?})",
+            artifact.capabilities.modes
+        );
+    }
+    if artifact.binding.phase_convention != CALIBRATION_PHASE_CONVENTION {
+        bail!(
+            "calibration artifact for channel {channel} uses unknown phase convention {:?}",
+            artifact.binding.phase_convention
+        );
+    }
+    let request = ApplicabilityRequest {
+        channel: u32::from(channel),
+        sample_interval_s,
+        reference_frequency_hz,
+        voltage_unit: voltage_unit.to_string(),
+        phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
+        adc_scale_provenance: None,
+        acquisition: pmoke_analysis_core::calibration::AcquisitionMeta {
+            device: None,
+            gain: None,
+            bandwidth_hz: None,
+        },
+    };
+    let report = inspect_applicability(artifact, &request);
+    if !report.compatible {
+        let details = report
+            .errors
+            .iter()
+            .map(|error| format!("{}: {}", error.code, error.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("calibration artifact for channel {channel} is not applicable: {details}");
+    }
+    let variance_bins = match noise_mode {
+        GlsNoiseMode::PhaseDiagonal | GlsNoiseMode::PhaseCorrelated => {
+            if artifact.phase.center_convention != EXPECTED_PHASE_CENTER_CONVENTION {
+                bail!(
+                    "calibration artifact for channel {channel} uses unknown phase center \
+                         convention {:?}",
+                    artifact.phase.center_convention
+                );
+            }
+            if artifact.phase.interpolation != VARIANCE_INTERP_ID {
+                bail!(
+                    "calibration artifact for channel {channel} uses unknown variance \
+                         interpolation {:?}",
+                    artifact.phase.interpolation
+                );
+            }
+            Some(artifact.phase.variances_v2.clone())
+        }
+        GlsNoiseMode::Identity | GlsNoiseMode::StationaryCorrelated => None,
+    };
+    let correlation = match noise_mode {
+        GlsNoiseMode::StationaryCorrelated | GlsNoiseMode::PhaseCorrelated => {
+            let table = artifact.correlation.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "calibration artifact for channel {channel} carries no correlation \
+                         table for mode {name}"
+                )
+            })?;
+            if !table.spd_validated {
+                bail!(
+                    "calibration artifact for channel {channel} carries a correlation \
+                         table without SPD evidence"
+                );
+            }
+            if table.taper != pmoke_analysis_core::calibration::CORRELATION_TAPER_ID {
+                bail!(
+                    "calibration artifact for channel {channel} uses unknown correlation \
+                         taper {:?}",
+                    table.taper
+                );
+            }
+            let lag_detail = (table.lag_step_s - sample_interval_s).abs() / sample_interval_s;
+            if !lag_detail.is_finite() || lag_detail > artifact.binding.sample_interval_rel_tol {
+                bail!(
+                    "calibration artifact for channel {channel} has lag step relative \
+                         deviation {lag_detail:.3e} beyond the binding tolerance"
+                );
+            }
+            Some(CorrelationKernel {
+                lags: table.lags.clone(),
+                lag_step_s: table.lag_step_s,
+            })
+        }
+        GlsNoiseMode::Identity | GlsNoiseMode::PhaseDiagonal => None,
+    };
+    let core_mode = match noise_mode {
+        GlsNoiseMode::Identity => NoiseMode::Identity,
+        GlsNoiseMode::PhaseDiagonal => NoiseMode::PhaseDiagonal,
+        GlsNoiseMode::StationaryCorrelated => NoiseMode::StationaryCorrelated,
+        GlsNoiseMode::PhaseCorrelated => NoiseMode::PhaseCorrelated,
+    };
+    let model = NoiseModel {
+        mode: core_mode,
+        reference_variance_v2: artifact.reference_variance_v2,
+        variance_bins,
+        correlation,
+    };
+    validate_noise_model(&model).map_err(|error| {
+        anyhow::anyhow!(
+            "calibration artifact for channel {channel} yields an invalid noise model: {}",
+            error.message()
+        )
+    })?;
+    Ok((model, report.warnings))
 }
 
 #[cfg(test)]

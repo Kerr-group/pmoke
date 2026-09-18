@@ -306,6 +306,74 @@ fn v7_gls_rejects_missing_extra_and_duplicate_bindings() {
     );
 }
 
+fn v7_gls_prepulse_config() -> String {
+    V7_BASE.replace(
+        "[lockin.estimator]\nkind = \"boxcar_legacy\"",
+        "[lockin.estimator]\nkind = \"joint_harmonic_gls\"\nfit_harmonics = [1, 2, 3, 4, 5, 6]\noutput_harmonics = [1, 2, 3, 4, 5, 6]\nnoise_mode = \"identity\"\ncalibration_source = \"prepulse\"",
+    )
+}
+
+#[test]
+fn v7_gls_calibration_source_defaults_to_artifact() {
+    let config = ready_config(&v7_gls_config());
+    match &config.lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => {
+            assert!(matches!(
+                gls.calibration_source,
+                crate::config::GlsCalibrationSource::Artifact
+            ));
+        }
+        LockinEstimator::BoxcarLegacy => panic!("expected GLS estimator"),
+    }
+}
+
+#[test]
+fn v7_gls_prepulse_loads_without_bindings() {
+    let config = ready_config(&v7_gls_prepulse_config());
+    match &config.lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => {
+            assert!(matches!(
+                gls.calibration_source,
+                crate::config::GlsCalibrationSource::Prepulse
+            ));
+            assert!(gls.calibrations.is_empty());
+        }
+        LockinEstimator::BoxcarLegacy => panic!("expected GLS estimator"),
+    }
+}
+
+#[test]
+fn v7_gls_prepulse_rejects_file_bindings() {
+    let text = v7_gls_prepulse_config().replace(
+        "calibration_source = \"prepulse\"",
+        &format!(
+            "calibration_source = \"prepulse\"\n[[lockin.estimator.calibrations]]\nchannel = 3\npath = \"calibration/ch3.json\"\nsha256 = \"{SHA_A}\""
+        ),
+    );
+    let diagnostics = diagnostic_paths(&text);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.starts_with("lockin.estimator.calibration_source")),
+        "unexpected diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn v7_gls_rejects_unknown_calibration_source() {
+    let text = v7_gls_config().replace(
+        "noise_mode = \"identity\"",
+        "noise_mode = \"identity\"\ncalibration_source = \"file\"",
+    );
+    let diagnostics = diagnostic_paths(&text);
+    assert!(
+        diagnostics
+            .join("\n")
+            .contains("expected `artifact` or `prepulse`"),
+        "unexpected diagnostics: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn v7_legacy_rejects_gls_only_settings() {
     let text = V7_BASE.replace(
@@ -346,6 +414,7 @@ fn gls_config(calibrations: Vec<crate::config::EstimatorCalibration>) -> JointHa
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations,
     }
 }

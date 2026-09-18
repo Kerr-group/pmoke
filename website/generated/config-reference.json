@@ -775,6 +775,24 @@
       "constraints": []
     },
     {
+      "id": "lockin.estimator.calibration_source",
+      "path": "lockin.estimator.calibration_source",
+      "value_type": "string enum",
+      "required": "optional",
+      "default": "artifact",
+      "valid_values": [
+        "artifact",
+        "prepulse"
+      ],
+      "units": null,
+      "since": 4,
+      "summary_en": "Calibration source for the joint estimator.",
+      "details_en": "artifact keeps the file-bound behavior: one immutable calibration artifact per lock-in channel. prepulse derives each channel noise model once per LI run from pulse.background_before and records prepulse_calibration_digest in the LI provenance; calibrations must be empty alongside prepulse.",
+      "summary_ja": "joint推定器のcalibration取得元",
+      "details_ja": "artifactはファイル束縛の現行動作。prepulseはpulse.background_beforeからLI実行毎にchannel毎の雑音モデルを一度だけ導出し、LI provenanceにprepulse_calibration_digestを記録。prepulse選択時はcalibrationsは空でなければならない。",
+      "constraints": []
+    },
+    {
       "id": "lockin.estimator.calibrations",
       "path": "lockin.estimator.calibrations",
       "value_type": "table array",
@@ -784,11 +802,11 @@
       "units": null,
       "since": 4,
       "summary_en": "Immutable calibration bindings, one per lock-in channel.",
-      "details_en": "Each entry binds a channel to a calibration artifact path plus its expected SHA-256 digest. Unexpanded template placeholders are rejected.",
+      "details_en": "Each entry binds a channel to a calibration artifact path plus its expected SHA-256 digest. Unexpanded template placeholders are rejected. Required exactly once per channel in artifact mode; must be empty when calibration_source is prepulse.",
       "summary_ja": "不変calibration束縛。lock-in channel毎に1件",
-      "details_ja": "channelとcalibration成果物パス＋期待SHA-256の束縛。未展開テンプレートは拒否。",
+      "details_ja": "channelとcalibration成果物パス＋期待SHA-256の束縛。未展開テンプレートは拒否。artifact方式ではchannel毎に1件必須。calibration_sourceがprepulseの場合は空でなければならない。",
       "constraints": [
-        "exactly one entry per lockin.channels value"
+        "exactly one entry per lockin.channels value (artifact mode)"
       ]
     },
     {

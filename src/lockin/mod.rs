@@ -5,6 +5,7 @@ pub mod lockin_core;
 pub mod lockin_params;
 pub mod lockin_plot;
 pub mod model_loading;
+pub mod prepulse;
 pub mod provenance;
 pub mod reference;
 pub mod resolve;
@@ -425,7 +426,10 @@ pub fn li_process<'a>(
 
 /// Joint-harmonic GLS estimation over the shared legacy-trim grid.
 /// Calibration-backed models only (FR-048): any loading failure aborts,
-/// never falls back to boxcar_legacy.
+/// never falls back to boxcar_legacy. With `calibration_source` set to
+/// `prepulse`, the per-channel models are derived once from
+/// `pulse.background_before` before estimation (FR-03) and the derivation
+/// digest is recorded on the provenance (FR-04).
 fn li_process_joint<'a>(
     cfg: &Config,
     t: impl Into<TimeAxisRef<'a>>,
@@ -434,29 +438,55 @@ fn li_process_joint<'a>(
     ref_fit_params: RefFitParams,
     gls: &crate::config::JointHarmonicGlsConfig,
 ) -> Result<LockinProcessOutput> {
-    use crate::lockin::joint::{JointRunInputs, run_joint_li};
+    use crate::lockin::joint::{JointRunInputs, NoiseModelSource, run_joint_li};
     use crate::lockin::model_loading::{FileNoiseModelSource, PIPELINE_VOLTAGE_UNIT};
 
     let t = t.into();
     let sample_interval_s = t
         .dt()
         .ok_or_else(|| anyhow::anyhow!("joint_harmonic_gls execution needs a uniform timebase"))?;
-    // Calibration paths resolve against the declaring configuration file
-    // directory, never an unspecified cwd (INTERFACES section 5).
-    let base_dir = cfg
-        .source_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let source = FileNoiseModelSource::new(
-        base_dir,
-        &gls.calibrations,
-        PIPELINE_VOLTAGE_UNIT.to_string(),
-        sample_interval_s,
-        ref_fit_params.f_ref,
-    )
-    .context("joint_harmonic_gls model source is not usable")?;
+    // FR-03: exactly one derivation per LI run, before any estimation.
+    let mut prepulse_digest: Option<String> = None;
+    let source: Box<dyn NoiseModelSource> = match gls.calibration_source {
+        crate::config::GlsCalibrationSource::Prepulse => {
+            let derivation = crate::lockin::prepulse::derive_prepulse(
+                cfg.pulse.bg_window_before,
+                t,
+                signal_ch,
+                signal_data,
+                ref_fit_params.f_ref,
+                ref_fit_params.omega_tref,
+                sample_interval_s,
+                gls,
+                &crate::lockin::prepulse::acquisition_digest_for(cfg),
+            )
+            .context(
+                "pre-pulse calibration derivation failed; refusing to fall back to artifact mode",
+            )?;
+            prepulse_digest = Some(derivation.digest);
+            Box::new(derivation.source)
+        }
+        crate::config::GlsCalibrationSource::Artifact => {
+            // Calibration paths resolve against the declaring configuration file
+            // directory, never an unspecified cwd (INTERFACES section 5).
+            let base_dir = cfg
+                .source_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            Box::new(
+                FileNoiseModelSource::new(
+                    base_dir,
+                    &gls.calibrations,
+                    PIPELINE_VOLTAGE_UNIT.to_string(),
+                    sample_interval_s,
+                    ref_fit_params.f_ref,
+                )
+                .context("joint_harmonic_gls model source is not usable")?,
+            )
+        }
+    };
     let inputs = JointRunInputs {
         lockin: &cfg.lockin,
         gls,
@@ -466,7 +496,11 @@ fn li_process_joint<'a>(
         sample_rate: sample_interval_s.recip(),
         tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
     };
-    let output = run_joint_li(&inputs, signal_ch, signal_data, &source)?;
+    let output = run_joint_li(&inputs, signal_ch, signal_data, source.as_ref())?;
+    let provenance = match prepulse_digest {
+        Some(digest) => output.provenance.with_prepulse_digest(digest),
+        None => output.provenance,
+    };
     Ok(LockinProcessOutput {
         result: output.result,
         quality: Some(output.quality),
@@ -475,7 +509,7 @@ fn li_process_joint<'a>(
         bindings: Some(output.bindings),
         base_index_range: output.base_index_range,
         output_index_range: output.output_index_range,
-        provenance: output.provenance,
+        provenance,
     })
 }
 

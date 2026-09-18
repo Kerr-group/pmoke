@@ -333,7 +333,20 @@ pub(super) struct JointHarmonicGlsConfigV7 {
     #[serde(default)]
     pub(super) failure_policy: GlsFailurePolicyV7,
     #[serde(default)]
+    pub(super) calibration_source: GlsCalibrationSourceV7,
+    #[serde(default)]
     pub(super) calibrations: Vec<EstimatorCalibrationV7>,
+}
+
+/// Pre-pulse calibration source (FR-01): `artifact` keeps the current
+/// file-bound behavior; `prepulse` derives the per-channel noise model once
+/// per LI run from `pulse.background_before` with no artifact files.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum GlsCalibrationSourceV7 {
+    #[default]
+    Artifact,
+    Prepulse,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
