@@ -132,7 +132,7 @@ def solve_whitened(design_w, signal_w, driver="gelsd"):
 
 
 def map_to_xy(beta, fit_harmonics, output_harmonics):
-    """Legacy half-amplitude mapping: Xk = b_k / 2, Yk = a_k / 2.
+    """Peak-amplitude mapping: Xk = b_k, Yk = a_k.
 
     Coefficients are selected by fitting-list position, not harmonic number,
     so sparse lists like [1, 3, 5] resolve correctly. Every output must be a
@@ -146,7 +146,7 @@ def map_to_xy(beta, fit_harmonics, output_harmonics):
         except ValueError:
             raise ValueError(f"output harmonic {k} is not in the fitting list") from None
         a, b = beta[1 + 2 * position], beta[2 + 2 * position]
-        xy[str(k)] = {"x": float(b / 2.0), "y": float(a / 2.0)}
+        xy[str(k)] = {"x": float(b), "y": float(a)}
     return xy
 
 

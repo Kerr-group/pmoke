@@ -217,8 +217,8 @@ class NoiseFamilyTests(unittest.TestCase):
 
 
 class LegacyBoxcarSmokeTests(unittest.TestCase):
-    def test_pure_sine_recovers_half_amplitude(self):
-        # y = 2 sin(phi): legacy X1 must equal 1 within window ripple.
+    def test_pure_sine_recovers_peak_amplitude(self):
+        # y = 2 sin(phi): legacy X1 must equal 2 within window ripple.
         f_ref, dt, t0, phase = 1000.0, 1e-5, 0.0, 0.0
         n = 3000
         signal = [2.0 * math.sin(2.0 * math.pi * f_ref * (t0 + i * dt) - phase)
@@ -226,7 +226,7 @@ class LegacyBoxcarSmokeTests(unittest.TestCase):
         _, xs, _, _ = legacy_boxcar(signal, t0, dt, f_ref, phase, 1.0, 50, 1)
         self.assertTrue(xs)
         for value in xs:
-            self.assertAlmostEqual(value, 1.0, delta=0.02)
+            self.assertAlmostEqual(value, 2.0, delta=0.02)
 
     def test_impulse_matches_closed_form_endpoint_weights(self):
         # Unit impulse at the inner-negative edge sample isolates the
@@ -249,7 +249,7 @@ class LegacyBoxcarSmokeTests(unittest.TestCase):
         phase_zero = -harmonic * (omega * t0 - phase)
         mix_re = math.cos(phase_zero + impulse * step)
         mix_im = math.sin(phase_zero + impulse * step)
-        scale = 1.0 / (2.0 * half_window_s)
+        scale = 1.0 / half_window_s
 
         def edge(y0):
             interp = y0 * (dt - edge_dt) / dt

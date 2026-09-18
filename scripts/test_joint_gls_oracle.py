@@ -174,22 +174,22 @@ class OracleRecoveryTests(unittest.TestCase):
 
 
 class MapToXyTests(unittest.TestCase):
-    def test_half_amplitude_mapping(self):
+    def test_peak_amplitude_mapping(self):
         beta = [10.0, 0.0, 4.0, -6.0, 0.0]
         xy = map_to_xy(beta, [1, 2], [1, 2])
-        self.assertEqual(xy["1"], {"x": 2.0, "y": 0.0})
-        self.assertEqual(xy["2"], {"x": 0.0, "y": -3.0})
+        self.assertEqual(xy["1"], {"x": 4.0, "y": 0.0})
+        self.assertEqual(xy["2"], {"x": 0.0, "y": -6.0})
 
     def test_sparse_fitting_list_selects_by_position(self):
-        # fit=[1,3,5] with true (a3,b3)=(4,6): X3/Y3 must be 3/2, not A5.
+        # fit=[1,3,5] with true (a3,b3)=(4,6): X3/Y3 must be 6/4, not A5.
         rng = np.random.RandomState(23)
         n = 512
         times = rng.uniform(0.0, 0.01, n).tolist()
         phi = 2.0 * np.pi * 1000.0 * np.array(times) - 0.4
         signal = (4.0 * np.cos(3 * phi) + 6.0 * np.sin(3 * phi)).tolist()
         result = solve_case(times, signal, 1000.0, 0.4, [1, 3, 5], [3])
-        self.assertAlmostEqual(result["xy"]["3"]["x"], 3.0, delta=1e-8)
-        self.assertAlmostEqual(result["xy"]["3"]["y"], 2.0, delta=1e-8)
+        self.assertAlmostEqual(result["xy"]["3"]["x"], 6.0, delta=1e-8)
+        self.assertAlmostEqual(result["xy"]["3"]["y"], 4.0, delta=1e-8)
 
     def test_output_outside_fitting_list_is_rejected(self):
         with self.assertRaises(ValueError):
