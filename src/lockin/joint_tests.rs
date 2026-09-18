@@ -136,13 +136,13 @@ fn identity_recovers_tone_matching_boxcar() {
         assert_eq!(row.noise_mode, "identity");
     }
 
-    // h1 recovers the tone amplitude as a half-amplitude (boxcar scale).
+    // h1 recovers the tone peak amplitude (peak-amplitude XY convention).
     let x1 = output.result[0][0][grid / 2];
     let y1 = output.result[0][1][grid / 2];
     let amplitude = (x1 * x1 + y1 * y1).sqrt();
     assert!(
-        (amplitude - 0.5).abs() < 1e-9,
-        "h1 half-amplitude {amplitude}"
+        (amplitude - 1.0).abs() < 1e-9,
+        "h1 peak amplitude {amplitude}"
     );
 }
 
@@ -632,8 +632,8 @@ fn covariance_covers_known_noise() {
             let x1 = output.result[0][0][choice];
             let variance = output.covariance[0][choice][0][0];
             assert!(variance > 0.0);
-            // Phase-zero unit tone: X1 truth is the 1/2 half-amplitude.
-            if ((x1 - 0.5) / variance.sqrt()).abs() <= 1.0 {
+            // Phase-zero unit tone: X1 truth is the peak amplitude 1.0.
+            if ((x1 - 1.0) / variance.sqrt()).abs() <= 1.0 {
                 inside += 1;
             }
             total += 1;

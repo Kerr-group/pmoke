@@ -7,7 +7,7 @@
 //! stationary-correlated (`v0 * C_N`), and phase-correlated (`S_N C_N S_N`).
 //! Coordinate conventions follow NUMERICS sections 1-2: original-sample
 //! support, `phi = 2 pi f t - phase`, column order `[DC, cos, sin, ...]`,
-//! and the legacy half-amplitude map `Xk = b/2`, `Yk = a/2`.
+//! and the peak-amplitude map `Xk = b`, `Yk = a`.
 //!
 //! Backend: nalgebra 0.35.0, no-default plus `std` (A-010 spike). The
 //! rectangular solve uses only public APIs: thin `Q`, `Q^T y`, and manual
@@ -1425,7 +1425,7 @@ pub fn covariance_from_qr(
     }
 }
 
-/// Legacy half-amplitude map `Xk = b/2`, `Yk = a/2` in `[X1,Y1,...]` order.
+/// Peak-amplitude map `Xk = b`, `Yk = a` in `[X1,Y1,...]` order.
 pub fn map_to_xy(beta: &[f64], model: &HarmonicSignalModel) -> Result<Vec<f64>> {
     if beta.len() != 1 + 2 * model.fit_harmonics.len() {
         return Err(AnalysisError::new(
@@ -1453,13 +1453,14 @@ pub fn map_to_xy(beta: &[f64], model: &HarmonicSignalModel) -> Result<Vec<f64>> 
                     format!("output harmonic {output} is not in the fitting list"),
                 )
             })?;
-        xy.push(beta[2 + 2 * position] / 2.0);
-        xy.push(beta[1 + 2 * position] / 2.0);
+        xy.push(beta[2 + 2 * position]);
+        xy.push(beta[1 + 2 * position]);
     }
     Ok(xy)
 }
 
-/// Map beta-space covariance to XY space with 1/4 scaling (AT-022).
+/// Map beta-space covariance to XY space without rescaling (AT-022):
+/// XY now carries peak amplitudes, so the mapper only reorders entries.
 pub fn map_covariance_to_xy(
     covariance_beta: &DMatrix<f64>,
     model: &HarmonicSignalModel,
@@ -1491,7 +1492,7 @@ pub fn map_covariance_to_xy(
                     format!("output harmonic {output} is not in the fitting list"),
                 )
             })?;
-        // XY order is [Xk, Yk] = [b/2, a/2]: select sin then cos rows/cols.
+        // XY order is [Xk, Yk] = [b, a]: select sin then cos rows/cols.
         rows.push(2 + 2 * position);
         rows.push(1 + 2 * position);
     }
@@ -1499,7 +1500,7 @@ pub fn map_covariance_to_xy(
     let mut xy = DMatrix::zeros(dimension, dimension);
     for (i, row) in rows.iter().enumerate() {
         for (j, column) in rows.iter().enumerate() {
-            xy[(i, j)] = covariance_beta[(*row, *column)] / 4.0;
+            xy[(i, j)] = covariance_beta[(*row, *column)];
         }
     }
     Ok(xy)

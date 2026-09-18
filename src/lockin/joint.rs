@@ -224,7 +224,7 @@ pub struct JointRunOutput {
     /// Per-channel quality rows aligned with the output grid.
     pub quality: Vec<Vec<QualityRow>>,
     /// Per-channel, per-output 12x12 design-model covariance in XY order
-    /// (half-amplitude scaled). `covariance_output=none` deliberately returns
+    /// (peak-amplitude quantities). `covariance_output=none` deliberately returns
     /// empty per-channel vectors after validating each solver result, so
     /// native memory does not retain an unused 144-f64 matrix per output.
     pub covariance: Vec<XyCovariances>,
@@ -332,8 +332,8 @@ pub fn covariance_csv_header(mode: GlsCovarianceOutput) -> Result<Vec<String>> {
 }
 
 /// Packs one 12x12 XY covariance into a serialized row matching
-/// [`covariance_csv_header`]. Values are already half-amplitude scaled (1/4)
-/// by the core mapper; this function only selects and orders entries.
+/// [`covariance_csv_header`]. Values arrive in peak-amplitude XY units
+/// from the core mapper; this function only selects and orders entries.
 pub fn pack_covariance_row(
     covariance_xy: &[Vec<f64>],
     mode: GlsCovarianceOutput,

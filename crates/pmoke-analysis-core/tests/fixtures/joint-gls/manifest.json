@@ -9,32 +9,32 @@
    "bytes": 4824
   },
   "conventions.json": {
-   "sha256": "62ea96791ef1b380b0f4af3eb8f2c3f78c583cb8bdc641945f1be14b8c7bee8b",
-   "bytes": 78420
+   "sha256": "c471e5e0994de78afd446f9cc1815d65ee320b6e1ec72addd79d4ebaa9fb7d4f",
+   "bytes": 78414
   },
   "noise.json": {
    "sha256": "940638a10a2a3a2d8d36007f84611eeefa129310b915b5d2e00fdc9165115b1b",
    "bytes": 299692
   },
   "oracle-expected.json": {
-   "sha256": "eff9aa8dcb6405f91b2e8d8015d5620d18b3599adfec923c16adeabf6f7bd95d",
-   "bytes": 4009
+   "sha256": "51f77536e660b615fc465b74bdaab46894d941c2b0157275012eb1b31953f8f0",
+   "bytes": 4000
   },
   "weighted-golden.json": {
-   "sha256": "327b2a740eba1a7945711dffe01c91deb09ee3966fbb8c8c7a903340f61ea205",
-   "bytes": 94394
+   "sha256": "37439d647013aba8826bb839f09dedf60fc658fb991cf09133c7644b4a3e1aa1",
+   "bytes": 94393
   },
   "calibration-golden.json": {
    "sha256": "2fa8dbef2d81fd2a71dcf56c8619770b522021d1f070c259b2d2d8e6aa9cdb07",
    "bytes": 2733866
   },
   "correlated-golden.json": {
-   "sha256": "34bbfdda9227f6c9a1896c64110b2d1d3de62ad76ff735abdd98a21a18c75322",
-   "bytes": 80910
+   "sha256": "5a0522e1822be730d171207d6b0e4c6f770bb28c3d248f3775cc8472800e549e",
+   "bytes": 80904
   },
   "legacy-golden.json": {
-   "sha256": "ba5e3276cd104435c9f71978d953a45fa71b04e5c9d30d614a1063fb23605898",
-   "bytes": 309288
+   "sha256": "441424f52c8658c5b19d1a4a85e3d59a31d0f2b8ad9ca4e3bafc3a7cd8eb10a1",
+   "bytes": 309297
   }
  }
 }
