@@ -52,6 +52,10 @@ pub struct LockinProvenance {
     /// omit it, so their manifests keep their exact bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     prepulse_calibration_digest: Option<String>,
+    /// Requested vs effective pre-pulse interval (Issue #269 FR-01):
+    /// present only for pre-pulse executions, alongside the digest above.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prepulse_interval: Option<PrepulseIntervalProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_note: Option<String>,
 }
@@ -62,6 +66,18 @@ pub struct ModelDigest {
     pub channel: u8,
     pub path: String,
     pub sha256: String,
+}
+
+/// Requested vs effective pre-pulse interval recorded in GLS provenance
+/// (Issue #269 FR-01): present only when `calibration_source` is
+/// `prepulse`, alongside `prepulse_calibration_digest`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PrepulseIntervalProvenance {
+    pub requested_start: f64,
+    pub requested_end: f64,
+    pub effective_start: usize,
+    pub effective_end: usize,
+    pub effective_samples: usize,
 }
 
 impl LockinProvenance {
@@ -89,6 +105,7 @@ impl LockinProvenance {
             solver: None,
             model_digests: None,
             prepulse_calibration_digest: None,
+            prepulse_interval: None,
             response_note: None,
         }
     }
@@ -104,6 +121,20 @@ impl LockinProvenance {
     /// Returns the recorded pre-pulse derivation digest, if any.
     pub fn prepulse_digest(&self) -> Option<&str> {
         self.prepulse_calibration_digest.as_deref()
+    }
+
+    /// Records the requested vs effective pre-pulse interval on a
+    /// pre-pulse provenance (Issue #269 FR-01). Artifact and boxcar
+    /// executions never call this, so their manifests keep their exact
+    /// bytes.
+    pub fn with_prepulse_interval(mut self, interval: PrepulseIntervalProvenance) -> Self {
+        self.prepulse_interval = Some(interval);
+        self
+    }
+
+    /// Returns the recorded pre-pulse interval, if any.
+    pub fn prepulse_interval(&self) -> Option<&PrepulseIntervalProvenance> {
+        self.prepulse_interval.as_ref()
     }
 
     /// Provenance for a joint-harmonic GLS execution over shared geometry.
@@ -146,6 +177,7 @@ impl LockinProvenance {
                     .to_string(),
             ),
             prepulse_calibration_digest: None,
+            prepulse_interval: None,
         }
     }
 }

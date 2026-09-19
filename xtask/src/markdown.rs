@@ -397,10 +397,32 @@ fn japanese(text: &str) -> Option<&'static str> {
             "記録済みデータのノイズ診断計画（新規destinationへ）"
         }
         "Path to the noise diagnose request file" => "ノイズ診断requestファイルのpath",
-        "Build an immutable calibration artifact from a recorded waveform CSV" => {
-            "記録済み波形CSVからの不変較正artifactのbuild"
+        "Build an immutable calibration artifact from recorded waveforms (CSV request or direct RAW run)" => {
+            "記録波形からの不変較正artifactのbuild（CSV requestまたはRAW run直接）"
         }
         "Path to the calibration build request file" => "較正build requestファイルのpath",
+        "Recorded run directory for a direct build (defaults to the current directory)" => {
+            "直接build用の記録済みrun directory（既定: カレントdirectory）"
+        }
+        "Target channel for a direct build; repeat for several (defaults to the run signal channels)" => {
+            "直接buildの対象channel（複数可。既定: run設定のsignal channel）"
+        }
+        "Model identifier for a single-channel direct build" => {
+            "単一channel直接build用のmodel識別子"
+        }
+        "Reference channel for the same-run reference fit of a direct build" => {
+            "直接buildの同run参照fitに使う参照channel"
+        }
+        "Reference frequency in Hz for a direct build (defaults to the same-run fit)" => {
+            "直接build用の参照周波数Hz（既定: 同runのfit値）"
+        }
+        "Reference phase in radians for a direct build (defaults to the same-run fit)" => {
+            "直接build用の参照位相rad（既定: 同runのfit値）"
+        }
+        "Block length in samples for a direct build (defaults to samples divided by 40)" => {
+            "直接build用のblock長サンプル数（既定: サンプル数÷40）"
+        }
+        "Random seed for a direct build (defaults to 0)" => "直接build用の乱数seed（既定: 0）",
         "Path to the calibration artifact JSON file" => "較正artifact JSONファイルのpath",
         "Path to the TOML applicability context file" => "適用性context TOMLファイルのpath",
         "Inspect a calibration artifact file (read-only)" => {

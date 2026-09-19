@@ -332,14 +332,51 @@ pub enum RawCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum CalibrateCommand {
-    /// Build an immutable calibration artifact from a recorded waveform CSV
+    /// Build an immutable calibration artifact from recorded waveforms (CSV request or direct RAW run)
     Build {
         /// Path to the calibration build request file
-        #[arg(long, value_name = "FILE")]
-        request: PathBuf,
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with_all = [
+                "run",
+                "channel",
+                "model_id",
+                "reference_channel",
+                "reference_frequency_hz",
+                "reference_phase_rad",
+                "block_len",
+                "seed",
+            ]
+        )]
+        request: Option<PathBuf>,
         /// Override the output directory from the request
         #[arg(long, value_name = "DIR")]
         output: Option<PathBuf>,
+        /// Recorded run directory for a direct build (defaults to the current directory)
+        #[arg(long, value_name = "DIR", conflicts_with = "request")]
+        run: Option<PathBuf>,
+        /// Target channel for a direct build; repeat for several (defaults to the run signal channels)
+        #[arg(long, value_name = "N", conflicts_with = "request")]
+        channel: Vec<u32>,
+        /// Model identifier for a single-channel direct build
+        #[arg(long, value_name = "ID", conflicts_with = "request")]
+        model_id: Option<String>,
+        /// Reference channel for the same-run reference fit of a direct build
+        #[arg(long, value_name = "N", conflicts_with = "request")]
+        reference_channel: Option<u8>,
+        /// Reference frequency in Hz for a direct build (defaults to the same-run fit)
+        #[arg(long, value_name = "HZ", conflicts_with = "request")]
+        reference_frequency_hz: Option<f64>,
+        /// Reference phase in radians for a direct build (defaults to the same-run fit)
+        #[arg(long, value_name = "RAD", conflicts_with = "request")]
+        reference_phase_rad: Option<f64>,
+        /// Block length in samples for a direct build (defaults to samples divided by 40)
+        #[arg(long, value_name = "N", conflicts_with = "request")]
+        block_len: Option<usize>,
+        /// Random seed for a direct build (defaults to 0)
+        #[arg(long, value_name = "N", conflicts_with = "request")]
+        seed: Option<u64>,
     },
     /// Inspect a calibration artifact file (read-only)
     Inspect {
