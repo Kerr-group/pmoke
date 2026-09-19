@@ -69,7 +69,8 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
                     DiagnosticKind::Parse,
                     Some("version".to_string()),
                     "missing required top-level `version`".to_string(),
-                    None,
+                    // FR-04 (Issue #264, Card A): name the item and how to add it.
+                    Some("add `version = 7` at the top of the configuration".to_string()),
                 )],
                 normalized: None,
             });
@@ -79,7 +80,18 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
     if version == 6 || version == 7 {
         let report = pmoke_config_core::validate_config_toml(s);
         if !report.valid {
-            return core_diagnostics(report);
+            // FR-01 bridge (Issue #264, Card A): the browser core still
+            // requires every section at parse until Card C mirrors the native
+            // v7 defaults. When the core rejects a v7 document ONLY with
+            // missing-field errors, fall through to the native v7 schema,
+            // which fills absent unrelated sections with inert defaults. Any
+            // other core error (unknown field, type, value) returns exactly as
+            // today, and v6 behavior is unchanged.
+            let missing_only = !report.diagnostics.is_empty()
+                && report.diagnostics.iter().all(is_missing_field_mismatch);
+            if version != 7 || !missing_only {
+                return core_diagnostics(report);
+            }
         }
     }
 
@@ -134,7 +146,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
             Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
                 version: Some(7),
                 warnings: Vec::new(),
-                diagnostics: vec![with_v7_contract_hint(diag)],
+                diagnostics: vec![with_missing_item_hint(with_v7_contract_hint(diag))],
                 normalized: None,
             }),
         },
@@ -143,7 +155,7 @@ pub fn load_from_str(s: &str) -> ConfigLoad {
             Err(diag) => ConfigLoad::Diagnostics(ConfigDiagnostics {
                 version: Some(6),
                 warnings: Vec::new(),
-                diagnostics: vec![with_v6_contract_hint(diag)],
+                diagnostics: vec![with_missing_item_hint(with_v6_contract_hint(diag))],
                 normalized: None,
             }),
         },
@@ -194,6 +206,19 @@ fn core_diagnostics(report: pmoke_config_core::ValidationReport) -> ConfigLoad {
                     hint_message.to_string(),
                     Some(hint_suggestion.to_string()),
                 )
+            } else if item.code == DiagnosticCode::SchemaMismatch
+                && missing_field_name(&item_message).is_some()
+            {
+                // FR-04 (Issue #264, Card A): core-side missing items (e.g. a
+                // v6 section present but incomplete) get the same named
+                // diagnostic + add-hint as the native path.
+                let hinted = with_missing_item_hint(ConfigDiagnostic::new(
+                    DiagnosticKind::Deserialize,
+                    item_path.clone(),
+                    item_message,
+                    item_suggestion,
+                ));
+                (hinted.kind, hinted.message, hinted.suggestion)
             } else {
                 let kind = match item.code {
                     DiagnosticCode::TomlSyntax | DiagnosticCode::InputTooLarge => {
@@ -290,6 +315,113 @@ fn with_v7_contract_hint(diag: ConfigDiagnostic) -> ConfigDiagnostic {
         )
     } else {
         diag
+    }
+}
+
+/// True when a browser-core diagnostic is a missing-field schema mismatch
+/// (as opposed to an unknown field, a type error, or a value judgement).
+/// Used by the FR-01 bridge to decide whether the native v7 schema may fill
+/// the gaps with inert defaults.
+fn is_missing_field_mismatch(item: &pmoke_config_core::ConfigDiagnostic) -> bool {
+    use pmoke_config_core::{DiagnosticCode, DiagnosticSeverity};
+    item.severity == DiagnosticSeverity::Error
+        && item.code == DiagnosticCode::SchemaMismatch
+        && missing_field_name(&item.message).is_some()
+}
+
+/// Extracts the field name from a raw serde `missing field` message.
+/// Matches both the bare form (`missing field \`model\``) and the
+/// TOML-wrapped form (position header plus `missing field \`model\``) so the
+/// browser-core and native paths share one detector. Returns `None` for any
+/// other error shape (unknown fields, type errors), so those keep their
+/// existing diagnostics untouched.
+fn missing_field_name(message: &str) -> Option<&str> {
+    const MARKER: &str = "missing field `";
+    let start = message.find(MARKER)? + MARKER.len();
+    let rest = &message[start..];
+    let end = rest.find('`')?;
+    Some(&rest[..end])
+}
+
+/// FR-04 missing-item diagnostic (Issue #264, Card A): a raw serde
+/// `missing field` error names the absent key but never says how to add it.
+/// Known config items get an actionable message plus an add-hint; anything
+/// else (including typo rejections from `deny_unknown_fields`) passes through
+/// unchanged.
+fn with_missing_item_hint(diag: ConfigDiagnostic) -> ConfigDiagnostic {
+    if !matches!(diag.kind, DiagnosticKind::Deserialize) {
+        return diag;
+    }
+    let field = match missing_field_name(&diag.message) {
+        Some(field) => field,
+        None => return diag,
+    };
+    let item = match diag.path.as_deref() {
+        None | Some("") => field.to_string(),
+        Some(path) if path == field || path.ends_with(&format!(".{field}")) => path.to_string(),
+        Some(path) => format!("{path}.{field}"),
+    };
+    let suggestion = missing_item_suggestion(&item);
+    ConfigDiagnostic::new(
+        DiagnosticKind::Deserialize,
+        Some(item.clone()),
+        format!("missing required item `{item}`"),
+        Some(suggestion),
+    )
+}
+
+/// How-to-add hint for a required config item (FR-04). The table covers the
+/// schema sections; nested or future items fall back to a generic pointer at
+/// `pmoke config explain` and the generated config reference.
+fn missing_item_suggestion(item: &str) -> String {
+    match item {
+        "scope.model" => "add `model = \"DHO5108\"` under `[scope]`".to_string(),
+        "scope.connection" => "add `connection = \"tcp://host:port\"` under `[scope]`".to_string(),
+        "data.output" => "add `output = \"csv\"` under `[data]` (`raw` and `both` are also accepted)".to_string(),
+        "data.input" => "add `input = \"csv\"` under `[data]` (`raw` and `auto` are also accepted)".to_string(),
+        "pulse.background_before" => {
+            "add `background_before = { start = -0.005, end = -0.001 }` under `[pulse]`".to_string()
+        }
+        "pulse.background_after" => {
+            "add `background_after = { start = 0.01, end = 0.02 }` under `[pulse]`".to_string()
+        }
+        "reference.channel" => {
+            "add `channel = <1-8>` under `[reference]` (`0` leaves the reference unspecified for sensor-only stages)".to_string()
+        }
+        "reference.fft_window" => {
+            "add `fft_window = { start = 0.0, end = 0.005 }` under `[reference]`".to_string()
+        }
+        "reference.stride_samples" => {
+            "add `stride_samples = <positive integer>` under `[reference]`".to_string()
+        }
+        "reference.window_samples" => {
+            "add `window_samples = <positive integer>` under `[reference]`".to_string()
+        }
+        "lockin.channels" => "add `channels = [<signal channel>]` under `[lockin]`".to_string(),
+        "lockin.workers" => "add `workers = <positive integer>` under `[lockin]`".to_string(),
+        "lockin.stride_samples" => {
+            "add `stride_samples = <positive integer>` under `[lockin]`".to_string()
+        }
+        "lockin.window" => {
+            "add `[lockin.window]` with `kind`, `half_window_cycles`, and `edge_policy`".to_string()
+        }
+        "lockin.estimator" => {
+            "add `[lockin.estimator]` with `kind = \"boxcar_legacy\"` (or a `joint_harmonic_gls` contract)".to_string()
+        }
+        "phase.offsets" => "add `offsets = [<six values>]` under `[phase]`".to_string(),
+        "moke.sensor" => "add `sensor = <sensor channel>` under `[moke]`".to_string(),
+        "moke.method" => {
+            "add `method = \"standard\"` under `[moke]` (`harmonics` is also accepted)".to_string()
+        }
+        "moke.factor" => "add `factor = <finite number>` under `[moke]`".to_string(),
+        _ => match item.rsplit_once('.') {
+            Some((parent, field)) => format!(
+                "add `{field}` under `{parent}` (see `pmoke config explain {parent}` and the generated config reference)"
+            ),
+            None => format!(
+                "add `{item}` at the top level of the config (see `pmoke config explain` and the generated config reference)"
+            ),
+        },
     }
 }
 
