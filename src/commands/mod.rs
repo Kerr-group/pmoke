@@ -17,6 +17,8 @@ pub mod export;
 pub mod fetch;
 pub mod instruments;
 pub mod li;
+#[cfg(test)]
+mod minimal_stages;
 pub mod moke;
 pub mod monitor;
 pub mod noise;
