@@ -257,6 +257,7 @@ fn legs_share_grid_and_never_touch_the_source() {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: crate::config::GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![crate::config::EstimatorCalibration {
             channel: 3,
             path: "ch3.json".to_string(),
@@ -525,6 +526,7 @@ fn method_preserves_base_signal_model() {
         noise_mode: GlsNoiseMode::PhaseDiagonal,
         covariance_output: GlsCovarianceOutput::Full,
         failure_policy: crate::config::GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![crate::config::EstimatorCalibration {
             channel: 3,
             path: "ch3.json".to_string(),

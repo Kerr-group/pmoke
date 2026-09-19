@@ -5,8 +5,9 @@ mod model;
 
 use connection::{ConnectionDefaults, ConnectionUri};
 use model::{
-    ConfigV6, ConfigV7, Filter, Generator, JointHarmonicGlsConfigV7, LockinEstimatorV7, LockinV7,
-    Moke, Phase, Plot, Pulse, Reference, Scope, Sensor, SensorScale, Signal, Window,
+    ConfigV6, ConfigV7, Filter, Generator, GlsCalibrationSourceV7, JointHarmonicGlsConfigV7,
+    LockinEstimatorV7, LockinV7, Moke, Phase, Plot, Pulse, Reference, Scope, Sensor, SensorScale,
+    Signal, Window,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -803,6 +804,22 @@ fn validate_estimator_calibrations(
     lockin_channels: &[u8],
     report: &mut ValidationReport,
 ) {
+    // FR-05/08 mirror: prepulse derives every channel model, so file bindings
+    // alongside it are ambiguous; the per-channel rule below is artifact-only.
+    if matches!(config.calibration_source, GlsCalibrationSourceV7::Prepulse) {
+        if !config.calibrations.is_empty() {
+            error(
+                report,
+                DiagnosticCode::MutuallyExclusive,
+                "lockin.estimator.calibration_source",
+                format!(
+                    "lockin.estimator.calibration_source is prepulse, so lockin.estimator.calibrations must be empty (got {} entries)",
+                    config.calibrations.len()
+                ),
+            );
+        }
+        return;
+    }
     let mut seen: Vec<u8> = Vec::with_capacity(config.calibrations.len());
     for (index, calibration) in config.calibrations.iter().enumerate() {
         if !lockin_channels.contains(&calibration.channel) {
@@ -1206,6 +1223,33 @@ factor = -1.0
     }
 
     #[test]
+    fn v7_prepulse_matches_native_validation() {
+        // AT-08: prepulse with empty calibrations is valid here exactly when
+        // it is valid natively; mixing file bindings with prepulse is a
+        // mutual-exclusion error on both sides (FR-05/FR-08).
+        let prepulse = VALID_V7_LEGACY.replace(
+            "[lockin.estimator]\nkind = \"boxcar_legacy\"",
+            "[lockin.estimator]\nkind = \"joint_harmonic_gls\"\nfit_harmonics = [1, 2, 3, 4, 5, 6]\noutput_harmonics = [1, 2, 3, 4, 5, 6]\nnoise_mode = \"identity\"\ncalibration_source = \"prepulse\"",
+        );
+        let report = validate_config_toml(&prepulse);
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        let mixed = prepulse.replace(
+            "calibration_source = \"prepulse\"",
+            &format!(
+                "calibration_source = \"prepulse\"\n[[lockin.estimator.calibrations]]\nchannel = 3\npath = \"calibration/ch3.json\"\nsha256 = \"{SHA_A}\""
+            ),
+        );
+        let report = validate_config_toml(&mixed);
+        assert!(!report.valid);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|item| item.code == DiagnosticCode::MutuallyExclusive)
+        );
+    }
+
+    #[test]
     fn rejects_schema_and_cross_field_errors() {
         let report = validate_config_toml(&VALID.replace("channel = 2", "channel = 1"));
         assert!(!report.valid);
@@ -1332,5 +1376,174 @@ factor = -1.0
         assert!(report.valid);
         assert_eq!(report.format_version, REPORT_FORMAT_VERSION);
         assert_eq!(report.schema_version, Some(CONFIG_SCHEMA_VERSION));
+    }
+
+    /// Sensor-class skeleton shared with the native minimal-config suite
+    /// (`src/config/tests/minimal.rs`, Card A): only the always-required core
+    /// plus `[pulse]`; every other section is absent and must default.
+    const SENSOR_SKELETON_V7: &str = r#"version = 7
+[[sensors]]
+channel = 1
+scale = { factor = 1.0 }
+label = "field"
+unit = "T"
+[pulse]
+background_before = { start = -0.005, end = -0.001 }
+background_after = { start = 0.01, end = 0.02 }
+"#;
+
+    #[test]
+    fn minimal_sensor_skeleton_matches_native_defaults() {
+        // FR-06 parity: the core agrees with the native Card A outcome — the
+        // skeleton validates, and the summary carries the mirrored defaults
+        // (loopback scope, channel-0 reference sentinel, empty lock-in set).
+        let report = validate_config_toml(SENSOR_SKELETON_V7);
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        assert_eq!(report.schema_version, Some(7));
+        let summary = report.summary.unwrap();
+        assert_eq!(summary.scope_model, "DHO5108");
+        assert!(
+            summary.scope_connection.contains("127.0.0.1"),
+            "unexpected scope connection: {}",
+            summary.scope_connection
+        );
+        assert_eq!(summary.sensor_channels, vec![1]);
+        assert_eq!(summary.reference_channel, 0);
+        assert!(summary.signal_channels.is_empty());
+        assert_eq!(summary.lockin_filter, "boxcar_legacy");
+        assert_eq!(summary.lockin_workers, 1);
+        let normalized = report.normalized_toml.unwrap();
+        let reparsed = validate_config_toml(&normalized);
+        assert!(reparsed.valid, "{:#?}", reparsed.diagnostics);
+    }
+
+    #[test]
+    fn each_absent_section_defaults_like_native() {
+        // FR-06 parity: removing any single unrelated section from the full
+        // v7 fixture still validates, exactly as the native
+        // `each_absent_unrelated_section_defaults_individually` test asserts.
+        // The surviving explicit sections keep their values.
+        let removals = [
+            (
+                "scope",
+                "[scope]\nmodel = \"DHO5108\"\nconnection = \"tcp://192.0.2.10:55255\"\n",
+            ),
+            ("data", "[data]\noutput = \"raw\"\ninput = \"raw\"\n"),
+            (
+                "pulse",
+                "[pulse]\nbackground_before = { start = -0.005, end = -0.001 }\nbackground_after = { start = 0.01, end = 0.02 }\n",
+            ),
+            (
+                "reference",
+                "[reference]\nchannel = 2\nfft_window = { start = 0.0, end = 0.005 }\nstride_samples = 100\nwindow_samples = 1000\n",
+            ),
+            (
+                "lockin",
+                "[lockin]\nchannels = [3]\nworkers = 2\nstride_samples = 100\n[lockin.window]\nkind = \"reference_cycles\"\nhalf_window_cycles = 1.0\nedge_policy = \"legacy_trim\"\n[lockin.estimator]\nkind = \"boxcar_legacy\"\n",
+            ),
+            ("phase", "[phase]\noffsets = [0, 0, 0, 0, 0, 0]\n"),
+            (
+                "moke",
+                "[moke]\nsensor = 1\nmethod = \"harmonics\"\nfactor = -1.0\n",
+            ),
+        ];
+        for (section, block) in removals {
+            let text = VALID_V7_LEGACY.replacen(block, "", 1);
+            assert_ne!(
+                text, VALID_V7_LEGACY,
+                "removal block for {section} did not match"
+            );
+            let report = validate_config_toml(&text);
+            assert!(
+                report.valid,
+                "section {section} absent should default, got {:#?}",
+                report.diagnostics
+            );
+            let summary = report.summary.unwrap();
+            if section != "scope" {
+                assert!(
+                    summary.scope_connection.contains("192.0.2.10"),
+                    "section {section}: explicit scope lost"
+                );
+            }
+            if section != "reference" {
+                assert_eq!(summary.reference_channel, 2, "section {section}");
+            }
+            if section != "lockin" {
+                assert_eq!(summary.signal_channels, vec![3], "section {section}");
+                assert_eq!(summary.lockin_workers, 2, "section {section}");
+            }
+            if section != "moke" {
+                assert!(
+                    report.normalized_toml.unwrap().contains("harmonics"),
+                    "section {section}: explicit moke lost"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn version_only_fails_on_required_core_like_native() {
+        // FR-06 parity: version/roles/channels stay always-required. With no
+        // sensors there is no role membership for the defaulted moke section
+        // to satisfy, so the core rejects exactly as native does.
+        let report = validate_config_toml("version = 7\n");
+        assert!(!report.valid);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|item| item.path.as_deref() == Some("moke.sensor")),
+            "expected a required-core diagnostic, got {:#?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn missing_sensor_item_is_schema_mismatch_like_native() {
+        // A present section that is itself incomplete still fails at parse
+        // (never a silent default): removing the sensor label is a schema
+        // mismatch naming that item, matching the native FR-04 outcome shape.
+        let text = VALID_V7_LEGACY.replacen("label = \"field\"\n", "", 1);
+        assert_ne!(text, VALID_V7_LEGACY);
+        let report = validate_config_toml(&text);
+        assert!(!report.valid);
+        assert_eq!(report.diagnostics[0].code, DiagnosticCode::SchemaMismatch);
+        let first = &report.diagnostics[0];
+        assert!(
+            first
+                .path
+                .as_deref()
+                .unwrap_or_default()
+                .contains("sensors")
+                && first.message.contains("label"),
+            "unexpected diagnostics: {:#?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn unknown_fields_still_rejected_on_minimal_configs() {
+        // `deny_unknown_fields` stays: typos never become silent defaults,
+        // on minimal skeletons exactly as on full configs.
+        let text = format!("{SENSOR_SKELETON_V7}top_level_unknown = true\n");
+        let report = validate_config_toml(&text);
+        assert!(!report.valid);
+        assert_eq!(report.diagnostics[0].code, DiagnosticCode::SchemaMismatch);
+    }
+
+    #[test]
+    fn full_v7_configs_keep_explicit_values_despite_defaults() {
+        // Pins the no-regression contract: present sections never see
+        // defaults; the normalized output keeps the explicit values.
+        for text in [VALID_V7_LEGACY.to_string(), valid_v7_gls()] {
+            let report = validate_config_toml(&text);
+            assert!(report.valid, "{:#?}", report.diagnostics);
+            let normalized = report.normalized_toml.unwrap();
+            assert!(normalized.contains("192.0.2.10"));
+            assert!(normalized.contains("reference_cycles"));
+            let reparsed = validate_config_toml(&normalized);
+            assert!(reparsed.valid, "{:#?}", reparsed.diagnostics);
+        }
     }
 }

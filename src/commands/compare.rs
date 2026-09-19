@@ -227,7 +227,13 @@ fn apply_method_estimator(cfg: &mut Config, method: &CompareMethod) -> Result<()
                     method.name
                 ),
             };
-            if base.calibrations.is_empty() {
+            if matches!(
+                base.calibration_source,
+                crate::config::GlsCalibrationSource::Prepulse
+            ) {
+                // Pre-pulse legs derive every channel model from the recorded
+                // background; file bindings are forbidden alongside, not required.
+            } else if base.calibrations.is_empty() {
                 bail!(
                     "comparison method {} needs calibration bindings, none configured",
                     method.name
@@ -245,6 +251,7 @@ fn apply_method_estimator(cfg: &mut Config, method: &CompareMethod) -> Result<()
                     noise_mode: *noise_mode,
                     covariance_output: *covariance_output,
                     failure_policy: base.failure_policy,
+                    calibration_source: base.calibration_source,
                     calibrations: base.calibrations,
                 });
             Ok(())

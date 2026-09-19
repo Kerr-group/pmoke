@@ -47,6 +47,11 @@ pub struct LockinProvenance {
     solver: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model_digests: Option<Vec<ModelDigest>>,
+    /// Pre-pulse derivation digest (FR-04): present only when
+    /// `calibration_source` is `prepulse`. Artifact and boxcar executions
+    /// omit it, so their manifests keep their exact bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prepulse_calibration_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_note: Option<String>,
 }
@@ -83,8 +88,22 @@ impl LockinProvenance {
             noise_mode: None,
             solver: None,
             model_digests: None,
+            prepulse_calibration_digest: None,
             response_note: None,
         }
+    }
+
+    /// Records the FR-04 pre-pulse derivation digest on a joint-GLS
+    /// provenance. Artifact executions never call this, so their manifests
+    /// keep their exact bytes.
+    pub fn with_prepulse_digest(mut self, digest: impl Into<String>) -> Self {
+        self.prepulse_calibration_digest = Some(digest.into());
+        self
+    }
+
+    /// Returns the recorded pre-pulse derivation digest, if any.
+    pub fn prepulse_digest(&self) -> Option<&str> {
+        self.prepulse_calibration_digest.as_deref()
     }
 
     /// Provenance for a joint-harmonic GLS execution over shared geometry.
@@ -126,6 +145,7 @@ impl LockinProvenance {
                 "single-ENBW undefined for the time-varying joint estimator; see per-window quality diagnostics (FR-043)"
                     .to_string(),
             ),
+            prepulse_calibration_digest: None,
         }
     }
 }

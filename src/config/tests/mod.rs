@@ -7,6 +7,7 @@ use std::fs;
 
 mod general;
 mod legacy;
+mod minimal;
 mod v4;
 mod v7;
 

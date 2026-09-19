@@ -604,6 +604,7 @@ fn joint_gls_setup() -> JointGlsSetup {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: pmoke::config::GlsCalibrationSource::Artifact,
         calibrations: Vec::new(),
     };
     lockin.estimator = pmoke::config::LockinEstimator::JointHarmonicGls(gls.clone());

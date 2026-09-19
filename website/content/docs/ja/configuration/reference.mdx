@@ -90,7 +90,8 @@ description: pmoke config schema version 7の自動生成fieldリファレンス
 | `lockin.estimator.noise_mode` | `string enum` | 必須 | `identity`, `phase_diagonal`, `stationary_correlated`, `phase_correlated` | GLS雑音モデル種別 白色化契約の選択。identity・位相別対角・定常相関・位相相関。 |
 | `lockin.estimator.covariance_output` | `string enum` | 任意 | `diagonal`; `none`, `diagonal`, `full` | XY共分散の出力形式 推定器共分散のrun成果物への書き出し量を制御。 |
 | `lockin.estimator.failure_policy` | `string enum` | 任意 | `error`; `error` | 推定器失敗時方針 v1ではerrorのみ。失敗時は代替動作せずrun中断。 |
-| `lockin.estimator.calibrations` | `table array` | 任意 | `[]` | 不変calibration束縛。lock-in channel毎に1件 channelとcalibration成果物パス＋期待SHA-256の束縛。未展開テンプレートは拒否。 **制約:** exactly one entry per lockin.channels value |
+| `lockin.estimator.calibration_source` | `string enum` | 任意 | `artifact`; `artifact`, `prepulse` | joint推定器のcalibration取得元 artifactはファイル束縛の現行動作。prepulseはpulse.background_beforeからLI実行毎にchannel毎の雑音モデルを一度だけ導出し、LI provenanceにprepulse_calibration_digestを記録。prepulse選択時はcalibrationsは空でなければならない。 |
+| `lockin.estimator.calibrations` | `table array` | 任意 | `[]` | 不変calibration束縛。lock-in channel毎に1件 channelとcalibration成果物パス＋期待SHA-256の束縛。未展開テンプレートは拒否。artifact方式ではchannel毎に1件必須。calibration_sourceがprepulseの場合は空でなければならない。 **制約:** exactly one entry per lockin.channels value (artifact mode) |
 | `lockin.filter` | `tagged inline table` | 必須 | - | lock-in low-pass filter 設定 schema v6以前はboxcar_legacyのみ。v7ではlockin.window/lockin.estimatorに置換。 **制約:** fields from other filter kinds are rejected |
 | `lockin.filter.kind` | `string enum` | 必須 | `boxcar_legacy` | lock-in filter アルゴリズム 現在のLPFはboxcar_legacyのみ。過去のFIR/IIR kindは移行診断のためだけに読み取る。 |
 | `lockin.filter.half_window_cycles` | `float` · `reference cycles` | 必須 | - | 参照周期単位の半窓幅 boxcar積分窓を参照周期単位で指定する半窓幅。 **制約:** must be finite and positive |

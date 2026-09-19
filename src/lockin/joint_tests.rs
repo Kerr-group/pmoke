@@ -40,6 +40,7 @@ fn joint_lockin() -> crate::config::Lockin {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![crate::config::EstimatorCalibration {
             channel: 3,
             path: "synthetic".to_string(),

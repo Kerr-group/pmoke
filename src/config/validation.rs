@@ -601,6 +601,24 @@ fn validate_estimator_calibrations(
     errors: &mut Vec<ConfigDiagnostic>,
 ) {
     const BASE: &str = "lockin.estimator.calibrations";
+    // FR-05: prepulse derives every channel model from background_before, so
+    // any file binding alongside it is ambiguous and rejected. The
+    // per-channel artifact rule below applies to artifact mode only.
+    if matches!(config.calibration_source, GlsCalibrationSource::Prepulse) {
+        if !config.calibrations.is_empty() {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin.estimator.calibration_source".to_string()),
+                format!(
+                    "lockin.estimator.calibration_source is prepulse, so {BASE} must be empty \
+                     (got {} entries); prepulse derives every channel model and file bindings alongside it are ambiguous",
+                    config.calibrations.len()
+                ),
+                Some("remove the calibrations entries or switch calibration_source back to artifact".to_string()),
+            ));
+        }
+        return;
+    }
     let mut seen: Vec<u8> = Vec::with_capacity(config.calibrations.len());
     for (idx, calibration) in config.calibrations.iter().enumerate() {
         if !signal_ch.contains(&calibration.channel) {
