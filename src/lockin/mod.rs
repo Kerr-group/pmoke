@@ -447,6 +447,7 @@ fn li_process_joint<'a>(
         .ok_or_else(|| anyhow::anyhow!("joint_harmonic_gls execution needs a uniform timebase"))?;
     // FR-03: exactly one derivation per LI run, before any estimation.
     let mut prepulse_digest: Option<String> = None;
+    let mut prepulse_interval: Option<crate::lockin::provenance::PrepulseIntervalProvenance> = None;
     let source: Box<dyn NoiseModelSource> = match gls.calibration_source {
         crate::config::GlsCalibrationSource::Prepulse => {
             let derivation = crate::lockin::prepulse::derive_prepulse(
@@ -464,6 +465,15 @@ fn li_process_joint<'a>(
                 "pre-pulse calibration derivation failed; refusing to fall back to artifact mode",
             )?;
             prepulse_digest = Some(derivation.digest);
+            // Issue #269 FR-01: record the requested window alongside the
+            // effective sample range in the LI provenance.
+            prepulse_interval = Some(crate::lockin::provenance::PrepulseIntervalProvenance {
+                requested_start: derivation.requested_window.start,
+                requested_end: derivation.requested_window.end,
+                effective_start: derivation.effective_start,
+                effective_end: derivation.effective_end,
+                effective_samples: derivation.effective_end - derivation.effective_start,
+            });
             Box::new(derivation.source)
         }
         crate::config::GlsCalibrationSource::Artifact => {
@@ -497,9 +507,13 @@ fn li_process_joint<'a>(
         tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
     };
     let output = run_joint_li(&inputs, signal_ch, signal_data, source.as_ref())?;
-    let provenance = match prepulse_digest {
-        Some(digest) => output.provenance.with_prepulse_digest(digest),
-        None => output.provenance,
+    let provenance = match (prepulse_digest, prepulse_interval) {
+        (Some(digest), Some(interval)) => output
+            .provenance
+            .with_prepulse_digest(digest)
+            .with_prepulse_interval(interval),
+        (Some(digest), None) => output.provenance.with_prepulse_digest(digest),
+        _ => output.provenance,
     };
     Ok(LockinProcessOutput {
         result: output.result,

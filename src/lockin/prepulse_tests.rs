@@ -573,3 +573,57 @@ fn prepulse_derivation_cost_is_a_fraction_of_the_li_run() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn truncation_warns_and_records_requested_and_effective() {
+    // Issue #269 FR-01/FR-02: a requested window extending 5 ms before the
+    // recorded timebase truncates to the recorded samples (with a warning),
+    // and both the requested window and the effective range are recorded.
+    let samples = 30_000usize;
+    let (time, signal) = stationary_trace(samples, 43, 0.05);
+    let gls = gls_config(GlsNoiseMode::Identity);
+    let requested = Window {
+        start: -0.005,
+        end: (samples - 1) as f64 * DT,
+    };
+    let derivation = derive_prepulse(
+        requested,
+        TimeAxisRef::Explicit(&time),
+        &[3],
+        &[signal.as_slice()],
+        F_REF,
+        PHASE,
+        DT,
+        &gls,
+        "acquisition-test",
+    )
+    .unwrap();
+    assert_eq!(derivation.requested_window.start, -0.005);
+    assert_eq!(derivation.requested_window.end, (samples - 1) as f64 * DT);
+    assert_eq!(derivation.effective_start, 0);
+    assert_eq!(derivation.effective_end, samples);
+}
+
+#[test]
+fn phase_correlated_scs_refusal_is_mode_independent() {
+    // Issue #269 FR-04: the SCS adequacy gate is mandatory even with
+    // noise_mode = "phase_correlated" (shot13 ch2 spread 0.506 analogue:
+    // refusal is the correct behavior, never a relaxed threshold).
+    let samples = 30_000usize;
+    let (time, signal) = correlation_shift_trace(samples, 47);
+    let gls = gls_config(GlsNoiseMode::PhaseCorrelated);
+    let error = derive_prepulse(
+        full_window(samples),
+        TimeAxisRef::Explicit(&time),
+        &[3],
+        &[signal.as_slice()],
+        F_REF,
+        PHASE,
+        DT,
+        &gls,
+        "acquisition-test",
+    )
+    .err()
+    .unwrap();
+    assert!(format!("{error:#}").contains("adequacy"), "{error:#}");
+}

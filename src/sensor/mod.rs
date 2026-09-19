@@ -90,6 +90,12 @@ pub fn run_sensor<'a>(
     // Stride-decimated grid shared by sensor.csv and the sensor plots (D2).
     // Plain every-Nth decimation over the full range: no window trim and no
     // reference needed. Rows = floor((n - 1) / stride) + 1.
+    //
+    // FR-05 (Issue #264, Card B): `lockin.stride_samples` is a defaulted
+    // sensor-required item, not a lock-in dependency. Card A fills an absent
+    // `[lockin]` with the inert stride 100, load-time validation keeps it
+    // positive, and no `[lockin]` section is needed for `pmoke sensor`; the
+    // read below must stay a plain positive-stride decimation.
     let stride = cfg.lockin.stride_samples;
     if stride == 0 {
         bail!("lockin.stride_samples must be positive");
@@ -234,6 +240,9 @@ pub fn run_sensor<'a>(
     )?;
 
     let headers = build_analysis_headers(cfg, Vec::<String>::new())?;
+    // FR-05 (Issue #264, Card B): `lockin.save_npy` is a defaulted
+    // sensor-required item (Card A inert default: no npy); no `[lockin]`
+    // section is needed for `pmoke sensor`.
     write_analysis_results(
         cfg.paths().sensor_csv(),
         &headers,

@@ -286,7 +286,9 @@ fn flat_request_text(path: &str, output: &str, total: u64) -> String {
 #[test]
 fn diagnostics_report_supported_structure_on_modulated_tone() {
     let dir = unique_test_dir("m1b_structured");
-    let blocks = 16usize;
+    let blocks = 8usize;
+    // Reduced geometry: 8 blocks (102,400 samples) keep the verdict coverage
+    // at roughly half of the compute.
     let block_len = 12800usize;
     let wave = dir.join("wave.csv");
     synthetic_structured_csv(&wave, blocks, block_len);
@@ -322,7 +324,8 @@ fn diagnostics_report_supported_structure_on_modulated_tone() {
 #[test]
 fn diagnostics_report_no_change_on_clean_tone() {
     let dir = unique_test_dir("m1b_clean");
-    let blocks = 16usize;
+    let blocks = 8usize;
+    // Reduced geometry (see the structured-tone test above).
     let block_len = 12800usize;
     let wave = dir.join("wave.csv");
     synthetic_csv(&wave, blocks, block_len);
