@@ -460,6 +460,9 @@ fn li_process_joint<'a>(
                 sample_interval_s,
                 gls,
                 &crate::lockin::prepulse::acquisition_digest_for(cfg),
+                // Same-run reference-fit uncertainty into each derived
+                // artifact binding (Issue #274 FR-01).
+                ref_fit_params.f_ref_rel_uncertainty,
             )
             .context(
                 "pre-pulse calibration derivation failed; refusing to fall back to artifact mode",
@@ -492,6 +495,9 @@ fn li_process_joint<'a>(
                     PIPELINE_VOLTAGE_UNIT.to_string(),
                     sample_interval_s,
                     ref_fit_params.f_ref,
+                    // Inference-side uncertainty from the run's own
+                    // reference fit (Issue #274 FR-02).
+                    ref_fit_params.f_ref_rel_uncertainty,
                 )
                 .context("joint_harmonic_gls model source is not usable")?,
             )
