@@ -185,24 +185,10 @@ pub(super) fn render_body(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rec
 }
 
 pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    let focus = match app.focus {
-        FocusPane::Commands => "workflow",
-        FocusPane::Inspector => "inspector",
-        FocusPane::Output => "activity",
-    };
-    let line = Line::from(vec![
-        Span::styled(" Enter ", Style::default().fg(Color::Cyan)),
-        Span::raw("run  "),
-        Span::styled("Tab ", Style::default().fg(Color::Cyan)),
-        Span::raw("focus  "),
-        Span::styled("i ", Style::default().fg(Color::Cyan)),
-        Span::raw("inspect  "),
-        Span::styled("[ ] ", Style::default().fg(Color::Cyan)),
-        Span::raw("history  "),
-        Span::styled("? ", Style::default().fg(Color::Cyan)),
-        Span::raw("help  "),
-        Span::styled(format!("[{focus}]"), Style::default().fg(Color::DarkGray)),
-    ]);
+    // FR-02: the footer is generated from the keybinding registry per focus
+    // (key labels via `keymap::primary_label`), so it cannot drift from the
+    // implementation either.
+    let line = Line::from(footer_spans(app));
     frame.render_widget(Paragraph::new(line), area);
 }
 

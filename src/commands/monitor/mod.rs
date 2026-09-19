@@ -5,8 +5,8 @@ use crate::ui::{EventKind, EventLevel, UiEvent};
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-        MouseButton, MouseEvent, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -23,7 +23,7 @@ use std::{
     env, fs,
     io::{self, Read, Stdout},
     process::{Child, Command as ProcessCommand, ExitStatus, Stdio},
-    sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError},
+    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -33,6 +33,7 @@ mod actions;
 mod app;
 mod clipboard;
 mod formatting;
+mod keymap;
 mod layout;
 mod output;
 mod panels;
@@ -50,6 +51,7 @@ use formatting::{
     bordered_inner, centered_rect, contains, fit_path, fit_text, format_age, format_duration,
     format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
 };
+use keymap::*;
 #[cfg(test)]
 use layout::workflow_panel_width;
 use layout::{
@@ -94,6 +96,20 @@ impl MotionMode {
     fn animates(self) -> bool {
         self != Self::Off
     }
+}
+
+/// FR-05 mouse-capture opt-out. `PMOKE_MOUSE=off` (also `0`/`no`/`false`/
+/// `disabled`) disables mouse capture; anything else (including unset) keeps
+/// the long-standing default of capturing the mouse. Read once per app via
+/// `MonitorApp::new`, mirroring `PMOKE_MOTION`.
+fn mouse_capture_enabled() -> bool {
+    !matches!(
+        env::var("PMOKE_MOUSE")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "off" | "0" | "no" | "false" | "disabled"
+    )
 }
 
 struct TerminalGuard<'a> {
@@ -167,9 +183,9 @@ impl Drop for TerminalSetupGuard {
 }
 
 pub fn monitor(config_path: &str, load: ConfigLoad) -> Result<()> {
-    let mut terminal = setup_terminal()?;
-    let mut guard = TerminalGuard::new(&mut terminal);
     let mut app = MonitorApp::new(config_path.to_string(), load);
+    let mut terminal = setup_terminal(app.mouse_capture)?;
+    let mut guard = TerminalGuard::new(&mut terminal);
     let run_result = run(guard.terminal(), &mut app);
     let restore_result = guard.restore();
     match run_result {
@@ -400,7 +416,7 @@ enum OutputStream {
     System,
 }
 
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+fn setup_terminal(mouse_capture: bool) -> Result<Terminal<CrosstermBackend<Stdout>>> {
     let mut guard = TerminalSetupGuard::new();
     enable_raw_mode()?;
     guard.raw_mode = true;
@@ -409,8 +425,10 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // terminal consumed the escape sequence, rollback still sends its inverse.
     guard.alternate_screen = true;
     execute!(stdout, EnterAlternateScreen)?;
-    guard.mouse_capture = true;
-    execute!(stdout, EnableMouseCapture)?;
+    if mouse_capture {
+        guard.mouse_capture = true;
+        execute!(stdout, EnableMouseCapture)?;
+    }
     let backend = CrosstermBackend::new(stdout);
     let terminal = Terminal::with_options(
         backend,
@@ -448,111 +466,14 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
-
-                    match key.code {
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.interrupt_current_operation();
-                        }
-                        KeyCode::Char('?') if !app.search_mode => app.show_help = !app.show_help,
-                        KeyCode::Esc if app.search_mode || !app.action_query.is_empty() => {
-                            app.clear_action_search()
-                        }
-                        KeyCode::Esc => app.escape_current_mode(),
-                        KeyCode::Char('q') if app.show_help => {
-                            app.show_help = false;
-                        }
-                        _ if app.show_help => {}
-                        KeyCode::Char('/') if !app.search_mode => app.begin_action_search(),
-                        KeyCode::Backspace if app.search_mode => app.pop_action_query(),
-                        KeyCode::Enter if app.search_mode => app.search_mode = false,
-                        KeyCode::Char(ch) if app.search_mode => app.push_action_query(ch),
-                        KeyCode::PageUp => {
-                            scroll_focused_up(app, terminal.size()?.into(), 12);
-                        }
-                        KeyCode::PageDown => {
-                            scroll_focused_down(app, terminal.size()?.into(), 12);
-                        }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            scroll_focused_up(app, terminal.size()?.into(), 6);
-                        }
-                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            scroll_focused_down(app, terminal.size()?.into(), 6);
-                        }
-                        KeyCode::End => app.follow_output(),
-                        KeyCode::Char('q') if app.command_running() => {
-                            app.push_output(
-                                OutputStream::System,
-                                "A command is running. Press Ctrl+C to stop it before quitting.",
-                            );
-                        }
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('r') => app.refresh(),
-                        KeyCode::Char('[') => app.show_previous_run(),
-                        KeyCode::Char(']') => app.show_next_run(),
-                        KeyCode::Char('a') => app.focus_actions(),
-                        KeyCode::Char('o') => app.focus_output(),
-                        KeyCode::Char('i') => app.cycle_inspector(),
-                        KeyCode::Char('m') => app.focus_messages(),
-                        KeyCode::Char('f') => app.focus_files(),
-                        KeyCode::Char('s') => app.focus_status(),
-                        KeyCode::Char('y') => app.copy_selected_output(),
-                        KeyCode::Char('v') | KeyCode::Char('V')
-                            if app.focus == FocusPane::Output =>
-                        {
-                            app.enter_output_line_visual_mode();
-                        }
-                        KeyCode::Enter if app.focus == FocusPane::Output => {
-                            app.copy_selected_output();
-                        }
-                        KeyCode::Enter => run_selected_action(app, terminal.size()?.into())?,
-                        KeyCode::Char('K') if app.focus == FocusPane::Output => {
-                            app.select_previous_output(true);
-                            ensure_selected_output_visible(app, terminal.size()?.into());
-                        }
-                        KeyCode::Char('J') if app.focus == FocusPane::Output => {
-                            app.select_next_output(true);
-                            ensure_selected_output_visible(app, terminal.size()?.into());
-                        }
-                        KeyCode::Up | KeyCode::Char('k') if app.focus == FocusPane::Output => {
-                            app.select_previous_output(
-                                key.modifiers.contains(KeyModifiers::SHIFT)
-                                    || app.output_selection_anchor.is_some(),
-                            );
-                            ensure_selected_output_visible(app, terminal.size()?.into());
-                        }
-                        KeyCode::Down | KeyCode::Char('j') if app.focus == FocusPane::Output => {
-                            app.select_next_output(
-                                key.modifiers.contains(KeyModifiers::SHIFT)
-                                    || app.output_selection_anchor.is_some(),
-                            );
-                            ensure_selected_output_visible(app, terminal.size()?.into());
-                        }
-                        KeyCode::Char('g') if app.focus == FocusPane::Output => {
-                            app.select_first_output(app.output_selection_anchor.is_some());
-                            ensure_selected_output_visible(app, terminal.size()?.into());
-                        }
-                        KeyCode::Char('G') if app.focus == FocusPane::Output => {
-                            app.select_last_output(app.output_selection_anchor.is_some());
-                            ensure_selected_output_visible(app, terminal.size()?.into());
-                        }
-                        KeyCode::Up | KeyCode::Char('k') if app.focus == FocusPane::Inspector => {
-                            scroll_inspector_up(app, terminal.size()?.into(), 1)
-                        }
-                        KeyCode::Down | KeyCode::Char('j') if app.focus == FocusPane::Inspector => {
-                            scroll_inspector_down(app, terminal.size()?.into(), 1)
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => select_previous_action(app),
-                        KeyCode::Down | KeyCode::Char('j') => select_next_action(app),
-                        KeyCode::Char('g') => select_first_action(app),
-                        KeyCode::Char('G') => select_last_action(app),
-                        KeyCode::Left | KeyCode::BackTab | KeyCode::Char('h') => {
-                            focus_previous_pane(app)
-                        }
-                        KeyCode::Right | KeyCode::Tab | KeyCode::Char('l') => focus_next_pane(app),
-                        _ => {}
+                    // FR-01: every key goes through the registry; the old flat
+                    // `match key.code` is gone. See `keymap::REGISTRY`.
+                    match handle_key(app, key, terminal.size()?.into())? {
+                        KeyOutcome::Quit => return Ok(()),
+                        KeyOutcome::Continue => {}
                     }
                 }
-                Event::Mouse(mouse) if app.show_help => {
+                Event::Mouse(mouse) if app.show_help && app.mouse_capture => {
                     if matches!(mouse.kind, MouseEventKind::Down(_)) {
                         app.show_help = false;
                     }
@@ -560,11 +481,140 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut MonitorApp) 
                         app.output_mouse_drag_active = false;
                     }
                 }
-                Event::Mouse(mouse) => handle_mouse(app, terminal.size()?.into(), mouse)?,
+                Event::Mouse(mouse) if app.mouse_capture => {
+                    handle_mouse(app, terminal.size()?.into(), mouse)?
+                }
+                Event::Mouse(_) => {}
                 _ => {}
             }
         }
     }
+}
+
+/// Outcome of applying one registry action: keep looping, or leave the
+/// event loop (FR-04 confirmed quit, FR-06 Stop already ran).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyOutcome {
+    Continue,
+    Quit,
+}
+
+/// FR-01 dispatch: workflow filter text entry first (plain characters while
+/// searching extend the query), then the registry via [`resolve_key`], then
+/// apply. Anything but a second `q` disarms a pending quit confirmation.
+/// Unbound keys are swallowed (while the help overlay is open, everything
+/// but its close keys is swallowed by the modal).
+fn handle_key(app: &mut MonitorApp, key: KeyEvent, area: Rect) -> Result<KeyOutcome> {
+    // Workflow filter text entry precedes the registry: a plain character
+    // while searching extends the query (the old flat match also shadowed
+    // every letter binding this way). Control/Alt chords still resolve to
+    // bindings (`Ctrl+C` interrupts even while searching).
+    if app.search_mode
+        && !app.show_help
+        && matches!(key.code, KeyCode::Char(_))
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::ALT)
+    {
+        if let KeyCode::Char(ch) = key.code {
+            app.push_action_query(ch);
+        }
+        app.quit_confirm_pending = false;
+        return Ok(KeyOutcome::Continue);
+    }
+    let Some(action) = resolve_key(&key, app.focus, app.search_mode, app.show_help) else {
+        if !app.show_help {
+            app.quit_confirm_pending = false;
+        }
+        return Ok(KeyOutcome::Continue);
+    };
+    if !matches!(action, TuiAction::RequestQuit) {
+        app.quit_confirm_pending = false;
+    }
+    apply_key_action(app, action, &key, area)
+}
+
+fn apply_key_action(
+    app: &mut MonitorApp,
+    action: TuiAction,
+    key: &KeyEvent,
+    area: Rect,
+) -> Result<KeyOutcome> {
+    match action {
+        TuiAction::ToggleHelp => app.show_help = !app.show_help,
+        TuiAction::CloseHelp => app.show_help = false,
+        TuiAction::Interrupt => app.interrupt_current_operation(),
+        TuiAction::Escape => app.escape(),
+        TuiAction::BeginSearch => app.begin_action_search(),
+        TuiAction::SearchBackspace => app.pop_action_query(),
+        TuiAction::SearchCommit => app.search_mode = false,
+        TuiAction::PageUpScroll => scroll_focused_up(app, area, 12),
+        TuiAction::PageDownScroll => scroll_focused_down(app, area, 12),
+        TuiAction::HalfUpScroll => scroll_focused_up(app, area, 6),
+        TuiAction::HalfDownScroll => scroll_focused_down(app, area, 6),
+        TuiAction::FollowOutput => app.follow_output(),
+        TuiAction::RequestQuit => {
+            if app.request_quit() {
+                return Ok(KeyOutcome::Quit);
+            }
+        }
+        TuiAction::Refresh => app.refresh(),
+        TuiAction::HistoryPrev => app.show_previous_run(),
+        TuiAction::HistoryNext => app.show_next_run(),
+        TuiAction::FocusWorkflow => app.focus_actions(),
+        TuiAction::FocusActivity => app.focus_output(),
+        TuiAction::CycleInspectorTabs => app.cycle_inspector(),
+        TuiAction::FocusMessages => app.focus_messages(),
+        TuiAction::FocusFiles => app.focus_files(),
+        TuiAction::FocusStatus => app.focus_status(),
+        TuiAction::FocusPane(pane) => match pane {
+            FocusPane::Commands => app.focus_actions(),
+            FocusPane::Inspector => app.focus_inspector(),
+            FocusPane::Output => app.focus_output(),
+        },
+        TuiAction::InspectorTab(view) => app.select_inspector_tab(view),
+        TuiAction::CopySelection => app.copy_selected_output(),
+        TuiAction::EnterVisualMode => app.enter_output_line_visual_mode(),
+        TuiAction::RunSelected => run_selected_action(app, area)?,
+        TuiAction::OutputUpExtend => {
+            app.select_previous_output(true);
+            ensure_selected_output_visible(app, area);
+        }
+        TuiAction::OutputDownExtend => {
+            app.select_next_output(true);
+            ensure_selected_output_visible(app, area);
+        }
+        TuiAction::OutputPrev => {
+            app.select_previous_output(
+                key.modifiers.contains(KeyModifiers::SHIFT)
+                    || app.output_selection_anchor.is_some(),
+            );
+            ensure_selected_output_visible(app, area);
+        }
+        TuiAction::OutputNext => {
+            app.select_next_output(
+                key.modifiers.contains(KeyModifiers::SHIFT)
+                    || app.output_selection_anchor.is_some(),
+            );
+            ensure_selected_output_visible(app, area);
+        }
+        TuiAction::OutputFirst => {
+            app.select_first_output(app.output_selection_anchor.is_some());
+            ensure_selected_output_visible(app, area);
+        }
+        TuiAction::OutputLast => {
+            app.select_last_output(app.output_selection_anchor.is_some());
+            ensure_selected_output_visible(app, area);
+        }
+        TuiAction::InspectorUp => scroll_inspector_up(app, area, 1),
+        TuiAction::InspectorDown => scroll_inspector_down(app, area, 1),
+        TuiAction::CommandsPrev => select_previous_action(app),
+        TuiAction::CommandsNext => select_next_action(app),
+        TuiAction::CommandsFirst => select_first_action(app),
+        TuiAction::CommandsLast => select_last_action(app),
+        TuiAction::FocusPrev => focus_previous_pane(app),
+        TuiAction::FocusNext => focus_next_pane(app),
+    }
+    Ok(KeyOutcome::Continue)
 }
 
 fn tui_frame_tick(app: &MonitorApp) -> Duration {
