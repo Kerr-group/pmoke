@@ -46,6 +46,10 @@ pub struct FileNoiseModelSource {
     voltage_unit: String,
     sample_interval_s: f64,
     reference_frequency_hz: f64,
+    /// Inference-side reference-fit relative uncertainty (Issue #274
+    /// FR-02): from the run's own reference fit when available, else
+    /// `None` (the floor gate applies).
+    reference_frequency_rel_uncertainty: Option<f64>,
     warned: std::cell::RefCell<HashSet<String>>,
 }
 
@@ -58,6 +62,7 @@ impl FileNoiseModelSource {
         voltage_unit: String,
         sample_interval_s: f64,
         reference_frequency_hz: f64,
+        reference_frequency_rel_uncertainty: Option<f64>,
     ) -> Result<Self> {
         if !sample_interval_s.is_finite() || sample_interval_s <= 0.0 {
             bail!("joint model loading needs a positive finite sample interval");
@@ -87,6 +92,7 @@ impl FileNoiseModelSource {
             voltage_unit,
             sample_interval_s,
             reference_frequency_hz,
+            reference_frequency_rel_uncertainty,
             warned: std::cell::RefCell::new(HashSet::new()),
         })
     }
@@ -393,6 +399,7 @@ impl NoiseModelSource for FileNoiseModelSource {
             self.sample_interval_s,
             self.reference_frequency_hz,
             &self.voltage_unit,
+            self.reference_frequency_rel_uncertainty,
         )?;
         for warning in &warnings {
             self.warn_once(warning);
@@ -423,6 +430,7 @@ pub(crate) fn noise_model_from_artifact(
     sample_interval_s: f64,
     reference_frequency_hz: f64,
     voltage_unit: &str,
+    reference_frequency_rel_uncertainty: Option<f64>,
 ) -> Result<(NoiseModel, Vec<String>)> {
     check_artifact_structure(artifact, channel)?;
     let name = mode_name(noise_mode);
@@ -462,6 +470,7 @@ pub(crate) fn noise_model_from_artifact(
             gain: None,
             bandwidth_hz: None,
         },
+        reference_frequency_rel_uncertainty,
     };
     let report = inspect_applicability(artifact, &request);
     if !report.compatible {
