@@ -114,6 +114,8 @@ fn identity_derivation_succeeds_and_loads() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .unwrap();
     assert!(
@@ -148,6 +150,8 @@ fn derivation_is_deterministic_for_identical_inputs() {
             DT,
             &gls,
             "acquisition-test",
+            // No same-run reference fit in these fixtures: floor gate.
+            None,
         )
         .unwrap()
     };
@@ -177,6 +181,8 @@ fn digest_distinguishes_interval_and_estimator_inputs() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .unwrap()
     .digest;
@@ -191,6 +197,8 @@ fn digest_distinguishes_interval_and_estimator_inputs() {
         DT,
         &gls_config(GlsNoiseMode::PhaseDiagonal),
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .unwrap()
     .digest;
@@ -209,6 +217,8 @@ fn digest_distinguishes_interval_and_estimator_inputs() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .unwrap()
     .digest;
@@ -224,6 +234,8 @@ fn digest_distinguishes_interval_and_estimator_inputs() {
         DT,
         &gls,
         "other-acquisition",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .unwrap()
     .digest;
@@ -248,6 +260,8 @@ fn empty_interval_is_a_named_error() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .err()
     .unwrap();
@@ -276,6 +290,8 @@ fn short_interval_trips_the_training_block_gate() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .err()
     .unwrap();
@@ -301,6 +317,8 @@ fn non_finite_signal_is_a_named_error() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .err()
     .unwrap();
@@ -328,6 +346,8 @@ fn inverted_window_is_rejected() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .err()
     .unwrap();
@@ -349,6 +369,8 @@ fn correlation_shift_between_halves_fails_adequacy() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .err()
     .unwrap();
@@ -376,6 +398,8 @@ fn correlated_modes_derive_tables_identity_does_not() {
             DT,
             &gls,
             "acquisition-test",
+            // No same-run reference fit in these fixtures: floor gate.
+            None,
         )
         .unwrap();
         let (model, _) = derivation.source.load(3, mode).unwrap();
@@ -398,6 +422,8 @@ fn loaded_model_rejects_a_foreign_noise_mode() {
         DT,
         &gls_config(GlsNoiseMode::Identity),
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .unwrap();
     assert!(
@@ -559,6 +585,8 @@ fn prepulse_derivation_cost_is_a_fraction_of_the_li_run() {
         DT,
         &gls,
         &acquisition_digest_for(&cfg),
+        // No same-run reference fit in this fixture: floor gate.
+        None,
     )
     .unwrap();
     let derivation_elapsed = start.elapsed();
@@ -596,6 +624,8 @@ fn truncation_warns_and_records_requested_and_effective() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .unwrap();
     assert_eq!(derivation.requested_window.start, -0.005);
@@ -622,6 +652,8 @@ fn phase_correlated_scs_refusal_is_mode_independent() {
         DT,
         &gls,
         "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
     )
     .err()
     .unwrap();
