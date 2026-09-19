@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 — 2026-09-20
+
+### Breaking changes
+
+- Lock-in quadratures use the peak-amplitude convention (`Xk = b_k`,
+  `Yk = a_k` for `s = DC + sum_k [a_k*cos(k*phi) + b_k*sin(k*phi)]`) instead
+  of the legacy half-amplitude (`/2`). XY columns double, XY covariance
+  quadruples, and `Vm` now reports the true carrier amplitude (previously
+  half); `angle`, modulation depth, and all ratio-based quantities are
+  unchanged. Migration: rerun analyses with 0.5.0 and never mix pre-0.5.0
+  lock-in artifacts with new ones by shape alone — old artifacts keep the
+  old values.
+- `pmoke analyze` executes its stages in the real order — sensor,
+  reference/window preparation, signal, lock-in, phase, MOKE — instead of
+  demodulating before the signal readout. Migration: rerun published
+  analyses with 0.5.0; do not compare stage outputs across the reorder.
+- The signal readout publishes only the combined `signal/mean.png` figure.
+  Migration: update any scripts or docs that consume per-channel
+  `signal/ch{N}_mean.png` figures (no longer generated, including for a
+  single entry).
+- Configuration schema v7 is canonical: `[lockin]` gains an explicit
+  `estimator` table (`boxcar_legacy` default, joint-harmonic GLS opt-in)
+  and an explicit `window` table. Migration: v6 files remain readable and
+  migrate with values preserved (preview with `pmoke config migrate`,
+  accept explicitly); v5 `[kerr]` files migrate to `[moke]` the same way.
 
 ### Changes
 
@@ -86,6 +110,45 @@
   preserved), the command is `pmoke moke` (`pmoke kerr` remains as a deprecated
   alias), and analysis outputs use `moke_results.csv` with `angle` and monitor
   voltage (`Vm`) columns.
+
+- Joint-harmonic GLS gains a pre-pulse auto-calibration source (Issue #258).
+  `lockin.estimator.calibration_source` selects `artifact` (default, one
+  immutable calibration artifact per lock-in channel) or `prepulse`, which
+  derives each channel noise model once per LI run from
+  `pulse.background_before` through the calibrate-equivalent pipeline
+  (training-block and SCS adequacy gates) and records the derivation digest
+  on the LI provenance. No artifact files are created in prepulse mode, and
+  existing configurations behave identically.
+
+- `pmoke calibrate build` accepts a direct recorded-data build (Issues
+  #269/#270). `--run DIR --channel N` (repeatable; defaults to the run
+  signal channels) replaces the TOML `--request` path (retained, mutually
+  exclusive) with manifest-backed defaults — same-run reference fit
+  (canonically ch3, overridable), seed 0, `block_len` n//40, skip-first-2pct
+  with 70/15/15 roles — writing per-channel artifacts under a CWD-anchored
+  `calibration/` directory. Reports record the requested and effective
+  intervals, exclusions, warnings, and the fully resolved request; trailing
+  exclusions warn instead of staying silent. RAW and CSV builds of the same
+  source agree byte-for-byte on the canonical sample digest, the TOML
+  request gains optional planning floors (schema v1 unchanged), and prepulse
+  provenance records the requested window plus the effective range.
+
+- Stage-minimal configuration files are accepted (Issue #264). Absent
+  scope/data/pulse/reference/lockin/phase/moke sections fill in with inert
+  documented defaults at parse (no schema bump; unknown fields still
+  rejected), and missing required items fail with named diagnostics that
+  explain how to add them. Sensor and lock-in runs declare per-command
+  required sets, and the recorded-data gate no longer requires
+  `[instruments.*]`; full-configuration load output is unchanged, and
+  `version`/roles/channels stay required.
+
+### CI
+
+- The all-profiles test matrix is split with sccache enabled to cut wall
+  time (#259), heavy non-golden noise fixtures are shrunk with identical
+  assertions and code paths (#268), and every sccache-enabled job now
+  reports sccache stats plus per-step wall-clock timing with zero behavioral
+  change (#272).
 
 ## v0.4.1 — 2026-08-21
 
