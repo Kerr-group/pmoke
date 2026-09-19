@@ -112,6 +112,15 @@ fn run_request(dir: &Path, text: &str) -> anyhow::Result<PathBuf> {
     Ok(dir.join("comparison"))
 }
 
+/// Reduced geometry for the non-golden compare tests: 102,400 samples at the
+/// same block_len 12800 (8 blocks instead of 15.625) keeps every calibration
+/// minimum, role fraction, and per-block cost model intact at roughly half
+/// the compute. The end-to-end test below stays at full size as the golden
+/// path. (block_len cannot shrink: blocks below 12800 samples fall under the
+/// 128-reference-cycles-per-block floor and become unusable.)
+const SMALL_TOTAL: usize = 102_400;
+const FULL_BLOCK: u64 = 12_800;
+
 #[test]
 fn compare_end_to_end_builds_frozen_models_and_baseline_plus_candidates() {
     // Geometry: 200k samples, block_len 12800 @128 cycles/block. Training
@@ -189,12 +198,12 @@ fn compare_resolves_omitted_phase_bins_to_accepted_64_explicitly() {
     // Omitted phase_bins must resolve to the accepted 64 explicitly and be
     // recorded as such — never the legacy CLI 8 (PN-AT-009).
     let dir = unique_test_dir("bins64");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total, 0.05, 0x1234_5678_9abc_def1);
-    // 64 bins need real coverage: 128 cycles/block over 7 training blocks
-    // gives ~14 cycles per bin — below the default 128 minimum, so this
+    // 64 bins need real coverage: 128 cycles/block over 4 training blocks
+    // gives ~8 cycles per bin — below the default 128 minimum, so this
     // geometry must fail closed rather than auto-reduce (asserted below).
-    let text = compare_request_text("wave.csv", "comparison", total as u64, 12_800, "");
+    let text = compare_request_text("wave.csv", "comparison", total as u64, FULL_BLOCK, "");
     let request_path = dir.join("request.toml");
     fs::write(&request_path, &text).unwrap();
     let result = run_compare(&request_path, None, None);
@@ -223,10 +232,15 @@ fn compare_resolves_omitted_phase_bins_to_accepted_64_explicitly() {
 #[test]
 fn compare_rejects_missing_baseline_and_search_and_unknown_fields() {
     let dir = unique_test_dir("reject");
-    synthetic_csv(&dir.join("wave.csv"), 200_000, 0.05, 0x1234_5678_9abc_def1);
-    let total = 200_000u64;
+    synthetic_csv(
+        &dir.join("wave.csv"),
+        SMALL_TOTAL,
+        0.05,
+        0x1234_5678_9abc_def1,
+    );
+    let total = SMALL_TOTAL as u64;
     // Missing boxcar baseline.
-    let text = compare_request_text("wave.csv", "comparison", total, 12_800, "").replace(
+    let text = compare_request_text("wave.csv", "comparison", total, FULL_BLOCK, "").replace(
         "include_boxcar_baseline = true",
         "include_boxcar_baseline = false",
     );
@@ -235,7 +249,7 @@ fn compare_rejects_missing_baseline_and_search_and_unknown_fields() {
     assert!(run_compare(&request_path, None, None).is_err());
 
     // Hyperparameter search refused.
-    let text = compare_request_text("wave.csv", "comparison", total, 12_800, "").replace(
+    let text = compare_request_text("wave.csv", "comparison", total, FULL_BLOCK, "").replace(
         "[calibration]\n",
         "[calibration]\nhyperparameter_search = true\n",
     );
@@ -244,13 +258,13 @@ fn compare_rejects_missing_baseline_and_search_and_unknown_fields() {
     assert!(error.contains("unsupported_autotuning"), "got: {error}");
 
     // Unknown fields rejected.
-    let text =
-        compare_request_text("wave.csv", "comparison", total, 12_800, "") + "\nunknown_field = 1\n";
+    let text = compare_request_text("wave.csv", "comparison", total, FULL_BLOCK, "")
+        + "\nunknown_field = 1\n";
     fs::write(&request_path, &text).unwrap();
     assert!(run_compare(&request_path, None, None).is_err());
 
     // Bad operation rejected.
-    let text = compare_request_text("wave.csv", "comparison", total, 12_800, "")
+    let text = compare_request_text("wave.csv", "comparison", total, FULL_BLOCK, "")
         .replace("operation = \"compare\"", "operation = \"diagnose\"");
     fs::write(&request_path, &text).unwrap();
     assert!(run_compare(&request_path, None, None).is_err());
@@ -264,9 +278,9 @@ fn compare_records_explicit_unavailable_and_failed_legs() {
     // legs run, and short-block failures stay explicit per-window records
     // beside the intact labeled baseline (PN-AT-015).
     let dir = unique_test_dir("unavail");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total, 0.05, 0x1234_5678_9abc_def1);
-    let text = compare_request_text("wave.csv", "comparison", total as u64, 12_800, "")
+    let text = compare_request_text("wave.csv", "comparison", total as u64, FULL_BLOCK, "")
         .replace(
             "joint_modes = [\"identity\", \"phase_diagonal\"]",
             "joint_modes = [\"identity\", \"stationary_correlated\"]",
@@ -322,9 +336,9 @@ fn compare_reserved_evidence_is_measured_not_declared() {
     // Changing only reserved bytes must change reserved diagnostics while
     // the training model bytes stay identical (PN-AT-010).
     let dir = unique_test_dir("reserved");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     let recipe_override = "[calibration]\nphase_bins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 1\nmin_contributing_blocks = 2\nmin_training_blocks = 2\nmin_training_intervals = 1\n";
-    let text = compare_request_text("wave.csv", "comparison", total as u64, 12_800, "")
+    let text = compare_request_text("wave.csv", "comparison", total as u64, FULL_BLOCK, "")
         .replace("[calibration]\n", recipe_override);
     // Run A: baseline noise.
     synthetic_csv(&dir.join("wave.csv"), total, 0.05, 0x1234_5678_9abc_def1);
@@ -393,9 +407,9 @@ fn compare_cancel_before_commit_leaves_destination_absent() {
     // A pre-set cancel flag stops the workflow before commit with no
     // visible destination (PN-AT-021 subset, PN-NFR-005).
     let dir = unique_test_dir("cancel");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total, 0.05, 0x1234_5678_9abc_def1);
-    let text = compare_request_text("wave.csv", "comparison", total as u64, 12_800, "")
+    let text = compare_request_text("wave.csv", "comparison", total as u64, FULL_BLOCK, "")
         .replace(
             "[calibration]\n",
             "[calibration]\nphase_bins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 1\nmin_contributing_blocks = 2\nmin_training_blocks = 2\nmin_training_intervals = 1\n",
@@ -426,8 +440,13 @@ fn compare_request_cancelled_before_commit_flag_refuses() {
     // resources.cancelled_before_commit=true is a declared pre-cancelled
     // workflow: refuse before touching the source (PN-FR-031).
     let dir = unique_test_dir("precancel");
-    synthetic_csv(&dir.join("wave.csv"), 200_000, 0.05, 0x1234_5678_9abc_def1);
-    let text = compare_request_text("wave.csv", "comparison", 200_000, 12_800, "")
+    synthetic_csv(
+        &dir.join("wave.csv"),
+        SMALL_TOTAL,
+        0.05,
+        0x1234_5678_9abc_def1,
+    );
+    let text = compare_request_text("wave.csv", "comparison", SMALL_TOTAL as u64, FULL_BLOCK, "")
         + "\n[resources]\ncancelled_before_commit = true\n";
     let request_path = dir.join("request.toml");
     fs::write(&request_path, &text).unwrap();
@@ -444,9 +463,9 @@ fn compare_request_cancelled_before_commit_flag_refuses() {
 #[test]
 fn compare_frozen_context_is_shared_and_post_freeze_mutation_is_refused() {
     let dir = unique_test_dir("context_freeze");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total, 0.05, 0x0c0f_fee1_2345_6789);
-    let base = compare_request_text("wave.csv", "comparison", total as u64, 12_800, "").replace(
+    let base = compare_request_text("wave.csv", "comparison", total as u64, FULL_BLOCK, "").replace(
         "[calibration]\n",
         "[calibration]\nphase_bins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 1\nmin_contributing_blocks = 2\nmin_training_blocks = 2\nmin_training_intervals = 1\n",
     );

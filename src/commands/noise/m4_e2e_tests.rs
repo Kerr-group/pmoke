@@ -76,11 +76,18 @@ fn amplitude_rise_csv_at(
 
 const SMALL_CALIBRATION: &str = "phase_bins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 1\nmin_contributing_blocks = 2\nmin_training_blocks = 2\nmin_training_intervals = 1\n";
 
+/// Reduced geometry: 102,400 samples at the same block_len 12800 (8 blocks
+/// instead of 15.625) keeps every calibration minimum, role fraction, and
+/// per-block cost model intact at roughly half the compute.
+const SMALL_TOTAL: usize = 102_400;
+const FULL_BLOCK: u64 = 12_800;
+
 /// Compare request over a recorded CSV with one evaluation region.
 fn request_text(
     csv: &str,
     output: &str,
     total: u64,
+    block_len: u64,
     extra_calibration: &str,
     statistics: &str,
     bank: &str,
@@ -94,7 +101,7 @@ operation = "compare"
 reference_frequency_hz = 1000.0
 reference_phase_rad = 0.0
 sample_interval_s = 0.00001
-block_len = 12800
+block_len = {block_len}
 output = "{output}"
 
 [source]
@@ -163,12 +170,13 @@ fn compare_reports_separate_gates_fidelity_and_complete_accounting() {
     // and computed / benefit / adequacy / fidelity / scientific /
     // default-promotion are reported as separate gates.
     let dir = unique_test_dir("gates");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total, 0x1234_5678_9abc_def1);
     let text = request_text(
         "wave.csv",
         "comparison_gates",
         total as u64,
+        FULL_BLOCK,
         SMALL_CALIBRATION,
         "",
         "",
@@ -271,12 +279,13 @@ fn compare_replays_frozen_inputs_to_identical_reports() {
     // PN-NFR-006: the same frozen inputs and recorded RNG reproduce the
     // report byte for byte.
     let dir = unique_test_dir("repro");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total, 0x1234_5678_9abc_def1);
     let text = request_text(
         "wave.csv",
         "comparison_repro",
         total as u64,
+        FULL_BLOCK,
         SMALL_CALIBRATION,
         "",
         "",
@@ -299,13 +308,14 @@ fn compare_insufficient_evidence_is_inconclusive_not_a_pass() {
     // PN-AT-022: an insufficient-evidence input produces a complete
     // computation whose benefit state is explicitly inconclusive.
     let dir = unique_test_dir("insufficient");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total, 0x1234_5678_9abc_def1);
     let statistics = "[statistics]\nmin_independent_blocks = 99\n";
     let text = request_text(
         "wave.csv",
         "comparison_insufficient",
         total as u64,
+        FULL_BLOCK,
         SMALL_CALIBRATION,
         statistics,
         "",
@@ -338,13 +348,14 @@ fn compare_does_not_mutate_sources_or_local_defaults() {
     // PN-AT-022: a completed (no-benefit) run must not touch the recorded
     // source, the request or any local default.
     let dir = unique_test_dir("mutation");
-    let total = 200_000usize;
+    let total = SMALL_TOTAL;
     let csv = dir.join("wave.csv");
     synthetic_csv(&csv, total, 0x1234_5678_9abc_def1);
     let text = request_text(
         "wave.csv",
         "comparison_mutation",
         total as u64,
+        FULL_BLOCK,
         SMALL_CALIBRATION,
         "",
         "",
@@ -464,6 +475,9 @@ fn known_amplitude_rise_is_recovered_at_output_resolution() {
     // latency, overshoot and final-value/field errors at the actual output
     // resolution — while the fidelity gate stays unverified (PN-D-007).
     let dir = unique_test_dir("fidelity");
+    // Full-size geometry: the three-window fidelity analysis needs ~10
+    // evaluation centers, so this test keeps the 200k fixture (see the
+    // reduced-geometry note on SMALL_TOTAL).
     let total = 200_000usize;
     let (ramp_start, ramp_len) = (100_000usize, 2_000usize);
     amplitude_rise_csv_at(
@@ -532,6 +546,8 @@ fn bank_boundary_rise_keeps_every_row_and_reports_seam_evidence() {
     // dropping, no implicit crossfade) and the measured seam evidence is
     // reported as unverified physical fidelity.
     let dir = unique_test_dir("bankrise");
+    // Full-size geometry: the seam statistics need several evaluation
+    // centers on each side of the boundary (see SMALL_TOTAL note).
     let total = 200_000usize;
     let split = total - total / 8; // the bank schedule boundary at 175k
     amplitude_rise_csv_at(
@@ -573,6 +589,7 @@ end = {total}
         "wave.csv",
         "comparison_bankrise",
         total as u64,
+        FULL_BLOCK,
         SMALL_CALIBRATION,
         "",
         &bank,
