@@ -28,6 +28,19 @@ pub(crate) struct Scope {
     pub connection: String,
 }
 
+/// Inert stage-minimal default (FR-01/FR-06, Issue #264, Card C): mirrors the
+/// native Card A default. A well-formed dummy so recorded-data stages can
+/// load without `[scope]`; the loopback discard port parses but fails fast
+/// at dial time and is never routable.
+impl Default for Scope {
+    fn default() -> Self {
+        Self {
+            model: "DHO5108".to_string(),
+            connection: "tcp://127.0.0.1:9".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Generator {
@@ -42,6 +55,20 @@ pub(crate) struct Data {
     pub input: DataInput,
     #[serde(default)]
     pub screenshot: bool,
+}
+
+/// Inert stage-minimal default (FR-01/FR-06, Issue #264, Card C): mirrors the
+/// native Card A default (`csv`/`csv`/no screenshot). A wrong guess only
+/// misdirects the recorded-data lookup (a loud file-not-found diagnostic),
+/// never hardware.
+impl Default for Data {
+    fn default() -> Self {
+        Self {
+            output: DataOutput::Csv,
+            input: DataInput::Csv,
+            screenshot: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -103,6 +130,24 @@ pub(crate) struct Pulse {
     pub background_after: Window,
 }
 
+/// Inert stage-minimal default (FR-01/FR-06, Issue #264, Card C): disjoint
+/// finite windows matching the canonical fixture shape and the native Card A
+/// default, so unrelated stages load without `[pulse]`.
+impl Default for Pulse {
+    fn default() -> Self {
+        Self {
+            background_before: Window {
+                start: -0.005,
+                end: -0.001,
+            },
+            background_after: Window {
+                start: 0.01,
+                end: 0.02,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Signal {
@@ -118,6 +163,24 @@ pub(crate) struct Reference {
     pub fft_window: Window,
     pub stride_samples: usize,
     pub window_samples: usize,
+}
+
+/// Inert stage-minimal default (FR-01/FR-06, Issue #264, Card C): mirrors the
+/// native Card A default. Channel `0` is the established unspecified sentinel
+/// (assigns no hardware channel; reference-gated targets reject it), so no
+/// reference-gated stage can act on this default.
+impl Default for Reference {
+    fn default() -> Self {
+        Self {
+            channel: 0,
+            fft_window: Window {
+                start: 0.0,
+                end: 0.005,
+            },
+            stride_samples: 100,
+            window_samples: 1000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -165,16 +228,29 @@ impl Filter {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConfigV7 {
     pub version: u32,
+    // FR-01/FR-06 (Issue #264, Card C): absent unrelated sections fill with
+    // inert defaults at parse so stage-minimal configs load, mirroring the
+    // native Card A contract. `deny_unknown_fields` stays, so misspelled keys
+    // are still rejected. `version` and the roles/channels core (derived from
+    // sensors/signals/reference) stay required: an empty sensor set still
+    // fails validation. No schema version bump (still v7).
+    #[serde(default)]
     pub scope: Scope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generator: Option<Generator>,
+    #[serde(default)]
     pub data: Data,
     #[serde(default)]
     pub sensors: Vec<Sensor>,
+    #[serde(default)]
     pub pulse: Pulse,
+    #[serde(default)]
     pub reference: Reference,
+    #[serde(default)]
     pub lockin: LockinV7,
+    #[serde(default)]
     pub phase: Phase,
+    #[serde(default)]
     pub moke: Moke,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub signals: Vec<Signal>,
@@ -205,12 +281,47 @@ pub(crate) struct LockinV7 {
     pub save_npy: bool,
 }
 
+/// Inert stage-minimal default (FR-01/FR-06, Issue #264, Card C): mirrors the
+/// native Card A default (legacy boxcar contract with an empty channel set,
+/// so every signal-gated target rejects configs that rely on this default).
+/// `stride_samples` mirrors the canonical fixture because `sensor`
+/// cross-reads it; the value only matters once an explicit `[lockin]`
+/// replaces this default.
+impl Default for LockinV7 {
+    fn default() -> Self {
+        Self {
+            channels: Vec::new(),
+            workers: 1,
+            stride_samples: 100,
+            window: LockinWindowV7::default(),
+            estimator: LockinEstimatorV7::default(),
+            debug_output: false,
+            debug_label: None,
+            debug_overwrite: false,
+            snr_background_window: None,
+            snr_signal_window: None,
+            save_npy: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LockinWindowV7 {
     pub kind: LockinWindowKindV7,
     pub half_window_cycles: f64,
     pub edge_policy: LockinEdgePolicyV7,
+}
+
+/// Mirrors the native Card A default: the canonical reference-cycles window.
+impl Default for LockinWindowV7 {
+    fn default() -> Self {
+        Self {
+            kind: LockinWindowKindV7::ReferenceCycles,
+            half_window_cycles: 1.0,
+            edge_policy: LockinEdgePolicyV7::LegacyTrim,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -238,6 +349,13 @@ impl LockinEstimatorV7 {
             Self::BoxcarLegacy {} => "boxcar_legacy",
             Self::JointHarmonicGls(_) => "joint_harmonic_gls",
         }
+    }
+}
+
+/// Mirrors the native Card A default: the legacy boxcar estimator.
+impl Default for LockinEstimatorV7 {
+    fn default() -> Self {
+        Self::BoxcarLegacy {}
     }
 }
 
@@ -331,6 +449,18 @@ impl Serialize for Phase {
     }
 }
 
+/// Inert stage-minimal default (FR-01/FR-06, Issue #264, Card C): six zero
+/// offsets satisfy the length-6 finite validation and mirror the native Card
+/// A default; the phase stage additionally requires published lock-in
+/// results, so a fresh minimal config cannot act on this default.
+impl Default for Phase {
+    fn default() -> Self {
+        Self {
+            offsets: vec![NumberOrExpression::Number(0.0); 6],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum NumberOrExpression {
@@ -399,6 +529,20 @@ pub(crate) struct Moke {
     pub sensor: u8,
     pub method: MokeMethod,
     pub factor: f64,
+}
+
+/// Inert stage-minimal default (FR-01/FR-06, Issue #264, Card C): mirrors the
+/// native Card A default. Sensor channel 1 is the canonical first sensor
+/// channel, so canonical minimal skeletons keep loading; skeletons using
+/// other sensor channels must carry an explicit `[moke]`.
+impl Default for Moke {
+    fn default() -> Self {
+        Self {
+            sensor: 1,
+            method: MokeMethod::Standard,
+            factor: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
