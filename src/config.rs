@@ -35,9 +35,11 @@ pub use render::render_normalized_config;
 use render::{render_config_v4, render_config_v5, render_config_v6, render_config_v7};
 use schema::*;
 use validation::validate_common;
-pub use validation::validate_for_target;
 #[cfg(test)]
 use validation::validate_sensor_metadata;
+pub use validation::{
+    LI_REQUIRED_ITEMS, SENSOR_REQUIRED_ITEMS, required_items_for_target, validate_for_target,
+};
 
 fn usbtmc_supported() -> bool {
     cfg!(all(target_os = "windows", feature = "hw-gpib"))

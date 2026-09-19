@@ -263,7 +263,99 @@ fn is_safe_debug_label(label: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+/// Sensor-stage required config items (FR-02, Issue #264, Card B): the exact
+/// set `pmoke sensor` may read. Load-time rules (`validate_common`) cover
+/// the value contracts (plot/lockin positivity, window finiteness, channel
+/// consistency); the Sensor arm of [`validate_for_target`] covers presence
+/// of the role/metadata/recorded-data items. Reads outside this set are
+/// forbidden and minimal-config fixture tests enforce the boundary:
+///
+/// - `version`: always-required core.
+/// - `sensors[].channel` / `sensors[].scale` / `sensors[].label` /
+///   `sensors[].unit`: derive `roles.sensor_ch` and the per-channel scale,
+///   label, and unit (`validate_sensor_roles`, `validate_sensor_metadata`,
+///   `extract_sensor_metadata`).
+/// - `pulse.background_before` / `pulse.background_after`: sensor background
+///   averaging (`calculate_background_averages`).
+/// - `lockin.stride_samples` / `lockin.save_npy`: FR-05 defaulted
+///   cross-reads (Card A inert defaults: stride 100, no npy); the sensor
+///   decimation grid and the artifact writer.
+/// - `plot.max_points` / `plot.output_dir` / `plot.mode`: plot-class items
+///   honored by `run_plot` (mode `off` skips rendering).
+/// - `data.input` plus the recorded input file (`waveform.csv` or the raw
+///   manifest): recorded-data selection (`validate_analysis_input_exists`,
+///   `read_waveform_channels`).
+pub const SENSOR_REQUIRED_ITEMS: &[&str] = &[
+    "version",
+    "sensors[].channel",
+    "sensors[].scale",
+    "sensors[].label",
+    "sensors[].unit",
+    "pulse.background_before",
+    "pulse.background_after",
+    "lockin.stride_samples",
+    "lockin.save_npy",
+    "plot.max_points",
+    "plot.output_dir",
+    "plot.mode",
+    "data.input",
+];
+
+/// Lock-in-stage required config items (FR-02, Issue #264, Card B): the
+/// Sensor set plus the reference/signal/lockin-class items `pmoke li` reads
+/// (`run_sensor_stage` runs first, so every Sensor item stays required):
+/// - `reference.channel` / `reference.fft_window` /
+///   `reference.stride_samples` / `reference.window_samples`: reference role
+///   and fit geometry (`validate_reference_roles`, `run_fit_ref_core`).
+/// - `lockin.channels`: derives `roles.signal_ch` (`validate_signal_roles`,
+///   `build_channel_list`).
+/// - `lockin.workers` / `lockin.window` / `lockin.estimator`: demodulation
+///   geometry and dispatch (`LockinParams::from_geometry`, `li_process`).
+pub const LI_REQUIRED_ITEMS: &[&str] = &[
+    "version",
+    "sensors[].channel",
+    "sensors[].scale",
+    "sensors[].label",
+    "sensors[].unit",
+    "pulse.background_before",
+    "pulse.background_after",
+    "lockin.stride_samples",
+    "lockin.save_npy",
+    "plot.max_points",
+    "plot.output_dir",
+    "plot.mode",
+    "data.input",
+    "reference.channel",
+    "reference.fft_window",
+    "reference.stride_samples",
+    "reference.window_samples",
+    "lockin.channels",
+    "lockin.workers",
+    "lockin.window",
+    "lockin.estimator",
+];
+
+/// Declared per-command required-item set for a validation target
+/// (FR-02, Issue #264, Card B). Returns `None` for targets Card B does not
+/// declare (acquisition commands and the other analysis stages keep their
+/// existing behavior; `pmoke config validate` with no target keeps full
+/// load-time validation).
+pub fn required_items_for_target(target: ValidationTarget) -> Option<&'static [&'static str]> {
+    match target {
+        ValidationTarget::Sensor => Some(SENSOR_REQUIRED_ITEMS),
+        ValidationTarget::Li => Some(LI_REQUIRED_ITEMS),
+        _ => None,
+    }
+}
+
 pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()> {
+    // FR-03 (Issue #264, Card B): the Sensor and Li stages analyze
+    // already-fetched waveforms and never touch instruments, so their arms
+    // below must not require `[instruments.*]`. Acquisition-command arms
+    // (Single/Fetch/Screenshot/Process/Auto, Trigger/Autoshot/Automeasure)
+    // keep their requirements unchanged, other analysis stages
+    // (Reference/Signal/Phase/Moke/Analyze/Process/Auto) stay as-is, and
+    // `pmoke config validate` (no target) keeps full load-time validation.
     match target {
         ValidationTarget::Single
         | ValidationTarget::Fetch
@@ -305,13 +397,15 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Sensor => {
-            validate_oscilloscope_required(cfg)?;
+            // FR-03: no instruments requirement; the recorded-data lookup
+            // below is the only environment gate.
             validate_sensor_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
             validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Li => {
-            validate_oscilloscope_required(cfg)?;
+            // FR-03: no instruments requirement; the recorded-data lookup
+            // below is the only environment gate.
             validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_signal_roles(cfg)?;
