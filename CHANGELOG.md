@@ -142,6 +142,17 @@
   `[instruments.*]`; full-configuration load output is unchanged, and
   `version`/roles/channels stay required.
 
+- Calibration applicability uses an uncertainty-aware reference-frequency
+  tolerance (Issue #274). The gate widens from the fixed 1e-9 default
+  through max(1e-9, 3*sqrt(u_build^2 + u_apply^2)): the reference fit
+  records its uncertainty (fit stderr plus split-segment probe) as u_build
+  at artifact build (direct and prepulse paths) and lock-in inference
+  supplies u_apply, and the effective tolerance plus the tol-basis recipe
+  are recorded on the applicability report and artifact. `pmoke calibrate
+  build` accepts an explicit `--frequency-rel-tol` direct override
+  (recorded and marked overridden). Behavior without recorded
+  uncertainties is unchanged.
+
 ### CI
 
 - The all-profiles test matrix is split with sccache enabled to cut wall
