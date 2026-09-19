@@ -17,6 +17,27 @@
 //! Derivation failure (empty interval, too few training blocks, SCS adequacy
 //! mismatch, non-finite input) aborts the run with a named error, never a
 //! silent fallback (FR-06).
+//!
+//! ## Background-interval contract (Issue #269; prepulse is KEPT)
+//!
+//! Pre-pulse derivation trains on background (no-signal) data. The
+//! canonical source is a drive-off acquisition (pulse field OFF); feeding
+//! drive-on (drive-response-contaminated) data as `background_before` is
+//! misuse. Derivation cannot detect the drive state from samples alone, so
+//! the premise is documented here, not silently assumed.
+//!
+//! The requested window (`pulse.background_before`) and the effective
+//! sample range are both recorded: [`PrepulseDerivation`] carries the
+//! requested window plus the effective `[start, end)` range, and the LI
+//! provenance records them alongside the derivation digest. A window that
+//! extends beyond the recorded timebase warns with both the requested and
+//! effective durations (never a silent truncation); a window holding no
+//! samples, or too few samples for the short-interval floor, is a hard
+//! error. The SCS adequacy gate (training phase spread <= 0.2) is
+//! mandatory and mode-independent: derivation runs for every `noise_mode`
+//! and the gate applies unchanged even with
+//! `noise_mode = "phase_correlated"`. The 0.2 threshold is never relaxed;
+//! on failure, retake the interval or data instead of lowering the bar.
 
 use crate::config::{GlsNoiseMode, JointHarmonicGlsConfig, Window};
 use crate::lockin::joint::{ModelBinding, NoiseModelSource, gls_noise_mode_name};
@@ -103,10 +124,18 @@ impl NoiseModelSource for PrepulseNoiseModelSource {
 }
 
 /// Derivation output: the per-channel source plus the run-level FR-04
-/// digest to record in LI provenance.
+/// digest to record in LI provenance, plus the requested window and the
+/// effective sample range (Issue #269 FR-01).
 pub struct PrepulseDerivation {
     pub source: PrepulseNoiseModelSource,
     pub digest: String,
+    /// Requested background window (`pulse.background_before`).
+    pub requested_window: Window,
+    /// Effective sample range `[effective_start, effective_end)` selected
+    /// from the timebase: the intersection of the requested window with
+    /// the recorded samples.
+    pub effective_start: usize,
+    pub effective_end: usize,
 }
 
 /// Acquisition digest for the FR-04 digest input: SHA-256 of the acquisition
@@ -230,6 +259,26 @@ pub fn derive_prepulse(
             window.start, window.end
         )
     })?;
+    // Issue #269 FR-01/FR-02: a requested window extending beyond the
+    // recorded timebase truncates to the effective sample range. Warn with
+    // both the requested and effective durations; never proceed silently.
+    {
+        let t_first = t.value_at(0);
+        let t_last = t.value_at(t.len() - 1);
+        if window.start < t_first || window.end > t_last {
+            let requested_ms = (window.end - window.start) * 1000.0;
+            let effective_ms = (t.value_at(hi - 1) - t.value_at(lo)) * 1000.0;
+            crate::ui::warn(format!(
+                "pre-pulse calibration window background_before=[{}, {}] extends beyond \
+                 the recorded timebase [{t_first}, {t_last}]; using effective samples \
+                 [{lo}, {hi}) (requested {requested_ms:.3} ms, effective {effective_ms:.3} ms, \
+                 {} samples)",
+                window.start,
+                window.end,
+                hi - lo,
+            ));
+        }
+    }
     for (channel, signal) in signal_ch.iter().zip(signal_data.iter()) {
         if signal.len() < hi {
             bail!(
@@ -320,6 +369,9 @@ pub fn derive_prepulse(
     Ok(PrepulseDerivation {
         source: PrepulseNoiseModelSource { models },
         digest,
+        requested_window: window,
+        effective_start: lo,
+        effective_end: hi,
     })
 }
 
