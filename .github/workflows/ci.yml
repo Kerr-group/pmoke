@@ -102,10 +102,22 @@ jobs:
       # `cargo check` is intentionally omitted: `cargo clippy` below type-checks
       # the identical target set, so a separate check would only recompile it.
       - name: Test
-        run: cargo test --locked --workspace --lib --bins --tests --examples --all-features
+        shell: bash
+        run: |
+          start=$(date +%s)
+          status=0
+          cargo test --locked --workspace --lib --bins --tests --examples --all-features || status=$?
+          end=$(date +%s)
+          echo "TEST_WALL_TIME=$((end - start))s test-workspace-all-features"
+          echo "TEST_WALL_TIME=$((end - start))s test-workspace-all-features" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Lint
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
 
   performance-smoke:
     name: Performance smoke test
@@ -149,6 +161,10 @@ jobs:
 
       - name: Run deterministic smoke benchmark
         run: cargo bench --locked --no-default-features --bench performance -- --smoke
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
 
   hardware-feature-slices:
     name: Hardware feature slices
@@ -220,24 +236,52 @@ jobs:
 
       # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Test gpib-rs
-        run: cargo test --locked -p gpib-rs --lib --bins --tests --examples
+        shell: bash
+        run: |
+          start=$(date +%s)
+          status=0
+          cargo test --locked -p gpib-rs --lib --bins --tests --examples || status=$?
+          end=$(date +%s)
+          echo "TEST_WALL_TIME=$((end - start))s test-gpib-rs"
+          echo "TEST_WALL_TIME=$((end - start))s test-gpib-rs" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Lint gpib-rs
         run: cargo clippy --locked -p gpib-rs --lib --bins --tests --examples -- -D warnings
 
       # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Test instruments gpib
-        run: cargo test --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib
+        shell: bash
+        run: |
+          start=$(date +%s)
+          status=0
+          cargo test --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib || status=$?
+          end=$(date +%s)
+          echo "TEST_WALL_TIME=$((end - start))s test-instruments-gpib"
+          echo "TEST_WALL_TIME=$((end - start))s test-instruments-gpib" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Lint instruments gpib
         run: cargo clippy --locked -p instruments --lib --bins --tests --examples --no-default-features --features gpib -- -D warnings
 
       # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Test pmoke Linux full build
-        run: cargo test --locked -p pmoke --lib --bins --tests --examples
+        shell: bash
+        run: |
+          start=$(date +%s)
+          status=0
+          cargo test --locked -p pmoke --lib --bins --tests --examples || status=$?
+          end=$(date +%s)
+          echo "TEST_WALL_TIME=$((end - start))s test-pmoke-linux-full"
+          echo "TEST_WALL_TIME=$((end - start))s test-pmoke-linux-full" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Lint pmoke Linux full build
         run: cargo clippy --locked -p pmoke --lib --bins --tests --examples -- -D warnings
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
 
   windows-visa-check:
     name: Windows full compile check
@@ -286,6 +330,10 @@ jobs:
       # No separate `cargo check`: `cargo clippy` below checks identical targets.
       - name: Lint pmoke Windows full build
         run: cargo clippy --locked -p pmoke --all-targets -- -D warnings
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
 
   crate-feature-matrix:
     name: Crate feature suite (${{ matrix.os }}, ${{ matrix.suite }})
@@ -408,9 +456,13 @@ jobs:
             read -r -a cargo_flags <<< "${flags}"
             echo "::group::${package} ${label}"
             # No `cargo check`: `cargo clippy` below checks identical targets.
+            test_start=$(date +%s)
             if ! cargo test --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}"; then
               profile_status=1
             fi
+            test_end=$(date +%s)
+            echo "TIMING ${package} ${label} test_wall=$((test_end - test_start))s"
+            echo "TIMING ${package} ${label} test_wall=$((test_end - test_start))s" >> "${GITHUB_STEP_SUMMARY}"
             if ! cargo clippy --locked -p "${package}" --lib --bins --tests --examples "${cargo_flags[@]}" -- -D warnings; then
               profile_status=1
             fi
@@ -423,6 +475,10 @@ jobs:
             fi
           done <<< "${FEATURE_PROFILES}"
           exit "${status}"
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
 
   analysis-portability:
     name: Analysis-only (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -486,7 +542,19 @@ jobs:
       # benches/performance.rs (~25 min per job), which stays covered by the
       # performance-smoke job and the scheduled performance workflow instead.
       - name: Test analysis-only build
-        run: cargo test --locked -p pmoke --lib --bins --tests --examples --no-default-features
+        shell: bash
+        run: |
+          start=$(date +%s)
+          status=0
+          cargo test --locked -p pmoke --lib --bins --tests --examples --no-default-features || status=$?
+          end=$(date +%s)
+          echo "TEST_WALL_TIME=$((end - start))s test-analysis-only"
+          echo "TEST_WALL_TIME=$((end - start))s test-analysis-only" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Lint analysis-only build
         run: cargo clippy --locked -p pmoke --all-targets --no-default-features -- -D warnings
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
