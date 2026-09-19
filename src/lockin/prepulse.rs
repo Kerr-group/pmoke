@@ -49,7 +49,7 @@ use pmoke_analysis_core::calibration::{
     CALIBRATION_PHASE_CONVENTION, CalibrationRole, CorrelationRecipe, HeldoutReport,
     ModelBinding as CoreBinding, PhaseVarianceRecipe, RoleInterval, TuningMode, assemble_samples,
     build_artifact, estimate_correlation, estimate_phase_variance, fit_nuisance, plan_blocks,
-    scs_adequacy,
+    resolve_build_frequency_tol, scs_adequacy,
 };
 use pmoke_analysis_core::joint::{JointSolverTolerances, NoiseModel};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -204,6 +204,10 @@ pub fn derive_prepulse(
     sample_interval_s: f64,
     gls: &JointHarmonicGlsConfig,
     acquisition_digest: &str,
+    // Same-run reference-fit relative uncertainty (Issue #274 FR-01):
+    // the run's own reference fit uncertainty, recorded into each
+    // derived artifact binding. `None` keeps the floor gate.
+    reference_frequency_rel_uncertainty: Option<f64>,
 ) -> Result<PrepulseDerivation> {
     if !window.start.is_finite() || !window.end.is_finite() {
         bail!(
@@ -352,6 +356,7 @@ pub fn derive_prepulse(
             acquisition_digest,
             tolerances,
             &mut warned,
+            reference_frequency_rel_uncertainty,
         )
         .with_context(|| {
             format!("pre-pulse calibration derivation failed for channel {channel}")
@@ -391,6 +396,7 @@ fn derive_channel(
     acquisition_digest: &str,
     tolerances: JointSolverTolerances,
     warned: &mut HashSet<String>,
+    reference_frequency_rel_uncertainty: Option<f64>,
 ) -> Result<(NoiseModel, ModelBinding)> {
     let mut block_times = Vec::with_capacity(training.len());
     let mut block_residuals = Vec::with_capacity(training.len());
@@ -505,6 +511,10 @@ fn derive_channel(
         );
     }
 
+    let (frequency_rel_tol, frequency_tol_overridden) =
+        resolve_build_frequency_tol(reference_frequency_rel_uncertainty, None).with_context(
+            || format!("pre-pulse tolerance resolution failed for channel {channel}"),
+        )?;
     let built = build_artifact(ArtifactRequest {
         model_id: format!("pmoke-prepulse-ch{channel}"),
         pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -517,7 +527,8 @@ fn derive_channel(
             recorded_original_dt_s: Some(sample_interval_s),
             sample_interval_rel_tol: pmoke_analysis_core::calibration::DEFAULT_DT_REL_TOL,
             reference_frequency_hz: f_ref,
-            frequency_rel_tol: pmoke_analysis_core::calibration::DEFAULT_FREQ_REL_TOL,
+            frequency_rel_tol,
+            reference_frequency_rel_uncertainty,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
                 device: None,
@@ -538,6 +549,7 @@ fn derive_channel(
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden,
     })
     .with_context(|| format!("pre-pulse artifact construction failed for channel {channel}"))?;
 
@@ -548,6 +560,10 @@ fn derive_channel(
         sample_interval_s,
         f_ref,
         crate::lockin::model_loading::PIPELINE_VOLTAGE_UNIT,
+        // Same-run derivation: the artifact already carries the run's own
+        // reference-fit uncertainty as u_build, so the inference side
+        // contributes nothing extra here (Issue #274 FR-02).
+        None,
     )?;
     for warning in warnings {
         if warned.insert(warning.clone()) {

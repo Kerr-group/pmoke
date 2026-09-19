@@ -206,3 +206,98 @@ class ReferenceFitter:
             "A_ref": A_ref_fit,
             "omega_tref": omega_tref_fit,
         }
+
+    def fit_with_uncertainty(
+        self,
+        t: NDArray,
+        y: NDArray,
+        f_ref: float,
+        A_ref: float,
+        omega_tref: float,
+        segments: int = 4,
+        min_segment_samples: int = 8,
+    ):
+        """Full sine fit plus a per-side relative frequency uncertainty.
+
+        Returns the same ``f_ref``/``A_ref``/``omega_tref`` contract as
+        :meth:`fit` with three extra keys:
+
+        - ``df_stderr``: standard error of the fitted frequency offset
+          (``None`` when lmfit reports no covariance).
+        - ``u_stat_rel``: ``df_stderr / |f_ref|`` (white-noise precision).
+        - ``u_split_rel``: maximum pairwise relative deviation among the
+          fitted frequencies of ``segments`` contiguous time segments
+          (within-run reproducibility probe: captures wander/drift the
+          white-noise model misses; ``None`` when fewer than two
+          segments fit).
+        - ``u_rel``: ``max`` of the available components (``None`` when
+          neither is available: the caller falls back to the floor gate).
+
+        Four segments balance wander resolution against segment-fit
+        noise on the production fit span: fewer segments under-resolve
+        within-run wander, more segments drown the probe in fit noise.
+        Deterministic: no randomization anywhere.
+        """
+        t = np.asarray(t, dtype=float)
+        y = np.asarray(y, dtype=float)
+
+        def do_fit(tt, yy, f0, a0, w0):
+            def ref_model(t, A_ref, df, omega_tref):
+                return A_ref * np.sin(2 * np.pi * (f0 + df) * t - omega_tref)
+
+            model = lmfit.Model(ref_model)
+            params = model.make_params()
+            params["A_ref"].set(value=a0, min=a0 * 0.5, max=a0 * 2.0)
+            params["df"].set(value=0.0, min=-100, max=100)
+            params["omega_tref"].set(
+                value=w0, min=w0 - np.pi, max=w0 + np.pi
+            )
+            return model.fit(yy, t=tt, params=params, method="least_squares")
+
+        full = do_fit(t, y, f_ref, A_ref, omega_tref)
+        p = full.params
+        df = float(p["df"].value)
+        f_fit = f_ref + df
+        A_fit = float(p["A_ref"].value)
+        w_fit = float(p["omega_tref"].value)
+        se = p["df"].stderr
+        df_stderr = None if se is None else float(se)
+        if df_stderr is not None and not np.isfinite(df_stderr):
+            df_stderr = None
+        u_stat_rel = None
+        if df_stderr is not None and np.isfinite(f_fit) and f_fit != 0.0:
+            u_stat_rel = abs(df_stderr / f_fit)
+
+        u_split_rel = None
+        if segments >= 2 and len(t) >= segments * min_segment_samples:
+            bounds = np.linspace(0, len(t), segments + 1, dtype=int)
+            seg_freqs = []
+            for lo, hi in zip(bounds[:-1], bounds[1:]):
+                if hi - lo < min_segment_samples:
+                    continue
+                try:
+                    seg = do_fit(t[lo:hi], y[lo:hi], f_fit, A_fit, w_fit)
+                except Exception:
+                    continue
+                f_seg = f_fit + float(seg.params["df"].value)
+                if np.isfinite(f_seg):
+                    seg_freqs.append(f_seg)
+            if len(seg_freqs) >= 2 and np.isfinite(f_fit) and f_fit != 0.0:
+                span = max(seg_freqs) - min(seg_freqs)
+                if np.isfinite(span) and span >= 0.0:
+                    u_split_rel = abs(span / f_fit)
+
+        u_rel = None
+        for candidate in (u_stat_rel, u_split_rel):
+            if candidate is not None and np.isfinite(candidate) and candidate > 0.0:
+                u_rel = candidate if u_rel is None else max(u_rel, candidate)
+
+        return {
+            "f_ref": f_fit,
+            "A_ref": A_fit,
+            "omega_tref": w_fit,
+            "df_stderr": df_stderr,
+            "u_stat_rel": u_stat_rel,
+            "u_split_rel": u_split_rel,
+            "u_rel": u_rel,
+        }
