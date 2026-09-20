@@ -450,7 +450,10 @@ fn reports_tab_renders_stages_and_reports_sections() {
     assert!(bottom.contains("evaluate"), "report lane row");
     assert!(bottom.contains("verdict=pass"), "report summary");
     // (Item cells truncate to 14 chars, so pin the value text instead.)
-    assert!(bottom.contains("no analysis manifest"), "analysis manifest row");
+    assert!(
+        bottom.contains("no analysis manifest"),
+        "analysis manifest row"
+    );
     // The section marker sits one row above the clamped last window; its
     // presence is pinned on the row list itself.
     assert!(
