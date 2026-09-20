@@ -293,6 +293,48 @@ fn joint_execution_is_deterministic_across_channels() {
     assert_eq!(dual.result[0], first.result[0]);
 }
 
+/// LI-level wiring for the hoisted plan (P1) in the target correlated mode:
+/// the full run uses one prepared plan per channel, keeps the shared grid,
+/// and stays deterministic across runs.
+#[test]
+fn phase_correlated_run_uses_hoisted_plan_deterministically() {
+    let (time, signal) = tone_waveform_with(1_500);
+    let mut lockin = joint_lockin();
+    let LockinEstimator::JointHarmonicGls(gls) = &mut lockin.estimator else {
+        unreachable!()
+    };
+    gls.noise_mode = GlsNoiseMode::PhaseCorrelated;
+    let source = SyntheticNoiseModelSource {
+        reference_variance_v2: 1.0,
+        variance_bins: Some((0..8).map(|bin| 1.0 + 0.05 * bin as f64).collect()),
+        correlation_lags: Some((0..64).map(|lag| 0.9_f64.powi(lag)).collect()),
+        correlation_lag_step_s: 1.0e-5,
+        label: "phase-correlated-hoisted".to_string(),
+    };
+    let LockinEstimator::JointHarmonicGls(gls) = &lockin.estimator else {
+        unreachable!()
+    };
+    let inputs = test_inputs(&lockin, gls, &time);
+    let first = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    let second = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    assert_eq!(first.result, second.result);
+    assert_eq!(first.result.len(), 1);
+    assert_eq!(first.result[0].len(), 12);
+    let grid = first.result[0][0].len();
+    assert!(grid > 100);
+    assert_eq!(first.quality[0].len(), grid);
+    for row in &first.quality[0] {
+        assert_eq!(row.noise_mode, "phase_correlated");
+        assert_eq!(row.rank, 25);
+        assert!(row.scaled_design_condition.is_finite());
+        assert!(row.residual_rms_v.is_finite());
+        assert_eq!(row.jitter_applied_v2, 0.0);
+    }
+    for column in &first.result[0] {
+        assert!(column.iter().all(|value| value.is_finite()));
+    }
+}
+
 #[test]
 fn stage_fingerprint_distinguishes_estimators() {
     let boxcar = test_config(vec![1], vec![3]);

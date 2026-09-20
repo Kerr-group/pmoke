@@ -747,12 +747,67 @@ pub struct PreparedNoisePlan {
 }
 
 /// Factorized normalized Toeplitz factor for one window length, built once
-/// and reused by every window that shares the geometry.
+/// and reused by every window that shares the geometry. The executed
+/// factor condition `cond(C)` with `C = T + jI` is measured once here with
+/// the same symmetric eigendecomposition the per-window TOL-07 gate uses,
+/// so every window can certify acceptance with an O(N) scale-ratio bound
+/// instead of its own O(N^3) eigendecomposition (LI 10s target).
 #[derive(Debug, Clone)]
 struct PreparedCorrelation {
     lower: DMatrix<f64>,
     toeplitz: DMatrix<f64>,
     jitter_applied_v2: f64,
+    /// 2-norm condition of the executed factor `C = T + jI`.
+    correlation_condition: f64,
+    /// Maximum `|C|` entry, for the O(N) realized-finiteness guard that
+    /// keeps the bound path fail-closed where the exact gate would refuse
+    /// an overflowing `R = S C S` realization.
+    max_abs_factor: f64,
+}
+
+impl PreparedCorrelation {
+    /// Conservative TOL-07 bound `cond(S C S) <= cond(S)^2 * cond(C)`.
+    /// Returns `None` when the bound cannot be formed (non-finite or
+    /// non-positive scales, non-finite arithmetic, or an `R` realization
+    /// the exact gate would refuse as overflowing): callers fall back to
+    /// the exact per-window gate, preserving its failure surface exactly.
+    fn condition_bound(&self, sqrt_variance: &[f64]) -> Option<f64> {
+        if sqrt_variance.is_empty() {
+            return None;
+        }
+        let mut smallest = f64::INFINITY;
+        let mut largest = 0.0_f64;
+        for scale in sqrt_variance.iter() {
+            if !scale.is_finite() || *scale <= 0.0 {
+                return None;
+            }
+            smallest = smallest.min(*scale);
+            largest = largest.max(*scale);
+        }
+        if !(smallest > 0.0 && largest > 0.0) {
+            return None;
+        }
+        let scale_condition = largest / smallest;
+        if !scale_condition.is_finite() {
+            return None;
+        }
+        let scale_condition_squared = scale_condition * scale_condition;
+        if !scale_condition_squared.is_finite() {
+            return None;
+        }
+        // Every `|R_ij| <= max_s^2 * max|C|`: a non-finite product means
+        // the exact gate would refuse the overflowing realization, so the
+        // bound must not certify acceptance here.
+        let realized_magnitude = largest * largest * self.max_abs_factor;
+        if !realized_magnitude.is_finite() {
+            return None;
+        }
+        let bound = scale_condition_squared * self.correlation_condition;
+        if !bound.is_finite() {
+            return None;
+        }
+        Some(bound)
+    }
 }
 
 impl PreparedNoisePlan {
@@ -859,10 +914,22 @@ impl PreparedNoisePlan {
             .unwrap_or(0.0)
     }
 
+    /// Hoisted 2-norm condition of the executed correlation factor
+    /// `C = T + jI` (`None` for the uncorrelated modes). Measured once per
+    /// plan with the same symmetric eigendecomposition the exact TOL-07
+    /// gate uses; the per-window bound is `cond(S)^2` times this value.
+    pub fn correlation_condition(&self) -> Option<f64> {
+        self.correlation
+            .as_ref()
+            .map(|prepared| prepared.correlation_condition)
+    }
+
     /// Whitens design and response with the prepared plan (the accelerated
     /// path). Every per-window validation, variance interpolation,
-    /// realized-covariance gate and triangular solve matches the direct
-    /// path exactly; only the correlated factor construction is reused.
+    /// realized-covariance verdict and triangular solve matches the direct
+    /// path exactly; only the correlated factor construction and its
+    /// TOL-07 condition measurement are reused (an O(N) conservative bound
+    /// certifies acceptance, with exact-gate fallback otherwise).
     pub fn whiten(
         &self,
         design: &DMatrix<f64>,
@@ -901,14 +968,20 @@ enum FactorSource<'a> {
 }
 
 impl FactorSource<'_> {
-    fn parts(&self) -> (&DMatrix<f64>, &DMatrix<f64>, f64) {
+    fn parts(&self) -> (&DMatrix<f64>, &DMatrix<f64>, f64, &PreparedCorrelation) {
         match self {
             FactorSource::Prepared(prepared) => (
                 &prepared.lower,
                 &prepared.toeplitz,
                 prepared.jitter_applied_v2,
+                prepared,
             ),
-            FactorSource::Fresh(fresh) => (&fresh.lower, &fresh.toeplitz, fresh.jitter_applied_v2),
+            FactorSource::Fresh(fresh) => (
+                &fresh.lower,
+                &fresh.toeplitz,
+                fresh.jitter_applied_v2,
+                fresh,
+            ),
         }
     }
 }
@@ -938,10 +1011,55 @@ fn prepare_correlation_factor(
     }
     let toeplitz = toeplitz_from_lags(&kernel.lags, rows);
     let (lower, jitter_applied_v2) = cholesky_factor(&toeplitz, max_jitter_v2)?;
+    // Hoisted TOL-07 factor condition: measure cond(C) once with the same
+    // symmetric eigendecomposition the per-window gate uses. Cholesky
+    // success already proves positive definiteness; a non-finite or
+    // non-positive spectrum here fails closed exactly like the gate would.
+    let mut executed = toeplitz.clone();
+    if jitter_applied_v2 != 0.0 {
+        for diagonal in 0..executed.nrows() {
+            executed[(diagonal, diagonal)] += jitter_applied_v2;
+        }
+    }
+    let eigenvalues = executed.clone().symmetric_eigen().eigenvalues;
+    let mut smallest = f64::INFINITY;
+    let mut largest = f64::NEG_INFINITY;
+    for value in eigenvalues.iter() {
+        smallest = smallest.min(*value);
+        largest = largest.max(*value);
+    }
+    if !(smallest.is_finite() && largest.is_finite()) || smallest <= 0.0 {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            "hoisted correlation factor is not numerically positive definite; \
+             refusing the condition verdict",
+        ));
+    }
+    let correlation_condition = largest / smallest;
+    if !correlation_condition.is_finite() {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            "hoisted correlation factor condition is non-finite; \
+             refusing the condition verdict",
+        ));
+    }
+    let mut max_abs_factor = 0.0_f64;
+    for value in executed.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "ill_conditioned_noise_model",
+                "hoisted correlation factor is non-finite; \
+                 refusing the condition verdict",
+            ));
+        }
+        max_abs_factor = max_abs_factor.max(value.abs());
+    }
     Ok(PreparedCorrelation {
         lower,
         toeplitz,
         jitter_applied_v2,
+        correlation_condition,
+        max_abs_factor,
     })
 }
 
@@ -1197,15 +1315,26 @@ fn whiten_correlated(
             tolerances.max_jitter_v2,
         )?),
     };
-    let (lower, toeplitz, jitter) = factor_source.parts();
-    // TOL-07 on the executed covariance, not just its factors: Cholesky
-    // success and whitened-design conditioning do not bound cond(R).
-    gate_realized_noise_condition(
-        toeplitz,
-        jitter,
-        sqrt_variance,
-        tolerances.max_noise_condition,
-    )?;
+    let (lower, toeplitz, jitter, prepared_factor) = factor_source.parts();
+    // Hoisted TOL-07 bound (P0): cond(S C S) <= cond(S)^2 * cond(C) with
+    // cond(C) measured once per plan. A bound at or under the cap implies
+    // the exact gate passes, so acceptance skips the per-window O(N^3)
+    // eigendecomposition with bit-identical outputs. Any unformable or
+    // over-cap bound falls back to the exact gate, preserving its failure
+    // surface exactly (no new rejections, no new acceptances).
+    let bound_accepts = prepared_factor
+        .condition_bound(sqrt_variance)
+        .is_some_and(|bound| bound <= tolerances.max_noise_condition);
+    if !bound_accepts {
+        // TOL-07 on the executed covariance, not just its factors: Cholesky
+        // success and whitened-design conditioning do not bound cond(R).
+        gate_realized_noise_condition(
+            toeplitz,
+            jitter,
+            sqrt_variance,
+            tolerances.max_noise_condition,
+        )?;
+    }
     let mut rhs = DMatrix::zeros(rows, scaled_design.ncols() + 1);
     for row in 0..rows {
         for column in 0..scaled_design.ncols() {
