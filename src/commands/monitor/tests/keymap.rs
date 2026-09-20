@@ -310,7 +310,7 @@ fn resolve_numbered_focus_and_inspector_tabs() {
         resolve_key(&char_key('3'), FocusPane::Output, false, false),
         Some(TuiAction::FocusPane(FocusPane::Output))
     );
-    // ...while the inspector is focused, 1-4 select its tabs instead.
+    // ...while the inspector is focused, 1-5 select its tabs instead.
     assert_eq!(
         resolve_key(&char_key('1'), FocusPane::Inspector, false, false),
         Some(TuiAction::InspectorTab(InspectorView::Summary))
@@ -327,6 +327,19 @@ fn resolve_numbered_focus_and_inspector_tabs() {
         resolve_key(&char_key('4'), FocusPane::Inspector, false, false),
         Some(TuiAction::InspectorTab(InspectorView::Artifacts))
     );
+    // S3 claims `5` for the REPORTS tab; it is inspector-local only, so
+    // `5` stays unbound everywhere else.
+    assert_eq!(
+        resolve_key(&char_key('5'), FocusPane::Inspector, false, false),
+        Some(TuiAction::InspectorTab(InspectorView::Reports))
+    );
+    for focus in [FocusPane::Commands, FocusPane::Runs, FocusPane::Output] {
+        assert_eq!(
+            resolve_key(&char_key('5'), focus, false, false),
+            None,
+            "5 is unbound outside the inspector ({focus:?})"
+        );
+    }
     // `4` is claimed by the S2 run browser outside the inspector, where it
     // focuses the Runs section; inside the inspector it still selects tabs.
     assert_eq!(
@@ -510,6 +523,13 @@ fn numbered_focus_keys_move_between_panes() {
     handle_key(&mut app, char_key('4'), area).unwrap();
     assert_eq!(app.focus, FocusPane::Inspector);
     assert_eq!(app.inspector_view, InspectorView::Artifacts);
+    // S3: `5` selects the REPORTS tab the same way.
+    handle_key(&mut app, char_key('5'), area).unwrap();
+    assert_eq!(app.focus, FocusPane::Inspector);
+    assert_eq!(app.inspector_view, InspectorView::Reports);
+    // `i` cycles through REPORTS back to SUMMARY.
+    app.cycle_inspector();
+    assert_eq!(app.inspector_view, InspectorView::Summary);
     handle_key(&mut app, char_key('1'), area).unwrap();
     assert_eq!(app.inspector_view, InspectorView::Summary);
 }

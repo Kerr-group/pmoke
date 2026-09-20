@@ -36,6 +36,9 @@ pub(super) struct MonitorApp {
     pub(super) config_scroll: usize,
     pub(super) messages_scroll: usize,
     pub(super) files_scroll: usize,
+    /// S3 REPORTS tab scroll offset (Issue #277). Reset by `refresh` like
+    /// the other inspector tabs.
+    pub(super) reports_scroll: usize,
     pub(super) copy_status: Option<String>,
     pub(super) show_help: bool,
     pub(super) motion_mode: MotionMode,
@@ -86,6 +89,7 @@ impl MonitorApp {
             config_scroll: 0,
             messages_scroll: 0,
             files_scroll: 0,
+            reports_scroll: 0,
             copy_status: None,
             show_help: false,
             motion_mode: MotionMode::from_env(),
@@ -100,6 +104,7 @@ impl MonitorApp {
         self.config_scroll = 0;
         self.messages_scroll = 0;
         self.files_scroll = 0;
+        self.reports_scroll = 0;
         // S2: a finished command may have published a new sibling run, so
         // the budgeted snapshot is refreshed together with config and files.
         self.refresh_runs();
@@ -788,7 +793,7 @@ impl MonitorApp {
         self.focus_inspector();
     }
 
-    /// FR-03 in-panel tabs: direct inspector tab selection (the `1-4` keys
+    /// FR-03 in-panel tabs: direct inspector tab selection (the `1-5` keys
     /// while the inspector is focused).
     pub(super) fn select_inspector_tab(&mut self, view: InspectorView) {
         self.inspector_view = view;
