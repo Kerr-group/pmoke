@@ -4,14 +4,14 @@ expression: rendered
 ---
  pmoke  ● RUNNABLE  │  IDLE  │  00:00                                                                                   
  └─ ◆ cwd /workspace/pmoke  │  config config.toml ──────────────────────────────────────────────────────────────────────
-┌ RUNS 0/0 ────────────┐┌ MESSAGES ────────────────────────────────────────────────────────────────────────────────────┐
-│no run dirs under scan││No warnings.                                                                                  │
-│                      ││                                                                                              │
-│                      ││                                                                                              │
-│                      ││                                                                                              │
-│                      ││                                                                                              │
-└──────────────────────┘│                                                                                              │
-┌ WORKFLOW 02/12 ──────┐│                                                                                              │
+┌ RUNS 01/1 ───────────┐┌ REPORTS 1-6/21 ──────────────────────────────────────────────────────────────────────────────┐
+│▌ run-alpha complete  ││Report: run-alph Value                                                                        │
+│                      ││Run              run-alpha                                                                    │
+│                      ││Status           complete                                                                     │
+│                      ││Stage            analysis                                                                     │
+│                      ││Updated          2026-01-01                                                                   │
+└──────────────────────┘│Path             /workspace/pmoke/runs/run-alpha                                              │
+┌ WORKFLOW 02/12 ──────┐│Stages           per-stage status from run manifest                                           │
 │  ▾ UTILITIES         │└──────────────────────────────────────────────────────────────────────────────────────────────┘
 │▌    ●  show OK       │╭ ACTIVITY · LIVE · READY ─────────────────────────────────────────────────────────────────────╮
 │     ●  doctor OK     ││ READY  events 1  ·  following                                                                │

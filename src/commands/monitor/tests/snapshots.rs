@@ -1,8 +1,9 @@
 //! S4 canonical-frame snapshots + cell-budget tests (Issue #278, FR-02/FR-03).
 //!
-//! Phase 1 covers S1/S2 screens only: the idle dashboard at all three size
+//! Phase 1 covered S1/S2 screens: the idle dashboard at all three size
 //! classes, the `?` help overlay, the S2 runs-browser focus, and the S1
-//! inspector tab cycle. S3 report screens get their own snapshots in Phase 2.
+//! inspector tab cycle. Phase 2 adds the S3 REPORTS tab (empty state plus a
+//! selected run whose probes all degrade to explicit markers).
 //!
 //! Frames render through the same `TestBackend` path as `view.rs` tests, but
 //! pinned with `insta` so any chrome drift fails loudly. The dashboard app
@@ -130,4 +131,53 @@ fn cjk_probe_stays_within_budget() {
     // Full-width input fitted to a narrow budget stays within budget too.
     let fitted = fit_text("ＡＢＣＤＥＦＧＨＩＪＫＬＭ", 10);
     assert!(UnicodeWidthStr::width(fitted.as_str()) <= 10);
+}
+
+/// S3 REPORTS tab over a selected run whose directory carries no manifest
+/// or reports. Every probe degrades to its explicit `unknown` / `not found`
+/// marker, so the frame is fully deterministic: the run path is a fixed
+/// fixture string (no temp dirs, whose PID-scoped names would poison the
+/// snapshot) and the repo root carries no `./calibration/` fallback for the
+/// calibrate lane to find when tests run with the package root as cwd.
+fn reports_probe_app() -> MonitorApp {
+    let mut app = ready_probe_app();
+    app.run_entries = vec![RunDirEntry {
+        name: "run-alpha".to_string(),
+        path: "/workspace/pmoke/runs/run-alpha".to_string(),
+        status: "complete".to_string(),
+        stage: "analysis".to_string(),
+        updated: "2026-01-01".to_string(),
+        has_acquisition: true,
+        has_analysis: true,
+    }];
+    app.run_cursor = 0;
+    app
+}
+
+#[test]
+fn snapshot_reports_tab_empty() {
+    let mut app = probe_app();
+    let outcomes = drive(&mut app, area_for(WIDE), &[ch('2'), ch('5')]);
+    assert_continue(&outcomes);
+    assert_eq!(app.focus, FocusPane::Inspector);
+    assert_eq!(app.inspector_view, InspectorView::Reports);
+    let rendered = render_text(&mut app, WIDE);
+    assert_fits_width(&rendered, WIDE);
+    assert!(rendered.contains("REPORTS"));
+    assert!(rendered.contains("No recorded run selected."));
+    insta::assert_snapshot!("reports_empty", rendered);
+}
+
+#[test]
+fn snapshot_reports_tab_populated() {
+    let mut app = reports_probe_app();
+    let outcomes = drive(&mut app, area_for(WIDE), &[ch('2'), ch('5')]);
+    assert_continue(&outcomes);
+    assert_eq!(app.focus, FocusPane::Inspector);
+    assert_eq!(app.inspector_view, InspectorView::Reports);
+    let rendered = render_text(&mut app, WIDE);
+    assert_fits_width(&rendered, WIDE);
+    assert!(rendered.contains("run-alpha"));
+    assert!(rendered.contains("Stages"));
+    insta::assert_snapshot!("reports_populated", rendered);
 }

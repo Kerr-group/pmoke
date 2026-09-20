@@ -15,8 +15,10 @@
 //! - `r` (`Refresh` re-probes the filesystem; read-only but environment
 //!   dependent, so refresh coverage stays in `app` unit tests).
 //!
-//! S3-owned inspector screens are out of scope: this harness covers S1/S2
-//! states only (workflow, runs, inspector S1 tabs, output, help, search).
+//! S3 REPORTS tab (Issue #277) is covered like every other inspector tab:
+//! `5` selects it while the inspector is focused and `i` cycles through it,
+//! so the Phase 2 snapshots drive those keys. No new `TuiAction` was needed
+//! (scrolling reuses the inspector actions).
 
 use super::*;
 use ratatui::backend::TestBackend;

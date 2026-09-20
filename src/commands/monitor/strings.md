@@ -1,8 +1,8 @@
-# Monitor TUI string inventory + CJK cell budgets (S4, Issue #278, Phase 1)
+# Monitor TUI string inventory + CJK cell budgets (S4, Issue #278, Phase 2)
 
-Scope: S1 keybinding registry (Issue #275) + S2 run browser (Issue #276)
-screens only. S3 inspector screens are Phase 2 and are deliberately absent
-here; extend this file when Phase 2 lands instead of guessing S3 strings.
+Scope: S1 keybinding registry (Issue #275) + S2 run browser (Issue #276) +
+S3 calibration/analysis inspectors (Issue #277). Phase 1 covered S1/S2;
+Phase 2 adds the S3 REPORTS tab below.
 
 ## Source-of-truth rule
 
@@ -26,12 +26,44 @@ here; extend this file when Phase 2 lands instead of guessing S3 strings.
 | ` WORKFLOW {:02}/{} `, ` WORKFLOW /{query} `, ` WORKFLOW /{query} · NO MATCHES ` | `render_workflow_list` (`view.rs`) | S1 filter; `/` begins, `Enter` commits, `Esc` clears |
 | ` RUNS {:02}/{total} `, ` RUNS /{query} {:02}/{total} `, ` RUNS /{query} · NO MATCHES `, ` RUNS 0/0 `, `no run dirs under scan root`, `no runs match the filter`, optional `TRUNC` | `render_runs_panel`, `runs_panel_title` (`view.rs`) | S2 browser; budgets `RUN_SCAN_MAX_*` in `runs.rs` |
 | `▌ ` selection marker | `render_runs_panel` (`view.rs`) | single-cell block, width 1 |
-| Inspector tab labels `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, `ARTIFACTS` | `InspectorView::label` (`mod.rs`) | `i` cycles; inspector-local `1`-`4` select |
+| Inspector tab labels `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, `ARTIFACTS`, `REPORTS` | `InspectorView::label` (`mod.rs`) | `i` cycles; inspector-local `1`-`5` select (`5` = S3 REPORTS) |
 | ` Help ` overlay, section titles `GLOBAL WORKFLOW RUNS INSPECTOR ACTIVITY SEARCH` | `help_sections` (`keymap.rs`), `panels.rs` | fully registry-generated rows |
 | Footer verbs per focus (`run move filter focus …`, `filter move preview focus …`, `tabs tab scroll focus …`, `select visual copy follow …`, shared `history help quit [focus]`, quit-confirm ` q again to stop + quit ` / `Esc stays`) | `footer_spans` (`keymap.rs`) | key labels via `primary_label`; verbs curated |
 | `HISTORY {i}/{n}`, `PAUSED · {n} NEW · G follow`, `PAUSED · G follow`, `STOPPING · …` | `activity_title` (`view.rs`) | never wall-clock, only counters/state |
 | `capture on (click/drag/wheel); PMOKE_MOUSE=off disables`, `capture off (PMOKE_MOUSE=off)` | `panels.rs` | FR-05 mouse opt-out |
 | `PMOKE_MOTION=full\|reduced\|off` tick rates | `mod.rs` (`MotionMode`, `tui_frame_tick`) | snapshots run idle; motion never affects frames |
+
+## S3 REPORTS tab curated strings (Phase 2)
+
+The REPORTS tab (`InspectorView::Reports` in `mod.rs`, rendered by
+`render_reports` in `view.rs` from `reports_table_rows` in `inspect.rs`)
+shows the S2-selected run: a run header, a `Stages` section from the run
+manifest (FR-02), and a `Reports` section of standalone lane summaries
+(FR-01). `5` selects the tab while the inspector is focused; scrolling
+reuses the inspector `j`/`k` actions into `reports_scroll` (reset by
+`refresh`, clamped by `reports_scroll_max`, title shows the scroll range).
+
+| String | Location | Notes |
+| --- | --- | --- |
+| ` REPORTS `, empty `No recorded run selected.`, `root  …`, `scan  …`, `hint  press … to focus the runs browser` | `render_reports` (`view.rs`) | no run selected; scan line quotes `run_scan_budgets_label` |
+| `Report: {name}` + `Value` header, `REPORTS {start}-{end}/{total}` title | `render_reports` (`view.rs`) | single scroll window over the combined row list |
+| `Run`, `Status`, `Stage`, `Updated`, `Path` | `reports_table_rows` (`inspect.rs`) | header rows from the S2 `RunDirEntry` |
+| `Stages` / `per-stage status from run manifest` | `reports_table_rows` (`inspect.rs`) | section label row |
+| `Status`, `Stage`, `Started`, `Acquired`, `Analyzed`, `Completed`, `Updated`, conditional `Failed stage`, analysis attempt rows, published rows | `stage_rows` (`inspect.rs`) | from `run.toml`; missing fields degrade to `unknown` / `—`, never an error |
+| `Reports` / `calibrate / noise / compare / evaluate` | `reports_table_rows` (`inspect.rs`) | section label row |
+| lane labels `calibrate`, `noise`, `compare`, `evaluate`; files `calibrate-report.json`, `diagnostics.json`, `compare-report.json`, `m6-evaluation-report.json` | `ReportKind` (`inspect.rs`) | calibrate additionally probes `./calibration/` |
+| `not found ({file} in run dir)`, `unreadable ({oversized\|unreadable\|invalid json})` | `report_table_rows` (`inspect.rs`) | symlinks refused (report as missing, next candidate tried) |
+| `calibration artifact` / `not found (calibration.json in run dir or ./calibration/)`, `model=… ch=… f=…` summary | `calibration_artifact_row` (`inspect.rs`) | artifact budget mirrors `calibrate inspect` |
+| `analysis results` / `no analysis manifest in run dir`, `published through {lane} (gen {n})` | `analysis_manifest_row` (`inspect.rs`) | from `<run>/analysis/manifest.toml` |
+
+Probe budgets (`inspect.rs`): `STAGE_MANIFEST_MAX_BYTES` 65_536,
+`REPORT_MAX_BYTES` 65_536, `ARTIFACT_MAX_BYTES` 1 MiB. Contracts: every
+probe is a bounded read-only file read (nothing created, written, or
+spawned); all parsing goes through `toml::Value` / `serde_json::Value`, so
+a kernel field rename degrades a row to `unknown` instead of breaking the
+build. Pinned by `tests/inspect.rs` (row content, degradation, read-only
+tree snapshot) and by the `reports_empty` / `reports_populated` canonical
+frames in `tests/snapshots.rs` (chrome + scroll range at `WIDE`).
 
 ## CJK cell budgets
 
@@ -81,5 +113,8 @@ together with its snapshot and this table.
    the monitor page, tune `SEARCH_HINTS` repetitions in
    `website/app/api/semantic-search/route.ts` (counts matter; see the S4
    handoff), and keep `tests/fixtures/search-relevance-v1.json` monitor
-   queries hitting. Ship only at Recall@5 >= 0.95 per locale.
+   queries hitting. Ship only at Recall@5 >= 0.95 per locale. Phase 2
+   lesson: literal `*.toml` filenames on the JA page fired the `config`
+   concept and stole a validation query; the JA page paraphrases them
+   (`run manifest`, `analysis/manifest`) while EN keeps exact filenames.
 5. Keep this inventory's tables and minima in sync.

@@ -18,8 +18,8 @@ type StructuredData = {
 // tests/fixtures/search-relevance-v1.json recall (gate: Recall@5 >= 0.95).
 const SEARCH_HINTS: Record<string, string> = {
   '/en/docs': 'what is pmoke overview design priorities reproducibility what is pmoke what is pmoke what is pmoke what is pmoke what is pmoke',
-  '/en/docs/monitor': 'monitor TUI terminal dashboard run browser inspector activity focus panes keybindings help overlay workflow runs preview pin',
-  '/ja/docs/monitor': '監視 TUI ダッシュボード run browser inspector activity focus keybinding 実行コマンド 履歴 preview pin留め 終了確認',
+  '/en/docs/monitor': 'monitor TUI terminal dashboard run browser inspector activity focus panes keybindings help overlay workflow runs preview pin REPORTS tab stages lifecycle read-only',
+  '/ja/docs/monitor': '監視 TUI ダッシュボード run browser inspector activity focus keybinding 実行コマンド 履歴 preview pin留め 終了確認 REPORTS tab Stages read-only',
   '/en/docs/configuration': 'schema configuration create config init guided configuration signal roles artifacts',
   '/en/docs/ai': 'machine readable documentation feed llms agent index versioned markdown feeds typed contracts local retrieval',
   '/ja/docs/ai': '機械可読 documentation feed llms エージェント Markdown feed 型付き契約 ローカル検索',

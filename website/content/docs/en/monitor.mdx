@@ -17,8 +17,8 @@ selected command itself does.
 - `WORKFLOW`: the command list with a `DETAIL` description of the selected
   row. `/` filters, `Enter` runs the selected command.
 - `RUNS`: the S2 run browser (see below).
-- `INSPECTOR`: `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, and `ARTIFACTS` tabs for
-  the selected workflow entry or the pinned run preview.
+- `INSPECTOR`: `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, `ARTIFACTS`, and `REPORTS`
+  tabs for the selected workflow entry or the pinned run preview.
 - `ACTIVITY`: live command output with `LIVE`, `PAUSED`, and `HISTORY` states.
 - Footer: the key hints for the focused pane. `?` opens the full help
   overlay, which is generated from the same key registry as the event loop,
@@ -34,7 +34,7 @@ activity.
 | `1` / `2` / `3` / `4` (`b` also focuses runs) | Focus workflow / inspector / activity / runs |
 | `Tab` / `Shift-Tab` (`l` / `h`, `Right` / `Left`) | Focus next / previous pane |
 | `i` | Cycle inspector tabs (focuses the inspector) |
-| `1`-`4` while the inspector is focused | Select inspector tab directly |
+| `1`-`5` while the inspector is focused | Select inspector tab directly (`5` = `REPORTS`) |
 
 ## Keys
 
@@ -68,6 +68,22 @@ partial list is marked `TRUNC` rather than silently short. `/` filters by
 name, path, status, or stage, and `Enter` pins the selected run as a
 read-only inspector preview. Empty states read `no run dirs under scan root`
 and `no runs match the filter`.
+
+## Reports inspector
+
+The S3 `REPORTS` tab answers "what happened inside the selected run"
+without running anything: press `5` while the inspector is focused (`i`
+cycles through it like every other tab, `j`/`k` scroll the combined
+table). The top rows name the selected run, then a `Stages` section reads
+the run's per-stage lifecycle status from its `run.toml` manifest, and a
+`Reports` section summarizes the standalone lane reports
+(`calibrate-report.json`, noise `diagnostics.json`, `compare-report.json`,
+`m6-evaluation-report.json`) plus the `calibration.json` artifact and the
+`analysis/manifest.toml` publication state. Every probe is a bounded
+read-only file read: missing, oversized, or unparsable files degrade to an
+explicit `not found` / `unreadable` marker instead of failing the render.
+With no run selected the tab names the scan root and budgets and points at
+the runs browser.
 
 ## Safety and environment
 
