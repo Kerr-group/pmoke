@@ -10,6 +10,7 @@ use crate::config::{GlsCovarianceOutput, GlsNoiseMode, JointHarmonicGlsConfig, L
 use crate::lockin::estimator_snapshot::{EstimatorSnapshot, build_estimator_snapshot};
 use crate::lockin::lockin_params::LockinParams;
 use crate::lockin::provenance::LockinProvenance;
+use crate::ui;
 use crate::utils::time_axis::TimeAxisRef;
 use anyhow::{Context, Result, bail};
 use pmoke_analysis_core::{
@@ -545,7 +546,17 @@ pub fn run_joint_li(
     let mut covariance = Vec::with_capacity(signal_data.len());
     let mut snapshots = Vec::with_capacity(signal_data.len());
     let mut bindings = Vec::with_capacity(signal_data.len());
+    // The joint GLS fit is the long silent stage of this path (one solver
+    // run per output window per channel): one coarse progress unit per
+    // channel keeps the bar and the JSONL stream alive without touching the
+    // hot per-window loop.
+    let pb = ui::progress(
+        format!("joint GLS lock-in processing with {} workers", plan.workers),
+        signal_ch.len() as u64,
+    );
+    let t0 = std::time::Instant::now();
     for (&channel, signal) in signal_ch.iter().zip(signal_data.iter()) {
+        pb.set_message(format!("joint GLS lock-in ch{channel}"));
         let signal: &[f64] = signal;
         let (noise, binding) = source
             .load(channel, gls.noise_mode)
@@ -583,7 +594,18 @@ pub fn run_joint_li(
             )
             .with_context(|| format!("joint estimator snapshot failed for channel {channel}"))?,
         );
+        pb.inc(1);
     }
+    // The completion line carries the boxcar path's marker substring so the
+    // monitor timeline's Lock-in step completes under either estimator.
+    ui::finish_success(
+        pb,
+        format!(
+            "lock-in processing completed (joint GLS, {} workers, {})",
+            plan.workers,
+            ui::fmt_duration(t0.elapsed())
+        ),
+    );
 
     let provenance =
         LockinProvenance::from_joint(plan.params, gls.noise_mode, &bindings, JOINT_SOLVER_ID);
