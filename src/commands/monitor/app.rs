@@ -12,6 +12,13 @@ pub(super) struct MonitorApp {
     pub(super) collapsed_groups: std::collections::BTreeSet<ActionGroup>,
     pub(super) action_query: String,
     pub(super) search_mode: bool,
+    /// Deterministic workflow fixture for insta snapshots (Issue #278).
+    /// When `Some`, [`MonitorApp::actions`] returns the fixture instead of
+    /// the feature-gated [`monitor_actions`] registry, so the WORKFLOW panel
+    /// renders identically with `--no-default-features` (12 entries) and
+    /// `--all-features`/`hw-core` (22 entries). Production leaves this as
+    /// `None`; snapshot harnesses pin it to the canonical 10-action list.
+    pub(super) workflow_fixture: Option<Vec<MonitorAction>>,
     /// S2 run browser state (FR-02/FR-03). The entries are a budgeted,
     /// read-only snapshot refreshed on startup, `r`, and after each run;
     /// `run_cursor` indexes the *filtered* list like `workflow_cursor`.
@@ -68,6 +75,7 @@ impl MonitorApp {
             collapsed_groups: std::collections::BTreeSet::new(),
             action_query: String::new(),
             search_mode: false,
+            workflow_fixture: None,
             run_root,
             run_entries: Vec::new(),
             run_cursor: 0,
@@ -157,6 +165,9 @@ impl MonitorApp {
     }
 
     pub(super) fn actions(&self) -> Vec<MonitorAction> {
+        if let Some(fixture) = &self.workflow_fixture {
+            return fixture.clone();
+        }
         monitor_actions()
     }
 
