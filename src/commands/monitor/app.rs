@@ -29,6 +29,8 @@ pub(super) struct MonitorApp {
     pub(super) copy_status: Option<String>,
     pub(super) show_help: bool,
     pub(super) motion_mode: MotionMode,
+    pub(super) mouse_capture: bool,
+    pub(super) quit_confirm_pending: bool,
 }
 
 impl MonitorApp {
@@ -67,6 +69,8 @@ impl MonitorApp {
             copy_status: None,
             show_help: false,
             motion_mode: MotionMode::from_env(),
+            mouse_capture: mouse_capture_enabled(),
+            quit_confirm_pending: false,
         }
     }
 
@@ -205,31 +209,132 @@ impl MonitorApp {
     }
 
     pub(super) fn poll_command(&mut self) {
-        let Some(run) = &self.active_run else {
-            return;
-        };
+        self.drain_available_run_events();
+    }
 
+    /// Apply one runner event to the app state. Shared by the per-frame poll
+    /// and the Start/Stop lifecycle drains so leaving a screen never loses or
+    /// leaks in-flight events.
+    fn handle_run_event(&mut self, event: RunEvent) {
+        match event {
+            RunEvent::Output(stream, text) => self.push_output(stream, &text),
+            RunEvent::Progress(stream, text) => self.push_progress(stream, &text),
+            RunEvent::Structured(event) => self.push_structured_output(event),
+            RunEvent::Finished { ok, status } => self.finish_run(ok, status),
+            RunEvent::Failed(message) => self.finish_run(false, message),
+        }
+    }
+
+    /// Drain every event the runner thread has already sent without blocking.
+    fn drain_available_run_events(&mut self) {
+        if self.active_run.is_none() {
+            return;
+        }
         let mut events = Vec::new();
-        loop {
-            match run.receiver.try_recv() {
-                Ok(event) => events.push(event),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    events.push(RunEvent::Failed("command runner disconnected".to_string()));
-                    break;
+        let mut disconnected = false;
+        if let Some(run) = &self.active_run {
+            loop {
+                match run.receiver.try_recv() {
+                    Ok(event) => events.push(event),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
                 }
             }
         }
-
         for event in events {
-            match event {
-                RunEvent::Output(stream, text) => self.push_output(stream, &text),
-                RunEvent::Progress(stream, text) => self.push_progress(stream, &text),
-                RunEvent::Structured(event) => self.push_structured_output(event),
-                RunEvent::Finished { ok, status } => self.finish_run(ok, status),
-                RunEvent::Failed(message) => self.finish_run(false, message),
+            self.handle_run_event(event);
+            if self.active_run.is_none() {
+                return;
             }
         }
+        if disconnected && self.active_run.is_some() {
+            self.handle_run_event(RunEvent::Failed("command runner disconnected".to_string()));
+        }
+    }
+
+    /// FR-06 Stop: leaving a screen always cancels its child and drains the
+    /// channel, so no runner thread is left behind pumping into a dead view.
+    pub(super) fn stop_screen(&mut self) {
+        if self.active_run.is_none() {
+            return;
+        }
+        self.cancel_command(CancelReason::CtrlC);
+        self.drain_available_run_events();
+    }
+
+    /// Blocking variant of [`MonitorApp::stop_screen`] for the confirmed
+    /// quit-while-running path: cancel, then wait (bounded) for the runner
+    /// thread to report the stop so the child process is reaped before the
+    /// terminal is restored. Best-effort past the deadline: the run handle is
+    /// abandoned with a note instead of hanging quit forever.
+    pub(super) fn shutdown_active_run(&mut self, timeout: Duration) {
+        self.stop_screen();
+        if self.active_run.is_some() {
+            self.wait_for_run_end(timeout);
+        }
+    }
+
+    fn wait_for_run_end(&mut self, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while self.active_run.is_some() {
+            let event = {
+                let Some(run) = &self.active_run else {
+                    break;
+                };
+                run.receiver
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            };
+            match event {
+                Ok(event) => self.handle_run_event(event),
+                Err(RecvTimeoutError::Timeout) => {
+                    self.active_run = None;
+                    self.push_output(
+                        OutputStream::System,
+                        "command did not stop in time; leaving it behind",
+                    );
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.handle_run_event(RunEvent::Failed(
+                        "command runner disconnected".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// FR-04 quit contract: idle quits immediately; while a child runs the
+    /// first `q` arms a confirmation (any other key disarms it) and the
+    /// second `q` stops the child and quits. Returns true when the event loop
+    /// should exit.
+    pub(super) fn request_quit(&mut self) -> bool {
+        if !self.command_running() {
+            return true;
+        }
+        if self.quit_confirm_pending {
+            self.quit_confirm_pending = false;
+            self.shutdown_active_run(Duration::from_millis(1500));
+            return true;
+        }
+        self.quit_confirm_pending = true;
+        self.push_output(
+            OutputStream::System,
+            "A command is running. Press q again to stop it and quit (Esc stays).",
+        );
+        false
+    }
+
+    /// FR-04 Esc contract: close the help overlay first, then clear the
+    /// workflow search, then clear the activity selection, then leave the
+    /// activity panel. Never cancels a running command (that is `Ctrl+C`).
+    pub(super) fn escape(&mut self) {
+        if self.search_mode || !self.action_query.is_empty() {
+            self.clear_action_search();
+            return;
+        }
+        self.escape_current_mode();
     }
 
     pub(super) fn command_running(&self) -> bool {
@@ -526,6 +631,13 @@ impl MonitorApp {
 
     pub(super) fn cycle_inspector(&mut self) {
         self.inspector_view = self.inspector_view.next();
+        self.focus_inspector();
+    }
+
+    /// FR-03 in-panel tabs: direct inspector tab selection (the `1-4` keys
+    /// while the inspector is focused).
+    pub(super) fn select_inspector_tab(&mut self, view: InspectorView) {
+        self.inspector_view = view;
         self.focus_inspector();
     }
 

@@ -1132,6 +1132,9 @@ pub(super) fn build_mode_artifact(
             sample_interval_rel_tol: pmoke_analysis_core::calibration::DEFAULT_DT_REL_TOL,
             reference_frequency_hz,
             frequency_rel_tol: pmoke_analysis_core::calibration::DEFAULT_FREQ_REL_TOL,
+            // Frozen compare models declare an explicit reference: no
+            // same-run fit uncertainty is recorded (Issue #274 FR-01).
+            reference_frequency_rel_uncertainty: None,
             phase_convention: pmoke_analysis_core::calibration::CALIBRATION_PHASE_CONVENTION
                 .to_string(),
             acquisition: AcquisitionMeta {
@@ -1153,6 +1156,7 @@ pub(super) fn build_mode_artifact(
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     let built = build_artifact(artifact_request)?;
     if built.json_bytes.len() > max_model_bytes {

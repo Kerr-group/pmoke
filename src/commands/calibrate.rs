@@ -48,8 +48,10 @@
 //! back-compat: an equivalent TOML request over identical samples yields
 //! the identical artifact digest, because both paths bind the artifact to
 //! the canonical sample digest (see [`canonical_sample_digest`]) rather
-//! than to the container file. The fully resolved request is recorded in
-//! the report, so a direct build reproduces without its TOML.
+//! than to the container file. The TOML mirror carries the direct fit's
+//! recorded reference uncertainty (`reference_frequency_rel_uncertainty`)
+//! so the tolerance basis matches as well. The fully resolved request is
+//! recorded in the report, so a direct build reproduces without its TOML.
 //!
 //! The default direct-build output is CWD-anchored (`./calibration/` with
 //! per-channel artifact filenames). When that default would resolve inside
@@ -68,9 +70,10 @@ use pmoke_analysis_core::calibration::{
     BlockPlan, BlockPlanRequest, CALIBRATION_ALGORITHM_VERSION,
     CALIBRATION_ARTIFACT_SCHEMA_VERSION, CALIBRATION_PHASE_CONVENTION, CalibrationArtifact,
     CalibrationRole, CorrelationRecipe, DEFAULT_MIN_CYCLES_PER_BLOCK, DEFAULT_MIN_TRAINING_BLOCKS,
-    DEFAULT_MIN_TRAINING_INTERVALS, HeldoutReport, ModelBinding, PhaseVarianceRecipe, RoleInterval,
-    TuningMode, assemble_samples, build_artifact, estimate_correlation, estimate_phase_variance,
-    fit_nuisance, inspect_applicability, plan_blocks, scs_adequacy,
+    DEFAULT_MIN_TRAINING_INTERVALS, FREQUENCY_TOL_COVERAGE_K, FREQUENCY_TOL_FLOOR, HeldoutReport,
+    ModelBinding, PhaseVarianceRecipe, RoleInterval, TuningMode, assemble_samples, build_artifact,
+    estimate_correlation, estimate_phase_variance, fit_nuisance, inspect_applicability,
+    plan_blocks, resolve_build_frequency_tol, scs_adequacy,
 };
 use pmoke_analysis_core::joint::JointSolverTolerances;
 use serde::{Deserialize, Serialize};
@@ -108,6 +111,19 @@ pub struct CalibrateRequest {
     pub phase_recipe: Option<PhaseVarianceRecipeToml>,
     pub correlation_recipe: Option<CorrelationRecipeToml>,
     pub heldout: Option<HeldoutToml>,
+    /// Explicit reference-frequency applicability tolerance override
+    /// (relative, Issue #274 FR-04). Absent by default: the build-side
+    /// uncertainty combination applies. An explicit value is recorded in
+    /// the artifact and marked as overridden in the report.
+    #[serde(default)]
+    pub frequency_rel_tol: Option<f64>,
+    /// Reference-fit relative uncertainty recorded as the build-side
+    /// input (Issue #274 FR-01). TOML builds declare their reference
+    /// explicitly, so this stays absent unless the request carries the
+    /// uncertainty measured elsewhere (e.g. mirroring a same-run fit);
+    /// only positive finite values enter the combination.
+    #[serde(default)]
+    pub reference_frequency_rel_uncertainty: Option<f64>,
     pub output: String,
 }
 
@@ -257,6 +273,24 @@ pub struct CalibrateReport {
     pub warnings: Vec<String>,
     /// Fully resolved request for reproduction without TOML.
     pub resolved_request: ResolvedRequestRecord,
+    /// Uncertainty-aware tolerance basis behind the binding (Issue #274
+    /// FR-03): per-side uncertainties (or their explicit absence), the
+    /// coverage factor, the floor, the final tolerance, and whether it
+    /// came from an explicit override.
+    pub tolerance_basis: ToleranceBasisRecord,
+}
+
+/// Uncertainty-aware tolerance basis recorded per build (Issue #274 FR-03).
+#[derive(Debug, Clone, Serialize)]
+pub struct ToleranceBasisRecord {
+    pub u_build: Option<f64>,
+    /// Inference-side uncertainty is always absent at build time; the
+    /// combination at inference widens through the same rule.
+    pub u_apply: Option<f64>,
+    pub coverage_k: f64,
+    pub floor: f64,
+    pub final_tol: f64,
+    pub overridden: bool,
 }
 
 fn role_of(role: CalibrationRoleToml) -> CalibrationRole {
@@ -388,6 +422,13 @@ struct ResolvedBuild {
     reference_frequency_hz: f64,
     reference_phase_rad: f64,
     reference_provenance: String,
+    /// Same-run reference-fit relative uncertainty, when the reference
+    /// came from a same-run fit (Issue #274 FR-01), or when a TOML
+    /// request records the uncertainty measured elsewhere. `None`
+    /// (explicit-frequency builds without a record) keeps the floor gate.
+    reference_frequency_rel_uncertainty: Option<f64>,
+    /// Explicit tolerance override (Issue #274 FR-04).
+    frequency_rel_tol_override: Option<f64>,
     source_kind: &'static str,
     source_files: Vec<SourceFileRecord>,
     seed: u64,
@@ -413,6 +454,7 @@ struct BuiltCalibration {
     adequacy_reason: String,
     training_blocks: usize,
     warnings: Vec<String>,
+    frequency_tol_overridden: bool,
 }
 
 /// Plans whole blocks inside the requested role intervals. Out-of-range,
@@ -525,6 +567,16 @@ fn execute_resolved_build(resolved: &ResolvedBuild, plan: &BlockPlan) -> Result<
         None => (None, None),
     };
 
+    let (frequency_rel_tol, frequency_tol_overridden) = resolve_build_frequency_tol(
+        resolved.reference_frequency_rel_uncertainty,
+        resolved.frequency_rel_tol_override,
+    )
+    .with_context(|| {
+        format!(
+            "invalid frequency_rel_tol override for model {}",
+            resolved.model_id
+        )
+    })?;
     let artifact_request = ArtifactRequest {
         model_id: resolved.model_id.clone(),
         pmoke_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -537,7 +589,8 @@ fn execute_resolved_build(resolved: &ResolvedBuild, plan: &BlockPlan) -> Result<
             recorded_original_dt_s: Some(resolved.sample_interval_s),
             sample_interval_rel_tol: pmoke_analysis_core::calibration::DEFAULT_DT_REL_TOL,
             reference_frequency_hz: resolved.reference_frequency_hz,
-            frequency_rel_tol: pmoke_analysis_core::calibration::DEFAULT_FREQ_REL_TOL,
+            frequency_rel_tol,
+            reference_frequency_rel_uncertainty: resolved.reference_frequency_rel_uncertainty,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
                 device: None,
@@ -558,6 +611,7 @@ fn execute_resolved_build(resolved: &ResolvedBuild, plan: &BlockPlan) -> Result<
             profile_rmse_v2: resolved.heldout_profile_rmse_v2,
             standardized_lag1: resolved.heldout_standardized_lag1,
         },
+        frequency_tol_overridden,
     };
     let built = build_artifact(artifact_request)?;
 
@@ -634,6 +688,7 @@ fn execute_resolved_build(resolved: &ResolvedBuild, plan: &BlockPlan) -> Result<
         built,
         plan: plan.clone(),
         warnings,
+        frequency_tol_overridden,
     })
 }
 
@@ -711,6 +766,14 @@ fn report_for(
                 })
                 .collect(),
             output_artifact: normalize_report_path(artifact_path),
+        },
+        tolerance_basis: ToleranceBasisRecord {
+            u_build: resolved.reference_frequency_rel_uncertainty,
+            u_apply: None,
+            coverage_k: FREQUENCY_TOL_COVERAGE_K,
+            floor: FREQUENCY_TOL_FLOOR,
+            final_tol: built.built.artifact.binding.frequency_rel_tol,
+            overridden: built.frequency_tol_overridden,
         },
     }
 }
@@ -828,6 +891,11 @@ pub fn run_build(request_path: &Path, output_override: Option<&Path>) -> Result<
         reference_frequency_hz: request.reference_frequency_hz,
         reference_phase_rad: request.reference_phase_rad,
         reference_provenance: "toml-request".to_string(),
+        // TOML builds declare their reference explicitly: the build-side
+        // uncertainty comes from the request record when present, else
+        // the floor combination applies unless overridden below.
+        reference_frequency_rel_uncertainty: request.reference_frequency_rel_uncertainty,
+        frequency_rel_tol_override: request.frequency_rel_tol,
         source_kind: "csv",
         source_files: vec![SourceFileRecord {
             path: normalize_report_path(&waveform),
@@ -904,6 +972,10 @@ pub struct DirectBuildOptions {
     pub reference_phase_rad: Option<f64>,
     pub block_len: Option<usize>,
     pub seed: Option<u64>,
+    /// Explicit reference-frequency applicability tolerance override
+    /// (relative, Issue #274 FR-04). Absent by default: the build-side
+    /// uncertainty combination applies.
+    pub frequency_rel_tol: Option<f64>,
 }
 
 /// Resolves `--run` to a lookup root: the explicit directory, else `.`
@@ -1227,52 +1299,62 @@ pub fn run_build_direct(options: &DirectBuildOptions) -> Result<()> {
     }
     let times = waveform.t.to_vec();
 
-    let (reference_frequency_hz, reference_phase_rad, reference_provenance) =
-        match (options.reference_frequency_hz, options.reference_phase_rad) {
-            (Some(frequency), Some(phase)) => {
-                if !(frequency.is_finite() && frequency > 0.0) {
-                    bail!("direct calibration needs a positive finite --reference-frequency-hz");
-                }
-                if !phase.is_finite() {
-                    bail!("direct calibration needs a finite --reference-phase-rad");
-                }
-                (
-                    frequency,
-                    phase,
-                    "--reference-frequency-hz/--reference-phase-rad flag override".to_string(),
-                )
+    let (
+        reference_frequency_hz,
+        reference_phase_rad,
+        reference_provenance,
+        reference_frequency_rel_uncertainty,
+    ) = match (options.reference_frequency_hz, options.reference_phase_rad) {
+        (Some(frequency), Some(phase)) => {
+            if !(frequency.is_finite() && frequency > 0.0) {
+                bail!("direct calibration needs a positive finite --reference-frequency-hz");
             }
-            _ => {
-                let config = snapshot.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("run configuration snapshot vanished before the reference fit")
-                })?;
-                let reference = reference_channel.ok_or_else(|| {
-                    anyhow::anyhow!("reference channel resolution vanished before the fit")
-                })?;
-                let reference_signal = signals.get(&reference).ok_or_else(|| {
-                    anyhow::anyhow!("reference channel {reference} missing from RAW ingest")
-                })?;
-                let fit = crate::lockin::reference::run_fit_ref_core_without_plot(
-                    config,
-                    waveform.t.as_ref(),
-                    reference_signal,
-                )
-                .with_context(|| {
-                    format!("same-run reference fit failed for channel {reference}")
-                })?;
-                let provenance = format!(
-                    "same-run-ch{reference}-fit f_ref={:.6e} Hz omega_tref={:.6e} rad \
+            if !phase.is_finite() {
+                bail!("direct calibration needs a finite --reference-phase-rad");
+            }
+            (
+                frequency,
+                phase,
+                "--reference-frequency-hz/--reference-phase-rad flag override".to_string(),
+                // Explicit flags bypass the same-run fit: no build-side
+                // uncertainty is recorded (Issue #274 FR-01).
+                None,
+            )
+        }
+        _ => {
+            let config = snapshot.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("run configuration snapshot vanished before the reference fit")
+            })?;
+            let reference = reference_channel.ok_or_else(|| {
+                anyhow::anyhow!("reference channel resolution vanished before the fit")
+            })?;
+            let reference_signal = signals.get(&reference).ok_or_else(|| {
+                anyhow::anyhow!("reference channel {reference} missing from RAW ingest")
+            })?;
+            let fit = crate::lockin::reference::run_fit_ref_core_without_plot(
+                config,
+                waveform.t.as_ref(),
+                reference_signal,
+            )
+            .with_context(|| format!("same-run reference fit failed for channel {reference}"))?;
+            let provenance = format!(
+                "same-run-ch{reference}-fit f_ref={:.6e} Hz omega_tref={:.6e} rad \
                      fft_window=[{:.6e}, {:.6e}] stride={} window={}",
-                    fit.f_ref,
-                    fit.omega_tref,
-                    config.reference.fft_window.start,
-                    config.reference.fft_window.end,
-                    config.reference.stride_samples,
-                    config.reference.window_samples,
-                );
-                (fit.f_ref, fit.omega_tref, provenance)
-            }
-        };
+                fit.f_ref,
+                fit.omega_tref,
+                config.reference.fft_window.start,
+                config.reference.fft_window.end,
+                config.reference.stride_samples,
+                config.reference.window_samples,
+            );
+            (
+                fit.f_ref,
+                fit.omega_tref,
+                provenance,
+                fit.f_ref_rel_uncertainty,
+            )
+        }
+    };
 
     let block_len = match options.block_len {
         Some(len) => {
@@ -1391,6 +1473,8 @@ pub fn run_build_direct(options: &DirectBuildOptions) -> Result<()> {
             reference_frequency_hz,
             reference_phase_rad,
             reference_provenance: reference_provenance.clone(),
+            reference_frequency_rel_uncertainty,
+            frequency_rel_tol_override: options.frequency_rel_tol,
             source_kind: "raw",
             source_files,
             seed,
@@ -1532,6 +1616,7 @@ pub fn run(command: &crate::cli::CalibrateCommand) -> Result<()> {
             reference_phase_rad,
             block_len,
             seed,
+            frequency_rel_tol,
         } => {
             if let Some(request_path) = request {
                 run_build(request_path, output.as_deref())
@@ -1546,6 +1631,7 @@ pub fn run(command: &crate::cli::CalibrateCommand) -> Result<()> {
                     reference_phase_rad: *reference_phase_rad,
                     block_len: *block_len,
                     seed: *seed,
+                    frequency_rel_tol: *frequency_rel_tol,
                 })
             }
         }

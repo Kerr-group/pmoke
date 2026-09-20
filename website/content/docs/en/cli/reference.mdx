@@ -579,7 +579,7 @@ pmoke calibrate [-h, --help] <COMMAND>
 Build an immutable calibration artifact from recorded waveforms (CSV request or direct RAW run)
 
 ```text
-pmoke calibrate build [--request <FILE>] [--output <DIR>] [--run <DIR>] [--channel <N>] [--model-id <ID>] [--reference-channel <N>] [--reference-frequency-hz <HZ>] [--reference-phase-rad <RAD>] [--block-len <N>] [--seed <N>] [-h, --help]
+pmoke calibrate build [--request <FILE>] [--output <DIR>] [--run <DIR>] [--channel <N>] [--model-id <ID>] [--reference-channel <N>] [--reference-frequency-hz <HZ>] [--reference-phase-rad <RAD>] [--block-len <N>] [--seed <N>] [--frequency-rel-tol <TOL>] [-h, --help]
 ```
 
 | Option | Required | Default / values | Description | Conflicts |
@@ -594,6 +594,7 @@ pmoke calibrate build [--request <FILE>] [--output <DIR>] [--run <DIR>] [--chann
 | `--reference-phase-rad <RAD>` | - | - | Reference phase in radians for a direct build (defaults to the same-run fit) | `request` |
 | `--block-len <N>` | - | - | Block length in samples for a direct build (defaults to samples divided by 40) | `request` |
 | `--seed <N>` | - | - | Random seed for a direct build (defaults to 0) | `request` |
+| `--frequency-rel-tol <TOL>` | - | - | Reference-frequency applicability tolerance override (relative) for a direct build (defaults to the uncertainty combination; the value is recorded and marked overridden) | `request` |
 | `-h, --help` | - | - | Print help | - |
 
 

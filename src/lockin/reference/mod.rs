@@ -122,8 +122,12 @@ pub fn run_fit_ref_core_with_plot<'a>(
     ));
 
     let (fit_t, fit_ref_data) = stride_samples(cfg, t, ref_data);
-    let results =
-        fit_ref(&fit_t, &fit_ref_data, fft_results).context("failed to fit reference signal")?;
+    let results = fit_ref_with_uncertainty(&fit_t, &fit_ref_data, fft_results)
+        .context("failed to fit reference signal")?;
+    let uncertainty_row = match results.f_ref_rel_uncertainty {
+        Some(uncertainty) => format!("{uncertainty:.3e} (relative)"),
+        None => "absent (floor gate applies)".to_string(),
+    };
     ui::summary_table(
         "Reference fit",
         &["Metric", "Value"],
@@ -137,6 +141,7 @@ pub fn run_fit_ref_core_with_plot<'a>(
                 "phase".to_string(),
                 format!("{:.8} rad", results.omega_tref),
             ],
+            vec!["frequency uncertainty".to_string(), uncertainty_row],
         ],
     );
     if should_plot {
@@ -162,7 +167,11 @@ fn fft_ref(dt: f64, ref_data: &[f64]) -> Result<RefFitParams> {
     Ok(results)
 }
 
-fn fit_ref(t: &[f64], ref_data: &[f64], params: RefFitParams) -> Result<RefFitParams> {
+fn fit_ref_with_uncertainty(
+    t: &[f64],
+    ref_data: &[f64],
+    params: RefFitParams,
+) -> Result<RefFitParams> {
     if t.len() != ref_data.len() {
         bail!(
             "time length ({}) and reference length ({}) differ",
@@ -177,7 +186,7 @@ fn fit_ref(t: &[f64], ref_data: &[f64], params: RefFitParams) -> Result<RefFitPa
     }
 
     let results = ReferenceFitter {}
-        .fit(t, ref_data, params)
+        .fit_with_uncertainty(t, ref_data, params)
         .context("failed to fit reference signal")?;
 
     Ok(results)
