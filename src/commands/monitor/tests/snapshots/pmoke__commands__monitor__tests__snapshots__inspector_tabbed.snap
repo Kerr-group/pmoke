@@ -1,0 +1,34 @@
+---
+source: src/commands/monitor/tests/snapshots.rs
+expression: rendered
+---
+ pmoke  ● RUNNABLE  │  IDLE  │  00:00                                                                                   
+ └─ ◆ cwd /workspace/pmoke  │  config config.toml ──────────────────────────────────────────────────────────────────────
+┌ RUNS 0/0 ────────────┐┌ MESSAGES ────────────────────────────────────────────────────────────────────────────────────┐
+│no run dirs under scan││No warnings.                                                                                  │
+│                      ││                                                                                              │
+│                      ││                                                                                              │
+│                      ││                                                                                              │
+│                      ││                                                                                              │
+└──────────────────────┘│                                                                                              │
+┌ WORKFLOW 02/12 ──────┐│                                                                                              │
+│  ▾ UTILITIES         │└──────────────────────────────────────────────────────────────────────────────────────────────┘
+│▌    ●  show OK       │╭ ACTIVITY · LIVE · READY ─────────────────────────────────────────────────────────────────────╮
+│     ●  doctor OK     ││ READY  events 1  ·  following                                                                │
+│     ·  raw verify -- ││ timeline idle                                                                                │
+│  ▾ ANALYSIS          ││                                                                                              │
+│     ·  reference --  ││──────────────────────────────────────────────────────────────────────────────────────────────│
+│     ·  sensor --     ││SYS   snapshot probe line                                                                     │
+│     ·  li --         ││                                                                                              │
+│     ·  signal --     ││                                                                                              │
+│     ·  phase --      ││                                                                                              │
+│     ·  moke --       ││                                                                                              │
+│     ·  analyze --    ││                                                                                              │
+│                      ││                                                                                              │
+└──────────────────────┘│                                                                                              │
+┌ DETAIL show ─────────┐│                                                                                              │
+│Print normalized      ││                                                                                              │
+│config and            ││                                                                                              │
+│diagnostics.          ││                                                                                              │
+└──────────────────────┘╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+itabs    1-4tab    j/kscroll    Tab/Right/lfocus    [ ]history    ?help    qquit    [inspector]

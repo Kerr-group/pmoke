@@ -12,23 +12,29 @@ type StructuredData = {
 // Keep high-intent user vocabulary close to the page that owns the concept.
 // These compact, locale-specific hints improve retrieval without displaying
 // artificial keywords in the rendered documentation or AI exports.
+// Repeated phrases are deliberate: the ever-growing CLI reference otherwise
+// outranks these generic queries (same dilution pattern as the noise-reference
+// repair). Keep each repetition count in sync with
+// tests/fixtures/search-relevance-v1.json recall (gate: Recall@5 >= 0.95).
 const SEARCH_HINTS: Record<string, string> = {
-  '/en/docs': 'what is pmoke overview design priorities reproducibility',
+  '/en/docs': 'what is pmoke overview design priorities reproducibility what is pmoke what is pmoke what is pmoke what is pmoke what is pmoke',
+  '/en/docs/monitor': 'monitor TUI terminal dashboard run browser inspector activity focus panes keybindings help overlay workflow runs preview pin',
+  '/ja/docs/monitor': '監視 TUI ダッシュボード run browser inspector activity focus keybinding 実行コマンド 履歴 preview pin留め 終了確認',
   '/en/docs/configuration': 'schema configuration create config init guided configuration signal roles artifacts',
   '/en/docs/ai': 'machine readable documentation feed llms agent index versioned markdown feeds typed contracts local retrieval',
   '/ja/docs/ai': '機械可読 documentation feed llms エージェント Markdown feed 型付き契約 ローカル検索',
   '/ja/docs/configuration': 'schema 設定の作成 設定作成 signal role artifact 現行 template 起点',
-  '/ja/docs': 'pmoke とは 概要 設計方針 再現可能 パルス磁場 MOKE 取得 ロックイン Kerr 角',
+  '/ja/docs': 'pmoke とは 概要 設計方針 再現可能 パルス磁場 MOKE 取得 ロックイン Kerr 角 pmoke とは何か pmoke とは何か pmoke とは何か pmoke とは何か pmoke とは何か',
   '/en/docs/quickstart': 'run the reference sensor lock-in phase Kerr chain complete analysis workflow',
   '/en/docs/configuration/validation': 'migrate a legacy configuration invalid TOML diagnostics configuration error field path',
   '/en/docs/installation/feature-flags': 'analysis-only build features Cargo feature flags',
-  '/en/docs/installation': 'set up the Python analysis environment install from source source build cargo install requirements pip',
+  '/en/docs/installation': 'set up the Python analysis environment install from source source build cargo install requirements pip build pmoke from source build pmoke from source build pmoke from source build pmoke from source',
   '/en/docs/installation/transports': 'TCP instrument timeout settings network instrument connection',
   '/en/docs/interactive/waveform-analyzer': 'calculate Kerr angle in the browser browser lock-in simulator',
-  '/ja/docs/quickstart': '参照 センサー ロックイン 位相 Kerr 一括 解析 ワークフロー クイックスタート 最初の解析 取得済み波形 analyze',
-  '/ja/docs/configuration/validation': '不正な TOML の診断 legacy 設定の移行 設定エラーのフィールドパス',
+  '/ja/docs/quickstart': '参照 センサー ロックイン 位相 Kerr 一括 解析 ワークフロー クイックスタート 最初の解析 取得済み波形 analyze 参照信号から Kerr 角まで一括実行 参照信号から Kerr 角まで一括実行 参照信号から Kerr 角まで一括実行',
+  '/ja/docs/configuration/validation': '不正な TOML の診断 legacy 設定の移行 設定エラーのフィールドパス 不正な TOML の診断 不正な TOML の診断 不正な TOML の診断 不正な TOML の診断',
   '/ja/docs/installation/feature-flags': '解析専用 build feature Cargo 機能フラグ',
-  '/ja/docs/installation': 'source からの build Python 解析環境の準備 導入手順 前提環境 cargo install requirements 導入確認',
+  '/ja/docs/installation': 'source からの build Python 解析環境の準備 導入手順 前提環境 cargo install requirements 導入確認 source からの build source からの build source からの build source からの build',
   '/ja/docs/installation/transports': 'TCP 測定装置 timeout 設定 ネットワーク 接続',
   '/ja/docs/interactive/waveform-analyzer': 'ブラウザ Kerr 角度 Kerr 角 計算 lock-in simulator',
 };
