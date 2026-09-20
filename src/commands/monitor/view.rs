@@ -193,6 +193,114 @@ pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
 }
 
 pub(super) fn render_command_palette(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    // S2: the workflow panel hosts the runs browser on top (FR-02 list).
+    let (runs_area, workflow_area) = runs_layout(area);
+    render_runs_panel(frame, app, runs_area);
+    render_workflow_list(frame, app, workflow_area);
+}
+
+/// S2 run browser list (FR-02). Windowing mirrors `select_run_at` so mouse
+/// clicks land on the rendered row.
+pub(super) fn render_runs_panel(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let filtered = app.filtered_run_indices();
+    let total = filtered.len();
+    let selected = app.run_cursor.min(total.saturating_sub(1));
+    let visible_rows = area.height.saturating_sub(2).max(1) as usize;
+    let start = selected.saturating_sub(visible_rows / 2);
+    let items = if total == 0 {
+        vec![ListItem::new(Line::styled(
+            if app.run_query.is_empty() {
+                "no run dirs under scan root"
+            } else {
+                "no runs match the filter"
+            },
+            Style::default().fg(Color::DarkGray),
+        ))]
+    } else {
+        filtered
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(visible_rows)
+            .map(|(position, entry_index)| {
+                let entry = &app.run_entries[*entry_index];
+                let is_selected = position == selected;
+                let status_color = run_entry_color(&entry.status);
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        if is_selected { "▌ " } else { "  " },
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(
+                        fit_text(&entry.name, 20),
+                        if is_selected {
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        },
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        fit_text(&entry.status, 10),
+                        if is_selected {
+                            Style::default()
+                                .fg(status_color)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(status_color)
+                        },
+                    ),
+                ]))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    frame.render_widget(
+        List::new(items).block(
+            accent_panel(runs_panel_title(app, selected, total)).border_style(focus_border_style(
+                app,
+                FocusPane::Runs,
+                Color::DarkGray,
+            )),
+        ),
+        area,
+    );
+}
+
+fn runs_panel_title(app: &MonitorApp, selected: usize, total: usize) -> String {
+    let base = if total == 0 {
+        if app.run_query.is_empty() {
+            " RUNS 0/0 ".to_string()
+        } else {
+            format!(" RUNS /{} · NO MATCHES ", app.run_query)
+        }
+    } else if app.run_search_mode || !app.run_query.is_empty() {
+        format!(" RUNS /{} {:02}/{total} ", app.run_query, selected + 1)
+    } else {
+        format!(" RUNS {:02}/{total} ", selected + 1)
+    };
+    if app.run_truncated {
+        format!("{base}TRUNC ")
+    } else {
+        base
+    }
+}
+
+fn run_entry_color(status: &str) -> Color {
+    match status {
+        "complete" => Color::Green,
+        "failed" => Color::Red,
+        "acquired" | "analyzing" => Color::Yellow,
+        _ => Color::DarkGray,
+    }
+}
+
+pub(super) fn render_workflow_list(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     let (list_area, description_area) = workflow_layout(area);
     let selected = app.workflow_cursor;
     let entries = app.workflow_entries();
@@ -342,7 +450,113 @@ pub(super) fn render_inspector(frame: &mut Frame<'_>, app: &MonitorApp, area: Re
     }
 }
 
+/// S2 inspector preview for the selected recorded run (FR-02). A pure read
+/// of the budgeted snapshot; previewing never writes or spawns.
+fn render_run_preview(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    let block = accent_panel(" INSPECTOR · RUN ").border_style(focus_border_style(
+        app,
+        FocusPane::Inspector,
+        Color::DarkGray,
+    ));
+    let Some(entry) = app.selected_run_entry() else {
+        let lines = vec![
+            Line::styled(
+                if app.run_query.is_empty() {
+                    "No recorded runs under the scan root."
+                } else {
+                    "No recorded runs match the filter."
+                },
+                Style::default().fg(Color::Yellow),
+            ),
+            Line::from(vec![
+                Span::styled("root  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(app.run_root.clone(), Style::default().fg(Color::Gray)),
+            ]),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    };
+    let color = run_entry_color(&entry.status);
+    let path_width = area.width.saturating_sub(14) as usize;
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!(" {} ", entry.status),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                entry.name.clone(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("stage    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(entry.stage.clone(), Style::default().fg(Color::Gray)),
+        ]),
+        Line::from(vec![
+            Span::styled("updated  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(entry.updated.clone(), Style::default().fg(Color::Gray)),
+        ]),
+        Line::from(vec![
+            Span::styled("path     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                fit_path(&entry.path, path_width),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("artifacts  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(
+                    "acquisition {} · analysis {}",
+                    if entry.has_acquisition {
+                        "present"
+                    } else {
+                        "missing"
+                    },
+                    if entry.has_analysis {
+                        "present"
+                    } else {
+                        "missing"
+                    },
+                ),
+                Style::default().fg(Color::Gray),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("root     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                fit_path(&app.run_root, path_width),
+                Style::default().fg(Color::Gray),
+            ),
+        ]),
+    ];
+    if let Some(note) = &app.run_scan_note {
+        lines.push(Line::from(vec![
+            Span::styled("scan     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(note.clone(), Style::default().fg(Color::Yellow)),
+        ]));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
 fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    // S2: while the Runs browser is focused, the inspector previews the
+    // selected recorded run (FR-02) instead of the workflow action.
+    if app.focus == FocusPane::Runs {
+        render_run_preview(frame, app, area);
+        return;
+    }
     if app.selected_workflow_entry().is_none() {
         frame.render_widget(
             Paragraph::new("No workflow action matches the current search.")
@@ -437,6 +651,15 @@ fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
         lines.push(Line::from(vec![
             Span::styled("reason   ", Style::default().fg(Color::DarkGray)),
             Span::styled(reason, Style::default().fg(Color::LightRed)),
+        ]));
+    }
+    // FR-04: show / raw-verify / doctor are first-class read-only panels.
+    // The note names the launch model (existing re-exec runner) so the
+    // panel treatment never implies a new execution path.
+    if let Some(note) = readout_panel_note(action) {
+        lines.push(Line::from(vec![
+            Span::styled("panel    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(note, Style::default().fg(Color::Gray)),
         ]));
     }
     frame.render_widget(

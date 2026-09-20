@@ -57,6 +57,7 @@ fn registry_resolves_deterministically_in_every_ui_state() {
     fn pane_context(focus: FocusPane) -> KeyContext {
         match focus {
             FocusPane::Commands => KeyContext::Commands,
+            FocusPane::Runs => KeyContext::Runs,
             FocusPane::Inspector => KeyContext::Inspector,
             FocusPane::Output => KeyContext::Output,
         }
@@ -80,7 +81,12 @@ fn registry_resolves_deterministically_in_every_ui_state() {
         }
         rank
     }
-    let focuses = [FocusPane::Commands, FocusPane::Inspector, FocusPane::Output];
+    let focuses = [
+        FocusPane::Commands,
+        FocusPane::Runs,
+        FocusPane::Inspector,
+        FocusPane::Output,
+    ];
     for focus in focuses {
         for search_mode in [false, true] {
             for show_help in [false, true] {
@@ -181,12 +187,24 @@ fn resolve_pane_specific_keys_beat_their_global_fallback() {
         Some(TuiAction::RunSelected)
     );
     assert_eq!(
+        resolve_key(&key(KeyCode::Enter), FocusPane::Runs, false, false),
+        Some(TuiAction::PinRun)
+    );
+    assert_eq!(
         resolve_key(&char_key('k'), FocusPane::Output, false, false),
         Some(TuiAction::OutputPrev)
     );
     assert_eq!(
         resolve_key(&char_key('k'), FocusPane::Inspector, false, false),
         Some(TuiAction::InspectorUp)
+    );
+    assert_eq!(
+        resolve_key(&char_key('k'), FocusPane::Runs, false, false),
+        Some(TuiAction::RunsPrev)
+    );
+    assert_eq!(
+        resolve_key(&char_key('j'), FocusPane::Runs, false, false),
+        Some(TuiAction::RunsNext)
     );
     assert_eq!(
         resolve_key(&char_key('k'), FocusPane::Commands, false, false),
@@ -199,6 +217,14 @@ fn resolve_pane_specific_keys_beat_their_global_fallback() {
     assert_eq!(
         resolve_key(&char_key('g'), FocusPane::Commands, false, false),
         Some(TuiAction::CommandsFirst)
+    );
+    assert_eq!(
+        resolve_key(&char_key('g'), FocusPane::Runs, false, false),
+        Some(TuiAction::RunsFirst)
+    );
+    assert_eq!(
+        resolve_key(&char_key('G'), FocusPane::Runs, false, false),
+        Some(TuiAction::RunsLast)
     );
 }
 
@@ -241,7 +267,12 @@ fn resolve_search_state_prefers_search_bindings() {
 
 #[test]
 fn resolve_help_modal_only_answers_close_keys() {
-    for focus in [FocusPane::Commands, FocusPane::Inspector, FocusPane::Output] {
+    for focus in [
+        FocusPane::Commands,
+        FocusPane::Runs,
+        FocusPane::Inspector,
+        FocusPane::Output,
+    ] {
         assert_eq!(
             resolve_key(&char_key('?'), focus, false, true),
             Some(TuiAction::ToggleHelp)
@@ -266,7 +297,7 @@ fn resolve_help_modal_only_answers_close_keys() {
 
 #[test]
 fn resolve_numbered_focus_and_inspector_tabs() {
-    // FR-03: 1-3 focus panes globally...
+    // FR-03: 1-4 focus panes globally (S2 claims `4` for the runs browser)...
     assert_eq!(
         resolve_key(&char_key('1'), FocusPane::Commands, false, false),
         Some(TuiAction::FocusPane(FocusPane::Commands))
@@ -296,14 +327,27 @@ fn resolve_numbered_focus_and_inspector_tabs() {
         resolve_key(&char_key('4'), FocusPane::Inspector, false, false),
         Some(TuiAction::InspectorTab(InspectorView::Artifacts))
     );
-    // `4` is unbound outside the inspector (S1 has three panes).
+    // `4` is claimed by the S2 run browser outside the inspector, where it
+    // focuses the Runs section; inside the inspector it still selects tabs.
     assert_eq!(
         resolve_key(&char_key('4'), FocusPane::Commands, false, false),
-        None
+        Some(TuiAction::FocusRuns)
+    );
+    assert_eq!(
+        resolve_key(&char_key('4'), FocusPane::Runs, false, false),
+        Some(TuiAction::FocusRuns)
     );
     assert_eq!(
         resolve_key(&char_key('4'), FocusPane::Output, false, false),
-        None
+        Some(TuiAction::FocusRuns)
+    );
+    assert_eq!(
+        resolve_key(&char_key('b'), FocusPane::Commands, false, false),
+        Some(TuiAction::FocusRuns)
+    );
+    assert_eq!(
+        resolve_key(&char_key('b'), FocusPane::Output, false, false),
+        Some(TuiAction::FocusRuns)
     );
 }
 
@@ -311,7 +355,12 @@ fn resolve_numbered_focus_and_inspector_tabs() {
 fn colon_stays_reserved_for_a_future_command_palette() {
     // FR-08: adopting `:` requires relocating `[`/`]` as a set, so `:` is
     // unbound in every UI state.
-    for focus in [FocusPane::Commands, FocusPane::Inspector, FocusPane::Output] {
+    for focus in [
+        FocusPane::Commands,
+        FocusPane::Runs,
+        FocusPane::Inspector,
+        FocusPane::Output,
+    ] {
         for search_mode in [false, true] {
             for show_help in [false, true] {
                 assert_eq!(
@@ -353,7 +402,8 @@ fn help_overlay_lists_every_registered_binding() {
     app.show_help = true;
     // Tall enough that the 70%-height popup fits every generated row plus
     // the curated notes; clipping would hide the drift the test guards.
-    let rendered = rendered_help(120, 100, &mut app);
+    // (S2 added the RUNS section, so the floor moved from 100 to 120.)
+    let rendered = rendered_help(120, 120, &mut app);
     for binding in REGISTRY {
         assert!(
             rendered.contains(&binding.label()),
@@ -368,6 +418,7 @@ fn help_overlay_lists_every_registered_binding() {
     }
     assert!(rendered.contains("GLOBAL"));
     assert!(rendered.contains("WORKFLOW"));
+    assert!(rendered.contains("RUNS"));
     assert!(rendered.contains("INSPECTOR"));
     assert!(rendered.contains("ACTIVITY"));
     assert!(rendered.contains("SEARCH"));
@@ -400,6 +451,15 @@ fn footer_hints_match_the_registry_per_focus() {
         "select", "visual", "copy", "follow", "history", "help", "quit",
     ] {
         assert!(output.contains(token), "output footer: {output}");
+    }
+
+    app.focus = FocusPane::Runs;
+    let runs = footer_text(&app);
+    assert!(runs.contains("[runs]"));
+    for token in [
+        "filter", "move", "preview", "focus", "history", "help", "quit",
+    ] {
+        assert!(runs.contains(token), "runs footer: {runs}");
     }
 
     // Spot-check the curated literals against dispatch.
@@ -634,7 +694,7 @@ fn mouse_capture_defaults_on_and_opts_out_via_env() {
 fn help_notes_cover_mouse_keymap_prefs_and_reserved_colon() {
     let mut app = test_app();
     app.show_help = true;
-    let rendered = rendered_help(120, 100, &mut app);
+    let rendered = rendered_help(120, 120, &mut app);
     assert!(rendered.contains("PMOKE_MOUSE"));
     assert!(rendered.contains("keymap.toml"));
     assert!(rendered.contains("history stays on [ ]"));

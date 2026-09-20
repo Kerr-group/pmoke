@@ -12,6 +12,16 @@ pub(super) struct MonitorApp {
     pub(super) collapsed_groups: std::collections::BTreeSet<ActionGroup>,
     pub(super) action_query: String,
     pub(super) search_mode: bool,
+    /// S2 run browser state (FR-02/FR-03). The entries are a budgeted,
+    /// read-only snapshot refreshed on startup, `r`, and after each run;
+    /// `run_cursor` indexes the *filtered* list like `workflow_cursor`.
+    pub(super) run_root: String,
+    pub(super) run_entries: Vec<RunDirEntry>,
+    pub(super) run_cursor: usize,
+    pub(super) run_query: String,
+    pub(super) run_search_mode: bool,
+    pub(super) run_truncated: bool,
+    pub(super) run_scan_note: Option<String>,
     pub(super) last_run: Option<RunRecord>,
     pub(super) run_history: std::collections::VecDeque<RunSnapshot>,
     pub(super) history_view: Option<usize>,
@@ -38,6 +48,9 @@ impl MonitorApp {
         let current_dir = env::current_dir()
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(|_| ".".to_string());
+        let run_root = run_browser_root(&config_path, &load, &current_dir)
+            .to_string_lossy()
+            .into_owned();
         Self {
             config_path,
             current_dir,
@@ -52,6 +65,13 @@ impl MonitorApp {
             collapsed_groups: std::collections::BTreeSet::new(),
             action_query: String::new(),
             search_mode: false,
+            run_root,
+            run_entries: Vec::new(),
+            run_cursor: 0,
+            run_query: String::new(),
+            run_search_mode: false,
+            run_truncated: false,
+            run_scan_note: None,
             last_run: None,
             run_history: std::collections::VecDeque::new(),
             history_view: None,
@@ -80,6 +100,27 @@ impl MonitorApp {
         self.config_scroll = 0;
         self.messages_scroll = 0;
         self.files_scroll = 0;
+        // S2: a finished command may have published a new sibling run, so
+        // the budgeted snapshot is refreshed together with config and files.
+        self.refresh_runs();
+    }
+
+    /// Re-scan the browser root within the S2 budgets (read-only). Never
+    /// clears the query or moves the cursor beyond the filtered list.
+    pub(super) fn refresh_runs(&mut self) {
+        let root = run_browser_root(&self.config_path, &self.load, &self.current_dir);
+        let outcome = scan_run_dirs(&root);
+        self.run_root = outcome.root.clone();
+        self.run_truncated = outcome.truncated_dirs || outcome.truncated_entries;
+        self.run_scan_note = self.run_truncated.then(|| {
+            format!(
+                "scan truncated after {} dirs ({})",
+                outcome.dirs_visited,
+                run_scan_budgets_label(),
+            )
+        });
+        self.run_entries = outcome.entries;
+        self.clamp_run_cursor();
     }
 
     pub(super) fn status(&self) -> (&'static str, Color) {
@@ -178,6 +219,7 @@ impl MonitorApp {
     }
 
     pub(super) fn begin_action_search(&mut self) {
+        self.run_search_mode = false;
         self.search_mode = true;
         self.action_query.clear();
         self.select_first_matching_action();
@@ -206,6 +248,90 @@ impl MonitorApp {
             .iter()
             .position(|entry| matches!(entry, WorkflowEntry::Action(_)))
             .unwrap_or(0);
+    }
+
+    /// S2 filtered run indices (FR-02). Same substring idiom as
+    /// [`MonitorApp::workflow_entries`]; the cursor indexes this list.
+    pub(super) fn filtered_run_indices(&self) -> Vec<usize> {
+        filter_run_entries(&self.run_entries, &self.run_query)
+    }
+
+    pub(super) fn selected_run_entry(&self) -> Option<&RunDirEntry> {
+        let filtered = self.filtered_run_indices();
+        filtered
+            .get(self.run_cursor.min(filtered.len().saturating_sub(1)))
+            .and_then(|index| self.run_entries.get(*index))
+    }
+
+    pub(super) fn clamp_run_cursor(&mut self) {
+        self.run_cursor = self
+            .run_cursor
+            .min(self.filtered_run_indices().len().saturating_sub(1));
+    }
+
+    pub(super) fn select_previous_run(&mut self) {
+        self.focus_runs();
+        self.run_cursor = self.run_cursor.saturating_sub(1);
+    }
+
+    pub(super) fn select_next_run(&mut self) {
+        self.focus_runs();
+        let last = self.filtered_run_indices().len().saturating_sub(1);
+        self.run_cursor = (self.run_cursor + 1).min(last);
+    }
+
+    pub(super) fn select_first_run(&mut self) {
+        self.focus_runs();
+        self.run_cursor = 0;
+    }
+
+    pub(super) fn select_last_run(&mut self) {
+        self.focus_runs();
+        self.run_cursor = self.filtered_run_indices().len().saturating_sub(1);
+    }
+
+    /// S2 `/` filter for the runs list (FR-02). Mirrors
+    /// [`MonitorApp::begin_action_search`]; the two search modes are mutually
+    /// exclusive so typing always targets the focused list.
+    pub(super) fn begin_run_search(&mut self) {
+        self.search_mode = false;
+        self.run_search_mode = true;
+        self.run_query.clear();
+        self.select_first_matching_run();
+        self.focus_runs();
+    }
+
+    pub(super) fn clear_run_search(&mut self) {
+        self.run_search_mode = false;
+        self.run_query.clear();
+        self.select_first_matching_run();
+    }
+
+    pub(super) fn push_run_query(&mut self, ch: char) {
+        self.run_query.push(ch);
+        self.select_first_matching_run();
+    }
+
+    pub(super) fn pop_run_query(&mut self) {
+        self.run_query.pop();
+        self.select_first_matching_run();
+    }
+
+    fn select_first_matching_run(&mut self) {
+        self.run_cursor = 0;
+        self.clamp_run_cursor();
+    }
+
+    /// S2 pin (FR-03 unification tail): previewing a recorded run returns
+    /// the activity pane to live output so the browser selection and the
+    /// history view never claim the inspector at once. Read-only: no child
+    /// is spawned and no artifact is touched.
+    pub(super) fn pin_selected_run(&mut self) {
+        self.focus_runs();
+        self.clamp_run_cursor();
+        if self.selected_run_entry().is_some() {
+            self.history_view = None;
+        }
     }
 
     pub(super) fn poll_command(&mut self) {
@@ -329,7 +455,18 @@ impl MonitorApp {
     /// FR-04 Esc contract: close the help overlay first, then clear the
     /// workflow search, then clear the activity selection, then leave the
     /// activity panel. Never cancels a running command (that is `Ctrl+C`).
+    /// S2 clears the runs filter before the workflow filter so `Esc` unwinds
+    /// the most recently focused list first.
     pub(super) fn escape(&mut self) {
+        // The help overlay always closes first, whatever filters are set.
+        if self.show_help {
+            self.escape_current_mode();
+            return;
+        }
+        if self.run_search_mode || !self.run_query.is_empty() {
+            self.clear_run_search();
+            return;
+        }
         if self.search_mode || !self.action_query.is_empty() {
             self.clear_action_search();
             return;
@@ -361,6 +498,12 @@ impl MonitorApp {
     }
 
     pub(super) fn show_previous_run(&mut self) {
+        // FR-03 unification: `[`/`]` move the run-browser selection while
+        // the Runs pane is focused, and browse command history elsewhere.
+        if self.focus == FocusPane::Runs {
+            self.select_previous_run();
+            return;
+        }
         // While idle, the newest snapshot is also the live output and must be
         // skipped. During a run, every completed snapshot is historical.
         let live_is_latest_snapshot = !self.command_running();
@@ -376,6 +519,10 @@ impl MonitorApp {
     }
 
     pub(super) fn show_next_run(&mut self) {
+        if self.focus == FocusPane::Runs {
+            self.select_next_run();
+            return;
+        }
         let Some(index) = self.history_view else {
             return;
         };
@@ -597,6 +744,13 @@ impl MonitorApp {
     pub(super) fn focus_actions(&mut self) {
         self.output_mouse_drag_active = false;
         self.focus = FocusPane::Commands;
+    }
+
+    /// S2: focus the run browser section of the workflow panel.
+    pub(super) fn focus_runs(&mut self) {
+        self.output_mouse_drag_active = false;
+        self.focus = FocusPane::Runs;
+        self.clamp_run_cursor();
     }
 
     pub(super) fn focus_status(&mut self) {

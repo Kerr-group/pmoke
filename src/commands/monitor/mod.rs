@@ -37,6 +37,7 @@ mod keymap;
 mod layout;
 mod output;
 mod panels;
+mod runs;
 mod timeline;
 mod view;
 
@@ -55,10 +56,12 @@ use keymap::*;
 #[cfg(test)]
 use layout::workflow_panel_width;
 use layout::{
-    UiLayout, config_panel_layout, output_inner_layout, output_visible_rows, workflow_layout,
+    UiLayout, config_panel_layout, output_inner_layout, output_visible_rows, runs_layout,
+    workflow_layout,
 };
 use output::*;
 use panels::*;
+use runs::*;
 #[cfg(test)]
 use timeline::{
     StageProgressState, TimelineStep, TimelineStepState, timeline_for_action, timeline_separator,
@@ -184,6 +187,9 @@ impl Drop for TerminalSetupGuard {
 
 pub fn monitor(config_path: &str, load: ConfigLoad) -> Result<()> {
     let mut app = MonitorApp::new(config_path.to_string(), load);
+    // S2: populate the budgeted run snapshot before the first frame (the
+    // constructor stays I/O-free so unit tests never touch the filesystem).
+    app.refresh_runs();
     let mut terminal = setup_terminal(app.mouse_capture)?;
     let mut guard = TerminalGuard::new(&mut terminal);
     let run_result = run(guard.terminal(), &mut app);
@@ -241,6 +247,9 @@ impl CancelReason {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FocusPane {
     Commands,
+    /// S2 run browser. Rendered as the top section of the workflow panel;
+    /// `4`/`b` focus it (S1 reserved `4` outside the inspector for this).
+    Runs,
     Inspector,
     Output,
 }
@@ -505,23 +514,30 @@ enum KeyOutcome {
 /// Unbound keys are swallowed (while the help overlay is open, everything
 /// but its close keys is swallowed by the modal).
 fn handle_key(app: &mut MonitorApp, key: KeyEvent, area: Rect) -> Result<KeyOutcome> {
-    // Workflow filter text entry precedes the registry: a plain character
-    // while searching extends the query (the old flat match also shadowed
-    // every letter binding this way). Control/Alt chords still resolve to
-    // bindings (`Ctrl+C` interrupts even while searching).
-    if app.search_mode
+    // Workflow/runs filter text entry precedes the registry: a plain character
+    // while searching extends the query of the focused list (the old flat
+    // match also shadowed every letter binding this way). Control/Alt chords
+    // still resolve to bindings (`Ctrl+C` interrupts even while searching).
+    // S2: the two search modes are mutually exclusive, so typing targets the
+    // focused list.
+    if (app.search_mode || app.run_search_mode)
         && !app.show_help
         && matches!(key.code, KeyCode::Char(_))
         && !key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::ALT)
     {
         if let KeyCode::Char(ch) = key.code {
-            app.push_action_query(ch);
+            if app.run_search_mode {
+                app.push_run_query(ch);
+            } else {
+                app.push_action_query(ch);
+            }
         }
         app.quit_confirm_pending = false;
         return Ok(KeyOutcome::Continue);
     }
-    let Some(action) = resolve_key(&key, app.focus, app.search_mode, app.show_help) else {
+    let searching = app.search_mode || app.run_search_mode;
+    let Some(action) = resolve_key(&key, app.focus, searching, app.show_help) else {
         if !app.show_help {
             app.quit_confirm_pending = false;
         }
@@ -544,9 +560,26 @@ fn apply_key_action(
         TuiAction::CloseHelp => app.show_help = false,
         TuiAction::Interrupt => app.interrupt_current_operation(),
         TuiAction::Escape => app.escape(),
-        TuiAction::BeginSearch => app.begin_action_search(),
-        TuiAction::SearchBackspace => app.pop_action_query(),
-        TuiAction::SearchCommit => app.search_mode = false,
+        TuiAction::BeginSearch => {
+            // S2: `/` filters the focused list (FR-02) using the same
+            // registry row and footer label as the workflow filter.
+            if app.focus == FocusPane::Runs {
+                app.begin_run_search();
+            } else {
+                app.begin_action_search();
+            }
+        }
+        TuiAction::SearchBackspace => {
+            if app.run_search_mode {
+                app.pop_run_query();
+            } else {
+                app.pop_action_query();
+            }
+        }
+        TuiAction::SearchCommit => {
+            app.search_mode = false;
+            app.run_search_mode = false;
+        }
         TuiAction::PageUpScroll => scroll_focused_up(app, area, 12),
         TuiAction::PageDownScroll => scroll_focused_down(app, area, 12),
         TuiAction::HalfUpScroll => scroll_focused_up(app, area, 6),
@@ -558,9 +591,12 @@ fn apply_key_action(
             }
         }
         TuiAction::Refresh => app.refresh(),
+        // FR-03 unification lives in the app: `[`/`]` move the run-browser
+        // selection while Runs is focused, command history elsewhere.
         TuiAction::HistoryPrev => app.show_previous_run(),
         TuiAction::HistoryNext => app.show_next_run(),
         TuiAction::FocusWorkflow => app.focus_actions(),
+        TuiAction::FocusRuns => app.focus_runs(),
         TuiAction::FocusActivity => app.focus_output(),
         TuiAction::CycleInspectorTabs => app.cycle_inspector(),
         TuiAction::FocusMessages => app.focus_messages(),
@@ -568,6 +604,7 @@ fn apply_key_action(
         TuiAction::FocusStatus => app.focus_status(),
         TuiAction::FocusPane(pane) => match pane {
             FocusPane::Commands => app.focus_actions(),
+            FocusPane::Runs => app.focus_runs(),
             FocusPane::Inspector => app.focus_inspector(),
             FocusPane::Output => app.focus_output(),
         },
@@ -607,6 +644,11 @@ fn apply_key_action(
         }
         TuiAction::InspectorUp => scroll_inspector_up(app, area, 1),
         TuiAction::InspectorDown => scroll_inspector_down(app, area, 1),
+        TuiAction::RunsPrev => app.select_previous_run(),
+        TuiAction::RunsNext => app.select_next_run(),
+        TuiAction::RunsFirst => app.select_first_run(),
+        TuiAction::RunsLast => app.select_last_run(),
+        TuiAction::PinRun => app.pin_selected_run(),
         TuiAction::CommandsPrev => select_previous_action(app),
         TuiAction::CommandsNext => select_next_action(app),
         TuiAction::CommandsFirst => select_first_action(app),
@@ -647,16 +689,20 @@ fn select_last_action(app: &mut MonitorApp) {
 }
 
 fn focus_previous_pane(app: &mut MonitorApp) {
+    // S2 four-pane ring: the Runs browser sits next to the workflow list it
+    // previews for, keeping `Tab`/`h/l` order spatial.
     app.focus = match app.focus {
         FocusPane::Commands => FocusPane::Output,
-        FocusPane::Inspector => FocusPane::Commands,
+        FocusPane::Runs => FocusPane::Commands,
+        FocusPane::Inspector => FocusPane::Runs,
         FocusPane::Output => FocusPane::Inspector,
     };
 }
 
 fn focus_next_pane(app: &mut MonitorApp) {
     app.focus = match app.focus {
-        FocusPane::Commands => FocusPane::Inspector,
+        FocusPane::Commands => FocusPane::Runs,
+        FocusPane::Runs => FocusPane::Inspector,
         FocusPane::Inspector => FocusPane::Output,
         FocusPane::Output => FocusPane::Commands,
     };
@@ -664,6 +710,7 @@ fn focus_next_pane(app: &mut MonitorApp) {
 
 fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<()> {
     let layout = dashboard_layout(area);
+    let (runs_area, _) = runs_layout(layout.workflow);
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
         app.output_mouse_drag_active = false;
     }
@@ -672,6 +719,8 @@ fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<(
             if contains(layout.activity, mouse.column, mouse.row) {
                 app.scroll_output_up(4);
                 clamp_output_scroll(app, area);
+            } else if contains(runs_area, mouse.column, mouse.row) {
+                app.select_previous_run();
             } else if contains(layout.workflow, mouse.column, mouse.row) {
                 select_previous_action(app);
             } else if contains(layout.inspector, mouse.column, mouse.row) {
@@ -682,6 +731,8 @@ fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<(
             if contains(layout.activity, mouse.column, mouse.row) {
                 app.scroll_output_down(4);
                 clamp_output_scroll(app, area);
+            } else if contains(runs_area, mouse.column, mouse.row) {
+                app.select_next_run();
             } else if contains(layout.workflow, mouse.column, mouse.row) {
                 select_next_action(app);
             } else if contains(layout.inspector, mouse.column, mouse.row) {
@@ -689,7 +740,9 @@ fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<(
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if contains(layout.workflow, mouse.column, mouse.row) {
+            if contains(runs_area, mouse.column, mouse.row) {
+                select_run_at(app, runs_area, mouse.column, mouse.row);
+            } else if contains(layout.workflow, mouse.column, mouse.row) {
                 select_action_at(app, layout.workflow, mouse.column, mouse.row);
             } else if contains(layout.inspector, mouse.column, mouse.row) {
                 app.focus_inspector();
@@ -829,9 +882,11 @@ fn visible_range_title(label: &str, start: usize, end: usize, total: usize) -> S
 
 fn select_action_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
     // The panel border/title is part of the focus target, but only an inner row
-    // is allowed to change the selected command.
+    // is allowed to change the selected command. `area` is the whole workflow
+    // panel; the runs browser owns its top section (S2).
     app.focus_commands();
-    let (list_area, _) = workflow_layout(area);
+    let (_, workflow_area) = runs_layout(area);
+    let (list_area, _) = workflow_layout(workflow_area);
     let inner = bordered_inner(list_area);
     if !contains(inner, column, row) {
         return;
@@ -843,6 +898,27 @@ fn select_action_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
     let entries_len = app.workflow_entries().len();
     if row_index < visible_rows && start + row_index < entries_len {
         app.workflow_cursor = start + row_index;
+    }
+}
+
+/// S2: click-to-select in the runs browser. `area` is the runs section from
+/// [`runs_layout`]; the windowing mirrors `render_runs_panel` so a click
+/// lands on the rendered row.
+fn select_run_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16) {
+    app.focus_runs();
+    let inner = bordered_inner(area);
+    if !contains(inner, column, row) {
+        return;
+    }
+    let filtered_len = app.filtered_run_indices().len();
+    if filtered_len == 0 {
+        return;
+    }
+    let visible_rows = area.height.saturating_sub(2).max(1) as usize;
+    let start = app.run_cursor.saturating_sub(visible_rows / 2);
+    let row_index = row.saturating_sub(inner.y) as usize;
+    if row_index < visible_rows && start + row_index < filtered_len {
+        app.run_cursor = start + row_index;
     }
 }
 
