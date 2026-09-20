@@ -1,0 +1,96 @@
+---
+title: Monitor TUI
+description: Live terminal dashboard for configuration, run browsing, and analysis output.
+---
+
+`pmoke monitor` (or bare `pmoke`) opens a live terminal dashboard. It runs the
+same workflow commands you would run by hand and surfaces their output; it
+never edits configuration files and never touches hardware beyond what the
+selected command itself does.
+
+## Layout
+
+- Header: status (`RUNNABLE` when the configuration loads, `BLOCKED` when it
+  carries diagnostics), the active run label, and a minutes:seconds timer.
+- Context bar: working directory and configuration path; it collapses to a
+  compact form on narrow terminals.
+- `WORKFLOW`: the command list with a `DETAIL` description of the selected
+  row. `/` filters, `Enter` runs the selected command.
+- `RUNS`: the S2 run browser (see below).
+- `INSPECTOR`: `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, `ARTIFACTS`, and `REPORTS`
+  tabs for the selected workflow entry or the pinned run preview.
+- `ACTIVITY`: live command output with `LIVE`, `PAUSED`, and `HISTORY` states.
+- Footer: the key hints for the focused pane. `?` opens the full help
+  overlay, which is generated from the same key registry as the event loop,
+  so the overlay always matches the implementation.
+
+## Focus
+
+Four panes share one focus ring in spatial order: workflow, runs, inspector,
+activity.
+
+| Keys | Effect |
+| --- | --- |
+| `1` / `2` / `3` / `4` (`b` also focuses runs) | Focus workflow / inspector / activity / runs |
+| `Tab` / `Shift-Tab` (`l` / `h`, `Right` / `Left`) | Focus next / previous pane |
+| `i` | Cycle inspector tabs (focuses the inspector) |
+| `1`-`5` while the inspector is focused | Select inspector tab directly (`5` = `REPORTS`) |
+
+## Keys
+
+Global keys (work in every pane):
+
+| Keys | Effect |
+| --- | --- |
+| `?` | Toggle help overlay (`q` or `Esc` closes it) |
+| `q` | Quit; while a command runs, arms a confirmation instead (`q` again quits, `Esc` stays) |
+| `/` | Filter the focused list (workflow or runs) |
+| `Enter` | Run the selected command, or pin the selected run preview while runs are focused |
+| `[` / `]` | Older run / back to live activity |
+| `r` | Refresh configuration and files |
+| `Ctrl+C` | Interrupt the running command |
+| `End` | Follow live activity |
+| `Esc` | Close dialog, clear search/selection, then leave the panel (never cancels a run) |
+
+List keys (`j`/`k` move, `g`/`G` first/last) apply to the focused list:
+workflow selection, run selection, inspector scroll, or activity selection.
+Activity adds `v` visual-line select, `y` copy, `K`/`J` extend selection,
+`PageUp`/`PageDown` and `Ctrl+U`/`Ctrl+D` scroll. Search typing appends to
+the filter; `Enter` commits, `Backspace` erases, `Esc` clears.
+
+## Run browser
+
+`RUNS` lists sibling run directories next to the current one: the scan root
+is the parent of the run directory, falling back to the configuration file's
+parent and then the startup directory. Scanning is read-only and budgeted
+(at most 512 directories, depth 3, 200 entries, 64 KiB per manifest); a
+partial list is marked `TRUNC` rather than silently short. `/` filters by
+name, path, status, or stage, and `Enter` pins the selected run as a
+read-only inspector preview. Empty states read `no run dirs under scan root`
+and `no runs match the filter`.
+
+## Reports inspector
+
+The S3 `REPORTS` tab answers "what happened inside the selected run"
+without running anything: press `5` while the inspector is focused (`i`
+cycles through it like every other tab, `j`/`k` scroll the combined
+table). The top rows name the selected run, then a `Stages` section reads
+the run's per-stage lifecycle status from its `run.toml` manifest, and a
+`Reports` section summarizes the standalone lane reports
+(`calibrate-report.json`, noise `diagnostics.json`, `compare-report.json`,
+`m6-evaluation-report.json`) plus the `calibration.json` artifact and the
+`analysis/manifest.toml` publication state. Every probe is a bounded
+read-only file read: missing, oversized, or unparsable files degrade to an
+explicit `not found` / `unreadable` marker instead of failing the render.
+With no run selected the tab names the scan root and budgets and points at
+the runs browser.
+
+## Safety and environment
+
+- Quitting while a command runs needs a second `q`; the footer shows
+  `q again to stop + quit` while armed. `Esc` never stops a command.
+- `PMOKE_MOUSE=off` (also `0`, `no`, `false`, `disabled`) disables mouse
+  capture; otherwise click, drag, and wheel work.
+- `PMOKE_MOTION=full|reduced|off` calms live animation while a command runs.
+- Display truncation is cell-based, so wide characters never overflow their
+  panel; the interface itself stays English-only.

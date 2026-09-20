@@ -41,6 +41,11 @@ fasteval = "0.2.4"
 num-complex = "0.4.6"
 unicode-width = "0.2.2"
 
+[dev-dependencies]
+# S4 (Issue #278) exception: pinned snapshot harness only. No runtime
+# dependency change; keep the pin exact so snapshot churn stays reviewable.
+insta = "=1.48.0"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 arboard = "3.6.1"
 dirs = "7.0.0"
