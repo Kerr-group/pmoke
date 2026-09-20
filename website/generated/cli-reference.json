@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "pmoke_version": "0.4.1",
+  "pmoke_version": "0.5.0",
   "feature_set": "hw-core",
   "command": {
     "name": "pmoke",
