@@ -153,6 +153,22 @@
   (recorded and marked overridden). Behavior without recorded
   uncertainties is unchanged.
 
+- The monitor TUI gains a keybinding-registry foundation and a read-only
+  run browser (Issues #275/#276). A global plus per-pane/modal registry
+  drives the `?` help overlay and the per-focus footer, with numbered
+  pane focus, inspector-local tabs, safe quit-while-running confirmation,
+  and a `PMOKE_MOUSE=off` mouse-capture opt-out. A budgeted
+  run-directory scan backs the RUNS browser section with `/` filter and
+  inspector preview, unified `[/]` history navigation, `Enter` pin, and
+  panelized `show`/`raw verify`/`doctor` views without any new execution
+  path or writes.
+
+- Staged `pmoke noise compare` publication writes `staging-manifest.json`
+  atomically (sibling temp file plus fsync plus rename), so an
+  interrupted publish leaves it absent-or-intact instead of torn. Retry
+  reclaims an unreadable manifest as stale staging with a warning while
+  parseable-but-mismatched manifests stay hard errors.
+
 ### CI
 
 - The all-profiles test matrix is split with sccache enabled to cut wall
