@@ -26,9 +26,10 @@
 //! - `:` is reserved for a future command palette (FR-08). Adopting it
 //!   requires relocating the `[`/`]` run-history keys as a set, so `:` stays
 //!   unbound and a test pins that;
-//! - `4` outside the inspector is unbound: S1 has three panes, so numbered
-//!   pane focus is `1-3`; `1-4` selects inspector tabs while the inspector is
-//!   focused. The S2 run browser may claim a fourth number.
+//! - S2 run browser (Issue #276): `4`/`b` focus the Runs section, `[/]`
+//!   move the run selection while it is focused (history elsewhere), `/`
+//!   filters the focused list, and `Enter` pins the run preview. All of
+//!   these reuse the registry/filter/footer primitives below.
 //!
 //! FR-07 keymap-prefs decision (decision only; loaders are an explicit
 //! non-goal, "keymap-format future extensions"):
@@ -53,6 +54,8 @@ use super::*;
 pub(super) enum KeyContext {
     Global,
     Commands,
+    /// S2 run browser section of the workflow panel.
+    Runs,
     Inspector,
     Output,
     Searching,
@@ -151,6 +154,15 @@ pub(super) enum TuiAction {
     FocusStatus,
     FocusPane(FocusPane),
     InspectorTab(InspectorView),
+    /// S2 run browser (FR-02/FR-03). Pane-local to `Runs`; handled by the
+    /// same apply path as the workflow list (no S1 redesign).
+    FocusRuns,
+    RunsPrev,
+    RunsNext,
+    RunsFirst,
+    RunsLast,
+    /// Preview the selected run in the inspector without spawning anything.
+    PinRun,
     CopySelection,
     EnterVisualMode,
     RunSelected,
@@ -226,7 +238,7 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
         action: TuiAction::BeginSearch,
         keys: &[KeySpec::plain(KeyCode::Char('/'))],
         contexts: &[KeyContext::Global],
-        description: "search workflow actions",
+        description: "search focused list (workflow / runs)",
     },
     KeyBinding {
         action: TuiAction::SearchBackspace,
@@ -286,13 +298,13 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
         action: TuiAction::HistoryPrev,
         keys: &[KeySpec::plain(KeyCode::Char('['))],
         contexts: &[KeyContext::Global],
-        description: "browse older runs",
+        description: "older runs (selection in runs)",
     },
     KeyBinding {
         action: TuiAction::HistoryNext,
         keys: &[KeySpec::plain(KeyCode::Char(']'))],
         contexts: &[KeyContext::Global],
-        description: "return toward live activity",
+        description: "live activity (selection in runs)",
     },
     KeyBinding {
         action: TuiAction::FocusWorkflow,
@@ -373,6 +385,15 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
         description: "focus activity panel",
     },
     KeyBinding {
+        action: TuiAction::FocusRuns,
+        keys: &[
+            KeySpec::plain(KeyCode::Char('4')),
+            KeySpec::plain(KeyCode::Char('b')),
+        ],
+        contexts: &[KeyContext::Global],
+        description: "focus runs browser panel",
+    },
+    KeyBinding {
         action: TuiAction::CopySelection,
         keys: &[KeySpec::plain(KeyCode::Char('y'))],
         contexts: &[KeyContext::Global],
@@ -392,6 +413,12 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
         keys: &[KeySpec::plain(KeyCode::Enter)],
         contexts: &[KeyContext::Output],
         description: "copy selected activity events",
+    },
+    KeyBinding {
+        action: TuiAction::PinRun,
+        keys: &[KeySpec::plain(KeyCode::Enter)],
+        contexts: &[KeyContext::Runs],
+        description: "preview selected run in inspector (read-only)",
     },
     KeyBinding {
         action: TuiAction::RunSelected,
@@ -440,6 +467,39 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
         keys: &[KeySpec::plain(KeyCode::Char('G'))],
         contexts: &[KeyContext::Output],
         description: "move activity selection to the last event",
+    },
+    // S2 run browser navigation (FR-02/FR-03). Pane-specific rows precede
+    // the global workflow fallbacks so first-match resolves to the runs
+    // list while it is focused (see the determinism test).
+    KeyBinding {
+        action: TuiAction::RunsPrev,
+        keys: &[
+            KeySpec::plain(KeyCode::Up),
+            KeySpec::plain(KeyCode::Char('k')),
+        ],
+        contexts: &[KeyContext::Runs],
+        description: "move run selection up",
+    },
+    KeyBinding {
+        action: TuiAction::RunsNext,
+        keys: &[
+            KeySpec::plain(KeyCode::Down),
+            KeySpec::plain(KeyCode::Char('j')),
+        ],
+        contexts: &[KeyContext::Runs],
+        description: "move run selection down",
+    },
+    KeyBinding {
+        action: TuiAction::RunsFirst,
+        keys: &[KeySpec::plain(KeyCode::Char('g'))],
+        contexts: &[KeyContext::Runs],
+        description: "move run selection to the first run",
+    },
+    KeyBinding {
+        action: TuiAction::RunsLast,
+        keys: &[KeySpec::plain(KeyCode::Char('G'))],
+        contexts: &[KeyContext::Runs],
+        description: "move run selection to the last run",
     },
     KeyBinding {
         action: TuiAction::InspectorUp,
@@ -514,6 +574,7 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
 fn pane_context(focus: FocusPane) -> KeyContext {
     match focus {
         FocusPane::Commands => KeyContext::Commands,
+        FocusPane::Runs => KeyContext::Runs,
         FocusPane::Inspector => KeyContext::Inspector,
         FocusPane::Output => KeyContext::Output,
     }
@@ -571,7 +632,14 @@ pub(super) fn primary_label(action: TuiAction) -> Option<String> {
 /// Grouping is curated by topic (every binding appears exactly once); the
 /// rows themselves — key labels and descriptions — come from the registry.
 pub(super) fn help_sections() -> Vec<(&'static str, Vec<&'static KeyBinding>)> {
-    const ORDER: [&str; 5] = ["GLOBAL", "WORKFLOW", "INSPECTOR", "ACTIVITY", "SEARCH"];
+    const ORDER: [&str; 6] = [
+        "GLOBAL",
+        "WORKFLOW",
+        "RUNS",
+        "INSPECTOR",
+        "ACTIVITY",
+        "SEARCH",
+    ];
     let mut sections: Vec<(&'static str, Vec<&'static KeyBinding>)> =
         ORDER.into_iter().map(|title| (title, Vec::new())).collect();
     for binding in REGISTRY {
@@ -590,6 +658,12 @@ pub(super) fn help_sections() -> Vec<(&'static str, Vec<&'static KeyBinding>)> {
 fn help_section(action: TuiAction) -> &'static str {
     match action {
         TuiAction::SearchBackspace | TuiAction::SearchCommit => "SEARCH",
+        TuiAction::FocusRuns
+        | TuiAction::RunsPrev
+        | TuiAction::RunsNext
+        | TuiAction::RunsFirst
+        | TuiAction::RunsLast
+        | TuiAction::PinRun => "RUNS",
         TuiAction::InspectorUp | TuiAction::InspectorDown | TuiAction::InspectorTab(_) => {
             "INSPECTOR"
         }
@@ -656,7 +730,21 @@ pub(super) fn footer_spans(app: &MonitorApp) -> Vec<Span<'static>> {
                 primary_label(TuiAction::BeginSearch).unwrap_or_else(|| "/".to_string())
             ));
             spans.push(verb("filter  "));
-            spans.push(key("1-3".to_string()));
+            spans.push(key("1-4".to_string()));
+            spans.push(verb("focus  "));
+        }
+        FocusPane::Runs => {
+            spans.push(key(
+                primary_label(TuiAction::BeginSearch).unwrap_or_else(|| "/".to_string())
+            ));
+            spans.push(verb("filter  "));
+            spans.push(key("j/k".to_string()));
+            spans.push(verb("move  "));
+            spans.push(key(
+                primary_label(TuiAction::PinRun).unwrap_or_else(|| "Enter".to_string())
+            ));
+            spans.push(verb("preview  "));
+            spans.push(key(focus_next));
             spans.push(verb("focus  "));
         }
         FocusPane::Inspector => {
@@ -696,6 +784,7 @@ pub(super) fn footer_spans(app: &MonitorApp) -> Vec<Span<'static>> {
     spans.push(verb("quit  "));
     let focus = match app.focus {
         FocusPane::Commands => "workflow",
+        FocusPane::Runs => "runs",
         FocusPane::Inspector => "inspector",
         FocusPane::Output => "activity",
     };
