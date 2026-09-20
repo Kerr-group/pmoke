@@ -549,3 +549,35 @@ fn compare_frozen_context_is_shared_and_post_freeze_mutation_is_refused() {
 
     fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A truncated staging manifest (the SIGKILL-in-write residue, Issue #273)
+/// is not a resume candidate: the retry reclaims the stale staging and
+/// commits normally instead of failing on the torn file.
+#[test]
+fn compare_torn_staging_manifest_is_reclaimed_and_retry_recovers() {
+    let dir = unique_test_dir("torn_manifest");
+    let total = SMALL_TOTAL;
+    synthetic_csv(&dir.join("wave.csv"), total, 0.05, 0x1234_5678_9abc_def1);
+    let text = compare_request_text("wave.csv", "comparison", total as u64, FULL_BLOCK, "")
+        .replace(
+            "[calibration]\n",
+            "[calibration]\nphase_bins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 1\nmin_contributing_blocks = 2\nmin_training_blocks = 2\nmin_training_intervals = 1\n",
+        );
+    let request_path = dir.join("request.toml");
+    fs::write(&request_path, &text).unwrap();
+    // Kill-in-window residue: a staging directory whose manifest is
+    // truncated mid-write, with no destination committed.
+    let staging = dir.join("comparison.staging");
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(
+        staging.join("staging-manifest.json"),
+        "{\"schema_version\": 2, \"request_sha256\": \"abc",
+    )
+    .unwrap();
+    assert!(!dir.join("comparison").exists());
+    run_compare(&request_path, None, None).unwrap();
+    assert!(dir.join("comparison/comparison.json").is_file());
+    assert!(dir.join("comparison/staging-manifest.json").is_file());
+    assert!(!staging.exists(), "recovered staging must be consumed");
+    fs::remove_dir_all(&dir).unwrap();
+}
