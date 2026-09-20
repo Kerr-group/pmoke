@@ -2368,6 +2368,41 @@ fn write_json(path: &Path, value: &impl Serialize, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Atomic JSON publication for the staging manifest (PN-FR-031): the bytes
+/// land in a sibling temp file (fsynced) and appear at `path` via a single
+/// atomic rename, so a SIGKILL can leave the manifest absent (reclaimed as
+/// clean-slate stale staging on retry) but never truncated. A torn manifest
+/// at `path` can only come from a pre-fix write or external corruption;
+/// `run_compare` treats that residue as stale staging and reclaims it.
+fn write_json_atomic(path: &Path, value: &impl Serialize, label: &str) -> Result<()> {
+    let text =
+        serde_json::to_string_pretty(value).with_context(|| format!("cannot encode {label}"))?;
+    let bytes = format!("{text}\n");
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    {
+        let mut file = std::fs::File::create(&tmp)
+            .with_context(|| format!("cannot write {}", tmp.display()))?;
+        {
+            use std::io::Write as _;
+            file.write_all(bytes.as_bytes())
+                .with_context(|| format!("cannot write {}", tmp.display()))?;
+        }
+        file.sync_all()
+            .with_context(|| format!("cannot fsync {}", tmp.display()))?;
+    }
+    std::fs::rename(&tmp, path).with_context(|| format!("cannot publish {}", path.display()))?;
+    // Best-effort directory fsync so the rename itself survives an OS crash.
+    // A SIGKILL needs no fsync (the OS preserves the completed rename), so a
+    // failure here must never fail publication.
+    #[cfg(unix)]
+    if let Some(parent) = path.parent()
+        && let Ok(dir) = std::fs::File::open(parent)
+    {
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
 fn ensure_absent_dir(path: &Path) -> Result<()> {
     if path.exists() {
         bail!(
@@ -2441,25 +2476,44 @@ pub fn run_compare(
             let text = std::fs::read_to_string(&manifest_path).with_context(|| {
                 format!("cannot read staging manifest: {}", manifest_path.display())
             })?;
-            let manifest: StagingManifest = serde_json::from_str(&text).with_context(|| {
-                format!("invalid staging manifest: {}", manifest_path.display())
-            })?;
-            if manifest.schema_version > 2 {
-                bail!(
-                    "noise compare staging manifest schema_version {} is unsupported (code=staging_mismatch)",
-                    manifest.schema_version
-                );
+            match serde_json::from_str::<StagingManifest>(&text) {
+                Ok(manifest) => {
+                    if manifest.schema_version > 2 {
+                        bail!(
+                            "noise compare staging manifest schema_version {} is unsupported (code=staging_mismatch)",
+                            manifest.schema_version
+                        );
+                    }
+                    if manifest.request_sha256 != request_sha {
+                        bail!(
+                            "noise compare staging manifest binds a different request (code=staging_mismatch); remove {} and retry",
+                            staging.display()
+                        );
+                    }
+                    if manifest.schema_version >= 2 {
+                        verify_manifest_closure(&staging, &manifest)?;
+                    }
+                    prior_manifest = Some(manifest);
+                }
+                Err(_) => {
+                    // Torn-manifest residue: a kill landed inside a pre-fix
+                    // non-atomic write (or the file was externally
+                    // truncated). It carries no valid digests, so it is not
+                    // a resume candidate; reclaim it exactly like
+                    // absent-manifest stale staging and recompute clean.
+                    // Parseable-but-mismatched manifests stay hard errors
+                    // below and above; only unreadable bytes are reclaimed.
+                    crate::ui::warn(format!(
+                        "reclaiming stale compare staging with an unreadable manifest: {}; recomputing",
+                        staging.display()
+                    ));
+                    std::fs::remove_dir_all(&staging).with_context(|| {
+                        format!("cannot clear stale compare staging: {}", staging.display())
+                    })?;
+                    std::fs::create_dir_all(&staging)
+                        .with_context(|| format!("cannot create staging: {}", staging.display()))?;
+                }
             }
-            if manifest.request_sha256 != request_sha {
-                bail!(
-                    "noise compare staging manifest binds a different request (code=staging_mismatch); remove {} and retry",
-                    staging.display()
-                );
-            }
-            if manifest.schema_version >= 2 {
-                verify_manifest_closure(&staging, &manifest)?;
-            }
-            prior_manifest = Some(manifest);
         } else {
             bail!(
                 "noise compare staging directory already exists: {} (remove it or recover explicitly; refusing to mix generations)",
@@ -4032,7 +4086,7 @@ fn run_compare_staged(
             );
         }
     }
-    write_json(
+    write_json_atomic(
         &staging.join("staging-manifest.json"),
         &manifest,
         "staging manifest",

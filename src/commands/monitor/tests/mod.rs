@@ -91,7 +91,9 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
 }
 
 mod interaction;
+mod keymap;
 mod output;
+mod runs;
 mod timeline;
 mod view;
 mod workflow;
