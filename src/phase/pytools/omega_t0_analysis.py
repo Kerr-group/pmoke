@@ -11,6 +11,13 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+# Liveness bound for the omega_t0 least-squares fit (single slope
+# parameter: converges in a handful of evaluations on valid data).
+# The fit must never iterate unboundedly on degenerate inputs; a fit
+# that exhausts the budget fails closed below instead of returning a
+# silent garbage slope.
+FIT_MAX_NFEV = 2000
+
 
 def finish_plot(output_path, interactive: bool):
     import matplotlib.pyplot as plt
@@ -66,6 +73,22 @@ def decimation_indices(series, max_points: int, method: str) -> NDArray:
     return unique[np.linspace(0, unique.size - 1, max_points, dtype=int)]
 
 
+def ensure_converged(result) -> None:
+    """Fail closed when the omega_t0 fit did not converge.
+
+    A non-converged slope is not a usable phase reference: returning it
+    would silently rotate every downstream harmonic by garbage, so the
+    phase stage must abort with an explicit error instead.
+    """
+    if not result.success:
+        raise RuntimeError(
+            "omega_t0 fit failed to converge "
+            f"(success={result.success}, nfev={result.nfev}, "
+            f"message={result.message!r}); refusing to rotate by "
+            "an unconverged slope"
+        )
+
+
 class OT0Analyser:
     def __init__(self):
         pass
@@ -92,7 +115,10 @@ class OT0Analyser:
         params = model.make_params(intercept=0, slope=0)
         # do not vary the intercept
         params["intercept"].vary = False
-        result = model.fit(m_omega_t0_even, params, x=harmonics_even)
+        result = model.fit(
+            m_omega_t0_even, params, x=harmonics_even, max_nfev=FIT_MAX_NFEV
+        )
+        ensure_converged(result)
 
         # Create data for plotting
         harmonics_even_plot = np.linspace(0, 7, 100)
@@ -156,4 +182,5 @@ class OT0Analyser:
         return {
             "omega_t0": omega_t0,
             "plot_error": plot_error,
+            "nfev": int(result.nfev),
         }
