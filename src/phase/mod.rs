@@ -95,18 +95,33 @@ pub fn run_phase_analysis(
         crate::config::LockinEstimator::JointHarmonicGls(_)
     );
     for (ch_i, li_result) in ch.iter().zip(li_results.iter()) {
-        pb.set_message(format!("phase analysis ch{ch_i}"));
-        let phase_output = phase_analysis(cfg, li_result)?;
+        // Sub-step heartbeats: each stage updates the bar message (a JSONL
+        // progress event) so a recorded-scale channel never sits at a
+        // frozen 0% without saying which step it is in.
+        pb.set_message(format!("phase analysis ch{ch_i}: fitting omega_t0"));
+        // Suspend the bar while the fit/render heartbeat lines print so
+        // human output stays readable; JSONL events are unaffected.
+        let phase_output = ui::suspend_progress(&pb, || phase_analysis(cfg, li_result))?;
         // R2c: reconstruct the rotated XY covariance behind this channel's
         // fitted deltas while the unrotated artifact is still the matching
         // revision (None for boxcar / missing / none-policy; malformed
         // artifacts fail closed). Persisted below next to the rotated XY.
+        pb.set_message(format!(
+            "phase analysis ch{ch_i}: reconstructing covariance"
+        ));
+        let reconstruct_started = Instant::now();
         let rotated_covariance = crate::phase::uncertainty::reconstruct_rotated_covariances(
             &paths,
             *ch_i,
             &phase_output.deltas,
             is_gls,
         )?;
+        ui::suspend_progress(&pb, || {
+            ui::info(format!(
+                "phase analysis ch{ch_i}: covariance reconstruction ({})",
+                ui::fmt_duration(reconstruct_started.elapsed())
+            ));
+        });
         ui::suspend_progress(&pb, || {
             ui::summary_table(
                 format!("Phase rotation ch{ch_i}"),
@@ -130,6 +145,7 @@ pub fn run_phase_analysis(
         });
         let path = paths.lockin_rotated_csv(*ch_i);
         let headers = get_li_rotated_headers(cfg)?;
+        pb.set_message(format!("phase analysis ch{ch_i}: saving rotated results"));
         write_li_rotated_results(
             &path,
             &headers,
