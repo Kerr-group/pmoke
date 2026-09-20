@@ -14,7 +14,7 @@ use crate::utils::time_axis::TimeAxisRef;
 use anyhow::{Context, Result, bail};
 use pmoke_analysis_core::{
     CorrelationKernel, HarmonicSignalModel, JointEstimate, JointHarmonicSettings,
-    JointSolverTolerances, NoiseModel, estimate_joint,
+    JointSolverTolerances, NoiseModel, PreparedNoisePlan, estimate_joint_with_plan,
 };
 use rayon::prelude::*;
 
@@ -623,6 +623,31 @@ fn run_joint_channel(
     // Same tap support as the legacy boxcar (edge legacy_trim): centers on
     // the strided grid, samples [center - n_half - 1, center + n_half + 1].
     let half_taps = params.n_half + 1;
+    // Hoisted per-channel noise plan (P1): every window shares the same
+    // length (2 * half_taps + 1) and the same calibrated noise model, so
+    // the Toeplitz Cholesky factor and its TOL-07 condition are built once
+    // per channel and reused by every window via estimate_joint_with_plan.
+    // The plan path executes the same arithmetic under the same gates as
+    // the direct path (bit-identical outputs); only cost is hoisted.
+    let window_rows = half_taps
+        .checked_mul(2)
+        .and_then(|doubled| doubled.checked_add(1))
+        .context("joint lock-in window length overflow")?;
+    let noise_plan =
+        PreparedNoisePlan::prepare(&settings.noise, window_rows, settings.tolerances).map_err(
+            |error| {
+                anyhow::anyhow!(GlsFailure {
+                    code: error.code().to_string(),
+                    channel,
+                    window_index: 0,
+                })
+            },
+        )
+        .with_context(|| {
+            format!(
+                "joint noise plan preparation failed (stage=lockin, channel={channel}); refusing to fall back"
+            )
+        })?;
     for chunk_start in (0..outputs).step_by(plan.chunk_size) {
         let chunk_end = (chunk_start + plan.chunk_size).min(outputs);
         let estimates: Vec<(usize, Result<JointEstimate>)> = pool.install(|| {
@@ -658,13 +683,15 @@ fn run_joint_channel(
                                 signal.len()
                             )
                         })?;
-                        estimate_joint(
+                        estimate_joint_with_plan(
                             &window_times,
                             window_signal,
                             f_ref,
                             omega_tref,
                             sample_rate_hz,
-                            settings,
+                            &settings.model,
+                            settings.tolerances,
+                            &noise_plan,
                         )
                         .map_err(|error| {
                             anyhow::anyhow!(GlsFailure {
