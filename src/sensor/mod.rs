@@ -171,7 +171,9 @@ pub fn run_sensor<'a>(
         })
         .collect::<Vec<_>>();
     if !scale_summary.is_empty() {
-        ui::settings_table("Sensor auto scales", scale_summary);
+        ui::suspend_progress(&pb, || {
+            ui::settings_table("Sensor auto scales", scale_summary);
+        });
     }
     let s_rate = sensor_series
         .iter()

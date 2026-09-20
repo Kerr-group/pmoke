@@ -88,6 +88,7 @@ pub fn run_phase_analysis(
         format!("phase analysis for channels {:?}", ch),
         ch.len() as u64,
     );
+    let t0 = Instant::now();
     let mut rotated_results: Vec<Vec<Vec<f64>>> = Vec::new();
     let is_gls = matches!(
         cfg.lockin.estimator,
@@ -148,7 +149,14 @@ pub fn run_phase_analysis(
         rotated_results.push(phase_output.rotated_result);
         pb.inc(1);
     }
-    ui::finish_saved(pb, format!("phase-rotated results for channels {:?}", ch));
+    ui::finish_saved(
+        pb,
+        format!(
+            "phase-rotated results for channels {:?} ({})",
+            ch,
+            ui::fmt_duration(t0.elapsed())
+        ),
+    );
     ui::success("phase analysis completed");
 
     plot::run_plot(
