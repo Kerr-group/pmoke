@@ -7,7 +7,7 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 
 > 型付きclap metadataから自動生成。手動編集は上書き対象。
 
-<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={7} />
+<ReferenceMetadata pmokeVersion="0.5.0" schemaVersion={7} />
 
 ## コマンド索引
 
@@ -579,7 +579,7 @@ pmoke calibrate [-h, --help] <COMMAND>
 記録波形からの不変較正artifactのbuild（CSV requestまたはRAW run直接）
 
 ```text
-pmoke calibrate build [--request <FILE>] [--output <DIR>] [--run <DIR>] [--channel <N>] [--model-id <ID>] [--reference-channel <N>] [--reference-frequency-hz <HZ>] [--reference-phase-rad <RAD>] [--block-len <N>] [--seed <N>] [-h, --help]
+pmoke calibrate build [--request <FILE>] [--output <DIR>] [--run <DIR>] [--channel <N>] [--model-id <ID>] [--reference-channel <N>] [--reference-frequency-hz <HZ>] [--reference-phase-rad <RAD>] [--block-len <N>] [--seed <N>] [--frequency-rel-tol <TOL>] [-h, --help]
 ```
 
 | option | 必須 | 既定値 / 候補 | 説明 | 競合 |
@@ -594,6 +594,7 @@ pmoke calibrate build [--request <FILE>] [--output <DIR>] [--run <DIR>] [--chann
 | `--reference-phase-rad <RAD>` | - | - | 直接build用の参照位相rad（既定: 同runのfit値） | `request` |
 | `--block-len <N>` | - | - | 直接build用のblock長サンプル数（既定: サンプル数÷40） | `request` |
 | `--seed <N>` | - | - | 直接build用の乱数seed（既定: 0） | `request` |
+| `--frequency-rel-tol <TOL>` | - | - | 直接build用の参照周波数適用tolerance上書き（相対値。既定: 不確かさ合成; 値は記録され上書きが明示される） | `request` |
 | `-h, --help` | - | - | help表示 | - |
 
 

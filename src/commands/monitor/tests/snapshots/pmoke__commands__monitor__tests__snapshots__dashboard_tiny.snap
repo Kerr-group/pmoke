@@ -1,0 +1,18 @@
+---
+source: src/commands/monitor/tests/snapshots.rs
+expression: rendered
+---
+ pmoke  ● BLOCKED  │  IDLE  │  00:00    
+◆ cwd /workspace/pmoke ─────────────────
+┌ RUNS 0/0 ────────────────────────────┐
+│no run dirs under scan root           │
+│                                      │
+└──────────────────────────────────────┘
+┌ WORKFLOW 02/12 ──────────────────────┐
+│▌    ●  show OK                       │
+└──────────────────────────────────────┘
+╭ ACTIVITY · LIVE · READY ─────────────╮
+│ READY  events 1  ·  following        │
+│SYS   snapshot probe line             │
+╰──────────────────────────────────────╯
+Enterrun    j/kmove    /filter    1-4foc

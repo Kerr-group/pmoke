@@ -1,0 +1,28 @@
+---
+source: src/commands/monitor/tests/snapshots.rs
+expression: rendered
+---
+ pmoke  ● BLOCKED  │  IDLE  │  00:00                                    
+ └─ ◆ cwd /workspace/pmoke  │  config config.toml ──────────────────────
+┌ RUNS 0/0 ────────────────────────────────────────────────────────────┐
+│no run dirs under scan root                                           │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+┌ WORKFLOW 02/12 ──────────────────────────────────────────────────────┐
+│  ▾ UTILITIES                                                         │
+│▌    ●  show OK                                                       │
+└──────────────────────────────────────────────────────────────────────┘
+┌ INSPECTOR · SUMMARY ─────────────────────────────────────────────────┐
+│READY   Config                                                        │
+│Print normalized config and diagnostics.                              │
+│command  pmoke --config config.toml show                              │
+│panel    Read-only config panel. Enter re-runs `show` through the     │
+│re-exec runner; nothing is written.                                   │
+└──────────────────────────────────────────────────────────────────────┘
+╭ ACTIVITY · LIVE · READY ─────────────────────────────────────────────╮
+│ READY  events 1  ·  following                                        │
+│SYS   snapshot probe line                                             │
+│                                                                      │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+Enterrun    j/kmove    /filter    1-4focus    [ ]history    ?help    qqu

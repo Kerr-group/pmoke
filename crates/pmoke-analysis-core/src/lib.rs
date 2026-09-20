@@ -17,12 +17,14 @@ pub use calibration::{
     DEFAULT_DT_REL_TOL, DEFAULT_FLOOR_RATIO, DEFAULT_FREQ_REL_TOL, DEFAULT_MAX_LAG,
     DEFAULT_MIN_CYCLES_PER_BIN, DEFAULT_MIN_CYCLES_PER_BLOCK, DEFAULT_MIN_SAMPLES_PER_BIN,
     DEFAULT_MIN_TRAINING_BLOCKS, DEFAULT_MIN_TRAINING_INTERVALS, DEFAULT_SHRINKAGE_ALPHA,
-    HeldoutReport, MAX_CALIBRATION_ARTIFACT_BYTES, ModelBinding, NUISANCE_HARMONICS,
-    NUISANCE_PARAMETERS, NuisanceFit, PhaseTable, PhaseVarianceOutput, PhaseVarianceRecipe,
-    PlannedBlock, PlannedExclusion, RegularizationRecord, RoleInterval, SearchSpace,
-    TrainingRecord, TuningMode, VARIANCE_INTERP_ID, ValidationRecord, assemble_samples,
-    build_artifact, ensure_fixed_tuning, estimate_correlation, estimate_phase_variance,
-    fit_nuisance, inspect_applicability, nuisance_design_matrix, plan_blocks, scs_adequacy,
+    FREQUENCY_TOL_COVERAGE_K, FREQUENCY_TOL_FLOOR, HeldoutReport, MAX_CALIBRATION_ARTIFACT_BYTES,
+    ModelBinding, NUISANCE_HARMONICS, NUISANCE_PARAMETERS, NuisanceFit, PhaseTable,
+    PhaseVarianceOutput, PhaseVarianceRecipe, PlannedBlock, PlannedExclusion, RegularizationRecord,
+    RoleInterval, SearchSpace, TrainingRecord, TuningMode, VARIANCE_INTERP_ID, ValidationRecord,
+    assemble_samples, build_artifact, effective_frequency_rel_tol, ensure_fixed_tuning,
+    estimate_correlation, estimate_phase_variance, fit_nuisance, frequency_rel_tol_bound,
+    inspect_applicability, nuisance_design_matrix, plan_blocks, resolve_build_frequency_tol,
+    scs_adequacy,
 };
 pub use error::{AnalysisError, Result};
 pub use joint::{
