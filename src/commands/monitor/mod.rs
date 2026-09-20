@@ -33,6 +33,7 @@ mod actions;
 mod app;
 mod clipboard;
 mod formatting;
+mod inspect;
 mod keymap;
 mod layout;
 mod output;
@@ -52,6 +53,7 @@ use formatting::{
     bordered_inner, centered_rect, contains, fit_path, fit_text, format_age, format_duration,
     format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
 };
+use inspect::*;
 use keymap::*;
 #[cfg(test)]
 use layout::workflow_panel_width;
@@ -261,6 +263,9 @@ enum InspectorView {
     Config,
     Diagnostics,
     Artifacts,
+    /// S3 calibration/analysis inspectors (Issue #277): per-stage status
+    /// from the selected run's manifest plus standalone report summaries.
+    Reports,
 }
 
 impl InspectorView {
@@ -269,7 +274,8 @@ impl InspectorView {
             Self::Summary => Self::Config,
             Self::Config => Self::Diagnostics,
             Self::Diagnostics => Self::Artifacts,
-            Self::Artifacts => Self::Summary,
+            Self::Artifacts => Self::Reports,
+            Self::Reports => Self::Summary,
         }
     }
 
@@ -279,6 +285,7 @@ impl InspectorView {
             Self::Config => "CONFIG",
             Self::Diagnostics => "DIAGNOSTICS",
             Self::Artifacts => "ARTIFACTS",
+            Self::Reports => "REPORTS",
         }
     }
 }
@@ -813,6 +820,7 @@ fn scroll_inspector_up(app: &mut MonitorApp, area: Rect, lines: usize) {
             app.messages_scroll = app.messages_scroll.saturating_sub(lines)
         }
         InspectorView::Artifacts => app.files_scroll = app.files_scroll.saturating_sub(lines),
+        InspectorView::Reports => app.reports_scroll = app.reports_scroll.saturating_sub(lines),
         InspectorView::Summary => {}
     }
     clamp_inspector_scroll(app, area);
@@ -825,6 +833,7 @@ fn scroll_inspector_down(app: &mut MonitorApp, area: Rect, lines: usize) {
             app.messages_scroll = app.messages_scroll.saturating_add(lines)
         }
         InspectorView::Artifacts => app.files_scroll = app.files_scroll.saturating_add(lines),
+        InspectorView::Reports => app.reports_scroll = app.reports_scroll.saturating_add(lines),
         InspectorView::Summary => {}
     }
     clamp_inspector_scroll(app, area);
@@ -841,6 +850,9 @@ fn clamp_inspector_scroll(app: &mut MonitorApp, area: Rect) {
         }
         InspectorView::Artifacts => {
             app.files_scroll = app.files_scroll.min(files_scroll_max(app, inspector))
+        }
+        InspectorView::Reports => {
+            app.reports_scroll = app.reports_scroll.min(reports_scroll_max(app, inspector))
         }
         InspectorView::Summary => {}
     }
@@ -866,6 +878,14 @@ fn messages_scroll_max(app: &MonitorApp, area: Rect) -> usize {
 fn files_scroll_max(app: &MonitorApp, area: Rect) -> usize {
     let total = artifact_rows(app.ready_config().map(|(config, _)| config)).len();
     total.saturating_sub(table_visible_rows(area))
+}
+
+/// S3: the REPORTS tab renders one combined table (run header + STAGES +
+/// REPORTS rows), so its scroll window covers the whole row list.
+fn reports_scroll_max(app: &MonitorApp, area: Rect) -> usize {
+    reports_table_rows(app)
+        .len()
+        .saturating_sub(table_visible_rows(area))
 }
 
 fn table_visible_rows(area: Rect) -> usize {

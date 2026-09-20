@@ -447,6 +447,7 @@ pub(super) fn render_inspector(frame: &mut Frame<'_>, app: &MonitorApp, area: Re
         InspectorView::Config => render_config(frame, app, area),
         InspectorView::Diagnostics => render_messages(frame, app, area),
         InspectorView::Artifacts => render_files(frame, app, area),
+        InspectorView::Reports => render_reports(frame, app, area),
     }
 }
 
@@ -548,6 +549,82 @@ fn render_run_preview(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
         area,
     );
+}
+
+/// S3 REPORTS tab (Issue #277): one scrollable two-column table over the
+/// S2-selected run — run header, STAGES rows from the run manifest (FR-02),
+/// REPORTS rows summarizing the standalone lane reports (FR-01). Column
+/// geometry mirrors the shared `two_col_table` helper; the title carries a
+/// scroll range like the FILES tab because the row list is taller than the
+/// 7-9 row inspector pane. All probes are bounded read-only file reads, so
+/// rendering never writes, spawns, or fails.
+fn render_reports(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
+    let Some(entry) = app.selected_run_entry() else {
+        let focus_runs = primary_label(TuiAction::FocusRuns).unwrap_or_else(|| "4".to_string());
+        let lines = vec![
+            Line::styled(
+                "No recorded run selected.",
+                Style::default().fg(Color::Yellow),
+            ),
+            Line::from(vec![
+                Span::styled("root  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(app.run_root.clone(), Style::default().fg(Color::Gray)),
+            ]),
+            Line::from(vec![
+                Span::styled("scan  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(run_scan_budgets_label(), Style::default().fg(Color::Gray)),
+            ]),
+            Line::from(vec![
+                Span::styled("hint  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("press {focus_runs} to focus the runs browser"),
+                    Style::default().fg(Color::Gray),
+                ),
+            ]),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(accent_panel(" REPORTS ").border_style(focus_border_style(
+                    app,
+                    FocusPane::Inspector,
+                    Color::DarkGray,
+                )))
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    };
+
+    let rows = reports_table_rows(app);
+    let visible_rows = table_visible_rows(area);
+    let total = rows.len();
+    let start = app.reports_scroll.min(total.saturating_sub(visible_rows));
+    let end = (start + visible_rows).min(total);
+    let value_width = area.width.saturating_sub(22) as usize;
+    let table_rows = rows
+        .into_iter()
+        .skip(start)
+        .take(visible_rows)
+        .map(|row| {
+            let item = row.first().cloned().unwrap_or_default();
+            let value = row.get(1).cloned().unwrap_or_default();
+            Row::new(vec![fit_text(&item, 14), fit_text(&value, value_width)])
+        })
+        .collect::<Vec<_>>();
+    let table = Table::new(table_rows, [Constraint::Length(16), Constraint::Min(20)])
+        .header(
+            Row::new(vec![format!("Report: {}", entry.name), "Value".to_string()]).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .block(
+            accent_panel(visible_range_title("REPORTS", start, end, total)).border_style(
+                focus_border_style(app, FocusPane::Inspector, Color::DarkGray),
+            ),
+        );
+    frame.render_widget(table, area);
 }
 
 fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {

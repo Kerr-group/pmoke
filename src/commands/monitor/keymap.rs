@@ -31,6 +31,13 @@
 //!   filters the focused list, and `Enter` pins the run preview. All of
 //!   these reuse the registry/filter/footer primitives below.
 //!
+//! - S3 calibration/analysis inspectors (Issue #277): `5` selects the
+//!   REPORTS inspector tab while the inspector is focused (`i` cycles
+//!   through it like every other tab). The tab renders the S2-selected
+//!   run's per-stage manifest status plus standalone report summaries;
+//!   scrolling reuses the existing inspector scroll actions, so no new
+//!   `TuiAction` was needed.
+//!
 //! FR-07 keymap-prefs decision (decision only; loaders are an explicit
 //! non-goal, "keymap-format future extensions"):
 //! - location: `$XDG_CONFIG_HOME/pmoke/keymap.toml`, falling back to
@@ -365,6 +372,12 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
         keys: &[KeySpec::plain(KeyCode::Char('4'))],
         contexts: &[KeyContext::Inspector],
         description: "inspector files tab",
+    },
+    KeyBinding {
+        action: TuiAction::InspectorTab(InspectorView::Reports),
+        keys: &[KeySpec::plain(KeyCode::Char('5'))],
+        contexts: &[KeyContext::Inspector],
+        description: "inspector reports tab",
     },
     KeyBinding {
         action: TuiAction::FocusPane(FocusPane::Commands),
@@ -752,7 +765,7 @@ pub(super) fn footer_spans(app: &MonitorApp) -> Vec<Span<'static>> {
                 primary_label(TuiAction::CycleInspectorTabs).unwrap_or_else(|| "i".to_string())
             ));
             spans.push(verb("tabs  "));
-            spans.push(key("1-4".to_string()));
+            spans.push(key("1-5".to_string()));
             spans.push(verb("tab  "));
             spans.push(key("j/k".to_string()));
             spans.push(verb("scroll  "));
