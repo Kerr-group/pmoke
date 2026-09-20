@@ -1494,6 +1494,7 @@ csv = "kerr/kerr.csv"
             f_ref: 1000.0,
             a_ref: 1.0,
             omega_tref: 0.0,
+            f_ref_rel_uncertainty: None,
         };
         let time = (0..2000).map(|i| i as f64 * 1e-5).collect::<Vec<_>>();
         let signal = vec![0.0; 2000];

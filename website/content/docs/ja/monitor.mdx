@@ -1,0 +1,87 @@
+---
+title: 監視TUI
+description: コンフィグ・run参照・解析出力を扱うlive terminal dashboard。
+---
+
+`pmoke monitor` (引数なしの`pmoke`も同じ) でlive terminal dashboardを開く。
+手実行と同じworkflow commandを実行し、その出力を表示する。コンフィグファイルの
+編集は行わず、選択command自体の動作を越えたhardware操作も行わない。
+
+## 配置
+
+- Header: 状態 (コンフィグが読めれば`RUNNABLE`、diagnosticsがあれば`BLOCKED`)、
+  実行中runのlabel、分:秒timer。
+- Context bar: 作業directoryとコンフィグpath。狭いterminalではcompact表示。
+- `WORKFLOW`: command一覧と選択行の`DETAIL`説明。`/`でfilter、`Enter`で実行。
+- `RUNS`: S2 run browser (後述)。
+- `INSPECTOR`: 選択commandまたはpin留めrun preview用の`SUMMARY`、`CONFIG`、
+  `DIAGNOSTICS`、`ARTIFACTS`、`REPORTS` tab。
+- `ACTIVITY`: `LIVE`、`PAUSED`、`HISTORY`状態を持つcommand出力。
+- Footer: focus中paneのkey hint。`?`でhelp overlayを開く。overlayはevent
+  loopと同じkey registryから生成されるため、表示と実装の乖離がない。
+
+## Focus
+
+4 paneが空間順のringを共有する: workflow、runs、inspector、activity。
+
+| Key | 効果 |
+| --- | --- |
+| `1` / `2` / `3` / `4` (`b`もrunsへ) | workflow / inspector / activity / runsへfocus |
+| `Tab` / `Shift-Tab` (`l` / `h`、`Right` / `Left`) | 次 / 前paneへfocus |
+| `i` | Inspector tab巡回 (inspectorへfocus) |
+| Inspector focus中の`1`-`5` | Inspector tab直接選択 (`5`は`REPORTS`) |
+
+## Key
+
+全pane共通:
+
+| Key | 効果 |
+| --- | --- |
+| `?` | Help overlay切替 (`q`または`Esc`で閉じる) |
+| `q` | 終了。command実行中は確認待ち (`q`再押下で終了、`Esc`で残留) |
+| `/` | Focus中listのfilter (workflowまたはruns) |
+| `Enter` | 選択command実行。runs focus中は選択runのpreview pin留め |
+| `[` / `]` | 過去run / live activityへ戻る |
+| `r` | コンフィグとfile再読込 |
+| `Ctrl+C` | 実行中commandの中断 |
+| `End` | Live activity追従 |
+| `Esc` | Dialogを閉じ、検索・選択解除、pane離脱 (実行中commandは中断しない) |
+
+List key (`j`/`k`移動、`g`/`G`先頭・末尾) はfocus中listに適用: workflow
+選択、run選択、inspector scroll、activity選択。Activityには`v`
+visual-line選択、`y` copy、`K`/`J`選択拡張、`PageUp`/`PageDown`と
+`Ctrl+U`/`Ctrl+D` scrollが加わる。検索入力中は文字がfilterに追加され、
+`Enter`確定、`Backspace`削除、`Esc`解除。
+
+## Run browser
+
+`RUNS`は現runと同じ階層のrun directory一覧。scan rootはrun directoryの
+親、なければコンフィグfileの親、さらに startup directory。scanはread-onlyで
+budget付き (最大512 directory、深さ3、200 entry、manifest毎64 KiB)。
+部分listには`TRUNC`表示を付け、黙って欠落させない。`/`で名前・path・
+状態・stageをfilterし、`Enter`で選択runをread-only inspector previewに
+pin留めする。空状態は`no run dirs under scan root`と
+`no runs match the filter`の表示。
+
+## Reports inspector
+
+S3 の`REPORTS` tabは、選択中runの内部で何が起きたかを表示する。何も実行
+しない。inspector focus中に`5`で選択 (`i`で巡回、`j`/`k`でscroll)。
+上部に選択中runの情報、続いて`Stages`にrun manifest由来のstage lifecycle
+状態、`Reports`に各laneのstandalone report要約
+(`calibrate-report.json`、noise `diagnostics.json`、`compare-report.json`、
+`m6-evaluation-report.json`) と`calibration.json` artifact、
+`analysis/manifest`の公開状態を表示する。probeはすべて上限付き
+read-only file read。欠落・超過・parse不可のfileは描画を失敗させず、
+`not found` / `unreadable`表示に劣化する。run未選択時はscan rootと
+budget、runs browserへのhintを表示する。
+
+## 安全と環境
+
+- Command実行中の終了には2度目の`q`が必要。確認待ち中footerに
+  `q again to stop + quit`表示。`Esc`でcommandが止まることはない。
+- `PMOKE_MOUSE=off` (`0`、`no`、`false`、`disabled`も可) でmouse capture
+  無効。既定ではclick、drag、wheel有効。
+- `PMOKE_MOTION=full|reduced|off`で実行中live animationを抑制。
+- 表示truncationはcell基準のため、wide文字でもpaneを溢れない。画面文言は
+  英語のみ。

@@ -377,6 +377,10 @@ pub enum CalibrateCommand {
         /// Random seed for a direct build (defaults to 0)
         #[arg(long, value_name = "N", conflicts_with = "request")]
         seed: Option<u64>,
+        /// Reference-frequency applicability tolerance override (relative) for a direct build
+        /// (defaults to the uncertainty combination; the value is recorded and marked overridden)
+        #[arg(long, value_name = "TOL", conflicts_with = "request")]
+        frequency_rel_tol: Option<f64>,
     },
     /// Inspect a calibration artifact file (read-only)
     Inspect {

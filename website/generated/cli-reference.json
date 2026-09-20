@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "pmoke_version": "0.4.1",
+  "pmoke_version": "0.5.0",
   "feature_set": "hw-core",
   "command": {
     "name": "pmoke",
@@ -1770,6 +1770,24 @@
                   "N"
                 ],
                 "help": "Random seed for a direct build (defaults to 0)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "frequency_rel_tol",
+                "kind": "option",
+                "short": null,
+                "long": "frequency-rel-tol",
+                "value_names": [
+                  "TOL"
+                ],
+                "help": "Reference-frequency applicability tolerance override (relative) for a direct build (defaults to the uncertainty combination; the value is recorded and marked overridden)",
                 "required": false,
                 "global": false,
                 "repeatable": false,

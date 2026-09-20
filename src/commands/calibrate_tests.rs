@@ -93,6 +93,31 @@ fn build_inspect_validate_round_trip() {
     let digest = crate::utils::checksum::file_sha256(&artifact).unwrap();
     assert_eq!(report["sha256"], digest);
 
+    // Tolerance basis record (Issue #274 FR-03): explicit-frequency TOML
+    // build carries no build-side uncertainty, so the floor combination
+    // applies and nothing is marked overridden.
+    let basis = &report["tolerance_basis"];
+    assert_eq!(basis["u_build"], serde_json::Value::Null);
+    assert_eq!(basis["u_apply"], serde_json::Value::Null);
+    assert_eq!(basis["coverage_k"], serde_json::json!(3.0));
+    assert_eq!(basis["floor"], serde_json::json!(1e-9));
+    assert_eq!(basis["final_tol"], serde_json::json!(1e-9));
+    assert_eq!(basis["overridden"], serde_json::Value::Bool(false));
+    let artifact_value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&artifact).unwrap()).unwrap();
+    assert_eq!(
+        artifact_value["binding"]["frequency_rel_tol"],
+        serde_json::json!(1e-9)
+    );
+    assert_eq!(
+        artifact_value["binding"]["reference_frequency_rel_uncertainty"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        artifact_value["builder"]["recipe_settings"]["frequency_tol_overridden"],
+        serde_json::json!("false")
+    );
+
     // Deterministic bytes: rebuild into a second directory matches exactly.
     let request2 = dir.join("request2.toml");
     std::fs::write(
@@ -146,6 +171,148 @@ phase_convention = "phi=2*pi*f*t-reference_phase_rad"
     )
     .unwrap();
     assert!(run_validate(&artifact, &bad_context).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Issue #274 FR-04: an explicit TOML tolerance override is honored and
+/// marked as overridden in both the report and the artifact record.
+#[test]
+fn build_override_tol_is_honored_and_marked() {
+    let dir = temp_dir("override");
+    let blocks = 10;
+    let block_len = 12_800;
+    let waveform = dir.join("wave.csv");
+    synthetic_waveform_csv(&waveform, blocks, block_len);
+    let total = (blocks * block_len) as u64;
+    let mid = (4 * block_len) as u64;
+    let training_end = (8 * block_len) as u64;
+    let request_path = dir.join("request.toml");
+    let mut text = build_request_text(
+        "wave.csv",
+        "model",
+        &[(0, mid), (mid, training_end)],
+        training_end,
+        total,
+    );
+    // Root-table key: prepend before the [[intervals]] tables so TOML
+    // assigns it to the request (not to the last interval table).
+    text = format!("frequency_rel_tol = 1e-7\n{text}");
+    std::fs::write(&request_path, text).unwrap();
+    run_build(&request_path, None).unwrap();
+
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("model/calibrate-report.json")).unwrap(),
+    )
+    .unwrap();
+    let basis = &report["tolerance_basis"];
+    assert_eq!(basis["overridden"], serde_json::Value::Bool(true));
+    assert_eq!(basis["final_tol"], serde_json::json!(1e-7));
+    let artifact_value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("model/calibration.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        artifact_value["binding"]["frequency_rel_tol"],
+        serde_json::json!(1e-7)
+    );
+    assert_eq!(
+        artifact_value["builder"]["recipe_settings"]["frequency_tol_overridden"],
+        serde_json::json!("true")
+    );
+
+    // A non-positive override is a hard build error, never silent.
+    let bad_path = dir.join("bad-request.toml");
+    let bad_text = build_request_text(
+        "wave.csv",
+        "bad",
+        &[(0, mid), (mid, training_end)],
+        training_end,
+        total,
+    );
+    let bad_text = format!("frequency_rel_tol = -1e-9\n{bad_text}");
+    std::fs::write(&bad_path, bad_text).unwrap();
+    assert!(run_build(&bad_path, None).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Issue #274 FR-02/FR-06 end to end: a TOML context carrying the
+/// inference-side uncertainty admits the 5.852e-9 same-condition pair
+/// through `calibrate validate`, while the field stays optional (contexts
+/// without it keep the exact historical gate) and 2.5% still refuses.
+#[test]
+fn validate_with_apply_uncertainty_admits_ppb_pair() {
+    let dir = temp_dir("validate-u");
+    let blocks = 10;
+    let block_len = 12_800;
+    let waveform = dir.join("wave.csv");
+    synthetic_waveform_csv(&waveform, blocks, block_len);
+    let total = (blocks * block_len) as u64;
+    let mid = (4 * block_len) as u64;
+    let training_end = (8 * block_len) as u64;
+    let request_path = dir.join("request.toml");
+    std::fs::write(
+        &request_path,
+        build_request_text(
+            "wave.csv",
+            "model",
+            &[(0, mid), (mid, training_end)],
+            training_end,
+            total,
+        ),
+    )
+    .unwrap();
+    run_build(&request_path, None).unwrap();
+    let artifact = dir.join("model/calibration.json");
+
+    // ppb-deviated context without the uncertainty field: refuses
+    // (historical gate, floor 1e-9).
+    let plain = dir.join("plain.toml");
+    std::fs::write(
+        &plain,
+        r#"channel = 3
+sample_interval_s = 0.00001
+reference_frequency_hz = 1000.000005852
+voltage_unit = "V"
+phase_convention = "phi=2*pi*f*t-reference_phase_rad"
+
+[acquisition]
+"#,
+    )
+    .unwrap();
+    assert!(run_validate(&artifact, &plain).is_err());
+
+    // Same pair with the inference-side uncertainty recorded: validates.
+    let with_u = dir.join("with-u.toml");
+    std::fs::write(
+        &with_u,
+        r#"channel = 3
+sample_interval_s = 0.00001
+reference_frequency_hz = 1000.000005852
+voltage_unit = "V"
+phase_convention = "phi=2*pi*f*t-reference_phase_rad"
+reference_frequency_rel_uncertainty = 2e-9
+
+[acquisition]
+"#,
+    )
+    .unwrap();
+    run_validate(&artifact, &with_u).unwrap();
+
+    // A true 2.5% mismatch refuses even with the uncertainty recorded.
+    let far = dir.join("far.toml");
+    std::fs::write(
+        &far,
+        r#"channel = 3
+sample_interval_s = 0.00001
+reference_frequency_hz = 1025.0
+voltage_unit = "V"
+phase_convention = "phi=2*pi*f*t-reference_phase_rad"
+reference_frequency_rel_uncertainty = 2e-9
+
+[acquisition]
+"#,
+    )
+    .unwrap();
+    assert!(run_validate(&artifact, &far).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -517,11 +684,19 @@ fn raw_csv_digest_equivalence() {
     crate::utils::waveform::export_raw_waveform_csv(&acquisition, &csv_path).unwrap();
 
     let intervals = direct_report["requested_intervals"].as_array().unwrap();
+    // The TOML mirror reuses the direct fit's reference values AND its
+    // recorded build-side uncertainty, so identical samples plus
+    // identical parameters yield identical digests (Issue #274 FR-01).
+    let u_build = direct_report["tolerance_basis"]["u_build"]
+        .as_f64()
+        .map(|value| format!("reference_frequency_rel_uncertainty = {value:.17e}\n"))
+        .unwrap_or_default();
     let mut request = format!(
         "schema_version = 1\nmodel_id = \"{}\"\nwaveform_csv = \"wave.csv\"\n\
          channel_column = 1\ntime_column = 0\nsample_interval_s = {DIRECT_DT_TEXT}\n\
          reference_frequency_hz = {:.17e}\nreference_phase_rad = {:.17e}\n\
-         channel = 2\nseed = 0\nblock_len = 3200\nmin_reference_cycles_per_block = 2.0\noutput = \"model\"\n\
+         channel = 2\nseed = 0\nblock_len = 3200\nmin_reference_cycles_per_block = 2.0\n{u_build}\
+         output = \"model\"\n\
          [phase_recipe]\nbins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 2\n\
          min_contributing_blocks = {}\n",
         direct_report["model_id"].as_str().unwrap(),

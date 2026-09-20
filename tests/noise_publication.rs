@@ -259,9 +259,45 @@ fn kill_at_publication_leaves_only_legal_durable_states() {
     } else {
         assert!(
             destination.exists(),
-            "a failed retry must not delete an existing committed generation"
+            "a failed retry must not delete an existing committed generation: {:?}",
+            output
         );
     }
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+/// An injected torn staging manifest (the SIGKILL-in-write residue,
+/// Issue #273) must not wedge the retry: it is reclaimed as stale staging
+/// and the retry commits normally with no destination pre-existing.
+#[test]
+fn torn_staging_manifest_retry_recovers() {
+    let dir = unique_test_dir("torn_manifest");
+    synthetic_csv(&dir.join("wave.csv"), 64_000, 0x9abc_def0_1234_5678);
+    let request_path = dir.join("request.toml");
+    fs::write(
+        &request_path,
+        request_text("wave.csv", "comparison", 64_000),
+    )
+    .unwrap();
+
+    let staging = dir.join("comparison.staging");
+    let destination = dir.join("comparison");
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(
+        staging.join("staging-manifest.json"),
+        "{\"schema_version\": 2, \"request_sha256\": \"abc",
+    )
+    .unwrap();
+    assert!(!destination.exists());
+
+    let output = compare_command(&dir, &request_path).output().unwrap();
+    assert!(
+        output.status.success(),
+        "retry after a torn staging manifest must commit: {:?}",
+        output
+    );
+    assert!(committed_generation_is_complete(&destination));
+    assert!(!staging.exists(), "recovered staging must be consumed");
     fs::remove_dir_all(&dir).unwrap();
 }
 
