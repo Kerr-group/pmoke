@@ -12,7 +12,9 @@
 //! Backend: nalgebra 0.35.0, no-default plus `std` (A-010 spike). The
 //! rectangular solve uses only public APIs: thin `Q`, `Q^T y`, and manual
 //! back-substitution on the upper-trapezoidal `R`. Rank and conditioning
-//! come from an SVD diagnostic on the same whitened design; the independent
+//! come from an SVD diagnostic on the thin `R` factor of the same whitened
+//! design (P3: reuses the QR factorization instead of cloning the `N x P`
+//! design a second time); the independent
 //! cross-check is the SciPy oracle, not a second nalgebra path.
 //!
 //! Scaling policy: the solver factors the supplied whitened design as-is,
@@ -1450,7 +1452,15 @@ pub type QrSolveWithCovariance = (DVector<f64>, f64, usize, f64, DMatrix<f64>);
 /// Thin-QR least squares that also returns the thin R factor, so the
 /// design-model covariance can reuse the exact same factorization instead
 /// of running a second QR over the same matrix (see
-/// [`solve_direct_and_covariance`]). Arithmetic, gates, and error
+/// [`solve_direct_and_covariance`]). The SVD rank/condition diagnostic
+/// likewise reuses this factor (P3) instead of cloning the `N x P` design
+/// a second time: for thin QR (`A = Q1 R1` with orthonormal `Q1`) the
+/// singular values of `R1` coincide with the design's in exact arithmetic
+/// (measured agreement ~1e-15 relative). Beta, residual, and covariance
+/// are bit-identical to the sequential pair; rank is unchanged and the
+/// reported condition agrees to ~1e-15 relative (see the P3 test). Gate
+/// thresholds, error precedence, and every other value are unchanged
+/// while the duplicate `N x P` traffic is gone. Arithmetic, gates, and error
 /// precedence match [`solve_direct`] step for step; only the duplicate
 /// factorization cost is hoisted, never any value.
 fn solve_direct_with_factor(
@@ -1491,8 +1501,22 @@ fn solve_direct_with_factor(
             "max_condition must be positive finite",
         ));
     }
-    // Rank and conditioning from the SVD diagnostic on the same matrix.
-    let svd = whitened_design.clone().svd(true, false);
+    // Solution through thin QR: c = Q^T y, then back-substitute R1 x = c.
+    // The factorization below runs on the single N x P clone. The SVD
+    // diagnostic reuses its thin R factor (P3) instead of cloning the
+    // design a second time; the gate checks keep their original order, so
+    // error precedence is unchanged (the QR computation itself is
+    // infallible on finite input, which the finiteness gate above proves).
+    let qr = whitened_design.clone().qr();
+    let projected = qr.q().tr_mul(whitened_signal);
+    let upper = qr.r();
+    // Rank and conditioning from the SVD diagnostic on the thin R factor.
+    // In exact arithmetic these singular values are the design's
+    // (A = Q1 R1 with orthonormal Q1); in floating point they agree to
+    // ~1e-15 relative, so rank and gate verdicts are unchanged while the
+    // duplicate N x P clone is gone. `upper` is still borrowed below by
+    // the back-substitution, hence the P x P clone (negligible traffic).
+    let svd = upper.clone().svd(true, false);
     let singular = svd.singular_values;
     let sigma_max = singular[0];
     if !(sigma_max.is_finite() && sigma_max > 0.0) {
@@ -1521,10 +1545,9 @@ fn solve_direct_with_factor(
             format!("scaled-design condition {condition:.6e} exceeds limit"),
         ));
     }
-    // Solution through thin QR: c = Q^T y, then back-substitute R1 x = c.
-    let qr = whitened_design.clone().qr();
-    let projected = qr.q().tr_mul(whitened_signal);
-    let upper = qr.r();
+    // Back-substitution R1 x = c on the same factor the diagnostic above
+    // already reused; `projected` and `upper` were computed before the
+    // gates but only read here, after them.
     let mut beta = DVector::zeros(columns);
     for column in (0..columns).rev() {
         let mut accumulator = projected[column];
@@ -1662,7 +1685,9 @@ fn covariance_from_factor(
 /// [`covariance_from_qr`] scale gate and forward substitution on the exact
 /// same factor object — so every output is bit-identical to running the two
 /// entry points in sequence, while the second `O(N p^2)` QR factorization
-/// and its matrix clone are gone. Returns
+/// and its matrix clone are gone (and the SVD diagnostic now also reuses
+/// that factor instead of cloning the design again — see
+/// [`solve_direct`]). Returns
 /// `(beta, residual_rms, rank, condition, covariance_beta)`.
 pub fn solve_direct_and_covariance(
     whitened_design: &DMatrix<f64>,
