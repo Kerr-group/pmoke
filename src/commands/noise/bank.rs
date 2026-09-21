@@ -124,6 +124,11 @@ pub(super) struct BankLegRow {
     pub xy: Vec<f64>,
     pub condition: f64,
     pub rank: usize,
+    /// Standardized per-unit-noise residual RMS (dimensionless; a volts RMS
+    /// only when the reference variance is 1 V^2), same convention as the
+    /// joint quality column. The `_v` suffix is frozen naming, not a unit
+    /// promise; contrast the diagnostics-path volts RMS of a raw nuisance
+    /// residual, which must not be compared directly.
     pub residual_rms_v: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub covariance: Option<Vec<f64>>,

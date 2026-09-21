@@ -151,6 +151,15 @@ impl NoiseModelSource for SyntheticNoiseModelSource {
 /// slice) but are never CSV columns: a window that needed regularization is
 /// flagged `warning`, and fatal windows abort publication instead of
 /// becoming shortened tables.
+///
+/// `residual_rms_v` carries `estimate.residual_rms` unchanged: a
+/// standardized per-unit-noise RMS (dimensionless), not a volts RMS. It
+/// coincides with a volts RMS only when the calibration reference variance
+/// is exactly 1 V^2. The `_v` suffix is a legacy label frozen by the CSV
+/// contract; renaming it is a contract change and needs separate approval.
+/// Contrast the diagnostics-path `residual_rms`, a true volts RMS of a raw
+/// nuisance residual under a confusable name (different estimator,
+/// different normalization): the two must not be compared directly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QualityRow {
     pub original_center_index: usize,

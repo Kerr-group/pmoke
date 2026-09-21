@@ -66,6 +66,11 @@ pub struct NuisanceObservability {
     pub blocks_fitted: usize,
     pub ranks: Vec<usize>,
     pub conditions: Vec<f64>,
+    /// True volts RMS per block: mean-removed RMS of the raw nuisance-fit
+    /// residual in signal units. Despite the shared name this is NOT the
+    /// standardized (dimensionless) joint `residual_rms` (different
+    /// estimator, different normalization); the two must not be compared
+    /// directly.
     pub residual_rms: Vec<f64>,
     pub rank_deficient_blocks: Vec<usize>,
     pub ill_conditioned_blocks: Vec<usize>,
@@ -629,4 +634,104 @@ pub fn recipe_provenance() -> Vec<(String, String)> {
             ),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use pmoke_analysis_core::{
+        HarmonicSignalModel, JointHarmonicSettings, JointSolverTolerances, NoiseMode, NoiseModel,
+        design_matrix, estimate_joint,
+    };
+    use std::f64::consts::PI;
+
+    /// S1 unit-honesty contract (document-first, no rename): the joint
+    /// `residual_rms` is a standardized per-unit-noise RMS (dimensionless;
+    /// volts only at v0 == 1 V^2) while the diagnostics `residual_rms` is a
+    /// true volts RMS of a raw nuisance residual. Both sides are pinned here
+    /// so a future rename or units change must update this test.
+    #[test]
+    fn residual_rms_units_are_pinned_on_both_sides() {
+        // Side A: joint standardized RMS through the shared core. The tone is
+        // exactly representable; the off-harmonic perturbation is not, so the
+        // residual is healthy and nonzero.
+        let samples = 500;
+        let dt = 1.0e-5;
+        let rate = 100_000.0;
+        let f_ref = 1_000.0;
+        let phase = 0.3;
+        let times: Vec<f64> = (0..samples).map(|index| index as f64 * dt).collect();
+        let signal: Vec<f64> = times
+            .iter()
+            .map(|time| {
+                (2.0 * PI * f_ref * time + phase).sin() + 1.0e-3 * (2.0 * PI * 1234.5 * time).sin()
+            })
+            .collect();
+        let model = HarmonicSignalModel {
+            fit_harmonics: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            output_harmonics: vec![1, 2, 3, 4, 5, 6],
+            envelope_degree: 0,
+        };
+        let settings_for = |v0: f64| JointHarmonicSettings {
+            model: model.clone(),
+            noise: NoiseModel {
+                mode: NoiseMode::Identity,
+                reference_variance_v2: v0,
+                variance_bins: None,
+                correlation: None,
+            },
+            tolerances: JointSolverTolerances::default(),
+        };
+        let at_unit =
+            estimate_joint(&times, &signal, f_ref, phase, rate, &settings_for(1.0)).unwrap();
+        let at_four =
+            estimate_joint(&times, &signal, f_ref, phase, rate, &settings_for(4.0)).unwrap();
+        // Independent volts RMS from the published coefficients: raw signal
+        // minus design * beta, in signal units.
+        let design = design_matrix(&times, f_ref, phase, &model, rate).unwrap();
+        let rows = times.len() as f64;
+        let columns = design.ncols();
+        let sum_sq: f64 = (0..times.len())
+            .map(|row| {
+                let fitted: f64 = (0..columns)
+                    .map(|column| design[(row, column)] * at_unit.beta[column])
+                    .sum();
+                (signal[row] - fitted).powi(2)
+            })
+            .sum();
+        let volts_rms = (sum_sq / rows).sqrt();
+        assert!(
+            volts_rms > 1.0e-6,
+            "fixture residual unexpectedly tiny: {volts_rms:.6e}"
+        );
+        // v0 == 1: the standardized value IS the volts RMS ...
+        let unit_rel = (at_unit.residual_rms - volts_rms).abs() / volts_rms;
+        assert!(
+            unit_rel < 1.0e-9,
+            "v0==1 must read volts RMS: got {:.6e}, want {volts_rms:.6e}",
+            at_unit.residual_rms
+        );
+        // ... while v0 == 4 scales as 1/sqrt(v0): dimensionless, and nowhere
+        // near the volts reading it could be confused with.
+        let four_rel = (at_four.residual_rms - volts_rms / 2.0).abs() / volts_rms;
+        assert!(
+            four_rel < 1.0e-12,
+            "v0==4 must read volts RMS / 2: got {:.6e}, want {:.6e}",
+            at_four.residual_rms,
+            volts_rms / 2.0
+        );
+        let gap = (at_four.residual_rms - volts_rms).abs() / volts_rms;
+        assert!(
+            gap > 0.4,
+            "v0==4 standardized value must stay far from volts RMS (gap {gap:.3})"
+        );
+
+        // Side B: the diagnostics volts-RMS helper preserves input units with
+        // mean removal. A pure offset carries no residual power; scaling the
+        // input scales the reading (volts in, volts out).
+        assert_eq!(super::rms(&[1.0, 3.0]), 1.0);
+        assert_eq!(super::rms(&[2.0, 6.0]), 2.0);
+        assert_eq!(super::rms(&[-2.0, -6.0]), 2.0);
+        assert_eq!(super::rms(&[5.0, 5.0, 5.0]), 0.0);
+        assert_eq!(super::rms(&[]), 0.0);
+    }
 }
