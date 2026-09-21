@@ -62,6 +62,14 @@ pub const DEFAULT_FLOOR_RATIO: f64 = 0.05;
 pub const DEFAULT_MAX_LAG: usize = 256;
 /// Default identity shrinkage on the tapered correlation (A-005).
 pub const DEFAULT_CORRELATION_ETA: f64 = 0.01;
+/// Default SCS adequacy lag count (FR-06 split-half gate, frozen).
+pub const DEFAULT_ADEQUACY_LAGS: usize = 4;
+/// Default SCS adequacy minimum pairs per phase cell (frozen).
+pub const DEFAULT_ADEQUACY_MIN_PAIRS_PER_CELL: usize = 10;
+/// Default SCS adequacy training phase-spread gate (FR-06, frozen).
+pub const DEFAULT_ADEQUACY_MAX_PHASE_SPREAD: f64 = 0.2;
+/// Default SCS adequacy reserved-shift gate (FR-06, frozen).
+pub const DEFAULT_ADEQUACY_MAX_RESERVED_SHIFT: f64 = 0.2;
 /// Nuisance harmonics 1..=12 plus DC and a scaled linear trend.
 pub const NUISANCE_HARMONICS: usize = 12;
 /// Nuisance parameter count: DC + trend + 2 coefficients per harmonic.
@@ -1601,6 +1609,17 @@ pub struct AdequacyPolicy {
     pub min_pairs_per_cell: usize,
     pub max_phase_spread: f64,
     pub max_reserved_shift: f64,
+}
+
+impl Default for AdequacyPolicy {
+    fn default() -> Self {
+        Self {
+            lags: DEFAULT_ADEQUACY_LAGS,
+            min_pairs_per_cell: DEFAULT_ADEQUACY_MIN_PAIRS_PER_CELL,
+            max_phase_spread: DEFAULT_ADEQUACY_MAX_PHASE_SPREAD,
+            max_reserved_shift: DEFAULT_ADEQUACY_MAX_RESERVED_SHIFT,
+        }
+    }
 }
 
 /// SCS adequacy verdict. A nonseparable process yields a model-mismatch

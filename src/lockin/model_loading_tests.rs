@@ -395,6 +395,8 @@ fn joint_end_to_end_through_run_li() {
             path: "ch3.json".to_string(),
             sha256: digest,
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
 
     let dt = DT;
@@ -542,6 +544,8 @@ fn retained_calibration_survives_external_removal() {
             path: "ch3.json".to_string(),
             sha256: digest.clone(),
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
 
     let dt = DT;

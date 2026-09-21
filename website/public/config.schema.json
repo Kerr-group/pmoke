@@ -1798,6 +1798,172 @@
         "value_type": "table array"
       },
       {
+        "constraints": [],
+        "default": "defaults",
+        "details_en": "Optional TOL-06/07 policy carriers for the joint estimator and the pre-pulse nuisance fit. Every key is optional; an absent table or absent key keeps the frozen default, so existing v7 configs behave byte-identically.",
+        "details_ja": "joint推定器とpre-pulse nuisance fit用のTOL-06/07ポリシー。すべて任意。テーブル欠落・キー欠落は凍結済み既定値を保持し、既存v7設定の動作はバイト同一。",
+        "id": "lockin.estimator.solver_tolerances",
+        "path": "lockin.estimator.solver_tolerances",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Joint solver tolerance overrides.",
+        "summary_ja": "joint solver許容値の上書き",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "must be finite and positive"
+        ],
+        "default": "1e-10",
+        "details_en": "Must be finite and positive. Smaller values keep weaker singular directions; larger values reject them earlier.",
+        "details_ja": "有限かつ正。既定1e-10。小さいほど弱い特異方向を残し、大きいほど早期に棄却。",
+        "id": "lockin.estimator.solver_tolerances.rank_tol",
+        "path": "lockin.estimator.solver_tolerances.rank_tol",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Relative singular-value floor for rank decisions.",
+        "summary_ja": "ランク判定の相対特異値フロア",
+        "units": null,
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must be finite and positive"
+        ],
+        "default": "1e8",
+        "details_en": "Must be finite and positive. Windows whose scaled-design condition exceeds it fail instead of publishing.",
+        "details_ja": "有限かつ正。既定1e8。超過ウィンドウは公開せず失敗扱い。",
+        "id": "lockin.estimator.solver_tolerances.max_condition",
+        "path": "lockin.estimator.solver_tolerances.max_condition",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Scaled-design condition rejection threshold.",
+        "summary_ja": "スケール済みdesignの条件数棄却閾値",
+        "units": null,
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must be finite and positive"
+        ],
+        "default": "1e10",
+        "details_en": "Must be finite and positive. Caps the executed covariance conditioning (TOL-07).",
+        "details_ja": "有限かつ正。既定1e10。実行時共分散の条件付けを制限（TOL-07）。",
+        "id": "lockin.estimator.solver_tolerances.max_noise_condition",
+        "path": "lockin.estimator.solver_tolerances.max_noise_condition",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Realized noise-covariance condition cap.",
+        "summary_ja": "実現雑音共分散の条件数上限",
+        "units": null,
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must be finite and non-negative"
+        ],
+        "default": "0.0",
+        "details_en": "Must be finite and non-negative. Zero (default) disables jitter: a non-SPD Toeplitz factor fails instead of regularizing silently.",
+        "details_ja": "有限かつ非負。既定0.0（無効）。非SPD Toeplitz因子は暗黙正則化せず失敗扱い。",
+        "id": "lockin.estimator.solver_tolerances.max_jitter_v2",
+        "path": "lockin.estimator.solver_tolerances.max_jitter_v2",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Bounded-jitter ceiling in normalized-lag units.",
+        "summary_ja": "正規化lag単位のbounded-jitter上限",
+        "units": "normalized-lag units",
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [],
+        "default": "defaults",
+        "details_en": "Optional FR-06 split-half policy for pre-pulse derivation. Every key is optional; an absent table or absent key keeps the frozen default. The gate stays mandatory for every noise mode.",
+        "details_ja": "pre-pulse導出用FR-06 split-halfポリシー。すべて任意で既定は凍結値。ゲート自体は全noise_modeで必須のまま。",
+        "id": "lockin.estimator.scs_adequacy",
+        "path": "lockin.estimator.scs_adequacy",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "SCS adequacy gate overrides.",
+        "summary_ja": "SCS adequacyゲートの上書き",
+        "units": null,
+        "valid_values": [],
+        "value_type": "table"
+      },
+      {
+        "constraints": [
+          "must be positive"
+        ],
+        "default": "4",
+        "details_en": "Must be positive. Lags compared across phase octants in the split-half check.",
+        "details_ja": "正の整数。既定4。split-half検査で位相octant間にわたり比較するlag数。",
+        "id": "lockin.estimator.scs_adequacy.lags",
+        "path": "lockin.estimator.scs_adequacy.lags",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Adequacy lag count.",
+        "summary_ja": "adequacyのlag数",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [
+          "must be positive"
+        ],
+        "default": "10",
+        "details_en": "Must be positive. Cells below this coverage carry no adequacy evidence.",
+        "details_ja": "正の整数。既定10。これ未満のセルはadequacy証拠なし扱い。",
+        "id": "lockin.estimator.scs_adequacy.min_pairs_per_cell",
+        "path": "lockin.estimator.scs_adequacy.min_pairs_per_cell",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Minimum lag pairs per phase cell.",
+        "summary_ja": "位相セル毎の最小lagペア数",
+        "units": null,
+        "valid_values": [],
+        "value_type": "integer"
+      },
+      {
+        "constraints": [
+          "must be finite and non-negative"
+        ],
+        "default": "0.2",
+        "details_en": "Must be finite and non-negative. Training/half splits disagreeing beyond it refuse derivation. Relaxing the bar needs approval; on failure retake the interval or data.",
+        "details_ja": "有限かつ非負。既定0.2。これを超える不一致は導出拒否。緩和は承認事項。失敗時は区間・データを再取得。",
+        "id": "lockin.estimator.scs_adequacy.max_phase_spread",
+        "path": "lockin.estimator.scs_adequacy.max_phase_spread",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Training phase-spread gate.",
+        "summary_ja": "学習位相spreadゲート",
+        "units": null,
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
+        "constraints": [
+          "must be finite and non-negative"
+        ],
+        "default": "0.2",
+        "details_en": "Must be finite and non-negative. Pooled training-vs-reserved shifts beyond it refuse derivation.",
+        "details_ja": "有限かつ非負。既定0.2。これを超えるshiftは導出拒否。",
+        "id": "lockin.estimator.scs_adequacy.max_reserved_shift",
+        "path": "lockin.estimator.scs_adequacy.max_reserved_shift",
+        "required": "optional",
+        "since": 4,
+        "summary_en": "Reserved-shift gate.",
+        "summary_ja": "reserved-shiftゲート",
+        "units": null,
+        "valid_values": [],
+        "value_type": "float"
+      },
+      {
         "constraints": [
           "fields from other filter kinds are rejected"
         ],

@@ -504,7 +504,7 @@ fn li_process_joint<'a>(
         f_ref: ref_fit_params.f_ref,
         omega_tref: ref_fit_params.omega_tref,
         sample_rate: sample_interval_s.recip(),
-        tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
+        tolerances: gls.solver_tolerances.into(),
     };
     let output = run_joint_li(&inputs, signal_ch, signal_data, source.as_ref())?;
     let provenance = match (prepulse_digest, prepulse_interval) {

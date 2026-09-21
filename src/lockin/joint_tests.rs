@@ -46,6 +46,8 @@ fn joint_lockin() -> crate::config::Lockin {
             path: "synthetic".to_string(),
             sha256: SHA_A.to_string(),
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
     lockin
 }

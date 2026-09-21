@@ -687,6 +687,99 @@ fn validate_estimator(lockin: &Lockin, signal_ch: &[u8], errors: &mut Vec<Config
         ));
     }
     validate_estimator_calibrations(config, signal_ch, errors);
+    validate_gls_tolerances(config, errors);
+}
+
+/// Validates the `[lockin.estimator.solver_tolerances]` and
+/// `[lockin.estimator.scs_adequacy]` overrides. Bounds mirror the runtime
+/// solver/adequacy gates exactly (joint `solve_direct`, `cholesky_factor`,
+/// TOL-07 caps, `scs_adequacy`): a config rejected here would fail at
+/// execution, so it fails at load with the offending path instead.
+fn validate_gls_tolerances(config: &JointHarmonicGlsConfig, errors: &mut Vec<ConfigDiagnostic>) {
+    let solver = &config.solver_tolerances;
+    if !solver.rank_tol.is_finite() || solver.rank_tol <= 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.solver_tolerances.rank_tol".to_string()),
+            format!(
+                "lockin.estimator.solver_tolerances.rank_tol must be finite and positive (got {})",
+                solver.rank_tol
+            ),
+            Some("use the default 1e-10 unless trading rank robustness for speed".to_string()),
+        ));
+    }
+    if !solver.max_condition.is_finite() || solver.max_condition <= 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.solver_tolerances.max_condition".to_string()),
+            format!(
+                "lockin.estimator.solver_tolerances.max_condition must be finite and positive (got {})",
+                solver.max_condition
+            ),
+            Some("use the default 1e8 unless trading conditioning strictness".to_string()),
+        ));
+    }
+    if !solver.max_noise_condition.is_finite() || solver.max_noise_condition <= 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.solver_tolerances.max_noise_condition".to_string()),
+            format!(
+                "lockin.estimator.solver_tolerances.max_noise_condition must be finite and positive (got {})",
+                solver.max_noise_condition
+            ),
+            Some("use the default 1e10 unless trading noise-covariance strictness".to_string()),
+        ));
+    }
+    if !solver.max_jitter_v2.is_finite() || solver.max_jitter_v2 < 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.solver_tolerances.max_jitter_v2".to_string()),
+            format!(
+                "lockin.estimator.solver_tolerances.max_jitter_v2 must be finite and non-negative (got {})",
+                solver.max_jitter_v2
+            ),
+            Some("use the default 0.0 (non-SPD factors fail instead of regularizing)".to_string()),
+        ));
+    }
+    let adequacy = &config.scs_adequacy;
+    if adequacy.lags == 0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.scs_adequacy.lags".to_string()),
+            "lockin.estimator.scs_adequacy.lags must be positive",
+            Some("use the default 4".to_string()),
+        ));
+    }
+    if adequacy.min_pairs_per_cell == 0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.scs_adequacy.min_pairs_per_cell".to_string()),
+            "lockin.estimator.scs_adequacy.min_pairs_per_cell must be positive",
+            Some("use the default 10".to_string()),
+        ));
+    }
+    if !adequacy.max_phase_spread.is_finite() || adequacy.max_phase_spread < 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.scs_adequacy.max_phase_spread".to_string()),
+            format!(
+                "lockin.estimator.scs_adequacy.max_phase_spread must be finite and non-negative (got {})",
+                adequacy.max_phase_spread
+            ),
+            Some("use the default 0.2; lowering the bar needs approval, never silent".to_string()),
+        ));
+    }
+    if !adequacy.max_reserved_shift.is_finite() || adequacy.max_reserved_shift < 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.scs_adequacy.max_reserved_shift".to_string()),
+            format!(
+                "lockin.estimator.scs_adequacy.max_reserved_shift must be finite and non-negative (got {})",
+                adequacy.max_reserved_shift
+            ),
+            Some("use the default 0.2".to_string()),
+        ));
+    }
 }
 
 fn validate_estimator_calibrations(

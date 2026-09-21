@@ -42,6 +42,8 @@ fn gls_config(noise_mode: GlsNoiseMode) -> JointHarmonicGlsConfig {
         failure_policy: GlsFailurePolicy::Error,
         calibration_source: crate::config::GlsCalibrationSource::Prepulse,
         calibrations: Vec::new(),
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     }
 }
 
@@ -228,6 +230,80 @@ fn digest_distinguishes_interval_and_estimator_inputs() {
     .unwrap()
     .digest;
     assert_ne!(base, other_source);
+}
+
+#[test]
+fn explicit_frozen_tolerances_match_implicit_defaults_end_to_end() {
+    let samples = 30_000usize;
+    let (time, signal) = stationary_trace(samples, 7, 0.05);
+    let default_gls = gls_config(GlsNoiseMode::Identity);
+    let mut frozen_gls = default_gls.clone();
+    frozen_gls.solver_tolerances = crate::config::GlsSolverTolerances {
+        rank_tol: 1e-10,
+        max_condition: 1e8,
+        max_noise_condition: 1e10,
+        max_jitter_v2: 0.0,
+    };
+    frozen_gls.scs_adequacy = crate::config::GlsScsAdequacy {
+        lags: 4,
+        min_pairs_per_cell: 10,
+        max_phase_spread: 0.2,
+        max_reserved_shift: 0.2,
+    };
+    let derive = |gls: &JointHarmonicGlsConfig| {
+        derive_prepulse(
+            full_window(samples),
+            TimeAxisRef::Explicit(&time),
+            &[3],
+            &[signal.as_slice()],
+            F_REF,
+            PHASE,
+            DT,
+            gls,
+            "acquisition-test",
+        )
+        .unwrap()
+    };
+    let from_default = derive(&default_gls);
+    let from_frozen = derive(&frozen_gls);
+    assert_eq!(from_default.digest, from_frozen.digest);
+    let (default_model, default_binding) =
+        from_default.source.load(3, GlsNoiseMode::Identity).unwrap();
+    let (frozen_model, frozen_binding) =
+        from_frozen.source.load(3, GlsNoiseMode::Identity).unwrap();
+    assert_eq!(default_model, frozen_model);
+    assert_eq!(default_binding, frozen_binding);
+}
+
+#[test]
+fn nondefault_tolerances_feed_the_derivation_digest() {
+    let samples = 30_000usize;
+    let (time, signal) = stationary_trace(samples, 13, 0.05);
+    let base_gls = gls_config(GlsNoiseMode::Identity);
+    let derive = |gls: &JointHarmonicGlsConfig| {
+        derive_prepulse(
+            full_window(samples),
+            TimeAxisRef::Explicit(&time),
+            &[3],
+            &[signal.as_slice()],
+            F_REF,
+            PHASE,
+            DT,
+            gls,
+            "acquisition-test",
+        )
+        .unwrap()
+        .digest
+    };
+    let base = derive(&base_gls);
+    // Solver tolerances steer the nuisance fit, so they feed the digest.
+    let mut solver_override = base_gls.clone();
+    solver_override.solver_tolerances.rank_tol = 1e-9;
+    assert_ne!(base, derive(&solver_override));
+    // The SCS adequacy gate feeds the digest.
+    let mut adequacy_override = base_gls.clone();
+    adequacy_override.scs_adequacy.max_phase_spread = 0.5;
+    assert_ne!(base, derive(&adequacy_override));
 }
 
 #[test]
