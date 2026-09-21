@@ -55,12 +55,12 @@ use formatting::{
 };
 use inspect::*;
 use keymap::*;
-#[cfg(test)]
-use layout::workflow_panel_width;
 use layout::{
     UiLayout, config_panel_layout, output_inner_layout, output_visible_rows, runs_layout,
     workflow_layout,
 };
+#[cfg(test)]
+use layout::{workflow_panel_width, workflow_panel_width_for};
 use output::*;
 use panels::*;
 use runs::*;
