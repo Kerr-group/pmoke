@@ -51,6 +51,87 @@ fn pin_canonical_workflow(app: &mut MonitorApp) {
     app.workflow_cursor = 1;
 }
 
+/// Invariant (a): the snapshot fixture must track the minimal registry.
+///
+/// `canonical_snapshot_actions()` hand-mirrors `monitor_actions()` under
+/// `--no-default-features`. A new non-`hw-core` action that is added to the
+/// registry without extending the fixture silently desyncs every committed
+/// `.snap` frame from the production UI, so this test fails fast instead.
+#[test]
+fn canonical_snapshot_actions_match_minimal_registry() {
+    let canonical = canonical_snapshot_actions();
+    #[cfg(not(feature = "hw-core"))]
+    {
+        let registry = monitor_actions();
+        assert_eq!(
+            canonical, registry,
+            "canonical snapshot fixture diverged from the minimal registry: \
+             fixture={canonical:?} registry={registry:?}; extend \
+             canonical_snapshot_actions() in src/commands/monitor/tests/snapshots.rs \
+             (and re-pin the .snap frames if WORKFLOW entries change)"
+        );
+    }
+    #[cfg(feature = "hw-core")]
+    {
+        // The `hw-core` leg adds exactly the hardware actions below; the
+        // fixture must remain the registry minus those. A mismatch means a
+        // new action landed in the registry: extend the fixture for a
+        // non-hardware action, or extend `hw_only` for a hardware-gated one
+        // (and re-pin the .snap frames if WORKFLOW entries change).
+        let hw_only = [
+            MonitorAction::Single,
+            MonitorAction::Trigger,
+            MonitorAction::Autoshot,
+            MonitorAction::Fetch,
+            MonitorAction::Screenshot,
+            MonitorAction::Automeasure,
+            MonitorAction::Process,
+            MonitorAction::Auto,
+        ];
+        let registry = monitor_actions();
+        let minimal: Vec<MonitorAction> = registry
+            .iter()
+            .copied()
+            .filter(|action| !hw_only.contains(action))
+            .collect();
+        assert_eq!(
+            canonical, minimal,
+            "canonical snapshot fixture diverged from the minimal registry: \
+             fixture={canonical:?} minimal={minimal:?} full_registry={registry:?}; \
+             extend canonical_snapshot_actions() for a non-hardware action or \
+             hw_only above for a hardware-gated one \
+             (src/commands/monitor/tests/snapshots.rs)"
+        );
+    }
+}
+
+/// Invariant (b): the WORKFLOW panel width must agree between the snapshot
+/// fixture and the real registry.
+///
+/// Frames render rows from `app.workflow_entries()` (fixture-pinned) but
+/// size the panel with `workflow_panel_width()` (real registry). Today both
+/// legs floor at `WORKFLOW_MIN_WIDTH`, but any action name >= 14 cells
+/// breaks that coincidence and desyncs `.snap` frames across feature legs.
+/// This test fails fast across representative widths instead.
+#[test]
+fn workflow_panel_width_matches_snapshot_fixture() {
+    let fixture = canonical_snapshot_actions();
+    let registry = monitor_actions();
+    for available_width in [40u16, 72, 92, 120, 200] {
+        let fixture_width = workflow_panel_width_for(&fixture, available_width);
+        let registry_width = workflow_panel_width_for(&registry, available_width);
+        assert_eq!(
+            fixture_width, registry_width,
+            "workflow panel width diverged between snapshot fixture and full \
+             registry at available width {available_width}: fixture={fixture_width} \
+             registry={registry_width}; an action/group label changed the content \
+             width past the shared floor — update canonical_snapshot_actions() \
+             and/or layout.rs, then re-pin the .snap frames \
+             (src/commands/monitor/tests/snapshots.rs)"
+        );
+    }
+}
+
 /// Idle dashboard with one probe line in the activity panel.
 fn probe_app() -> MonitorApp {
     let mut app = harness_app();
