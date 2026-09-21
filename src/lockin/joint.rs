@@ -14,10 +14,11 @@ use crate::ui;
 use crate::utils::time_axis::TimeAxisRef;
 use anyhow::{Context, Result, bail};
 use pmoke_analysis_core::{
-    CorrelationKernel, HarmonicSignalModel, JointEstimate, JointHarmonicSettings,
-    JointSolverTolerances, NoiseModel, PreparedNoisePlan, estimate_joint_with_plan,
+    CorrelationKernel, HarmonicSignalModel, JointEstimate, JointHarmonicSettings, JointScratch,
+    JointSolverTolerances, NoiseModel, PreparedNoisePlan, estimate_joint_with_scratch,
 };
 use rayon::prelude::*;
+use std::cell::RefCell;
 
 /// Upper bound for temporary per-window allocations during native execution.
 /// Final artifacts remain ordered and compatible, while a large record never
@@ -198,7 +199,31 @@ pub const QUADRATURE_NAMES: [&str; 12] = [
 /// Per-quadrature columns over the output grid: `[x_h1, y_h1, ..., x_h6, y_h6]`.
 pub type XyColumns = Vec<Vec<f64>>;
 /// Per-output 12x12 design-model covariance matrices in XY order.
+///
+/// Kept for the [`pack_covariance_row`] packing contract and its tests: the
+/// estimator validates each full matrix, then packs it on the fly. Native
+/// execution never retains this shape (see [`PackedCovariances`]).
 pub type XyCovariances = Vec<Vec<Vec<f64>>>;
+/// Per-output packed covariance rows in [`covariance_csv_header`] order:
+/// 12 diagonal entries for `diagonal`, 78 upper-triangle entries
+/// (lexicographic row<=column) for `full`. This is the native retention
+/// shape: the full 144-f64 matrix is validated and packed per window, so a
+/// 100k-window channel retains ~9.6MB (`diagonal`) or ~62MB (`full`)
+/// instead of ~115MB of full matrices plus the second column-matrix copy
+/// the old writer built.
+pub type PackedCovariances = Vec<Vec<f64>>;
+
+/// Packed row width for a serialization mode: 12 (`diagonal`) or 78
+/// (`full`). `none` omits the artifact entirely and has no width.
+pub fn packed_covariance_width(mode: GlsCovarianceOutput) -> Result<usize> {
+    match mode {
+        GlsCovarianceOutput::None => {
+            bail!("covariance_output=none omits the covariance artifact; it has no packed width")
+        }
+        GlsCovarianceOutput::Diagonal => Ok(12),
+        GlsCovarianceOutput::Full => Ok(78),
+    }
+}
 
 /// Shared inputs for a joint lock-in execution (keeps the engine entry
 /// points within the argument-count lint).
@@ -216,19 +241,22 @@ pub struct JointRunInputs<'a> {
 
 /// Joint lock-in outputs in boxcar-compatible layout.
 ///
-/// The estimator always computes the full design-model covariance; the
-/// none/diagonal/full serialization modes land with the covariance artifacts
-/// in the next slice, so no information is dropped here.
+/// The estimator always computes the full design-model covariance per
+/// window, validates it, and packs it on the fly into the
+/// `diagonal`/`full` serialization width; only the packed rows are
+/// retained, so no information the selected artifact carries is dropped
+/// here while peak native memory stays bounded.
 pub struct JointRunOutput {
     /// Per channel [`XyColumns`] over the shared output grid.
     pub result: Vec<XyColumns>,
     /// Per-channel quality rows aligned with the output grid.
     pub quality: Vec<Vec<QualityRow>>,
-    /// Per-channel, per-output 12x12 design-model covariance in XY order
-    /// (peak-amplitude quantities). `covariance_output=none` deliberately returns
-    /// empty per-channel vectors after validating each solver result, so
-    /// native memory does not retain an unused 144-f64 matrix per output.
-    pub covariance: Vec<XyCovariances>,
+    /// Per-channel, per-output packed design-model covariance rows in XY
+    /// serialization order (peak-amplitude quantities): 12 entries for
+    /// `diagonal`, 78 for `full`. `covariance_output=none` deliberately
+    /// returns empty per-channel vectors after validating each solver
+    /// result, so native memory retains nothing per output.
+    pub covariance: Vec<PackedCovariances>,
     /// Per-channel frozen estimator snapshots for staged reruns.
     pub snapshots: Vec<EstimatorSnapshot>,
     /// Per-channel retained calibration bindings (exact validated bytes).
@@ -361,45 +389,82 @@ pub fn pack_covariance_row(
 
 /// Writes the per-window conditional covariance artifact
 /// (`lockin/ch{channel}_covariance.csv`, AT-025): `time_s` plus the selected
-/// covariance columns. Existing files are never overwritten, and non-finite
-/// entries abort instead of publishing unknown-as-zero (FR-041).
+/// covariance columns. `packed` carries per-output packed rows in
+/// [`covariance_csv_header`] order (see [`pack_covariance_row`]); rows are
+/// streamed one at a time, so the writer holds no column-matrix copy.
+/// Existing files are never overwritten, and non-finite entries abort
+/// instead of publishing unknown-as-zero (FR-041).
 pub fn write_covariance_csv(
     path: &std::path::Path,
     mode: GlsCovarianceOutput,
     times: &[f64],
-    covariances: &[Vec<Vec<f64>>],
+    packed: &[Vec<f64>],
 ) -> Result<()> {
     let header = covariance_csv_header(mode)?;
-    write_covariance_table(path, &header, times, covariances, mode, false)
+    let width = packed_covariance_width(mode)?;
+    write_packed_covariance_table(path, &header, times, packed, width, false)
 }
 
 /// NPY mirror of [`write_covariance_csv`] with exactly the same
 /// time-plus-covariance columns, C-order `<f8`, via the shared
-/// [`crate::utils::csv::write_npy`] conventions. Quality CSVs stay
+/// [`crate::utils::csv::write_npy`] conventions (same header bytes and
+/// row-major layout, streamed row by row). Quality CSVs stay
 /// CSV-only; covariance is the numeric artifact with an NPY mirror.
 pub fn write_covariance_npy(
     path: &std::path::Path,
     mode: GlsCovarianceOutput,
     times: &[f64],
-    covariances: &[Vec<Vec<f64>>],
+    packed: &[Vec<f64>],
 ) -> Result<()> {
     let header = covariance_csv_header(mode)?;
-    write_covariance_table(path, &header, times, covariances, mode, true)
+    let width = packed_covariance_width(mode)?;
+    write_packed_covariance_table(path, &header, times, packed, width, true)
 }
 
-fn write_covariance_table(
+/// Validates packed rows without retaining them: exact `time_s` pairing,
+/// exact mode width, finite everywhere (FR-041). Shared by both writers so
+/// CSV and NPY reject the same rows before either creates its file.
+fn require_packed_covariance_rows(times: &[f64], packed: &[Vec<f64>], width: usize) -> Result<()> {
+    if times.len() != packed.len() {
+        bail!(
+            "covariance times ({}) and packed rows ({}) differ",
+            times.len(),
+            packed.len()
+        );
+    }
+    for (index, (time, row)) in times.iter().zip(packed.iter()).enumerate() {
+        if !time.is_finite() {
+            bail!("joint covariance row {index} has non-finite time_s");
+        }
+        if row.len() != width {
+            bail!(
+                "joint covariance row {index} holds {} entries, expected {width}",
+                row.len()
+            );
+        }
+        if row.iter().any(|value| !value.is_finite()) {
+            bail!("joint covariance row {index} has non-finite entries");
+        }
+    }
+    Ok(())
+}
+
+fn write_packed_covariance_table(
     path: &std::path::Path,
     header: &[String],
     times: &[f64],
-    covariances: &[Vec<Vec<f64>>],
-    mode: GlsCovarianceOutput,
+    packed: &[Vec<f64>],
+    width: usize,
     npy: bool,
 ) -> Result<()> {
-    if times.len() != covariances.len() {
+    // Legacy order: pair-length check, then the never-overwrite guard, then
+    // per-row validation before any file is created (a bailed write must not
+    // leave a header-only partial artifact behind).
+    if times.len() != packed.len() {
         bail!(
-            "covariance times ({}) and matrices ({}) differ",
+            "covariance times ({}) and packed rows ({}) differ",
             times.len(),
-            covariances.len()
+            packed.len()
         );
     }
     if path.exists() {
@@ -413,45 +478,83 @@ fn write_covariance_table(
             )
         })?;
     }
-    let mut columns: Vec<Vec<f64>> = vec![Vec::with_capacity(times.len()); header.len()];
-    for (index, (time, covariance)) in times.iter().zip(covariances.iter()).enumerate() {
-        if !time.is_finite() {
-            bail!("joint covariance row {index} has non-finite time_s");
-        }
-        let packed = pack_covariance_row(covariance, mode)?;
-        if packed.iter().any(|value| !value.is_finite()) {
-            bail!("joint covariance row {index} has non-finite entries");
-        }
-        columns[0].push(*time);
-        for (column, value) in columns.iter_mut().skip(1).zip(packed.iter()) {
-            column.push(*value);
-        }
-    }
+    require_packed_covariance_rows(times, packed, width)?;
     if npy {
-        crate::utils::csv::write_npy(path, &columns)
-            .with_context(|| format!("failed to write covariance NPY: {}", path.display()))?;
+        write_packed_covariance_npy(path, header.len(), times, packed)?;
     } else {
-        let file = std::fs::File::create(path)
-            .with_context(|| format!("failed to create covariance output: {}", path.display()))?;
-        let mut writer = csv::WriterBuilder::new()
-            .has_headers(true)
-            .from_writer(file);
-        writer
-            .write_record(header)
-            .context("failed to write covariance header")?;
-        for index in 0..times.len() {
-            let record: Vec<String> = columns
-                .iter()
-                .map(|column| column[index].to_string())
-                .collect();
-            writer
-                .write_record(&record)
-                .with_context(|| format!("failed to write covariance row {index}"))?;
-        }
-        writer
-            .flush()
-            .context("failed to flush covariance output")?;
+        write_packed_covariance_csv(path, header, times, packed)?;
     }
+    Ok(())
+}
+
+/// Streamed CSV body: header plus one `time_s` + packed row at a time.
+/// Values use the same `f64::to_string` formatting in the same column
+/// order as the legacy column-matrix writer, so files are byte-identical
+/// while peak memory stays at one formatted row.
+fn write_packed_covariance_csv(
+    path: &std::path::Path,
+    header: &[String],
+    times: &[f64],
+    packed: &[Vec<f64>],
+) -> Result<()> {
+    use std::io::BufWriter;
+    let file = std::fs::File::create(path)
+        .with_context(|| format!("failed to create covariance output: {}", path.display()))?;
+    let mut writer = csv::WriterBuilder::new()
+        .has_headers(true)
+        .from_writer(BufWriter::new(file));
+    writer
+        .write_record(header)
+        .context("failed to write covariance header")?;
+    for (index, (time, row)) in times.iter().zip(packed.iter()).enumerate() {
+        let mut record: Vec<String> = Vec::with_capacity(row.len() + 1);
+        record.push(time.to_string());
+        record.extend(row.iter().map(f64::to_string));
+        writer
+            .write_record(&record)
+            .with_context(|| format!("failed to write covariance row {index}"))?;
+    }
+    writer
+        .flush()
+        .context("failed to flush covariance output")?;
+    Ok(())
+}
+
+/// Streamed NPY body: the same `<f8` C-order header the shared
+/// [`crate::utils::csv::write_npy`] writer emits for the same
+/// `(nrows, ncols)` shape, then one row-major row at a time
+/// (`time_s` first, then the packed entries). Byte-identical to the
+/// legacy column-matrix mirror without retaining it.
+fn write_packed_covariance_npy(
+    path: &std::path::Path,
+    ncols: usize,
+    times: &[f64],
+    packed: &[Vec<f64>],
+) -> Result<()> {
+    use std::io::{BufWriter, Write};
+    let nrows = times.len();
+    let dictionary =
+        format!("{{'descr': '<f8', 'fortran_order': False, 'shape': ({nrows}, {ncols}), }}");
+    let prefix_len = 10usize;
+    let padding = (64 - ((prefix_len + dictionary.len() + 1) % 64)) % 64;
+    let header = format!("{dictionary}{}\n", " ".repeat(padding));
+    let header_len =
+        u16::try_from(header.len()).map_err(|_| anyhow::anyhow!("NPY header is too large"))?;
+    let file = std::fs::File::create(path)
+        .with_context(|| format!("failed to write covariance NPY: {}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(b"\x93NUMPY")?;
+    writer.write_all(&[1, 0])?;
+    writer.write_all(&header_len.to_le_bytes())?;
+    writer.write_all(header.as_bytes())?;
+    for (time, row) in times.iter().zip(packed.iter()) {
+        writer.write_all(&time.to_le_bytes())?;
+        for value in row.iter() {
+            writer.write_all(&value.to_le_bytes())?;
+        }
+    }
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
     Ok(())
 }
 
@@ -547,12 +650,15 @@ pub fn run_joint_li(
     let mut snapshots = Vec::with_capacity(signal_data.len());
     let mut bindings = Vec::with_capacity(signal_data.len());
     // The joint GLS fit is the long silent stage of this path (one solver
-    // run per output window per channel): one coarse progress unit per
-    // channel keeps the bar and the JSONL stream alive without touching the
-    // hot per-window loop.
+    // run per output window per channel): the bar counts windows in
+    // per-chunk batches, so the bar and the JSONL stream stay alive without
+    // touching the hot per-window loop (no per-window atomics, no per-window
+    // events). One chunk (<=256 windows) is milliseconds of work, far inside
+    // the ~1s heartbeat budget.
+    let outputs_per_channel = plan.params.i_end - plan.params.i_start + 1;
     let pb = ui::progress(
         format!("joint GLS lock-in processing with {} workers", plan.workers),
-        signal_ch.len() as u64,
+        outputs_per_channel as u64 * signal_ch.len() as u64,
     );
     let t0 = std::time::Instant::now();
     for (&channel, signal) in signal_ch.iter().zip(signal_data.iter()) {
@@ -568,16 +674,10 @@ pub fn run_joint_li(
             tolerances,
         };
         let (columns, rows, covariances) =
-            run_joint_channel(inputs, signal, channel, &plan, &settings, &pool)?;
+            run_joint_channel(inputs, signal, channel, &plan, &settings, &pool, &pb)?;
         result.push(columns);
         quality.push(rows);
-        covariance.push(
-            if matches!(gls.covariance_output, GlsCovarianceOutput::None) {
-                Vec::new()
-            } else {
-                covariances
-            },
-        );
+        covariance.push(covariances);
         snapshots.push(
             build_estimator_snapshot(
                 channel,
@@ -594,7 +694,6 @@ pub fn run_joint_li(
             )
             .with_context(|| format!("joint estimator snapshot failed for channel {channel}"))?,
         );
-        pb.inc(1);
     }
     // The completion line carries the boxcar path's marker substring so the
     // monitor timeline's Lock-in step completes under either estimator.
@@ -621,6 +720,14 @@ pub fn run_joint_li(
     })
 }
 
+// Per-rayon-thread design-matrix scratch for the buffer-reusing estimate
+// path. Each worker thread fills its own buffer once per window shape and
+// reuses it for every later window; the scratch never crosses threads, so
+// no synchronization touches the hot loop.
+thread_local! {
+    static JOINT_DESIGN_SCRATCH: RefCell<JointScratch> = RefCell::new(JointScratch::new());
+}
+
 fn run_joint_channel(
     inputs: &JointRunInputs<'_>,
     signal: &[f64],
@@ -628,7 +735,8 @@ fn run_joint_channel(
     plan: &PreparedJointPlan,
     settings: &JointHarmonicSettings,
     pool: &rayon::ThreadPool,
-) -> Result<(XyColumns, Vec<QualityRow>, XyCovariances)> {
+    progress: &ui::UiProgress,
+) -> Result<(XyColumns, Vec<QualityRow>, PackedCovariances)> {
     let params = plan.params;
     let JointRunInputs {
         gls,
@@ -639,17 +747,20 @@ fn run_joint_channel(
         ..
     } = *inputs;
     let outputs = params.i_end - params.i_start + 1;
+    let mode = gls.covariance_output;
+    let retain_packed = !matches!(mode, GlsCovarianceOutput::None);
     let mut columns: XyColumns = (0..12).map(|_| Vec::with_capacity(outputs)).collect();
     let mut rows = Vec::with_capacity(outputs);
-    let mut covariances = Vec::with_capacity(outputs);
+    let mut covariances: PackedCovariances =
+        Vec::with_capacity(if retain_packed { outputs } else { 0 });
     // Same tap support as the legacy boxcar (edge legacy_trim): centers on
     // the strided grid, samples [center - n_half - 1, center + n_half + 1].
     let half_taps = params.n_half + 1;
     // Hoisted per-channel noise plan (P1): every window shares the same
     // length (2 * half_taps + 1) and the same calibrated noise model, so
     // the Toeplitz Cholesky factor and its TOL-07 condition are built once
-    // per channel and reused by every window via estimate_joint_with_plan.
-    // The plan path executes the same arithmetic under the same gates as
+    // per channel and reused by every window via estimate_joint_with_scratch.
+    // The scratch path executes the same arithmetic under the same gates as
     // the direct path (bit-identical outputs); only cost is hoisted.
     let window_rows = half_taps
         .checked_mul(2)
@@ -705,16 +816,25 @@ fn run_joint_channel(
                                 signal.len()
                             )
                         })?;
-                        estimate_joint_with_plan(
-                            &window_times,
-                            window_signal,
-                            f_ref,
-                            omega_tref,
-                            sample_rate_hz,
-                            &settings.model,
-                            settings.tolerances,
-                            &noise_plan,
-                        )
+                        // Buffer-reusing estimate: the thread-local design
+                        // scratch skips the per-window column allocations and
+                        // the solve shares one QR factor with the covariance.
+                        // Arithmetic, gates, and error attribution match the
+                        // direct path window for window (byte-identical).
+                        JOINT_DESIGN_SCRATCH.with(|cell| {
+                            let mut scratch = cell.borrow_mut();
+                            estimate_joint_with_scratch(
+                                &window_times,
+                                window_signal,
+                                f_ref,
+                                omega_tref,
+                                sample_rate_hz,
+                                &settings.model,
+                                settings.tolerances,
+                                &noise_plan,
+                                &mut scratch,
+                            )
+                        })
                         .map_err(|error| {
                             anyhow::anyhow!(GlsFailure {
                                 code: error.code().to_string(),
@@ -746,6 +866,12 @@ fn run_joint_channel(
                 );
             }
             require_xy_covariance(&estimate.covariance_xy, channel, output_index)?;
+            // Pack-on-the-fly: the full 144-f64 matrix is validated above,
+            // then immediately reduced to the serialized width (12/78) and
+            // dropped. `none` validates but retains nothing.
+            if retain_packed {
+                covariances.push(pack_covariance_row(&estimate.covariance_xy, mode)?);
+            }
             for (harmonic, column_pair) in columns.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                 column_pair[0].push(estimate.xy[2 * harmonic]);
                 column_pair[1].push(estimate.xy[2 * harmonic + 1]);
@@ -768,8 +894,10 @@ fn run_joint_channel(
                 jitter_applied_v2: estimate.jitter_applied_v2,
                 noise_mode: gls_noise_mode_name(gls.noise_mode),
             });
-            covariances.push(estimate.covariance_xy);
         }
+        // Batched window progress: one bar/JSONL update per chunk from the
+        // sequential assembly loop, never from the hot per-window loop.
+        progress.inc((chunk_end - chunk_start) as u64);
     }
     Ok((columns, rows, covariances))
 }
