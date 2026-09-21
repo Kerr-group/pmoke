@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- The monitor TUI gains a read-only REPORTS inspector plus paired
+  documentation and regression hardening (Issues #277/#278). The REPORTS
+  tab over the selected run shows STAGES rows from the run-manifest
+  lifecycle plus compact summaries of the calibrate, noise-diagnostics,
+  compare, and M6 evaluation reports, the calibration artifact, and the
+  analysis manifest — all via bounded read-only file reads (symlinks
+  refused) with no kernel, schema, artifact, WASM, hardware, or
+  dependency changes. Paired English/Japanese monitor docs cover the new
+  UX, a TUI string inventory with CJK cell budgets is maintained, and
+  pinned `insta` snapshots (canonical frames per size class, including
+  REPORTS empty/populated states) plus a headless key-event harness
+  over the real key dispatch guard against regressions while the
+  semantic-search recall gate stays green.
+
 ## v0.5.0 — 2026-09-20
 
 ### Breaking changes
