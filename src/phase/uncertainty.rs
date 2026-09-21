@@ -421,11 +421,12 @@ mod export_policy_tests {
             });
             let paths = ArtifactPaths::new(&dir);
             let matrix = identity_12();
+            let packed_row = pack_covariance_row(&matrix, mode).unwrap();
             write_covariance_csv(
                 &paths.lockin_covariance_csv(3),
                 mode,
                 &[0.001],
-                std::slice::from_ref(&matrix),
+                std::slice::from_ref(&packed_row),
             )
             .unwrap();
             let deltas = [0.0; 6];
