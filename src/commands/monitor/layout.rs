@@ -90,6 +90,29 @@ pub(super) fn workflow_layout(area: Rect) -> (Rect, Rect) {
     (chunks[0], chunks[1])
 }
 
+/// S2: split the workflow panel into the runs browser (top) and the workflow
+/// list (bottom). The browser keeps a compact fixed height so the workflow
+/// list stays usable at small terminal sizes; click handling (`select_run_at`)
+/// and rendering (`render_runs_panel`) share this split.
+pub(super) fn runs_layout(area: Rect) -> (Rect, Rect) {
+    if area.height <= 1 {
+        return (Rect::default(), area);
+    }
+    let compact = if area.height >= 16 {
+        7
+    } else if area.height >= 10 {
+        5
+    } else {
+        4
+    };
+    let runs_height = compact.min(area.height.saturating_sub(2).max(1));
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(runs_height), Constraint::Min(2)])
+        .split(area);
+    (chunks[0], chunks[1])
+}
+
 pub(super) struct OutputSections {
     pub(super) status: Rect,
     pub(super) timeline: Rect,

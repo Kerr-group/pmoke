@@ -1,0 +1,34 @@
+---
+source: src/commands/monitor/tests/snapshots.rs
+expression: rendered
+---
+ pmoke  ● BLOCKED  │  IDLE  │  00:00                                                                                    
+ └─ ◆ cwd /workspace/pmoke  │  config config.toml ──────────────────────────────────────────────────────────────────────
+┌ RUNS 0/0 ────────────┐┌ INSPECTOR · SUMMARY ─────────────────────────────────────────────────────────────────────────┐
+│no run dirs under scan││READY   Config                                                                                │
+│                      ││Print normalized config and diagnostics.                                                      │
+│                 ┌ Help ────────────────────────────────────────────────────────────────────────────┐                 │
+│                 │pmoke TUI  ? / q close                                                            │ner; nothing is  │
+│                 │                                                                                  │                 │
+└─────────────────│Selected  Config                                                                  │                 │
+┌ WORKFLOW 02/12 ─│Print normalized config and diagnostics.                                          │                 │
+│  ▾ UTILITIES    │                                                                                  │─────────────────┘
+│▌    ●  show OK  │GLOBAL                                                                            │─────────────────╮
+│     ●  doctor OK│Ctrl+c                interrupt command or cancel activity selection              │                 │
+│     ·  raw verif│?                     toggle this help                                            │                 │
+│  ▾ ANALYSIS     │Esc                   close dialog, clear search/selection, then leave panel      │                 │
+│     ·  reference│q                     close this help                                             │─────────────────│
+│     ·  sensor --│End                   follow live activity                                        │                 │
+│     ·  li --    │q                     quit (press again to stop a running command and quit)       │                 │
+│     ·  signal --│r                     refresh config and files                                    │                 │
+│     ·  phase -- │[                     older runs (selection in runs)                              │                 │
+│     ·  moke --  │]                     live activity (selection in runs)                           │                 │
+│     ·  analyze -│a                     focus workflow panel                                        │                 │
+│                 │o                     focus activity panel and select events                      │                 │
+└─────────────────│i                     cycle inspector tabs                                        │                 │
+┌ DETAIL show ────│m                     focus inspector messages tab                                │                 │
+│Print normalized └──────────────────────────────────────────────────────────────────────────────────┘                 │
+│config and            ││                                                                                              │
+│diagnostics.          ││                                                                                              │
+└──────────────────────┘╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+Enterrun    j/kmove    /filter    1-4focus    [ ]history    ?help    qquit    [workflow]

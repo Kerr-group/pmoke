@@ -423,6 +423,9 @@ fn japanese(text: &str) -> Option<&'static str> {
             "直接build用のblock長サンプル数（既定: サンプル数÷40）"
         }
         "Random seed for a direct build (defaults to 0)" => "直接build用の乱数seed（既定: 0）",
+        "Reference-frequency applicability tolerance override (relative) for a direct build (defaults to the uncertainty combination; the value is recorded and marked overridden)" => {
+            "直接build用の参照周波数適用tolerance上書き（相対値。既定: 不確かさ合成; 値は記録され上書きが明示される）"
+        }
         "Path to the calibration artifact JSON file" => "較正artifact JSONファイルのpath",
         "Path to the TOML applicability context file" => "適用性context TOMLファイルのpath",
         "Inspect a calibration artifact file (read-only)" => {

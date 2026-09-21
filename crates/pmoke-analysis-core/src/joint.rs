@@ -599,9 +599,80 @@ pub fn design_matrix(
         ));
     }
     let nyquist = 0.5 / interval;
-    let mut columns: Vec<Vec<f64>> = Vec::with_capacity(1 + 2 * model.fit_harmonics.len());
-    columns.push(vec![1.0; times.len()]);
-    for harmonic in &model.fit_harmonics {
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    let mut design = DMatrix::zeros(times.len(), parameters);
+    fill_design_columns(
+        &mut design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        nyquist,
+    )?;
+    Ok(design)
+}
+
+/// Fill a preallocated design matrix in `[DC, cos(k phi), sin(k phi), ...]`
+/// order with `phi = 2 pi f t - phase` (NUMERICS section 2), reusing the
+/// caller's buffer across windows instead of allocating per-window column
+/// vectors. Each entry is an independent closed-form evaluation, so the
+/// filled values are bit-identical to [`design_matrix`]; only allocation
+/// cost is hoisted, never arithmetic. The timebase checks run in the same
+/// order with the same errors as [`design_matrix`].
+pub fn design_matrix_into(
+    design: &mut DMatrix<f64>,
+    times: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    model: &HarmonicSignalModel,
+    sample_rate_hz: f64,
+) -> Result<()> {
+    let interval = validate_timebase(times, sample_rate_hz)?;
+    require_finite("reference_frequency_hz", reference_frequency_hz)?;
+    require_finite("reference_phase_rad", reference_phase_rad)?;
+    if reference_frequency_hz <= 0.0 {
+        return Err(AnalysisError::new(
+            "non_finite_input",
+            "reference_frequency_hz must be positive",
+        ));
+    }
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    if design.nrows() != times.len() || design.ncols() != parameters {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            format!(
+                "design scratch holds {}x{} but the window needs {}x{}",
+                design.nrows(),
+                design.ncols(),
+                times.len(),
+                parameters
+            ),
+        ));
+    }
+    let nyquist = 0.5 / interval;
+    fill_design_columns(
+        design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        nyquist,
+    )
+}
+
+/// Shared design evaluation: per-harmonic Nyquist gate in fit order, then
+/// the closed-form column fill. Both [`design_matrix`] and
+/// [`design_matrix_into`] run this exact sequence, so acceptance and values
+/// match between the allocating and the buffer-reusing paths.
+fn fill_design_columns(
+    design: &mut DMatrix<f64>,
+    times: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    model: &HarmonicSignalModel,
+    nyquist: f64,
+) -> Result<()> {
+    for (position, harmonic) in model.fit_harmonics.iter().enumerate() {
         let frequency = *harmonic as f64 * reference_frequency_hz;
         if !frequency.is_finite() || frequency >= nyquist {
             return Err(AnalysisError::new(
@@ -609,23 +680,19 @@ pub fn design_matrix(
                 format!("harmonic {harmonic} reaches Nyquist at {nyquist:.6e} Hz"),
             ));
         }
-        let mut cos_column = Vec::with_capacity(times.len());
-        let mut sin_column = Vec::with_capacity(times.len());
-        for time in times {
+        let cos_column = 1 + 2 * position;
+        let sin_column = 2 + 2 * position;
+        for (row, time) in times.iter().enumerate() {
             let phi = TAU * reference_frequency_hz * time - reference_phase_rad;
             let (sin_phi, cos_phi) = (*harmonic as f64 * phi).sin_cos();
-            cos_column.push(cos_phi);
-            sin_column.push(sin_phi);
+            design[(row, cos_column)] = cos_phi;
+            design[(row, sin_column)] = sin_phi;
         }
-        columns.push(cos_column);
-        columns.push(sin_column);
     }
-    Ok(DMatrix::from_columns(
-        &columns
-            .iter()
-            .map(|column| DVector::from_vec(column.clone()))
-            .collect::<Vec<_>>(),
-    ))
+    for row in 0..times.len() {
+        design[(row, 0)] = 1.0;
+    }
+    Ok(())
 }
 
 /// Periodic piecewise-linear interpolation at uniform bin centers
@@ -747,12 +814,67 @@ pub struct PreparedNoisePlan {
 }
 
 /// Factorized normalized Toeplitz factor for one window length, built once
-/// and reused by every window that shares the geometry.
+/// and reused by every window that shares the geometry. The executed
+/// factor condition `cond(C)` with `C = T + jI` is measured once here with
+/// the same symmetric eigendecomposition the per-window TOL-07 gate uses,
+/// so every window can certify acceptance with an O(N) scale-ratio bound
+/// instead of its own O(N^3) eigendecomposition (LI 10s target).
 #[derive(Debug, Clone)]
 struct PreparedCorrelation {
     lower: DMatrix<f64>,
     toeplitz: DMatrix<f64>,
     jitter_applied_v2: f64,
+    /// 2-norm condition of the executed factor `C = T + jI`.
+    correlation_condition: f64,
+    /// Maximum `|C|` entry, for the O(N) realized-finiteness guard that
+    /// keeps the bound path fail-closed where the exact gate would refuse
+    /// an overflowing `R = S C S` realization.
+    max_abs_factor: f64,
+}
+
+impl PreparedCorrelation {
+    /// Conservative TOL-07 bound `cond(S C S) <= cond(S)^2 * cond(C)`.
+    /// Returns `None` when the bound cannot be formed (non-finite or
+    /// non-positive scales, non-finite arithmetic, or an `R` realization
+    /// the exact gate would refuse as overflowing): callers fall back to
+    /// the exact per-window gate, preserving its failure surface exactly.
+    fn condition_bound(&self, sqrt_variance: &[f64]) -> Option<f64> {
+        if sqrt_variance.is_empty() {
+            return None;
+        }
+        let mut smallest = f64::INFINITY;
+        let mut largest = 0.0_f64;
+        for scale in sqrt_variance.iter() {
+            if !scale.is_finite() || *scale <= 0.0 {
+                return None;
+            }
+            smallest = smallest.min(*scale);
+            largest = largest.max(*scale);
+        }
+        if !(smallest > 0.0 && largest > 0.0) {
+            return None;
+        }
+        let scale_condition = largest / smallest;
+        if !scale_condition.is_finite() {
+            return None;
+        }
+        let scale_condition_squared = scale_condition * scale_condition;
+        if !scale_condition_squared.is_finite() {
+            return None;
+        }
+        // Every `|R_ij| <= max_s^2 * max|C|`: a non-finite product means
+        // the exact gate would refuse the overflowing realization, so the
+        // bound must not certify acceptance here.
+        let realized_magnitude = largest * largest * self.max_abs_factor;
+        if !realized_magnitude.is_finite() {
+            return None;
+        }
+        let bound = scale_condition_squared * self.correlation_condition;
+        if !bound.is_finite() {
+            return None;
+        }
+        Some(bound)
+    }
 }
 
 impl PreparedNoisePlan {
@@ -859,10 +981,22 @@ impl PreparedNoisePlan {
             .unwrap_or(0.0)
     }
 
+    /// Hoisted 2-norm condition of the executed correlation factor
+    /// `C = T + jI` (`None` for the uncorrelated modes). Measured once per
+    /// plan with the same symmetric eigendecomposition the exact TOL-07
+    /// gate uses; the per-window bound is `cond(S)^2` times this value.
+    pub fn correlation_condition(&self) -> Option<f64> {
+        self.correlation
+            .as_ref()
+            .map(|prepared| prepared.correlation_condition)
+    }
+
     /// Whitens design and response with the prepared plan (the accelerated
     /// path). Every per-window validation, variance interpolation,
-    /// realized-covariance gate and triangular solve matches the direct
-    /// path exactly; only the correlated factor construction is reused.
+    /// realized-covariance verdict and triangular solve matches the direct
+    /// path exactly; only the correlated factor construction and its
+    /// TOL-07 condition measurement are reused (an O(N) conservative bound
+    /// certifies acceptance, with exact-gate fallback otherwise).
     pub fn whiten(
         &self,
         design: &DMatrix<f64>,
@@ -901,14 +1035,20 @@ enum FactorSource<'a> {
 }
 
 impl FactorSource<'_> {
-    fn parts(&self) -> (&DMatrix<f64>, &DMatrix<f64>, f64) {
+    fn parts(&self) -> (&DMatrix<f64>, &DMatrix<f64>, f64, &PreparedCorrelation) {
         match self {
             FactorSource::Prepared(prepared) => (
                 &prepared.lower,
                 &prepared.toeplitz,
                 prepared.jitter_applied_v2,
+                prepared,
             ),
-            FactorSource::Fresh(fresh) => (&fresh.lower, &fresh.toeplitz, fresh.jitter_applied_v2),
+            FactorSource::Fresh(fresh) => (
+                &fresh.lower,
+                &fresh.toeplitz,
+                fresh.jitter_applied_v2,
+                fresh,
+            ),
         }
     }
 }
@@ -938,10 +1078,55 @@ fn prepare_correlation_factor(
     }
     let toeplitz = toeplitz_from_lags(&kernel.lags, rows);
     let (lower, jitter_applied_v2) = cholesky_factor(&toeplitz, max_jitter_v2)?;
+    // Hoisted TOL-07 factor condition: measure cond(C) once with the same
+    // symmetric eigendecomposition the per-window gate uses. Cholesky
+    // success already proves positive definiteness; a non-finite or
+    // non-positive spectrum here fails closed exactly like the gate would.
+    let mut executed = toeplitz.clone();
+    if jitter_applied_v2 != 0.0 {
+        for diagonal in 0..executed.nrows() {
+            executed[(diagonal, diagonal)] += jitter_applied_v2;
+        }
+    }
+    let eigenvalues = executed.clone().symmetric_eigen().eigenvalues;
+    let mut smallest = f64::INFINITY;
+    let mut largest = f64::NEG_INFINITY;
+    for value in eigenvalues.iter() {
+        smallest = smallest.min(*value);
+        largest = largest.max(*value);
+    }
+    if !(smallest.is_finite() && largest.is_finite()) || smallest <= 0.0 {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            "hoisted correlation factor is not numerically positive definite; \
+             refusing the condition verdict",
+        ));
+    }
+    let correlation_condition = largest / smallest;
+    if !correlation_condition.is_finite() {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            "hoisted correlation factor condition is non-finite; \
+             refusing the condition verdict",
+        ));
+    }
+    let mut max_abs_factor = 0.0_f64;
+    for value in executed.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "ill_conditioned_noise_model",
+                "hoisted correlation factor is non-finite; \
+                 refusing the condition verdict",
+            ));
+        }
+        max_abs_factor = max_abs_factor.max(value.abs());
+    }
     Ok(PreparedCorrelation {
         lower,
         toeplitz,
         jitter_applied_v2,
+        correlation_condition,
+        max_abs_factor,
     })
 }
 
@@ -1197,15 +1382,26 @@ fn whiten_correlated(
             tolerances.max_jitter_v2,
         )?),
     };
-    let (lower, toeplitz, jitter) = factor_source.parts();
-    // TOL-07 on the executed covariance, not just its factors: Cholesky
-    // success and whitened-design conditioning do not bound cond(R).
-    gate_realized_noise_condition(
-        toeplitz,
-        jitter,
-        sqrt_variance,
-        tolerances.max_noise_condition,
-    )?;
+    let (lower, toeplitz, jitter, prepared_factor) = factor_source.parts();
+    // Hoisted TOL-07 bound (P0): cond(S C S) <= cond(S)^2 * cond(C) with
+    // cond(C) measured once per plan. A bound at or under the cap implies
+    // the exact gate passes, so acceptance skips the per-window O(N^3)
+    // eigendecomposition with bit-identical outputs. Any unformable or
+    // over-cap bound falls back to the exact gate, preserving its failure
+    // surface exactly (no new rejections, no new acceptances).
+    let bound_accepts = prepared_factor
+        .condition_bound(sqrt_variance)
+        .is_some_and(|bound| bound <= tolerances.max_noise_condition);
+    if !bound_accepts {
+        // TOL-07 on the executed covariance, not just its factors: Cholesky
+        // success and whitened-design conditioning do not bound cond(R).
+        gate_realized_noise_condition(
+            toeplitz,
+            jitter,
+            sqrt_variance,
+            tolerances.max_noise_condition,
+        )?;
+    }
     let mut rhs = DMatrix::zeros(rows, scaled_design.ncols() + 1);
     for row in 0..rows {
         for column in 0..scaled_design.ncols() {
@@ -1241,6 +1437,27 @@ pub fn solve_direct(
     whitened_signal: &DVector<f64>,
     tolerances: JointSolverTolerances,
 ) -> Result<(DVector<f64>, f64, usize, f64)> {
+    let (beta, residual_rms, rank, condition, _) =
+        solve_direct_with_factor(whitened_design, whitened_signal, tolerances)?;
+    Ok((beta, residual_rms, rank, condition))
+}
+
+/// Thin-QR least-squares solution with its design-model covariance, sharing
+/// one R factor: `(beta, residual_rms, rank, condition, covariance_beta)`.
+/// See [`solve_direct_and_covariance`].
+pub type QrSolveWithCovariance = (DVector<f64>, f64, usize, f64, DMatrix<f64>);
+
+/// Thin-QR least squares that also returns the thin R factor, so the
+/// design-model covariance can reuse the exact same factorization instead
+/// of running a second QR over the same matrix (see
+/// [`solve_direct_and_covariance`]). Arithmetic, gates, and error
+/// precedence match [`solve_direct`] step for step; only the duplicate
+/// factorization cost is hoisted, never any value.
+fn solve_direct_with_factor(
+    whitened_design: &DMatrix<f64>,
+    whitened_signal: &DVector<f64>,
+    tolerances: JointSolverTolerances,
+) -> Result<QrSolveWithCovariance> {
     let (rows, columns) = (whitened_design.nrows(), whitened_design.ncols());
     if whitened_signal.len() != rows {
         return Err(AnalysisError::new(
@@ -1362,7 +1579,7 @@ pub fn solve_direct(
             "residual RMS is non-finite",
         ));
     }
-    Ok((beta, residual_rms, rank, condition))
+    Ok((beta, residual_rms, rank, condition, upper))
 }
 
 /// Design-model covariance `(Dw^T Dw)^-1` from the whitened thin R factor.
@@ -1395,6 +1612,20 @@ pub fn covariance_from_qr(
         ));
     }
     let upper = whitened_design.clone().qr().r();
+    covariance_from_factor(&upper, columns, variance_scale)
+}
+
+/// Design-model covariance from an already-computed thin R factor: solves
+/// `R1^T Z = I` for `Z`, then `C = Z^T Z`, scaled. The substitution
+/// sequence matches [`covariance_from_qr`] exactly; callers must have run
+/// the same dimension/finiteness/scale gates first (they do: both
+/// [`covariance_from_qr`] above and [`solve_direct_and_covariance`] below
+/// validate before substituting).
+fn covariance_from_factor(
+    upper: &DMatrix<f64>,
+    columns: usize,
+    variance_scale: f64,
+) -> Result<DMatrix<f64>> {
     // Solve R1^T Z = I for Z, then C = Z^T Z, scaled.
     let mut inverse_transpose = DMatrix::zeros(columns, columns);
     for column in 0..columns {
@@ -1423,6 +1654,35 @@ pub fn covariance_from_qr(
             "design-model covariance is non-finite",
         ))
     }
+}
+
+/// Combined thin-QR solve and design-model covariance sharing one R factor
+/// (NUMERICS 5.1, per-window duplicate-factorization removal). Runs the
+/// [`solve_direct`] gates and back-substitution, then the
+/// [`covariance_from_qr`] scale gate and forward substitution on the exact
+/// same factor object — so every output is bit-identical to running the two
+/// entry points in sequence, while the second `O(N p^2)` QR factorization
+/// and its matrix clone are gone. Returns
+/// `(beta, residual_rms, rank, condition, covariance_beta)`.
+pub fn solve_direct_and_covariance(
+    whitened_design: &DMatrix<f64>,
+    whitened_signal: &DVector<f64>,
+    tolerances: JointSolverTolerances,
+    variance_scale: f64,
+) -> Result<QrSolveWithCovariance> {
+    let (beta, residual_rms, rank, condition, upper) =
+        solve_direct_with_factor(whitened_design, whitened_signal, tolerances)?;
+    // Same gate covariance_from_qr runs after its own factorization; the
+    // solve above already ran the shared dimension/finiteness gates first,
+    // preserving the sequential error precedence exactly.
+    if !variance_scale.is_finite() || variance_scale <= 0.0 {
+        return Err(AnalysisError::new(
+            "invalid_noise_model",
+            "covariance variance scale must be positive finite",
+        ));
+    }
+    let covariance_beta = covariance_from_factor(&upper, whitened_design.ncols(), variance_scale)?;
+    Ok((beta, residual_rms, rank, condition, covariance_beta))
 }
 
 /// Peak-amplitude map `Xk = b`, `Yk = a` in `[X1,Y1,...]` order.
@@ -1668,8 +1928,16 @@ pub fn estimate_joint_with_plan(
     let whitened_design = system.design;
     let whitened_signal = system.response;
     let variance_scale = system.variance_scale;
-    let (beta, whitened_rms, rank, condition) =
-        solve_direct(&whitened_design, &whitened_signal, tolerances)?;
+    // Shared-R solve+covariance: bit-identical to the sequential pair, one
+    // factorization fewer. The variance-scale guard below is unreachable
+    // through whitening (every arm emits a validated positive scale) and is
+    // kept as defense-in-depth in its original position.
+    let (beta, whitened_rms, rank, condition, covariance_beta) = solve_direct_and_covariance(
+        &whitened_design,
+        &whitened_signal,
+        tolerances,
+        variance_scale,
+    )?;
     if variance_scale <= 0.0 {
         return Err(AnalysisError::new(
             "non_finite_output",
@@ -1678,7 +1946,130 @@ pub fn estimate_joint_with_plan(
     }
     let residual_rms = whitened_rms / variance_scale.sqrt();
     let beta_vec = beta.as_slice().to_vec();
-    let covariance_beta = covariance_from_qr(&whitened_design, variance_scale)?;
+    let covariance_xy = map_covariance_to_xy(&covariance_beta, model)?;
+    let xy = map_to_xy(&beta_vec, model)?;
+    if !residual_rms.is_finite() {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "standardized residual RMS is non-finite",
+        ));
+    }
+    Ok(JointEstimate {
+        beta: beta_vec,
+        xy,
+        covariance_beta: covariance_beta
+            .row_iter()
+            .map(|row| row.iter().copied().collect())
+            .collect(),
+        covariance_xy: covariance_xy
+            .row_iter()
+            .map(|row| row.iter().copied().collect())
+            .collect(),
+        rank,
+        condition,
+        residual_rms,
+        jitter_applied_v2: system.jitter_applied_v2,
+    })
+}
+
+/// Reusable per-window workspace for the buffer-reusing estimate path.
+/// Holds the design-matrix buffer across windows so the hot loop allocates
+/// it once per thread instead of once per window. A scratch must never be
+/// shared across threads: give each worker its own (the native pipeline
+/// keeps one per rayon thread via a thread-local).
+#[derive(Debug, Clone)]
+pub struct JointScratch {
+    design: DMatrix<f64>,
+}
+
+impl JointScratch {
+    /// Empty workspace; the buffer grows to the first window it serves.
+    pub fn new() -> Self {
+        Self {
+            design: DMatrix::zeros(0, 0),
+        }
+    }
+
+    fn design_for(&mut self, rows: usize, parameters: usize) -> &mut DMatrix<f64> {
+        if self.design.nrows() != rows || self.design.ncols() != parameters {
+            self.design = DMatrix::zeros(rows, parameters);
+        }
+        &mut self.design
+    }
+}
+
+impl Default for JointScratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Buffer-reusing estimate on an immutable prepared noise plan: the design
+/// matrix fills the caller's [`JointScratch`] instead of allocating
+/// per-window column vectors, and the solve shares one QR factor with the
+/// covariance. Every validation, gate, and arithmetic step matches
+/// [`estimate_joint_with_plan`] exactly, so outputs are bit-identical;
+/// only allocation and duplicate-factorization cost is hoisted.
+#[allow(clippy::too_many_arguments)]
+pub fn estimate_joint_with_scratch(
+    times: &[f64],
+    signal: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    sample_rate_hz: f64,
+    model: &HarmonicSignalModel,
+    tolerances: JointSolverTolerances,
+    plan: &PreparedNoisePlan,
+    scratch: &mut JointScratch,
+) -> Result<JointEstimate> {
+    let noise = plan.noise_model();
+    validate_signal_model(model, sample_rate_hz)?;
+    validate_noise_model(noise)?;
+    if plan.rows() != times.len() {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            format!(
+                "prepared noise plan covers {} samples but the window holds {}",
+                plan.rows(),
+                times.len()
+            ),
+        ));
+    }
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    let design = scratch.design_for(times.len(), parameters);
+    design_matrix_into(
+        design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        sample_rate_hz,
+    )?;
+    let system = plan.whiten(
+        design,
+        signal,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+    )?;
+    let whitened_design = system.design;
+    let whitened_signal = system.response;
+    let variance_scale = system.variance_scale;
+    // Shared-R solve+covariance (same notes as estimate_joint_with_plan).
+    let (beta, whitened_rms, rank, condition, covariance_beta) = solve_direct_and_covariance(
+        &whitened_design,
+        &whitened_signal,
+        tolerances,
+        variance_scale,
+    )?;
+    if variance_scale <= 0.0 {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "variance scale is non-positive",
+        ));
+    }
+    let residual_rms = whitened_rms / variance_scale.sqrt();
+    let beta_vec = beta.as_slice().to_vec();
     let covariance_xy = map_covariance_to_xy(&covariance_beta, model)?;
     let xy = map_to_xy(&beta_vec, model)?;
     if !residual_rms.is_finite() {

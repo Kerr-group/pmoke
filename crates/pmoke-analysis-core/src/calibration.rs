@@ -42,6 +42,14 @@ pub const MAX_CALIBRATION_ARTIFACT_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_DT_REL_TOL: f64 = 1e-9;
 /// Default reference-frequency applicability tolerance (relative).
 pub const DEFAULT_FREQ_REL_TOL: f64 = 1e-9;
+/// Floor of the uncertainty-aware reference-frequency applicability
+/// tolerance (relative, Issue #274): the combination never resolves below
+/// the historical fixed gate, so absent uncertainties reproduce the exact
+/// historical behavior.
+pub const FREQUENCY_TOL_FLOOR: f64 = DEFAULT_FREQ_REL_TOL;
+/// Coverage factor applied to the combined reference-frequency standard
+/// uncertainty (root-sum-square of the per-side relative uncertainties).
+pub const FREQUENCY_TOL_COVERAGE_K: f64 = 3.0;
 /// Default recipe block length in original samples (NUMERICS 6.1 proposal).
 pub const DEFAULT_BLOCK_LEN: usize = 262_144;
 /// Default minimum reference cycles per block.
@@ -968,6 +976,12 @@ pub struct ModelBinding {
     pub sample_interval_rel_tol: f64,
     pub reference_frequency_hz: f64,
     pub frequency_rel_tol: f64,
+    /// Same-run reference-fit relative uncertainty recorded at build
+    /// (Issue #274 FR-03). `None` is explicitly unknown: legacy artifacts
+    /// and explicit-frequency builds carry no estimate, and inference then
+    /// falls back to the floor gate.
+    #[serde(default)]
+    pub reference_frequency_rel_uncertainty: Option<f64>,
     pub phase_convention: String,
     pub acquisition: AcquisitionMeta,
 }
@@ -1115,6 +1129,11 @@ pub struct ArtifactRequest {
     pub seed: u64,
     pub tuning: TuningMode,
     pub heldout: HeldoutReport,
+    /// Whether `binding.frequency_rel_tol` came from an explicit override
+    /// rather than the uncertainty combination (Issue #274 FR-04 audit
+    /// marker, recorded into the artifact recipe settings).
+    #[serde(default)]
+    pub frequency_tol_overridden: bool,
 }
 
 /// Held-out (tuning-validation) evidence attached to the artifact.
@@ -1361,6 +1380,30 @@ pub fn build_artifact(request: ArtifactRequest) -> Result<ArtifactWithHash> {
         "floor_ratio".to_string(),
         request.recipe.floor_ratio.to_string(),
     );
+    // Tolerance basis audit (Issue #274 FR-03): the combination inputs
+    // behind `binding.frequency_rel_tol`. Free-form string entries keep
+    // legacy readers (which accept any recipe-settings keys) compatible;
+    // the machine-readable build uncertainty lives on the binding.
+    recipe_settings.insert(
+        "frequency_tol_k".to_string(),
+        FREQUENCY_TOL_COVERAGE_K.to_string(),
+    );
+    recipe_settings.insert(
+        "frequency_tol_floor".to_string(),
+        FREQUENCY_TOL_FLOOR.to_string(),
+    );
+    recipe_settings.insert(
+        "frequency_tol_u_build".to_string(),
+        match request.binding.reference_frequency_rel_uncertainty {
+            Some(value) => value.to_string(),
+            None => "absent".to_string(),
+        },
+    );
+    recipe_settings.insert("frequency_tol_u_apply".to_string(), "absent".to_string());
+    recipe_settings.insert(
+        "frequency_tol_overridden".to_string(),
+        request.frequency_tol_overridden.to_string(),
+    );
     let artifact = CalibrationArtifact {
         schema_version: CALIBRATION_ARTIFACT_SCHEMA_VERSION,
         algorithm_version: CALIBRATION_ALGORITHM_VERSION.to_string(),
@@ -1448,6 +1491,82 @@ pub fn build_artifact(request: ArtifactRequest) -> Result<ArtifactWithHash> {
 }
 
 // ---------------------------------------------------------------------------
+// Uncertainty-aware frequency tolerance (Issue #274).
+// ---------------------------------------------------------------------------
+
+/// Sanitize one per-side reference-frequency relative uncertainty: only a
+/// positive finite value carries information; anything else (absent,
+/// non-finite, non-positive) contributes nothing to the combination.
+fn sanitized_rel_uncertainty(value: Option<f64>) -> f64 {
+    match value {
+        Some(uncertainty) if uncertainty.is_finite() && uncertainty > 0.0 => uncertainty,
+        _ => 0.0,
+    }
+}
+
+/// Uncertainty-aware reference-frequency tolerance bound (relative, Issue
+/// #274 FR-01/FR-02): `max(floor, k * sqrt(u_build^2 + u_apply^2))` with
+/// the floor and coverage factor above. Absent (or unusable) uncertainties
+/// contribute zero, so two absent sides reproduce exactly the historical
+/// `DEFAULT_FREQ_REL_TOL` gate.
+pub fn frequency_rel_tol_bound(
+    reference_build_rel_uncertainty: Option<f64>,
+    reference_apply_rel_uncertainty: Option<f64>,
+) -> f64 {
+    let build = sanitized_rel_uncertainty(reference_build_rel_uncertainty);
+    let apply = sanitized_rel_uncertainty(reference_apply_rel_uncertainty);
+    let combined = (build * build + apply * apply).sqrt();
+    (FREQUENCY_TOL_COVERAGE_K * combined).max(FREQUENCY_TOL_FLOOR)
+}
+
+/// Effective inference-time tolerance for a stored binding (Issue #274
+/// FR-02/FR-05): never stricter than the stored artifact tolerance and
+/// never stricter than the uncertainty combination. Legacy artifacts (tol
+/// at the floor on file, no recorded uncertainty) verify exactly as
+/// before, while uncertainty-bearing pairs widen through the same rule.
+/// An explicit tightening override below the measured basis is not
+/// honored here: the combination always applies.
+pub fn effective_frequency_rel_tol(
+    stored_tol: f64,
+    reference_build_rel_uncertainty: Option<f64>,
+    reference_apply_rel_uncertainty: Option<f64>,
+) -> f64 {
+    let bound = frequency_rel_tol_bound(
+        reference_build_rel_uncertainty,
+        reference_apply_rel_uncertainty,
+    );
+    if stored_tol.is_finite() && stored_tol > 0.0 {
+        stored_tol.max(bound)
+    } else {
+        bound
+    }
+}
+
+/// Resolve the build-time binding tolerance (Issue #274 FR-01/FR-04): an
+/// explicit override wins as-recorded (flagged for the audit trail) and
+/// must be positive finite; otherwise the build-side uncertainty
+/// combination applies. Returns `(final_tol, overridden)`.
+pub fn resolve_build_frequency_tol(
+    reference_build_rel_uncertainty: Option<f64>,
+    override_tol: Option<f64>,
+) -> Result<(f64, bool)> {
+    match override_tol {
+        Some(value) => {
+            if !is_positive_finite(value) {
+                return Err(invalid_request(
+                    "frequency_rel_tol override must be positive finite",
+                ));
+            }
+            Ok((value, true))
+        }
+        None => Ok((
+            frequency_rel_tol_bound(reference_build_rel_uncertainty, None),
+            false,
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Applicability inspection (pure; FR-031).
 // ---------------------------------------------------------------------------
 
@@ -1463,6 +1582,11 @@ pub struct ApplicabilityRequest {
     pub phase_convention: String,
     pub adc_scale_provenance: Option<String>,
     pub acquisition: AcquisitionMeta,
+    /// Inference-side reference-fit relative uncertainty (Issue #274
+    /// FR-02). Additive only: `None` (including TOML contexts written
+    /// before this field existed) keeps the exact historical gate.
+    #[serde(default)]
+    pub reference_frequency_rel_uncertainty: Option<f64>,
 }
 
 /// One applicability failure with its contract code.
@@ -1475,17 +1599,51 @@ pub struct ApplicabilityError {
 /// Applicability verdict: hard errors versus explicitly unverified warnings.
 /// Unknown conditions stay unverified; production suitability then needs an
 /// explicit operator decision, never an agent's guess.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Eq` is intentionally absent: the effective-tolerance audit field is a
+/// float (Issue #274).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApplicabilityReport {
     pub compatible: bool,
     pub errors: Vec<ApplicabilityError>,
     pub warnings: Vec<String>,
+    /// Effective reference-frequency tolerance actually applied (relative):
+    /// the stored binding widened through the uncertainty combination
+    /// (Issue #274 FR-02/FR-03 audit).
+    #[serde(default)]
+    pub effective_frequency_rel_tol: f64,
+    /// Per-side uncertainties that entered the combination (`None` means
+    /// that side contributed nothing: absent or unusable).
+    #[serde(default)]
+    pub applied_build_rel_uncertainty: Option<f64>,
+    #[serde(default)]
+    pub applied_apply_rel_uncertainty: Option<f64>,
 }
 
 fn binding_error(message: impl Into<String>) -> ApplicabilityError {
     ApplicabilityError {
         code: "model_binding_mismatch".to_string(),
         message: message.into(),
+    }
+}
+
+/// Audit rendering of one per-side uncertainty: value or explicit absent.
+fn format_rel_uncertainty(value: Option<f64>) -> String {
+    match value {
+        Some(uncertainty) if uncertainty.is_finite() && uncertainty > 0.0 => {
+            format!("{uncertainty:.3e}")
+        }
+        Some(_) => "unusable".to_string(),
+        None => "absent".to_string(),
+    }
+}
+
+/// The sanitized contribution of one per-side uncertainty: `Some` only
+/// when the value actually entered the combination.
+fn applied_rel_uncertainty(value: Option<f64>) -> Option<f64> {
+    match value {
+        Some(uncertainty) if uncertainty.is_finite() && uncertainty > 0.0 => Some(uncertainty),
+        _ => None,
     }
 }
 
@@ -1513,10 +1671,20 @@ pub fn inspect_applicability(
     }
     let freq_detail = (request.reference_frequency_hz - model.binding.reference_frequency_hz).abs()
         / model.binding.reference_frequency_hz;
-    if !freq_detail.is_finite() || freq_detail > model.binding.frequency_rel_tol {
+    // Uncertainty-aware gate (Issue #274): the stored binding widens
+    // through the per-side combination, never below either input.
+    let effective_tol = effective_frequency_rel_tol(
+        model.binding.frequency_rel_tol,
+        model.binding.reference_frequency_rel_uncertainty,
+        request.reference_frequency_rel_uncertainty,
+    );
+    if !freq_detail.is_finite() || freq_detail > effective_tol {
         errors.push(binding_error(format!(
-            "reference frequency relative deviation {freq_detail:.3e} exceeds {:.1e}",
-            model.binding.frequency_rel_tol
+            "reference frequency relative deviation {freq_detail:.3e} exceeds {effective_tol:.1e} \
+             (stored {:.1e}, u_build {}, u_apply {})",
+            model.binding.frequency_rel_tol,
+            format_rel_uncertainty(model.binding.reference_frequency_rel_uncertainty),
+            format_rel_uncertainty(request.reference_frequency_rel_uncertainty),
         )));
     }
     if request.voltage_unit != model.binding.voltage_unit {
@@ -1588,6 +1756,13 @@ pub fn inspect_applicability(
         compatible: errors.is_empty(),
         errors,
         warnings,
+        effective_frequency_rel_tol: effective_tol,
+        applied_build_rel_uncertainty: applied_rel_uncertainty(
+            model.binding.reference_frequency_rel_uncertainty,
+        ),
+        applied_apply_rel_uncertainty: applied_rel_uncertainty(
+            request.reference_frequency_rel_uncertainty,
+        ),
     }
 }
 
