@@ -581,3 +581,44 @@ fn compare_torn_staging_manifest_is_reclaimed_and_retry_recovers() {
     assert!(!staging.exists(), "recovered staging must be consumed");
     fs::remove_dir_all(&dir).unwrap();
 }
+
+/// An orphan `staging-manifest.tmp-<pid>` sibling (the SIGKILL-between-create-
+/// and-rename residue of the atomic manifest publication) beside a valid
+/// manifest must not wedge the retry: the unreferenced-file audit ignores the
+/// sibling, the retry sweeps it on startup, and the attempt commits cleanly
+/// with no tmp residue in the committed destination.
+#[test]
+fn compare_orphan_manifest_tmp_is_swept_and_retry_recovers() {
+    let dir = unique_test_dir("orphan_manifest_tmp");
+    let total = SMALL_TOTAL;
+    synthetic_csv(&dir.join("wave.csv"), total, 0.05, 0x1234_5678_9abc_def1);
+    let text = compare_request_text("wave.csv", "comparison", total as u64, FULL_BLOCK, "")
+        .replace(
+            "[calibration]\n",
+            "[calibration]\nphase_bins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 1\nmin_contributing_blocks = 2\nmin_training_blocks = 2\nmin_training_intervals = 1\n",
+        );
+    let request_path = dir.join("request.toml");
+    fs::write(&request_path, &text).unwrap();
+    run_compare(&request_path, None, None).unwrap();
+    // Simulate the interrupted attempt: the committed generation becomes
+    // the resume candidate, plus a kill-in-window tmp sibling from a dead
+    // publisher (a pid that will never be reused by the retry).
+    let staging = dir.join("comparison.staging");
+    fs::rename(dir.join("comparison"), &staging).unwrap();
+    fs::write(
+        staging.join("staging-manifest.tmp-99999999"),
+        "{\"schema_version\": 2, \"partial\": true}\n",
+    )
+    .unwrap();
+    assert!(!dir.join("comparison").exists());
+    run_compare(&request_path, None, None).unwrap();
+    assert!(dir.join("comparison/comparison.json").is_file());
+    assert!(dir.join("comparison/staging-manifest.json").is_file());
+    assert!(
+        !dir.join("comparison/staging-manifest.tmp-99999999")
+            .exists(),
+        "swept tmp sibling must not leak into the committed destination"
+    );
+    assert!(!staging.exists(), "recovered staging must be consumed");
+    fs::remove_dir_all(&dir).unwrap();
+}
