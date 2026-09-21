@@ -31,9 +31,9 @@ pub struct LockinProcessOutput {
     pub result: Vec<Vec<Vec<f64>>>,
     /// Per-channel quality rows for GLS executions; None for boxcar_legacy.
     pub quality: Option<Vec<Vec<crate::lockin::joint::QualityRow>>>,
-    /// Per-channel, per-output XY covariance for GLS executions; None for
+    /// Per-channel packed covariance rows for GLS executions; None for
     /// boxcar_legacy.
-    pub covariance: Option<Vec<crate::lockin::joint::XyCovariances>>,
+    pub covariance: Option<Vec<crate::lockin::joint::PackedCovariances>>,
     /// Per-channel frozen estimator snapshots; None for boxcar_legacy.
     pub estimator_snapshots: Option<Vec<crate::lockin::estimator_snapshot::EstimatorSnapshot>>,
     /// Per-channel retained calibration bindings (exact validated bytes);

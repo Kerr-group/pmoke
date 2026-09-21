@@ -576,6 +576,7 @@ fn covariance_packing_scales_with_signal_and_noise() {
     let (time, signal) = tone_waveform_with(1_500);
     let lockin = joint_lockin();
     let gls = joint_gls(&lockin);
+    assert_eq!(gls.covariance_output, GlsCovarianceOutput::Diagonal);
     let run = |time: &[f64], data: &[f64], v0: f64| {
         let source = SyntheticNoiseModelSource::identity(v0);
         let inputs = test_inputs(&lockin, &gls, time);
@@ -583,22 +584,55 @@ fn covariance_packing_scales_with_signal_and_noise() {
     };
     let base = run(&time, &signal, 0.01);
     let window = 7;
-    let diag =
-        pack_covariance_row(&base.covariance[0][window], GlsCovarianceOutput::Diagonal).unwrap();
-    let full = pack_covariance_row(&base.covariance[0][window], GlsCovarianceOutput::Full).unwrap();
+    // Diagonal retention: one packed 12-entry row per window.
+    assert_eq!(base.covariance[0][window].len(), 12);
+    for row in &base.covariance[0] {
+        assert_eq!(row.len(), 12);
+        assert!(row.iter().all(|value| value.is_finite() && *value > 0.0));
+    }
+    // Full-mode retention of the same signal packs the identical design-model
+    // covariance: every diagonal slot agrees exactly with the diagonal run.
+    let mut full_lockin = joint_lockin();
+    let LockinEstimator::JointHarmonicGls(full_gls_mut) = &mut full_lockin.estimator else {
+        unreachable!()
+    };
+    full_gls_mut.covariance_output = GlsCovarianceOutput::Full;
+    let LockinEstimator::JointHarmonicGls(full_gls) = &full_lockin.estimator else {
+        unreachable!()
+    };
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&full_lockin, full_gls, &time);
+    let full_run = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    assert_eq!(full_run.covariance[0][window].len(), 78);
+    for (diag_row, full_row) in base.covariance[0].iter().zip(full_run.covariance[0].iter()) {
+        assert_eq!(full_row.len(), 78);
+        for (index, expected) in diag_row.iter().enumerate() {
+            let triangular = index * 12 - index.saturating_sub(1) * index / 2;
+            assert_eq!(*expected, full_row[triangular]);
+        }
+    }
+    // The packing contract preserves symmetry on a synthetic symmetric
+    // matrix (retention only carries the packed subset, so symmetry itself
+    // is pinned here rather than on retained rows).
+    let symmetric: Vec<Vec<f64>> = (0..12)
+        .map(|row| {
+            (0..12)
+                .map(|column| 1.0 + 0.01 * (row + column) as f64 + 0.1 * f64::from(row == column))
+                .collect()
+        })
+        .collect();
+    for (row, values) in symmetric.iter().enumerate() {
+        for (column, value) in values.iter().enumerate() {
+            assert_eq!(*value, symmetric[column][row]);
+        }
+    }
+    let diag = pack_covariance_row(&symmetric, GlsCovarianceOutput::Diagonal).unwrap();
+    let full = pack_covariance_row(&symmetric, GlsCovarianceOutput::Full).unwrap();
     assert_eq!(diag.len(), 12);
     assert_eq!(full.len(), 78);
     for (index, expected) in diag.iter().enumerate() {
         let triangular = index * 12 - index.saturating_sub(1) * index / 2;
         assert_eq!(*expected, full[triangular]);
-    }
-    for row in 0..12 {
-        for column in 0..12 {
-            assert_eq!(
-                base.covariance[0][window][row][column],
-                base.covariance[0][window][column][row]
-            );
-        }
     }
     let doubled_signal: Vec<f64> = signal.iter().map(|value| 2.0 * value).collect();
     let doubled = run(&time, &doubled_signal, 0.01);
@@ -612,10 +646,9 @@ fn covariance_packing_scales_with_signal_and_noise() {
     assert_eq!(base.covariance.len(), noisy.covariance.len());
     for (plain_windows, scaled_windows) in base.covariance.iter().zip(noisy.covariance.iter()) {
         for (plain, scaled) in plain_windows.iter().zip(scaled_windows.iter()) {
-            for (plain_row, scaled_row) in plain.iter().zip(scaled.iter()) {
-                for (left, right) in plain_row.iter().zip(scaled_row.iter()) {
-                    assert!((4.0 * left - right).abs() <= 1e-9 * right.abs().max(1e-12));
-                }
+            assert_eq!(plain.len(), scaled.len());
+            for (left, right) in plain.iter().zip(scaled.iter()) {
+                assert!((4.0 * left - right).abs() <= 1e-9 * right.abs().max(1e-12));
             }
         }
     }
@@ -674,7 +707,8 @@ fn covariance_covers_known_noise() {
         // than the 203-tap window: 21 outputs at stride 10).
         for choice in [middle - 21, middle + 21] {
             let x1 = output.result[0][0][choice];
-            let variance = output.covariance[0][choice][0][0];
+            // Diagonal-packed retention: entry 0 is the x1 marginal variance.
+            let variance = output.covariance[0][choice][0];
             assert!(variance > 0.0);
             // Phase-zero unit tone: X1 truth is the peak amplitude 1.0.
             if ((x1 - 1.0) / variance.sqrt()).abs() <= 1.0 {
@@ -782,8 +816,15 @@ fn covariance_artifacts_round_trip_and_register() {
 #[test]
 fn full_covariance_registers_with_79_columns() {
     let (time, signal) = tone_waveform_with(1_500);
-    let lockin = joint_lockin();
+    let mut lockin = joint_lockin();
+    let LockinEstimator::JointHarmonicGls(gls_mut) = &mut lockin.estimator else {
+        unreachable!()
+    };
+    // Full retention is required for a full artifact: packed rows carry the
+    // serialized width, so a diagonal run cannot publish 78 columns.
+    gls_mut.covariance_output = GlsCovarianceOutput::Full;
     let gls = joint_gls(&lockin);
+    assert_eq!(gls.covariance_output, GlsCovarianceOutput::Full);
     let source = SyntheticNoiseModelSource::identity(0.01);
     let inputs = test_inputs(&lockin, &gls, &time);
     let output = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
@@ -962,4 +1003,184 @@ fn quality_center_index_matches_raw_timebase_with_origin() {
     for row in rows.iter() {
         assert_eq!(time[row.original_center_index], row.time_s);
     }
+}
+
+#[test]
+fn packed_retention_bounds_100k_window_bytes() {
+    // Peak-RSS regression pin (P4): native retention is the packed width,
+    // never the full 144-f64 matrix, and the streamed writers hold no
+    // column-matrix copy. Exact byte counts on the 100k-window reference
+    // shape (~115MB/ch before).
+    assert_eq!(
+        packed_covariance_width(GlsCovarianceOutput::Diagonal).unwrap(),
+        12
+    );
+    assert_eq!(
+        packed_covariance_width(GlsCovarianceOutput::Full).unwrap(),
+        78
+    );
+    assert!(packed_covariance_width(GlsCovarianceOutput::None).is_err());
+    const WINDOWS: usize = 100_000;
+    const FULL_MATRIX_F64: usize = 144;
+    let before_retention_bytes = WINDOWS * FULL_MATRIX_F64 * 8;
+    assert_eq!(before_retention_bytes, 115_200_000);
+    let diagonal_retention_bytes = WINDOWS * 12 * 8;
+    assert_eq!(diagonal_retention_bytes, 9_600_000);
+    let full_retention_bytes = WINDOWS * 78 * 8;
+    assert_eq!(full_retention_bytes, 62_400_000);
+    assert!(diagonal_retention_bytes <= 12_000_000);
+    assert!(full_retention_bytes < before_retention_bytes);
+    // The legacy writer's second copy (time + packed columns) is gone with
+    // streaming: these exact copies no longer exist at peak.
+    assert_eq!(WINDOWS * 13 * 8, 10_400_000);
+    assert_eq!(WINDOWS * 79 * 8, 63_200_000);
+    // Retention matches the fixture runs end to end.
+    let (time, signal) = tone_waveform_with(1_500);
+    let lockin = joint_lockin();
+    let gls = joint_gls(&lockin);
+    let source = SyntheticNoiseModelSource::identity(0.01);
+    let inputs = test_inputs(&lockin, &gls, &time);
+    let output = run_joint_li(&inputs, &[3], &[signal.as_slice()], &source).unwrap();
+    assert!(!output.covariance[0].is_empty());
+    for row in &output.covariance[0] {
+        assert_eq!(row.len(), 12);
+    }
+}
+
+#[test]
+fn covariance_streamed_writes_match_legacy_bytes() {
+    // File-identity proof (P4): the streamed packed writers emit
+    // byte-identical CSV and NPY artifacts to the legacy column-matrix
+    // writer for both serialization modes. The legacy logic is copied here
+    // as the reference; production no longer builds the column matrix.
+    for mode in [GlsCovarianceOutput::Diagonal, GlsCovarianceOutput::Full] {
+        let width = packed_covariance_width(mode).unwrap();
+        let rows = 17usize;
+        let times: Vec<f64> = (0..rows)
+            .map(|index| 0.001 + index as f64 * 1.0e-5)
+            .collect();
+        let matrices: Vec<Vec<Vec<f64>>> = (0..rows)
+            .map(|index| {
+                let scale = 1.0 + 0.01 * index as f64;
+                (0..12)
+                    .map(|row| {
+                        (0..12)
+                            .map(|column| {
+                                scale
+                                    * (1.0
+                                        + 0.01 * (row + column) as f64
+                                        + 0.1 * f64::from(row == column))
+                            })
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect();
+        let packed_rows: Vec<Vec<f64>> = matrices
+            .iter()
+            .map(|matrix| pack_covariance_row(matrix, mode).unwrap())
+            .collect();
+        assert!(packed_rows.iter().all(|row| row.len() == width));
+        let dir = std::env::temp_dir().join(format!(
+            "pmoke_joint_covariance_identity_{}_{}",
+            match mode {
+                GlsCovarianceOutput::Diagonal => "diagonal",
+                GlsCovarianceOutput::Full => "full",
+                GlsCovarianceOutput::None => unreachable!(),
+            },
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let header = covariance_csv_header(mode).unwrap();
+        // CSV: streamed packed writer vs legacy column-matrix writer.
+        let new_csv = dir.join("new.csv");
+        write_covariance_csv(&new_csv, mode, &times, &packed_rows).unwrap();
+        let legacy_csv = dir.join("legacy.csv");
+        {
+            let mut columns: Vec<Vec<f64>> = vec![Vec::with_capacity(times.len()); header.len()];
+            for (time, matrix) in times.iter().zip(matrices.iter()) {
+                let packed = pack_covariance_row(matrix, mode).unwrap();
+                columns[0].push(*time);
+                for (column, value) in columns.iter_mut().skip(1).zip(packed.iter()) {
+                    column.push(*value);
+                }
+            }
+            let file = std::fs::File::create(&legacy_csv).unwrap();
+            let mut writer = csv::WriterBuilder::new()
+                .has_headers(true)
+                .from_writer(file);
+            writer.write_record(&header).unwrap();
+            for index in 0..times.len() {
+                let record: Vec<String> = columns
+                    .iter()
+                    .map(|column| column[index].to_string())
+                    .collect();
+                writer.write_record(&record).unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        assert_eq!(
+            std::fs::read(&new_csv).unwrap(),
+            std::fs::read(&legacy_csv).unwrap(),
+            "CSV bytes differ for {mode:?}"
+        );
+        // NPY: streamed packed writer vs the shared column-matrix writer.
+        let new_npy = dir.join("new.npy");
+        write_covariance_npy(&new_npy, mode, &times, &packed_rows).unwrap();
+        let legacy_npy = dir.join("legacy.npy");
+        {
+            let mut columns: Vec<Vec<f64>> = vec![Vec::with_capacity(times.len()); header.len()];
+            for (time, matrix) in times.iter().zip(matrices.iter()) {
+                let packed = pack_covariance_row(matrix, mode).unwrap();
+                columns[0].push(*time);
+                for (column, value) in columns.iter_mut().skip(1).zip(packed.iter()) {
+                    column.push(*value);
+                }
+            }
+            crate::utils::csv::write_npy(&legacy_npy, &columns).unwrap();
+        }
+        assert_eq!(
+            std::fs::read(&new_npy).unwrap(),
+            std::fs::read(&legacy_npy).unwrap(),
+            "NPY bytes differ for {mode:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[test]
+fn covariance_writer_rejects_width_mismatch() {
+    // Retention carries the serialized width: a diagonal run cannot publish
+    // a full artifact (and vice versa) instead of silently padding.
+    let dir = std::env::temp_dir().join(format!(
+        "pmoke_joint_covariance_width_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let times = vec![0.001, 0.002];
+    let diagonal_rows = vec![vec![1.0; 12], vec![2.0; 12]];
+    assert!(
+        write_covariance_csv(
+            &dir.join("mismatch.csv"),
+            GlsCovarianceOutput::Full,
+            &times,
+            &diagonal_rows
+        )
+        .is_err()
+    );
+    assert!(!dir.join("mismatch.csv").exists());
+    let full_rows = vec![vec![1.0; 78], vec![2.0; 78]];
+    assert!(
+        write_covariance_npy(
+            &dir.join("mismatch.npy"),
+            GlsCovarianceOutput::Diagonal,
+            &times,
+            &full_rows
+        )
+        .is_err()
+    );
+    assert!(!dir.join("mismatch.npy").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
 }
