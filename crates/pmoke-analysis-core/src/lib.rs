@@ -30,13 +30,14 @@ pub use error::{AnalysisError, Result};
 pub use joint::{
     CORRELATION_DT_REL_TOL, CorrelationKernel, DEFAULT_MAX_CONDITION, DEFAULT_MAX_JITTER,
     DEFAULT_MAX_NOISE_CONDITION, DEFAULT_RANK_TOL, HarmonicSignalModel, JointEstimate,
-    JointHarmonicSettings, JointSolverTolerances, LAG_ZERO_TOL, MAX_MODEL_PARAMETERS,
-    MAX_WINDOW_SAMPLES, NoiseMode, NoiseModel, PreparedNoisePlan, TIMEBASE_RELATIVE_TOLERANCE,
-    WhitenedSystem, cholesky_factor, covariance_from_qr, design_matrix, estimate_joint,
-    estimate_joint_with_plan, forward_substitute, interpolate_variance, map_covariance_to_xy,
-    map_to_xy, pack_upper_triangle, rotate_xy_covariance, solve_direct, toeplitz_from_lags,
-    validate_correlation_kernel, validate_noise_model, validate_signal_model, validate_timebase,
-    whiten,
+    JointHarmonicSettings, JointScratch, JointSolverTolerances, LAG_ZERO_TOL, MAX_MODEL_PARAMETERS,
+    MAX_WINDOW_SAMPLES, NoiseMode, NoiseModel, PreparedNoisePlan, QrSolveWithCovariance,
+    TIMEBASE_RELATIVE_TOLERANCE, WhitenedSystem, cholesky_factor, covariance_from_qr,
+    design_matrix, design_matrix_into, estimate_joint, estimate_joint_with_plan,
+    estimate_joint_with_scratch, forward_substitute, interpolate_variance, map_covariance_to_xy,
+    map_to_xy, pack_upper_triangle, rotate_xy_covariance, solve_direct,
+    solve_direct_and_covariance, toeplitz_from_lags, validate_correlation_kernel,
+    validate_noise_model, validate_signal_model, validate_timebase, whiten,
 };
 pub use lockin::{
     BoxcarLegacyOutput, BoxcarLegacyPairOutput, BoxcarLegacySettings, BoxcarMeanOutput,

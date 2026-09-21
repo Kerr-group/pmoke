@@ -599,9 +599,80 @@ pub fn design_matrix(
         ));
     }
     let nyquist = 0.5 / interval;
-    let mut columns: Vec<Vec<f64>> = Vec::with_capacity(1 + 2 * model.fit_harmonics.len());
-    columns.push(vec![1.0; times.len()]);
-    for harmonic in &model.fit_harmonics {
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    let mut design = DMatrix::zeros(times.len(), parameters);
+    fill_design_columns(
+        &mut design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        nyquist,
+    )?;
+    Ok(design)
+}
+
+/// Fill a preallocated design matrix in `[DC, cos(k phi), sin(k phi), ...]`
+/// order with `phi = 2 pi f t - phase` (NUMERICS section 2), reusing the
+/// caller's buffer across windows instead of allocating per-window column
+/// vectors. Each entry is an independent closed-form evaluation, so the
+/// filled values are bit-identical to [`design_matrix`]; only allocation
+/// cost is hoisted, never arithmetic. The timebase checks run in the same
+/// order with the same errors as [`design_matrix`].
+pub fn design_matrix_into(
+    design: &mut DMatrix<f64>,
+    times: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    model: &HarmonicSignalModel,
+    sample_rate_hz: f64,
+) -> Result<()> {
+    let interval = validate_timebase(times, sample_rate_hz)?;
+    require_finite("reference_frequency_hz", reference_frequency_hz)?;
+    require_finite("reference_phase_rad", reference_phase_rad)?;
+    if reference_frequency_hz <= 0.0 {
+        return Err(AnalysisError::new(
+            "non_finite_input",
+            "reference_frequency_hz must be positive",
+        ));
+    }
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    if design.nrows() != times.len() || design.ncols() != parameters {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            format!(
+                "design scratch holds {}x{} but the window needs {}x{}",
+                design.nrows(),
+                design.ncols(),
+                times.len(),
+                parameters
+            ),
+        ));
+    }
+    let nyquist = 0.5 / interval;
+    fill_design_columns(
+        design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        nyquist,
+    )
+}
+
+/// Shared design evaluation: per-harmonic Nyquist gate in fit order, then
+/// the closed-form column fill. Both [`design_matrix`] and
+/// [`design_matrix_into`] run this exact sequence, so acceptance and values
+/// match between the allocating and the buffer-reusing paths.
+fn fill_design_columns(
+    design: &mut DMatrix<f64>,
+    times: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    model: &HarmonicSignalModel,
+    nyquist: f64,
+) -> Result<()> {
+    for (position, harmonic) in model.fit_harmonics.iter().enumerate() {
         let frequency = *harmonic as f64 * reference_frequency_hz;
         if !frequency.is_finite() || frequency >= nyquist {
             return Err(AnalysisError::new(
@@ -609,23 +680,19 @@ pub fn design_matrix(
                 format!("harmonic {harmonic} reaches Nyquist at {nyquist:.6e} Hz"),
             ));
         }
-        let mut cos_column = Vec::with_capacity(times.len());
-        let mut sin_column = Vec::with_capacity(times.len());
-        for time in times {
+        let cos_column = 1 + 2 * position;
+        let sin_column = 2 + 2 * position;
+        for (row, time) in times.iter().enumerate() {
             let phi = TAU * reference_frequency_hz * time - reference_phase_rad;
             let (sin_phi, cos_phi) = (*harmonic as f64 * phi).sin_cos();
-            cos_column.push(cos_phi);
-            sin_column.push(sin_phi);
+            design[(row, cos_column)] = cos_phi;
+            design[(row, sin_column)] = sin_phi;
         }
-        columns.push(cos_column);
-        columns.push(sin_column);
     }
-    Ok(DMatrix::from_columns(
-        &columns
-            .iter()
-            .map(|column| DVector::from_vec(column.clone()))
-            .collect::<Vec<_>>(),
-    ))
+    for row in 0..times.len() {
+        design[(row, 0)] = 1.0;
+    }
+    Ok(())
 }
 
 /// Periodic piecewise-linear interpolation at uniform bin centers
@@ -1370,6 +1437,27 @@ pub fn solve_direct(
     whitened_signal: &DVector<f64>,
     tolerances: JointSolverTolerances,
 ) -> Result<(DVector<f64>, f64, usize, f64)> {
+    let (beta, residual_rms, rank, condition, _) =
+        solve_direct_with_factor(whitened_design, whitened_signal, tolerances)?;
+    Ok((beta, residual_rms, rank, condition))
+}
+
+/// Thin-QR least-squares solution with its design-model covariance, sharing
+/// one R factor: `(beta, residual_rms, rank, condition, covariance_beta)`.
+/// See [`solve_direct_and_covariance`].
+pub type QrSolveWithCovariance = (DVector<f64>, f64, usize, f64, DMatrix<f64>);
+
+/// Thin-QR least squares that also returns the thin R factor, so the
+/// design-model covariance can reuse the exact same factorization instead
+/// of running a second QR over the same matrix (see
+/// [`solve_direct_and_covariance`]). Arithmetic, gates, and error
+/// precedence match [`solve_direct`] step for step; only the duplicate
+/// factorization cost is hoisted, never any value.
+fn solve_direct_with_factor(
+    whitened_design: &DMatrix<f64>,
+    whitened_signal: &DVector<f64>,
+    tolerances: JointSolverTolerances,
+) -> Result<QrSolveWithCovariance> {
     let (rows, columns) = (whitened_design.nrows(), whitened_design.ncols());
     if whitened_signal.len() != rows {
         return Err(AnalysisError::new(
@@ -1491,7 +1579,7 @@ pub fn solve_direct(
             "residual RMS is non-finite",
         ));
     }
-    Ok((beta, residual_rms, rank, condition))
+    Ok((beta, residual_rms, rank, condition, upper))
 }
 
 /// Design-model covariance `(Dw^T Dw)^-1` from the whitened thin R factor.
@@ -1524,6 +1612,20 @@ pub fn covariance_from_qr(
         ));
     }
     let upper = whitened_design.clone().qr().r();
+    covariance_from_factor(&upper, columns, variance_scale)
+}
+
+/// Design-model covariance from an already-computed thin R factor: solves
+/// `R1^T Z = I` for `Z`, then `C = Z^T Z`, scaled. The substitution
+/// sequence matches [`covariance_from_qr`] exactly; callers must have run
+/// the same dimension/finiteness/scale gates first (they do: both
+/// [`covariance_from_qr`] above and [`solve_direct_and_covariance`] below
+/// validate before substituting).
+fn covariance_from_factor(
+    upper: &DMatrix<f64>,
+    columns: usize,
+    variance_scale: f64,
+) -> Result<DMatrix<f64>> {
     // Solve R1^T Z = I for Z, then C = Z^T Z, scaled.
     let mut inverse_transpose = DMatrix::zeros(columns, columns);
     for column in 0..columns {
@@ -1552,6 +1654,35 @@ pub fn covariance_from_qr(
             "design-model covariance is non-finite",
         ))
     }
+}
+
+/// Combined thin-QR solve and design-model covariance sharing one R factor
+/// (NUMERICS 5.1, per-window duplicate-factorization removal). Runs the
+/// [`solve_direct`] gates and back-substitution, then the
+/// [`covariance_from_qr`] scale gate and forward substitution on the exact
+/// same factor object — so every output is bit-identical to running the two
+/// entry points in sequence, while the second `O(N p^2)` QR factorization
+/// and its matrix clone are gone. Returns
+/// `(beta, residual_rms, rank, condition, covariance_beta)`.
+pub fn solve_direct_and_covariance(
+    whitened_design: &DMatrix<f64>,
+    whitened_signal: &DVector<f64>,
+    tolerances: JointSolverTolerances,
+    variance_scale: f64,
+) -> Result<QrSolveWithCovariance> {
+    let (beta, residual_rms, rank, condition, upper) =
+        solve_direct_with_factor(whitened_design, whitened_signal, tolerances)?;
+    // Same gate covariance_from_qr runs after its own factorization; the
+    // solve above already ran the shared dimension/finiteness gates first,
+    // preserving the sequential error precedence exactly.
+    if !variance_scale.is_finite() || variance_scale <= 0.0 {
+        return Err(AnalysisError::new(
+            "invalid_noise_model",
+            "covariance variance scale must be positive finite",
+        ));
+    }
+    let covariance_beta = covariance_from_factor(&upper, whitened_design.ncols(), variance_scale)?;
+    Ok((beta, residual_rms, rank, condition, covariance_beta))
 }
 
 /// Peak-amplitude map `Xk = b`, `Yk = a` in `[X1,Y1,...]` order.
@@ -1797,8 +1928,16 @@ pub fn estimate_joint_with_plan(
     let whitened_design = system.design;
     let whitened_signal = system.response;
     let variance_scale = system.variance_scale;
-    let (beta, whitened_rms, rank, condition) =
-        solve_direct(&whitened_design, &whitened_signal, tolerances)?;
+    // Shared-R solve+covariance: bit-identical to the sequential pair, one
+    // factorization fewer. The variance-scale guard below is unreachable
+    // through whitening (every arm emits a validated positive scale) and is
+    // kept as defense-in-depth in its original position.
+    let (beta, whitened_rms, rank, condition, covariance_beta) = solve_direct_and_covariance(
+        &whitened_design,
+        &whitened_signal,
+        tolerances,
+        variance_scale,
+    )?;
     if variance_scale <= 0.0 {
         return Err(AnalysisError::new(
             "non_finite_output",
@@ -1807,7 +1946,130 @@ pub fn estimate_joint_with_plan(
     }
     let residual_rms = whitened_rms / variance_scale.sqrt();
     let beta_vec = beta.as_slice().to_vec();
-    let covariance_beta = covariance_from_qr(&whitened_design, variance_scale)?;
+    let covariance_xy = map_covariance_to_xy(&covariance_beta, model)?;
+    let xy = map_to_xy(&beta_vec, model)?;
+    if !residual_rms.is_finite() {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "standardized residual RMS is non-finite",
+        ));
+    }
+    Ok(JointEstimate {
+        beta: beta_vec,
+        xy,
+        covariance_beta: covariance_beta
+            .row_iter()
+            .map(|row| row.iter().copied().collect())
+            .collect(),
+        covariance_xy: covariance_xy
+            .row_iter()
+            .map(|row| row.iter().copied().collect())
+            .collect(),
+        rank,
+        condition,
+        residual_rms,
+        jitter_applied_v2: system.jitter_applied_v2,
+    })
+}
+
+/// Reusable per-window workspace for the buffer-reusing estimate path.
+/// Holds the design-matrix buffer across windows so the hot loop allocates
+/// it once per thread instead of once per window. A scratch must never be
+/// shared across threads: give each worker its own (the native pipeline
+/// keeps one per rayon thread via a thread-local).
+#[derive(Debug, Clone)]
+pub struct JointScratch {
+    design: DMatrix<f64>,
+}
+
+impl JointScratch {
+    /// Empty workspace; the buffer grows to the first window it serves.
+    pub fn new() -> Self {
+        Self {
+            design: DMatrix::zeros(0, 0),
+        }
+    }
+
+    fn design_for(&mut self, rows: usize, parameters: usize) -> &mut DMatrix<f64> {
+        if self.design.nrows() != rows || self.design.ncols() != parameters {
+            self.design = DMatrix::zeros(rows, parameters);
+        }
+        &mut self.design
+    }
+}
+
+impl Default for JointScratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Buffer-reusing estimate on an immutable prepared noise plan: the design
+/// matrix fills the caller's [`JointScratch`] instead of allocating
+/// per-window column vectors, and the solve shares one QR factor with the
+/// covariance. Every validation, gate, and arithmetic step matches
+/// [`estimate_joint_with_plan`] exactly, so outputs are bit-identical;
+/// only allocation and duplicate-factorization cost is hoisted.
+#[allow(clippy::too_many_arguments)]
+pub fn estimate_joint_with_scratch(
+    times: &[f64],
+    signal: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    sample_rate_hz: f64,
+    model: &HarmonicSignalModel,
+    tolerances: JointSolverTolerances,
+    plan: &PreparedNoisePlan,
+    scratch: &mut JointScratch,
+) -> Result<JointEstimate> {
+    let noise = plan.noise_model();
+    validate_signal_model(model, sample_rate_hz)?;
+    validate_noise_model(noise)?;
+    if plan.rows() != times.len() {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            format!(
+                "prepared noise plan covers {} samples but the window holds {}",
+                plan.rows(),
+                times.len()
+            ),
+        ));
+    }
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    let design = scratch.design_for(times.len(), parameters);
+    design_matrix_into(
+        design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        sample_rate_hz,
+    )?;
+    let system = plan.whiten(
+        design,
+        signal,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+    )?;
+    let whitened_design = system.design;
+    let whitened_signal = system.response;
+    let variance_scale = system.variance_scale;
+    // Shared-R solve+covariance (same notes as estimate_joint_with_plan).
+    let (beta, whitened_rms, rank, condition, covariance_beta) = solve_direct_and_covariance(
+        &whitened_design,
+        &whitened_signal,
+        tolerances,
+        variance_scale,
+    )?;
+    if variance_scale <= 0.0 {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "variance scale is non-positive",
+        ));
+    }
+    let residual_rms = whitened_rms / variance_scale.sqrt();
+    let beta_vec = beta.as_slice().to_vec();
     let covariance_xy = map_covariance_to_xy(&covariance_beta, model)?;
     let xy = map_to_xy(&beta_vec, model)?;
     if !residual_rms.is_finite() {
