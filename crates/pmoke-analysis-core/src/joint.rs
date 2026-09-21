@@ -215,9 +215,14 @@ pub struct JointEstimate {
     /// Standardized residual RMS per unit noise: the whitened RMS divided by
     /// the square root of the variance scale, so identity and diagonal modes
     /// report identical values for identical covariances. Dimensionless, not
-    /// volts: it reads as a volts RMS only when the reference variance is
-    /// exactly 1 V^2. Never the diagnostics-path volts RMS of a raw
-    /// nuisance residual (different estimator, different normalization).
+    /// volts: it is numerically equal to the raw volts RMS for Identity
+    /// noise when the reference variance is exactly 1 V^2 (more generally
+    /// whenever the effective covariance is the unit identity), and stays
+    /// dimensionless in that coincidence. Other modes normalize by their
+    /// own realized bins and/or correlation factor, so the reference
+    /// variance alone never sets the reading. Never the diagnostics-path
+    /// volts RMS of a raw nuisance residual (different estimator,
+    /// different normalization).
     pub residual_rms: f64,
     /// Bounded jitter actually applied to the normalized Toeplitz diagonal
     /// in V^2-normalized units (FR-017). Zero unless the factor needed it;

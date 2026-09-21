@@ -639,16 +639,18 @@ pub fn recipe_provenance() -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use pmoke_analysis_core::{
-        HarmonicSignalModel, JointHarmonicSettings, JointSolverTolerances, NoiseMode, NoiseModel,
-        design_matrix, estimate_joint,
+        CorrelationKernel, HarmonicSignalModel, JointHarmonicSettings, JointSolverTolerances,
+        NoiseMode, NoiseModel, design_matrix, estimate_joint,
     };
     use std::f64::consts::PI;
 
     /// S1 unit-honesty contract (document-first, no rename): the joint
     /// `residual_rms` is a standardized per-unit-noise RMS (dimensionless;
-    /// volts only at v0 == 1 V^2) while the diagnostics `residual_rms` is a
-    /// true volts RMS of a raw nuisance residual. Both sides are pinned here
-    /// so a future rename or units change must update this test.
+    /// numerically equal to the raw volts RMS for Identity noise at
+    /// v0 == 1 V^2, and dimensionless in that coincidence) while the
+    /// diagnostics `residual_rms` is a true volts RMS of a raw nuisance
+    /// residual. Both sides are pinned here so a future rename or units
+    /// change must update this test.
     #[test]
     fn residual_rms_units_are_pinned_on_both_sides() {
         // Side A: joint standardized RMS through the shared core. The tone is
@@ -723,6 +725,112 @@ mod tests {
         assert!(
             gap > 0.4,
             "v0==4 standardized value must stay far from volts RMS (gap {gap:.3})"
+        );
+
+        // Side A2: phase-diagonal normalization ignores the reference
+        // variance and whitens by the realized bins, so v0 alone never sets
+        // the reading. Uniform bins=4 must match Identity v0==4 (same
+        // effective scaling), and uniform bins=1 must match Identity v0==1
+        // even with v0==4 (unit effective covariance coincidence).
+        let settings_diagonal = |v0: f64, bins: Vec<f64>| JointHarmonicSettings {
+            model: model.clone(),
+            noise: NoiseModel {
+                mode: NoiseMode::PhaseDiagonal,
+                reference_variance_v2: v0,
+                variance_bins: Some(bins),
+                correlation: None,
+            },
+            tolerances: JointSolverTolerances::default(),
+        };
+        let diagonal_unit_ref_bins_four = estimate_joint(
+            &times,
+            &signal,
+            f_ref,
+            phase,
+            rate,
+            &settings_diagonal(1.0, vec![4.0; 8]),
+        )
+        .unwrap();
+        let diagonal_four_ref_bins_one = estimate_joint(
+            &times,
+            &signal,
+            f_ref,
+            phase,
+            rate,
+            &settings_diagonal(4.0, vec![1.0; 8]),
+        )
+        .unwrap();
+        let diag_four_rel =
+            (diagonal_unit_ref_bins_four.residual_rms - volts_rms / 2.0).abs() / volts_rms;
+        assert!(
+            diag_four_rel < 1.0e-9,
+            "diagonal v0==1 bins==4 must read volts RMS / 2: got {:.6e}, want {:.6e}",
+            diagonal_unit_ref_bins_four.residual_rms,
+            volts_rms / 2.0
+        );
+        let diag_one_rel = (diagonal_four_ref_bins_one.residual_rms - volts_rms).abs() / volts_rms;
+        assert!(
+            diag_one_rel < 1.0e-9,
+            "diagonal v0==4 bins==1 must coincide with volts RMS: got {:.6e}, want {volts_rms:.6e}",
+            diagonal_four_ref_bins_one.residual_rms
+        );
+        let diag_matches_identity_four =
+            (diagonal_unit_ref_bins_four.residual_rms - at_four.residual_rms).abs() / volts_rms;
+        assert!(
+            diag_matches_identity_four < 1.0e-12,
+            "diagonal v0==1 bins==4 must match identity v0==4 (gap {diag_matches_identity_four:.3e})"
+        );
+        let diag_matches_identity_one =
+            (diagonal_four_ref_bins_one.residual_rms - at_unit.residual_rms).abs() / volts_rms;
+        assert!(
+            diag_matches_identity_one < 1.0e-12,
+            "diagonal v0==4 bins==1 must match identity v0==1 (gap {diag_matches_identity_one:.3e})"
+        );
+
+        // Side A3: correlated counterexample. Even at v0==1 the
+        // non-identity correlation factor keeps the standardized value away
+        // from the raw volts RMS, so v0==1 is not a sufficient all-mode
+        // criterion either.
+        let correlated = estimate_joint(
+            &times,
+            &signal,
+            f_ref,
+            phase,
+            rate,
+            &JointHarmonicSettings {
+                model: model.clone(),
+                noise: NoiseModel {
+                    mode: NoiseMode::StationaryCorrelated,
+                    reference_variance_v2: 1.0,
+                    variance_bins: None,
+                    correlation: Some(CorrelationKernel {
+                        lags: vec![1.0, 0.2],
+                        lag_step_s: dt,
+                    }),
+                },
+                tolerances: JointSolverTolerances::default(),
+            },
+        )
+        .unwrap();
+        let correlated_raw: f64 = {
+            let raw_sum: f64 = (0..times.len())
+                .map(|row| {
+                    let fitted: f64 = (0..columns)
+                        .map(|column| design[(row, column)] * correlated.beta[column])
+                        .sum();
+                    (signal[row] - fitted).powi(2)
+                })
+                .sum();
+            (raw_sum / rows).sqrt()
+        };
+        assert!(
+            correlated_raw > 1.0e-6,
+            "correlated fixture residual unexpectedly tiny: {correlated_raw:.6e}"
+        );
+        let correlated_gap = (correlated.residual_rms - correlated_raw).abs() / correlated_raw;
+        assert!(
+            correlated_gap > 0.01,
+            "stationary-correlated v0==1 must stay away from volts RMS (gap {correlated_gap:.3})"
         );
 
         // Side B: the diagnostics volts-RMS helper preserves input units with

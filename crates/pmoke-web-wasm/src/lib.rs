@@ -238,7 +238,8 @@ fn analysis_error(error: pmoke_analysis_core::AnalysisError) -> JsError {
 /// jitter_applied_v2 | covariance diagonal (2 * outputs)]`. The covariance
 /// is the peak-amplitude design-model XY covariance (FR-040).
 /// `residual_rms` is the standardized per-unit-noise value (dimensionless;
-/// a volts RMS only when the reference variance is 1 V^2).
+/// numerically equal to the raw volts RMS for Identity noise when the
+/// reference variance is 1 V^2, and dimensionless in that coincidence).
 /// Native-testable core of [`analyze_joint_window_packed`]: identical logic,
 /// `String` errors (JsError messages are unreadable off-wasm targets).
 #[allow(clippy::too_many_arguments)]
