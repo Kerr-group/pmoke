@@ -457,6 +457,37 @@ fn correlation_shift_between_halves_fails_adequacy() {
     assert!(format!("{error:#}").contains("adequacy"), "{error:#}");
 }
 
+/// Issue #301 follow-up: a validated but unsatisfiable SCS lag count
+/// (representable TOML integer) must surface the typed
+/// insufficient_calibration error from derivation instead of panicking
+/// with capacity overflow during adequacy assessment.
+#[test]
+fn oversized_scs_lags_fail_derivation_with_typed_error() {
+    let samples = 30_000usize;
+    let (time, signal) = stationary_trace(samples, 7, 0.05);
+    let mut gls = gls_config(GlsNoiseMode::Identity);
+    gls.scs_adequacy.lags = i64::MAX as usize;
+    let error = derive_prepulse(
+        full_window(samples),
+        TimeAxisRef::Explicit(&time),
+        &[3],
+        &[signal.as_slice()],
+        F_REF,
+        PHASE,
+        DT,
+        &gls,
+        "acquisition-test",
+        // No same-run reference fit in these fixtures: floor gate.
+        None,
+    )
+    .err()
+    .unwrap();
+    assert!(
+        format!("{error:#}").contains("insufficient_calibration"),
+        "{error:#}"
+    );
+}
+
 #[test]
 fn correlated_modes_derive_tables_identity_does_not() {
     let samples = 30_000usize;

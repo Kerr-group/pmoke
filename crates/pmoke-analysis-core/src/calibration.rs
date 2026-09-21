@@ -1908,6 +1908,40 @@ pub fn scs_adequacy(
         }
     }
     const OCTANTS: usize = 8;
+    // Impossible support fails closed before any lag-sized allocation:
+    // lag_pairs only yields pairs for lag strictly shorter than the group,
+    // so a requested lag count at or beyond the shortest participating
+    // group can never produce pairs. Returning the typed
+    // insufficient_calibration error here (instead of allocating
+    // policy.lags-sized buffers first) keeps validated but unsatisfiable
+    // lag counts from panicking with capacity overflow.
+    let shortest = training
+        .iter()
+        .chain(reserved.iter())
+        .map(|group| group.standardized.len())
+        .min()
+        .unwrap_or(0);
+    if policy.lags >= shortest {
+        return Err(AnalysisError::new(
+            "insufficient_calibration",
+            format!(
+                "adequacy lags ({}) must be shorter than every adequacy group (shortest {})",
+                policy.lags, shortest
+            ),
+        ));
+    }
+    // Defense in depth: even satisfiable lag counts expand by the fixed
+    // octant factor below, so refuse counts whose plain f64 lag vector
+    // alone could not be allocated before materializing anything.
+    if policy.lags > (isize::MAX as usize) / std::mem::size_of::<f64>() {
+        return Err(AnalysisError::new(
+            "insufficient_calibration",
+            format!(
+                "adequacy lags ({}) exceed the addressable lag-vector size",
+                policy.lags
+            ),
+        ));
+    }
     // Per-role, per-lag, per-octant lag products plus pooled lag vectors.
     // roles: 0 = training, 1 = reserved.
     let mut pooled = vec![vec![0.0_f64; policy.lags]; 2];
