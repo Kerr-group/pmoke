@@ -128,6 +128,18 @@
     { "locale": "en", "query": "pulse noise diagnostics report", "expected": "/en/docs/cli/reference" },
     { "locale": "ja", "query": "記録済みパルスノイズの診断方法", "expected": "/ja/docs/cli/reference" },
     { "locale": "ja", "query": "noise diagnoseの実行手順", "expected": "/ja/docs/cli/reference" },
-    { "locale": "ja", "query": "ノイズ診断レポートの確認", "expected": "/ja/docs/cli/reference" }
+    { "locale": "ja", "query": "ノイズ診断レポートの確認", "expected": "/ja/docs/cli/reference" },
+    { "locale": "en", "query": "terminal dashboard for browsing recorded runs", "expected": "/en/docs/monitor" },
+    { "locale": "en", "query": "TUI inspector tabs and focus panes", "expected": "/en/docs/monitor" },
+    { "locale": "en", "query": "pin a run preview in the monitor", "expected": "/en/docs/monitor" },
+    { "locale": "ja", "query": "run browser で run を preview", "expected": "/ja/docs/monitor" },
+    { "locale": "ja", "query": "TUI の inspector tab 切替", "expected": "/ja/docs/monitor" },
+    { "locale": "ja", "query": "monitor の focus 移動と keybinding", "expected": "/ja/docs/monitor" },
+    { "locale": "en", "query": "monitor REPORTS tab for the selected run", "expected": "/en/docs/monitor" },
+    { "locale": "en", "query": "run stage lifecycle status in the monitor TUI", "expected": "/en/docs/monitor" },
+    { "locale": "en", "query": "read-only report summaries in the monitor inspector", "expected": "/en/docs/monitor" },
+    { "locale": "ja", "query": "monitor の REPORTS tab で選択中 run の状態確認", "expected": "/ja/docs/monitor" },
+    { "locale": "ja", "query": "monitor で run の stage lifecycle を見る", "expected": "/ja/docs/monitor" },
+    { "locale": "ja", "query": "monitor の read-only report 要約", "expected": "/ja/docs/monitor" }
   ]
 }
