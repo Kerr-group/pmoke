@@ -262,6 +262,7 @@ pub fn execute_lockin<'a>(
                 crate::config::GlsCovarianceOutput::None
             }
         };
+        let t_diagnostics = std::time::Instant::now();
         for ((((sig_ch, rows), covariances), snapshot), binding) in signal_ch
             .iter()
             .zip(quality.iter())
@@ -307,7 +308,8 @@ pub fn execute_lockin<'a>(
             }
         }
         ui::saved(format!(
-            "joint GLS diagnostics for signals {signal_ch:?} (quality always, covariance {mode:?})"
+            "joint GLS diagnostics for signals {signal_ch:?} (quality always, covariance {mode:?}, {})",
+            ui::fmt_duration(t_diagnostics.elapsed())
         ));
     }
 
@@ -460,6 +462,9 @@ fn li_process_joint<'a>(
                 sample_interval_s,
                 gls,
                 &crate::lockin::prepulse::acquisition_digest_for(cfg),
+                // Same-run reference-fit uncertainty into each derived
+                // artifact binding (Issue #274 FR-01).
+                ref_fit_params.f_ref_rel_uncertainty,
             )
             .context(
                 "pre-pulse calibration derivation failed; refusing to fall back to artifact mode",
@@ -492,6 +497,9 @@ fn li_process_joint<'a>(
                     PIPELINE_VOLTAGE_UNIT.to_string(),
                     sample_interval_s,
                     ref_fit_params.f_ref,
+                    // Inference-side uncertainty from the run's own
+                    // reference fit (Issue #274 FR-02).
+                    ref_fit_params.f_ref_rel_uncertainty,
                 )
                 .context("joint_harmonic_gls model source is not usable")?,
             )
@@ -653,7 +661,11 @@ pub fn li_process_boxcar<'a>(
                 harmonics
                     .par_iter()
                     .map(|&harmonic| {
-                        progress.set_message(format!("lock-in ch{sig_ch} h{harmonic}"));
+                        // No per-harmonic set_message here: the channel-level
+                        // message above already orients the bar, and a message
+                        // per harmonic from every worker thread interleaves
+                        // JSONL progress events with racy bar text. The
+                        // per-harmonic count below preserves exact progress.
                         let result = li_processor.compute_harmonic_detailed(harmonic, false);
                         progress.inc(1);
                         result

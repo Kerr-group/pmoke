@@ -467,6 +467,7 @@ fn artifact_bytes_bind_training_only() {
         sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
         reference_frequency_hz: case.f_ref,
         frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+        reference_frequency_rel_uncertainty: None,
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
         acquisition: AcquisitionMeta {
             device: Some("synthetic".to_string()),
@@ -495,6 +496,7 @@ fn artifact_bytes_bind_training_only() {
             profile_rmse_v2: Some(0.01),
             standardized_lag1: Some(0.02),
         },
+        frequency_tol_overridden: false,
     };
     let first = build_artifact(request.clone()).unwrap();
     assert_eq!(
@@ -618,6 +620,7 @@ fn applicability_binding() {
             sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
             reference_frequency_hz: case.f_ref,
             frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+            reference_frequency_rel_uncertainty: None,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
                 device: Some("synthetic".to_string()),
@@ -638,6 +641,7 @@ fn applicability_binding() {
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     let built = build_artifact(request).unwrap();
     assert_eq!(built.artifact.capabilities.modes.len(), 2);
@@ -653,6 +657,7 @@ fn applicability_binding() {
             gain: Some(2.0),
             bandwidth_hz: Some(50_000.0),
         },
+        reference_frequency_rel_uncertainty: None,
     };
     let report = inspect_applicability(&built.artifact, &good);
     // Fully matching acquisition: compatible with no warnings.
@@ -945,6 +950,7 @@ fn artifact_constructor_rejects_invalid_models() {
         sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
         reference_frequency_hz: case.f_ref,
         frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+        reference_frequency_rel_uncertainty: None,
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
         acquisition: AcquisitionMeta {
             device: None,
@@ -974,6 +980,7 @@ fn artifact_constructor_rejects_invalid_models() {
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     // Empty phase table advertises no bins: rejected, not hashed.
     let mut empty = base.clone();
@@ -1036,6 +1043,7 @@ fn rebuilt_artifact_hashes_track_data_mutations() {
         sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
         reference_frequency_hz: case.f_ref,
         frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+        reference_frequency_rel_uncertainty: None,
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
         acquisition: AcquisitionMeta {
             device: None,
@@ -1094,6 +1102,7 @@ fn rebuilt_artifact_hashes_track_data_mutations() {
                 profile_rmse_v2: None,
                 standardized_lag1: None,
             },
+            frequency_tol_overridden: false,
         })
         .unwrap()
     };
@@ -1241,6 +1250,7 @@ fn artifact_constructor_rejects_invalid_recipes() {
             sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
             reference_frequency_hz: case.f_ref,
             frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+            reference_frequency_rel_uncertainty: None,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
                 device: None,
@@ -1265,6 +1275,7 @@ fn artifact_constructor_rejects_invalid_recipes() {
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     // Positive control: the valid request still builds.
     build_artifact(base.clone()).unwrap();
@@ -1351,6 +1362,7 @@ fn artifact_constructor_rejects_inconsistent_lag_clock() {
             sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
             reference_frequency_hz: case.f_ref,
             frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+            reference_frequency_rel_uncertainty: None,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
                 device: None,
@@ -1375,6 +1387,7 @@ fn artifact_constructor_rejects_inconsistent_lag_clock() {
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     let built = build_artifact(base.clone()).unwrap();
     let stored = built.artifact.correlation.unwrap();
@@ -1427,6 +1440,7 @@ fn applicability_unknown_state_matrix() {
                 sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
                 reference_frequency_hz: case.f_ref,
                 frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+                reference_frequency_rel_uncertainty: None,
                 phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
                 acquisition,
             },
@@ -1443,6 +1457,7 @@ fn applicability_unknown_state_matrix() {
                 profile_rmse_v2: None,
                 standardized_lag1: None,
             },
+            frequency_tol_overridden: false,
         })
         .unwrap()
         .artifact
@@ -1455,6 +1470,7 @@ fn applicability_unknown_state_matrix() {
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
         adc_scale_provenance: adc,
         acquisition,
+        reference_frequency_rel_uncertainty: None,
     };
     let verified: Vec<String> = vec![];
     // Equal known states: compatible with no warnings.

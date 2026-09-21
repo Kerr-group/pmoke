@@ -10,13 +10,15 @@ use crate::config::{GlsCovarianceOutput, GlsNoiseMode, JointHarmonicGlsConfig, L
 use crate::lockin::estimator_snapshot::{EstimatorSnapshot, build_estimator_snapshot};
 use crate::lockin::lockin_params::LockinParams;
 use crate::lockin::provenance::LockinProvenance;
+use crate::ui;
 use crate::utils::time_axis::TimeAxisRef;
 use anyhow::{Context, Result, bail};
 use pmoke_analysis_core::{
-    CorrelationKernel, HarmonicSignalModel, JointEstimate, JointHarmonicSettings,
-    JointSolverTolerances, NoiseModel, estimate_joint,
+    CorrelationKernel, HarmonicSignalModel, JointEstimate, JointHarmonicSettings, JointScratch,
+    JointSolverTolerances, NoiseModel, PreparedNoisePlan, estimate_joint_with_scratch,
 };
 use rayon::prelude::*;
+use std::cell::RefCell;
 
 /// Upper bound for temporary per-window allocations during native execution.
 /// Final artifacts remain ordered and compatible, while a large record never
@@ -554,7 +556,20 @@ pub fn run_joint_li(
     let mut covariance = Vec::with_capacity(signal_data.len());
     let mut snapshots = Vec::with_capacity(signal_data.len());
     let mut bindings = Vec::with_capacity(signal_data.len());
+    // The joint GLS fit is the long silent stage of this path (one solver
+    // run per output window per channel): the bar counts windows in
+    // per-chunk batches, so the bar and the JSONL stream stay alive without
+    // touching the hot per-window loop (no per-window atomics, no per-window
+    // events). One chunk (<=256 windows) is milliseconds of work, far inside
+    // the ~1s heartbeat budget.
+    let outputs_per_channel = plan.params.i_end - plan.params.i_start + 1;
+    let pb = ui::progress(
+        format!("joint GLS lock-in processing with {} workers", plan.workers),
+        outputs_per_channel as u64 * signal_ch.len() as u64,
+    );
+    let t0 = std::time::Instant::now();
     for (&channel, signal) in signal_ch.iter().zip(signal_data.iter()) {
+        pb.set_message(format!("joint GLS lock-in ch{channel}"));
         let signal: &[f64] = signal;
         let (noise, binding) = source
             .load(channel, gls.noise_mode)
@@ -566,7 +581,7 @@ pub fn run_joint_li(
             tolerances,
         };
         let (columns, rows, covariances) =
-            run_joint_channel(inputs, signal, channel, &plan, &settings, &pool)?;
+            run_joint_channel(inputs, signal, channel, &plan, &settings, &pool, &pb)?;
         result.push(columns);
         quality.push(rows);
         covariance.push(
@@ -593,6 +608,16 @@ pub fn run_joint_li(
             .with_context(|| format!("joint estimator snapshot failed for channel {channel}"))?,
         );
     }
+    // The completion line carries the boxcar path's marker substring so the
+    // monitor timeline's Lock-in step completes under either estimator.
+    ui::finish_success(
+        pb,
+        format!(
+            "lock-in processing completed (joint GLS, {} workers, {})",
+            plan.workers,
+            ui::fmt_duration(t0.elapsed())
+        ),
+    );
 
     let provenance =
         LockinProvenance::from_joint(plan.params, gls.noise_mode, &bindings, JOINT_SOLVER_ID);
@@ -608,6 +633,14 @@ pub fn run_joint_li(
     })
 }
 
+// Per-rayon-thread design-matrix scratch for the buffer-reusing estimate
+// path. Each worker thread fills its own buffer once per window shape and
+// reuses it for every later window; the scratch never crosses threads, so
+// no synchronization touches the hot loop.
+thread_local! {
+    static JOINT_DESIGN_SCRATCH: RefCell<JointScratch> = RefCell::new(JointScratch::new());
+}
+
 fn run_joint_channel(
     inputs: &JointRunInputs<'_>,
     signal: &[f64],
@@ -615,6 +648,7 @@ fn run_joint_channel(
     plan: &PreparedJointPlan,
     settings: &JointHarmonicSettings,
     pool: &rayon::ThreadPool,
+    progress: &ui::UiProgress,
 ) -> Result<(XyColumns, Vec<QualityRow>, XyCovariances)> {
     let params = plan.params;
     let JointRunInputs {
@@ -632,6 +666,31 @@ fn run_joint_channel(
     // Same tap support as the legacy boxcar (edge legacy_trim): centers on
     // the strided grid, samples [center - n_half - 1, center + n_half + 1].
     let half_taps = params.n_half + 1;
+    // Hoisted per-channel noise plan (P1): every window shares the same
+    // length (2 * half_taps + 1) and the same calibrated noise model, so
+    // the Toeplitz Cholesky factor and its TOL-07 condition are built once
+    // per channel and reused by every window via estimate_joint_with_scratch.
+    // The scratch path executes the same arithmetic under the same gates as
+    // the direct path (bit-identical outputs); only cost is hoisted.
+    let window_rows = half_taps
+        .checked_mul(2)
+        .and_then(|doubled| doubled.checked_add(1))
+        .context("joint lock-in window length overflow")?;
+    let noise_plan =
+        PreparedNoisePlan::prepare(&settings.noise, window_rows, settings.tolerances).map_err(
+            |error| {
+                anyhow::anyhow!(GlsFailure {
+                    code: error.code().to_string(),
+                    channel,
+                    window_index: 0,
+                })
+            },
+        )
+        .with_context(|| {
+            format!(
+                "joint noise plan preparation failed (stage=lockin, channel={channel}); refusing to fall back"
+            )
+        })?;
     for chunk_start in (0..outputs).step_by(plan.chunk_size) {
         let chunk_end = (chunk_start + plan.chunk_size).min(outputs);
         let estimates: Vec<(usize, Result<JointEstimate>)> = pool.install(|| {
@@ -667,14 +726,25 @@ fn run_joint_channel(
                                 signal.len()
                             )
                         })?;
-                        estimate_joint(
-                            &window_times,
-                            window_signal,
-                            f_ref,
-                            omega_tref,
-                            sample_rate_hz,
-                            settings,
-                        )
+                        // Buffer-reusing estimate: the thread-local design
+                        // scratch skips the per-window column allocations and
+                        // the solve shares one QR factor with the covariance.
+                        // Arithmetic, gates, and error attribution match the
+                        // direct path window for window (byte-identical).
+                        JOINT_DESIGN_SCRATCH.with(|cell| {
+                            let mut scratch = cell.borrow_mut();
+                            estimate_joint_with_scratch(
+                                &window_times,
+                                window_signal,
+                                f_ref,
+                                omega_tref,
+                                sample_rate_hz,
+                                &settings.model,
+                                settings.tolerances,
+                                &noise_plan,
+                                &mut scratch,
+                            )
+                        })
                         .map_err(|error| {
                             anyhow::anyhow!(GlsFailure {
                                 code: error.code().to_string(),
@@ -730,6 +800,9 @@ fn run_joint_channel(
             });
             covariances.push(estimate.covariance_xy);
         }
+        // Batched window progress: one bar/JSONL update per chunk from the
+        // sequential assembly loop, never from the hot per-window loop.
+        progress.inc((chunk_end - chunk_start) as u64);
     }
     Ok((columns, rows, covariances))
 }

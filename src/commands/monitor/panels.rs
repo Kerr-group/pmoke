@@ -273,7 +273,7 @@ pub(super) fn render_files(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) 
 pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     let popup = centered_rect(70, 70, area);
     let selected = app.selected_action();
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled(
                 "pmoke TUI",
@@ -297,82 +297,54 @@ pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area:
         ]),
         Line::styled(selected.description(), Style::default().fg(Color::Gray)),
         Line::raw(""),
-        Line::from(vec![
-            Span::styled("Enter", Style::default().fg(Color::Cyan)),
-            Span::raw(" run selected command"),
-        ]),
-        Line::from(vec![
-            Span::styled("Esc", Style::default().fg(Color::Cyan)),
-            Span::raw(" leave current mode"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+C", Style::default().fg(Color::Cyan)),
-            Span::raw(" interrupt command or cancel activity selection"),
-        ]),
-        Line::from(vec![
-            Span::styled("j/k, Up/Down, g/G", Style::default().fg(Color::Cyan)),
-            Span::raw(" move command selection"),
-        ]),
-        Line::from(vec![
-            Span::styled("h/l, Tab/Shift-Tab", Style::default().fg(Color::Cyan)),
-            Span::raw(" switch panels"),
-        ]),
-        Line::from(vec![
-            Span::styled("a/o/m/f/s", Style::default().fg(Color::Cyan)),
-            Span::raw(" focus workflow/activity or inspector views"),
-        ]),
-        Line::from(vec![
-            Span::styled("/", Style::default().fg(Color::Cyan)),
-            Span::raw(" search workflow actions"),
-        ]),
-        Line::from(vec![
-            Span::styled("[ / ]", Style::default().fg(Color::Cyan)),
-            Span::raw(" browse older runs / return toward live activity"),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                "PageUp/PageDown, Ctrl-u/Ctrl-d",
-                Style::default().fg(Color::Cyan),
-            ),
-            Span::raw(" scroll activity events"),
-        ]),
-        Line::from(vec![
-            Span::styled("o / Click activity", Style::default().fg(Color::Cyan)),
-            Span::raw(" focus and select events"),
-        ]),
-        Line::from(vec![
-            Span::styled("j/k, g/G in activity", Style::default().fg(Color::Cyan)),
-            Span::raw(" move selected event"),
-        ]),
-        Line::from(vec![
-            Span::styled("V then j/k", Style::default().fg(Color::Cyan)),
-            Span::raw(" visual-line select activity"),
-        ]),
-        Line::from(vec![
-            Span::styled("y / Enter in activity", Style::default().fg(Color::Cyan)),
-            Span::raw(" copy selected events"),
-        ]),
-        Line::from(vec![
-            Span::styled("End", Style::default().fg(Color::Cyan)),
-            Span::raw(" follow live activity"),
-        ]),
-        Line::from(vec![
-            Span::styled("Mouse wheel", Style::default().fg(Color::Cyan)),
-            Span::raw(" scroll the panel under the pointer"),
-        ]),
-        Line::from(vec![
-            Span::styled("Click / drag", Style::default().fg(Color::Cyan)),
-            Span::raw(" focus a panel or select a range"),
-        ]),
-        Line::from(vec![
-            Span::styled("r", Style::default().fg(Color::Cyan)),
-            Span::raw(" refresh config and files"),
-        ]),
-        Line::from(vec![
-            Span::styled("q", Style::default().fg(Color::Cyan)),
-            Span::raw(" quit when idle"),
-        ]),
     ];
+    // FR-02: every row below is generated from the keybinding registry, so
+    // the overlay cannot drift from the implementation. `help_sections`
+    // owns the grouping; only the header above and the notes below are
+    // curated text (neither is a key binding).
+    for (title, rows) in help_sections() {
+        lines.push(Line::styled(
+            title.to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        for binding in rows {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<22}", binding.label()),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(binding.description, Style::default().fg(Color::Gray)),
+            ]));
+        }
+        lines.push(Line::raw(""));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("Mouse  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            if app.mouse_capture {
+                "capture on (click/drag/wheel); PMOKE_MOUSE=off disables"
+            } else {
+                "capture off (PMOKE_MOUSE=off)"
+            },
+            Style::default().fg(Color::Gray),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Keymap  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "fixed in S1; prefs file planned at $XDG_CONFIG_HOME/pmoke/keymap.toml",
+            Style::default().fg(Color::Gray),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("`:`  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "reserved for a future command palette; history stays on [ ]",
+            Style::default().fg(Color::Gray),
+        ),
+    ]));
 
     frame.render_widget(Clear, popup);
     frame.render_widget(

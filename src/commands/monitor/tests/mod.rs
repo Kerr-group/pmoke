@@ -90,8 +90,13 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
     )
 }
 
+mod harness;
+mod inspect;
 mod interaction;
+mod keymap;
 mod output;
+mod runs;
+mod snapshots;
 mod timeline;
 mod view;
 mod workflow;

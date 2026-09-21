@@ -122,6 +122,7 @@ pub fn run_moke_analysis(
     ) && matches!(moke_type, MokeType::Standard);
     let mut angle_variance_results: Vec<Vec<f64>> = Vec::new();
     let pb = ui::progress("running Moke analysis", ch.len() as u64);
+    let t0 = Instant::now();
     for (ch_i, li_rotated_result) in ch.iter().zip(li_rotated_results.iter()) {
         pb.set_message(format!("Moke analysis ch{ch_i}"));
         let fig_name = format!("{}_ch{}", MOKE_NAME, ch_i);
@@ -224,7 +225,14 @@ pub fn run_moke_analysis(
         write_moke_variance_csv(&paths.moke_variance_csv(), ch, &angle_variance_results)?;
     }
 
-    ui::finish_saved(pb, format!("Moke analysis results for channels {:?}", ch));
+    ui::finish_saved(
+        pb,
+        format!(
+            "Moke analysis results for channels {:?} ({})",
+            ch,
+            ui::fmt_duration(t0.elapsed())
+        ),
+    );
     ui::success("Moke analysis completed");
 
     Ok(())

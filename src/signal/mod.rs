@@ -98,12 +98,14 @@ pub fn run_signal_analysis<'a>(
         });
         pb.inc(1);
     }
+    let elapsed_compute = t0_instant.elapsed();
 
     let headers = get_signal_headers(cfg)?;
     let means = outputs
         .iter()
         .map(|output| output.mean.clone())
         .collect::<Vec<_>>();
+    let t_save = Instant::now();
     write_signal_results(
         cfg.paths().signal_csv(),
         &headers,
@@ -113,16 +115,18 @@ pub fn run_signal_analysis<'a>(
         &means,
         cfg.lockin.save_npy,
     )?;
+    let elapsed_save = t_save.elapsed();
 
     ui::finish_saved(
         pb,
         format!(
-            "signal means for channels {:?} ({})",
+            "signal means for channels {:?} (compute {}, save {})",
             outputs
                 .iter()
                 .map(|output| output.channel)
                 .collect::<Vec<_>>(),
-            ui::fmt_duration(t0_instant.elapsed())
+            ui::fmt_duration(elapsed_compute),
+            ui::fmt_duration(elapsed_save)
         ),
     );
 
