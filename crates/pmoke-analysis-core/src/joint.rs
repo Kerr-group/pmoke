@@ -1492,7 +1492,9 @@ fn solve_direct_with_factor(
         ));
     }
     // Rank and conditioning from the SVD diagnostic on the same matrix.
-    let svd = whitened_design.clone().svd(true, false);
+    // Values-only SVD: the thin U factor (N x p) is never read — only the
+    // singular values feed the rank/condition gates below — so skip it.
+    let svd = whitened_design.clone().svd(false, false);
     let singular = svd.singular_values;
     let sigma_max = singular[0];
     if !(sigma_max.is_finite() && sigma_max > 0.0) {
