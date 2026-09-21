@@ -13,6 +13,12 @@ const JSONL_OUTPUT_ENV: &str = "PMOKE_OUTPUT";
 const JSONL_OUTPUT_VALUE: &str = "jsonl";
 const OUTPUT_STAGE_ENV: &str = "PMOKE_STAGE";
 static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+/// Serializes JSONL event delivery. Sequence assignment and the stdout
+/// write share this lock, so wire order always matches sequence order even
+/// when rayon worker threads emit concurrently (e.g. lock-in harmonic
+/// progress via `UiProgress::set_message`/`inc`). This is the single
+/// delivery point: `UiEvent::new` must not hand out wire sequences.
+static EMIT_LOCK: Mutex<()> = Mutex::new(());
 static PROGRESS_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EVENT_EPOCH: OnceLock<Instant> = OnceLock::new();
 
@@ -76,7 +82,11 @@ impl UiEvent {
         let elapsed = EVENT_EPOCH.get_or_init(Instant::now).elapsed();
         Self {
             event_type: "event".to_string(),
-            sequence: EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            // Placeholder: the authoritative sequence is assigned at the
+            // single delivery point (`emit_event`, under `EMIT_LOCK`).
+            // Assigning here would order by construction time on the calling
+            // thread, which races delivery order across rayon workers.
+            sequence: 0,
             elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
             level,
             kind,
@@ -105,12 +115,29 @@ fn emit_event(event: &UiEvent, human: impl FnOnce()) {
         human();
         return;
     }
-    let stdout = io::stdout();
-    let mut output = stdout.lock();
-    if serde_json::to_writer(&mut output, event).is_ok() {
-        let _ = output.write_all(b"\n");
-        let _ = output.flush();
-    }
+    with_emit_sequence(|sequence| {
+        let mut owned = event.clone();
+        owned.sequence = sequence;
+        let stdout = io::stdout();
+        let mut output = stdout.lock();
+        if serde_json::to_writer(&mut output, &owned).is_ok() {
+            let _ = output.write_all(b"\n");
+            let _ = output.flush();
+        }
+    });
+}
+
+/// Hands out the next wire sequence number and runs `deliver` atomically
+/// with respect to every other JSONL emission. Holding `EMIT_LOCK` across
+/// both assignment and delivery is what keeps wire order strictly
+/// increasing; handing the number out before the lock (e.g. at event
+/// construction on a rayon worker) reintroduces the ordering race.
+fn with_emit_sequence<T>(deliver: impl FnOnce(u64) -> T) -> T {
+    let _guard = EMIT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let sequence = EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    deliver(sequence)
 }
 
 fn badge(label: &str) -> String {
@@ -561,6 +588,45 @@ mod tests {
         assert_eq!(progress.state.current.load(Ordering::Relaxed), 2);
         assert_eq!(progress.state.total, Some(4));
         assert_eq!(progress.state.message.lock().unwrap().as_str(), "channel 2");
+    }
+
+    #[test]
+    fn concurrent_delivery_keeps_sequences_strictly_increasing() {
+        use std::sync::Barrier;
+
+        // Models the lock-in rayon pool: N workers contend on the single
+        // delivery point and the observed delivery order must match the
+        // handed-out sequence order. The barrier aligns all workers so
+        // assignment and delivery contend as hard as `compute_harmonic`
+        // completions do; no sleeps are involved.
+        const THREADS: usize = 8;
+        const PER_THREAD: usize = 250;
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let delivered = Arc::new(Mutex::new(Vec::with_capacity(THREADS * PER_THREAD)));
+        std::thread::scope(|scope| {
+            for _ in 0..THREADS {
+                let barrier = Arc::clone(&barrier);
+                let delivered = Arc::clone(&delivered);
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..PER_THREAD {
+                        with_emit_sequence(|sequence| {
+                            delivered.lock().unwrap().push(sequence);
+                        });
+                    }
+                });
+            }
+        });
+        let delivered = delivered.lock().unwrap();
+        assert_eq!(delivered.len(), THREADS * PER_THREAD);
+        for window in delivered.windows(2) {
+            assert!(
+                window[1] > window[0],
+                "delivery order broke: {} !> {}",
+                window[1],
+                window[0]
+            );
+        }
     }
 
     #[test]
