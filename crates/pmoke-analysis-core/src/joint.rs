@@ -401,6 +401,15 @@ pub fn toeplitz_from_lags(lags: &[f64], samples: usize) -> DMatrix<f64> {
 /// hence the `covariance_not_spd` code on zero diagonals: a zero diagonal
 /// means the purported factor was not positive definite. Zero diagonals
 /// fail instead of dividing.
+///
+/// Cost note (P1): the kernel below blocks across the right-hand sides
+/// through a row-major work buffer (transpose once, solve with contiguous
+/// row accesses, transpose back). Each `(row, column)` still accumulates
+/// `inner = 0..row` subtractions in increasing order, exactly like the
+/// naive column-outer triple loop, so results are bit-identical; only the
+/// reuse changes. Each `L[row, inner]` is loaded once and fanned out
+/// across every right-hand side instead of once per column. No threading
+/// inside the window: the outer rayon pool owns parallelism.
 pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DMatrix<f64>> {
     let dimension = lower.nrows();
     if lower.ncols() != dimension || rhs.nrows() != dimension {
@@ -425,23 +434,13 @@ pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DM
             ));
         }
     }
-    let mut solution = DMatrix::zeros(dimension, rhs.ncols());
-    for column in 0..rhs.ncols() {
-        for row in 0..dimension {
-            let mut accumulator = rhs[(row, column)];
-            for inner in 0..row {
-                accumulator -= lower[(row, inner)] * solution[(inner, column)];
-            }
-            let diagonal = lower[(row, row)];
-            if diagonal == 0.0 {
-                return Err(AnalysisError::new(
-                    "covariance_not_spd",
-                    format!("zero triangular diagonal at row {row}"),
-                ));
-            }
-            solution[(row, column)] = accumulator / diagonal;
-        }
-    }
+    let mut solution = rhs.clone();
+    blocked_forward_kernel(
+        lower.as_slice(),
+        solution.as_mut_slice(),
+        dimension,
+        rhs.ncols(),
+    )?;
     for value in solution.iter() {
         if !value.is_finite() {
             return Err(AnalysisError::new(
@@ -451,6 +450,114 @@ pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DM
         }
     }
     Ok(solution)
+}
+
+/// In-place blocked forward substitution `L X = B` over the caller's
+/// buffer: the correlated whitener packs `[design | response]` once and
+/// solves without the extra per-window right-hand-side copy. Validation,
+/// diagonal-failure row, and output checks match [`forward_substitute`]
+/// exactly; only the redundant allocation is hoisted.
+fn forward_substitute_in_place(lower: &DMatrix<f64>, solution: &mut DMatrix<f64>) -> Result<()> {
+    let dimension = lower.nrows();
+    if lower.ncols() != dimension || solution.nrows() != dimension {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            "triangular solve needs a square factor matching every RHS row",
+        ));
+    }
+    for value in lower.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "triangular factor must be finite",
+            ));
+        }
+    }
+    for value in solution.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "triangular right-hand side must be finite",
+            ));
+        }
+    }
+    let ncols = solution.ncols();
+    blocked_forward_kernel(lower.as_slice(), solution.as_mut_slice(), dimension, ncols)?;
+    for value in solution.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                "triangular solve produced a non-finite value",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Blocked forward-substitution kernel over column-major slices: `lower`
+/// holds the `dimension x dimension` factor and `solution` the
+/// `dimension x ncols` right-hand sides, both column-major as stored by
+/// [`DMatrix`].
+///
+/// Layout blocking (P1): the right-hand sides are transposed once into a
+/// row-major work buffer, solved with contiguous row accesses, and
+/// transposed back. The naive column-outer loop streams the 32MB factor
+/// once per right-hand side (~26x at N=2003/P=25) and is host-memory
+/// bound; the row-major solve loads each `L[row, inner]` once and fans it
+/// out across every right-hand side while every work-buffer access stays
+/// contiguous and vectorizable.
+///
+/// Bit-identity: per `(row, column)` the subtractions still run in
+/// `inner = 0..row` order with the division landing last, exactly the
+/// naive order -- only the storage layout changes, never the operation
+/// sequence. The zero-diagonal failure reports the first such row,
+/// matching the column-outer loop's discovery order. Empty right-hand
+/// sides solve trivially with no diagonal checks, also matching.
+fn blocked_forward_kernel(
+    lower: &[f64],
+    solution: &mut [f64],
+    dimension: usize,
+    ncols: usize,
+) -> Result<()> {
+    if ncols == 0 {
+        return Ok(());
+    }
+    // Transpose to row-major work: work[row * ncols + column].
+    let mut work = vec![0.0_f64; dimension * ncols];
+    for column in 0..ncols {
+        let source = &solution[column * dimension..(column + 1) * dimension];
+        for row in 0..dimension {
+            work[row * ncols + column] = source[row];
+        }
+    }
+    for row in 0..dimension {
+        let base = row * ncols;
+        for inner in 0..row {
+            let factor = lower[inner * dimension + row];
+            let inner_base = inner * ncols;
+            for column in 0..ncols {
+                work[base + column] -= factor * work[inner_base + column];
+            }
+        }
+        let diagonal = lower[row * dimension + row];
+        if diagonal == 0.0 {
+            return Err(AnalysisError::new(
+                "covariance_not_spd",
+                format!("zero triangular diagonal at row {row}"),
+            ));
+        }
+        for column in 0..ncols {
+            work[base + column] /= diagonal;
+        }
+    }
+    // Transpose back to the column-major output.
+    for column in 0..ncols {
+        let target = &mut solution[column * dimension..(column + 1) * dimension];
+        for row in 0..dimension {
+            target[row] = work[row * ncols + column];
+        }
+    }
+    Ok(())
 }
 
 /// Cholesky factor of the normalized Toeplitz matrix with the bounded
@@ -1402,15 +1509,20 @@ fn whiten_correlated(
             tolerances.max_noise_condition,
         )?;
     }
-    let mut rhs = DMatrix::zeros(rows, scaled_design.ncols() + 1);
-    for row in 0..rows {
-        for column in 0..scaled_design.ncols() {
-            rhs[(row, column)] = scaled_design[(row, column)];
-        }
-        rhs[(row, scaled_design.ncols())] = scaled_response[row];
-    }
-    let solved = forward_substitute(lower, &rhs)?;
+    // One packed buffer holds `[design | response]` and is solved in place:
+    // the old path built a separate right-hand-side copy plus the solver's
+    // own output (two ~417KB allocs at N=2003/P=25). Packing once and
+    // solving in place keeps every arithmetic step in the same per-element
+    // order, so whitened values are bit-identical with one allocation.
     let columns = scaled_design.ncols();
+    let mut solved = DMatrix::zeros(rows, columns + 1);
+    for row in 0..rows {
+        for column in 0..columns {
+            solved[(row, column)] = scaled_design[(row, column)];
+        }
+        solved[(row, columns)] = scaled_response[row];
+    }
+    forward_substitute_in_place(lower, &mut solved)?;
     let design = solved.columns(0, columns).into_owned();
     let response = DVector::from_iterator(rows, (0..rows).map(|row| solved[(row, columns)]));
     for value in design.iter().chain(response.iter()) {
