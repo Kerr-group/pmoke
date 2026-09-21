@@ -354,3 +354,71 @@ fn hoisted_plan_beats_direct_wall() {
         "hoisted 12 windows ({planned_elapsed:?}) must beat direct 3 ({direct_elapsed:?})"
     );
 }
+
+/// Perf regression: the hoist covers BOTH correlated modes through the
+/// shared `whiten_correlated` gate, so twelve stationary planned windows
+/// sharing one plan must finish in less wall time than three direct
+/// stationary windows. Same self-calibrating structure as
+/// `hoisted_plan_beats_direct_wall`: fails before the hoist, passes after
+/// with margin for ~2x runner variance on either side.
+#[test]
+fn stationary_planned_beats_direct_wall() {
+    let model = signal_model();
+    let noise = stationary_noise();
+    let tolerances = JointSolverTolerances::default();
+    let settings = JointHarmonicSettings {
+        model: model.clone(),
+        noise: noise.clone(),
+        tolerances,
+    };
+    let plan = PreparedNoisePlan::prepare(&noise, SAMPLES, tolerances).unwrap();
+
+    // Warmup so the clock measures steady-state estimation, not setup.
+    let (times, signal) = window(0.0);
+    let _ = estimate_joint(&times, &signal, F_REF, 0.0, SAMPLE_RATE, &settings).unwrap();
+    let _ = estimate_joint_with_plan(
+        &times,
+        &signal,
+        F_REF,
+        0.0,
+        SAMPLE_RATE,
+        &model,
+        tolerances,
+        &plan,
+    )
+    .unwrap();
+
+    let windows: Vec<(Vec<f64>, Vec<f64>)> = (0..12)
+        .map(|index| window(0.37 * DT * index as f64))
+        .collect();
+
+    let start = Instant::now();
+    for (times, signal) in windows.iter().take(3) {
+        let _ = estimate_joint(times, signal, F_REF, 0.0, SAMPLE_RATE, &settings).unwrap();
+    }
+    let direct_elapsed = start.elapsed();
+
+    let start = Instant::now();
+    for (times, signal) in windows.iter() {
+        let _ = estimate_joint_with_plan(
+            times,
+            signal,
+            F_REF,
+            0.0,
+            SAMPLE_RATE,
+            &model,
+            tolerances,
+            &plan,
+        )
+        .unwrap();
+    }
+    let planned_elapsed = start.elapsed();
+
+    eprintln!(
+        "stationary hoisted perf: direct 3 windows in {direct_elapsed:?}, planned 12 windows in {planned_elapsed:?}"
+    );
+    assert!(
+        planned_elapsed < direct_elapsed,
+        "stationary hoisted 12 windows ({planned_elapsed:?}) must beat direct 3 ({direct_elapsed:?})"
+    );
+}
