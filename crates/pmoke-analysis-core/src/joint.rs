@@ -1516,6 +1516,11 @@ fn solve_direct_with_factor(
     // ~1e-15 relative, so rank and gate verdicts are unchanged while the
     // duplicate N x P clone is gone. `upper` is still borrowed below by
     // the back-substitution, hence the P x P clone (negligible traffic).
+    // NOTE (#297 convergence): the U factor stays computed (`svd(true,
+    // false)`): pinned nalgebra 0.35.0 skips the 2x2 normalization for
+    // values-only SVD, shifting singulars a few ULP and gate decisions, so
+    // `svd(false, false)` is not adopted here. P3 already subsumes P2's
+    // N x P U saving on this path (the diagnostic runs on P x P `upper`).
     let svd = upper.clone().svd(true, false);
     let singular = svd.singular_values;
     let sigma_max = singular[0];
