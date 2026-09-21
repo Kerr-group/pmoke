@@ -14,6 +14,7 @@ use pmoke_analysis_core::{
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 fn close(a: f64, b: f64, tolerance: f64, context: &str) {
     assert!(
@@ -472,5 +473,106 @@ fn prepared_plan_preflight_fails_closed() {
         .unwrap_err()
         .code(),
         "non_finite_input"
+    );
+}
+
+/// Perf parity: on the LI reference shape (N~=96, fit 1..12) the
+/// phase-diagonal per-window extras (variance interpolation, row weighting,
+/// table guard) are O(N)/O(N x p), so twelve planned diagonal windows must
+/// finish within 3x of twelve planned identity windows on the same fixture.
+/// Measured ~1.3x in release; the bound leaves margin for ~2x runner
+/// variance. Self-calibrating: no absolute wall, debug and release both
+/// gate the structural parity. Guards the all-modes finding that diagonal
+/// needs no hoist beyond the shared plan path.
+#[test]
+fn diagonal_planned_at_parity_with_identity() {
+    const SAMPLES: usize = 97;
+    const DT: f64 = 17.8e-9;
+    const F_REF: f64 = 1.17e6;
+    const SAMPLE_RATE: f64 = 1.0 / DT;
+    let model = HarmonicSignalModel {
+        fit_harmonics: (1..=12).collect(),
+        output_harmonics: (1..=6).collect(),
+        envelope_degree: 0,
+    };
+    let tolerances = JointSolverTolerances::default();
+    let noises = [
+        NoiseModel {
+            mode: NoiseMode::Identity,
+            reference_variance_v2: 0.01,
+            variance_bins: None,
+            correlation: None,
+        },
+        NoiseModel {
+            mode: NoiseMode::PhaseDiagonal,
+            reference_variance_v2: 0.01,
+            variance_bins: Some((0..8).map(|bin| 1.0 + 0.05 * bin as f64).collect()),
+            correlation: None,
+        },
+    ];
+    let plans: Vec<PreparedNoisePlan> = noises
+        .iter()
+        .map(|noise| PreparedNoisePlan::prepare(noise, SAMPLES, tolerances).unwrap())
+        .collect();
+    // Deterministic two-tone windows with absolute-time shifts, so consecutive
+    // windows exercise genuinely different interpolated variances.
+    let windows: Vec<(Vec<f64>, Vec<f64>)> = (0..12)
+        .map(|index| {
+            let shift = 0.37 * DT * index as f64;
+            let times: Vec<f64> = (0..SAMPLES)
+                .map(|sample| shift + sample as f64 * DT)
+                .collect();
+            let signal: Vec<f64> = times
+                .iter()
+                .map(|&time| {
+                    1.5 * (std::f64::consts::TAU * F_REF * time + 0.3).sin()
+                        + 0.4 * (std::f64::consts::TAU * 2.0 * F_REF * time).cos()
+                })
+                .collect();
+            (times, signal)
+        })
+        .collect();
+    // Warmup so the clock measures steady-state estimation, not setup.
+    for plan in &plans {
+        let (times, signal) = &windows[0];
+        let _ = estimate_joint_with_plan(
+            times,
+            signal,
+            F_REF,
+            0.0,
+            SAMPLE_RATE,
+            &model,
+            tolerances,
+            plan,
+        )
+        .unwrap();
+    }
+    let mut elapsed = Vec::with_capacity(2);
+    for plan in &plans {
+        let start = Instant::now();
+        for (times, signal) in &windows {
+            let _ = estimate_joint_with_plan(
+                times,
+                signal,
+                F_REF,
+                0.0,
+                SAMPLE_RATE,
+                &model,
+                tolerances,
+                plan,
+            )
+            .unwrap();
+        }
+        elapsed.push(start.elapsed());
+    }
+    eprintln!(
+        "diagonal parity: identity 12 windows in {:?}, diagonal 12 in {:?}",
+        elapsed[0], elapsed[1]
+    );
+    assert!(
+        elapsed[1] < elapsed[0] * 3,
+        "diagonal 12 windows ({:?}) must stay within 3x of identity ({:?})",
+        elapsed[1],
+        elapsed[0]
     );
 }
