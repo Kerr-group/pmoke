@@ -14,10 +14,11 @@ use crate::ui;
 use crate::utils::time_axis::TimeAxisRef;
 use anyhow::{Context, Result, bail};
 use pmoke_analysis_core::{
-    CorrelationKernel, HarmonicSignalModel, JointEstimate, JointHarmonicSettings,
-    JointSolverTolerances, NoiseModel, PreparedNoisePlan, estimate_joint_with_plan,
+    CorrelationKernel, HarmonicSignalModel, JointEstimate, JointHarmonicSettings, JointScratch,
+    JointSolverTolerances, NoiseModel, PreparedNoisePlan, estimate_joint_with_scratch,
 };
 use rayon::prelude::*;
+use std::cell::RefCell;
 
 /// Upper bound for temporary per-window allocations during native execution.
 /// Final artifacts remain ordered and compatible, while a large record never
@@ -547,12 +548,15 @@ pub fn run_joint_li(
     let mut snapshots = Vec::with_capacity(signal_data.len());
     let mut bindings = Vec::with_capacity(signal_data.len());
     // The joint GLS fit is the long silent stage of this path (one solver
-    // run per output window per channel): one coarse progress unit per
-    // channel keeps the bar and the JSONL stream alive without touching the
-    // hot per-window loop.
+    // run per output window per channel): the bar counts windows in
+    // per-chunk batches, so the bar and the JSONL stream stay alive without
+    // touching the hot per-window loop (no per-window atomics, no per-window
+    // events). One chunk (<=256 windows) is milliseconds of work, far inside
+    // the ~1s heartbeat budget.
+    let outputs_per_channel = plan.params.i_end - plan.params.i_start + 1;
     let pb = ui::progress(
         format!("joint GLS lock-in processing with {} workers", plan.workers),
-        signal_ch.len() as u64,
+        outputs_per_channel as u64 * signal_ch.len() as u64,
     );
     let t0 = std::time::Instant::now();
     for (&channel, signal) in signal_ch.iter().zip(signal_data.iter()) {
@@ -568,7 +572,7 @@ pub fn run_joint_li(
             tolerances,
         };
         let (columns, rows, covariances) =
-            run_joint_channel(inputs, signal, channel, &plan, &settings, &pool)?;
+            run_joint_channel(inputs, signal, channel, &plan, &settings, &pool, &pb)?;
         result.push(columns);
         quality.push(rows);
         covariance.push(
@@ -594,7 +598,6 @@ pub fn run_joint_li(
             )
             .with_context(|| format!("joint estimator snapshot failed for channel {channel}"))?,
         );
-        pb.inc(1);
     }
     // The completion line carries the boxcar path's marker substring so the
     // monitor timeline's Lock-in step completes under either estimator.
@@ -621,6 +624,14 @@ pub fn run_joint_li(
     })
 }
 
+// Per-rayon-thread design-matrix scratch for the buffer-reusing estimate
+// path. Each worker thread fills its own buffer once per window shape and
+// reuses it for every later window; the scratch never crosses threads, so
+// no synchronization touches the hot loop.
+thread_local! {
+    static JOINT_DESIGN_SCRATCH: RefCell<JointScratch> = RefCell::new(JointScratch::new());
+}
+
 fn run_joint_channel(
     inputs: &JointRunInputs<'_>,
     signal: &[f64],
@@ -628,6 +639,7 @@ fn run_joint_channel(
     plan: &PreparedJointPlan,
     settings: &JointHarmonicSettings,
     pool: &rayon::ThreadPool,
+    progress: &ui::UiProgress,
 ) -> Result<(XyColumns, Vec<QualityRow>, XyCovariances)> {
     let params = plan.params;
     let JointRunInputs {
@@ -648,8 +660,8 @@ fn run_joint_channel(
     // Hoisted per-channel noise plan (P1): every window shares the same
     // length (2 * half_taps + 1) and the same calibrated noise model, so
     // the Toeplitz Cholesky factor and its TOL-07 condition are built once
-    // per channel and reused by every window via estimate_joint_with_plan.
-    // The plan path executes the same arithmetic under the same gates as
+    // per channel and reused by every window via estimate_joint_with_scratch.
+    // The scratch path executes the same arithmetic under the same gates as
     // the direct path (bit-identical outputs); only cost is hoisted.
     let window_rows = half_taps
         .checked_mul(2)
@@ -705,16 +717,25 @@ fn run_joint_channel(
                                 signal.len()
                             )
                         })?;
-                        estimate_joint_with_plan(
-                            &window_times,
-                            window_signal,
-                            f_ref,
-                            omega_tref,
-                            sample_rate_hz,
-                            &settings.model,
-                            settings.tolerances,
-                            &noise_plan,
-                        )
+                        // Buffer-reusing estimate: the thread-local design
+                        // scratch skips the per-window column allocations and
+                        // the solve shares one QR factor with the covariance.
+                        // Arithmetic, gates, and error attribution match the
+                        // direct path window for window (byte-identical).
+                        JOINT_DESIGN_SCRATCH.with(|cell| {
+                            let mut scratch = cell.borrow_mut();
+                            estimate_joint_with_scratch(
+                                &window_times,
+                                window_signal,
+                                f_ref,
+                                omega_tref,
+                                sample_rate_hz,
+                                &settings.model,
+                                settings.tolerances,
+                                &noise_plan,
+                                &mut scratch,
+                            )
+                        })
                         .map_err(|error| {
                             anyhow::anyhow!(GlsFailure {
                                 code: error.code().to_string(),
@@ -770,6 +791,9 @@ fn run_joint_channel(
             });
             covariances.push(estimate.covariance_xy);
         }
+        // Batched window progress: one bar/JSONL update per chunk from the
+        // sequential assembly loop, never from the hot per-window loop.
+        progress.inc((chunk_end - chunk_start) as u64);
     }
     Ok((columns, rows, covariances))
 }
