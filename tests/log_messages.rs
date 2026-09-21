@@ -11,6 +11,12 @@
 //!   compute time into a save line;
 //! - the monitor timeline marker substrings keep matching (case-insensitive)
 //!   so every TUI stage step can complete.
+//!
+//! The joint-GLS leg below pins the same machine protocol on the joint
+//! estimator's real event stream: the `(joint GLS, …)` completion marker,
+//! one consistent progress total reached exactly by the final chunk, a
+//! `duration_ms` payload on the completion, and strictly increasing
+//! sequences without any sleep-based synchronization.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,6 +32,18 @@ const SAMPLES: usize = 8_000;
 const FREQUENCY_HZ: f64 = 1_000.0;
 const THETA: f64 = 0.01;
 const STRIDE_SAMPLES: usize = 20;
+
+/// Joint-GLS fixture geometry. The pre-pulse derivation trains one noise
+/// model per channel on `pulse.background_before` and needs at least two
+/// training blocks of two reference cycles each (see `PREPULSE_MIN_*` in
+/// `src/lockin/prepulse.rs`): at 1 kHz that floor is 400 background samples
+/// before block shaping, so this fixture carries a 19 ms pre-roll the
+/// boxcar fixture does not need. Everything at or after t = -5 ms matches
+/// the boxcar fixture sample-for-sample.
+const JOINT_ORIGIN_S: f64 = -0.02;
+const JOINT_SAMPLES: usize = 9_500;
+const JOINT_BACKGROUND_BEFORE_START_S: f64 = -19.5e-3;
+const JOINT_BACKGROUND_BEFORE_END_S: f64 = -0.5e-3;
 
 struct TempDir(PathBuf);
 
@@ -116,14 +134,89 @@ unit = "V"
     )
 }
 
-fn signal_time(index: usize) -> f64 {
-    ORIGIN_S + index as f64 * DT_S
+/// v7 configuration mirroring the boxcar fixture, but with the joint
+/// harmonic GLS estimator on the pre-pulse calibration source: no external
+/// calibration artifacts are needed, so the test stays hermetic while still
+/// driving the real joint lock-in path (`run_joint_li`) end to end.
+fn joint_config_text() -> String {
+    format!(
+        r#"version = 7
+
+[scope]
+model = "DHO5108"
+connection = "tcp://127.0.0.1:55255"
+
+[data]
+output = "raw"
+input = "csv"
+screenshot = false
+
+[[sensors]]
+channel = 1
+scale = {{ factor = 1.0 }}
+label = "field"
+unit = "T"
+
+[pulse]
+background_before = {{ start = {JOINT_BACKGROUND_BEFORE_START_S}, end = {JOINT_BACKGROUND_BEFORE_END_S} }}
+background_after = {{ start = 60e-3, end = 75e-3 }}
+
+[reference]
+channel = 2
+fft_window = {{ start = 0.0, end = 30e-3 }}
+stride_samples = 1_000
+window_samples = 100
+
+[lockin]
+channels = [3]
+workers = 2
+stride_samples = {STRIDE_SAMPLES}
+
+[lockin.window]
+kind = "reference_cycles"
+half_window_cycles = 1.3
+edge_policy = "legacy_trim"
+
+[lockin.estimator]
+kind = "joint_harmonic_gls"
+fit_harmonics = [1, 2, 3, 4, 5, 6]
+output_harmonics = [1, 2, 3, 4, 5, 6]
+noise_mode = "identity"
+calibration_source = "prepulse"
+
+[phase]
+offsets = [0, 0, 0, 0, 0, 0]
+
+[moke]
+sensor = 1
+method = "harmonics"
+factor = 1.0
+
+[plot]
+mode = "save"
+decimation = "none"
+on_error = "fail"
+
+[[signals]]
+channel = 4
+label = "DC4"
+unit = "V"
+"#
+    )
+}
+
+fn signal_time_with(index: usize, origin_s: f64) -> f64 {
+    origin_s + index as f64 * DT_S
 }
 
 /// Recorded waveform matching the documented channels: ch1 sensor pulse,
 /// ch2 reference sine, ch3 lock-in signal (Bessel harmonics), ch4
 /// deterministic raw readout channel.
 fn write_waveform_csv(run_dir: &Path) {
+    write_waveform_csv_with(run_dir, ORIGIN_S, SAMPLES);
+}
+
+fn write_waveform_csv_with(run_dir: &Path, origin_s: f64, samples: usize) {
     let bessel = [
         0.581_864_936_842_083_3,
         0.315_745_306_087_972_3,
@@ -133,8 +226,8 @@ fn write_waveform_csv(run_dir: &Path) {
         0.000_745_551_998_014_054_3,
     ];
     let mut csv = String::from("time,ch1,ch2,ch3,ch4\n");
-    for index in 0..SAMPLES {
-        let t = signal_time(index);
+    for index in 0..samples {
+        let t = signal_time_with(index, origin_s);
         let sensor = if (0.01..0.05).contains(&t) { 1.0 } else { 0.0 };
         let reference = {
             let amplitude_drift = 1.0 + 0.01 * (2.0 * std::f64::consts::PI * 3.0 * t).sin();
@@ -183,6 +276,9 @@ struct JsonlEvent {
     kind: String,
     sequence: u64,
     has_duration_ms: bool,
+    progress_id: String,
+    progress_current: Option<u64>,
+    progress_total: Option<u64>,
 }
 
 fn json_string(line: &str, key: &str) -> String {
@@ -247,6 +343,9 @@ fn parse_event(line: &str) -> JsonlEvent {
         kind,
         sequence,
         has_duration_ms: line.contains("\"duration_ms\""),
+        progress_id: json_string(line, "progress_id"),
+        progress_current: json_u64(line, "progress_current"),
+        progress_total: json_u64(line, "progress_total"),
     }
 }
 
@@ -435,5 +534,210 @@ fn log_message_contract_for_boxcar_analyze() {
         lockin.has_duration_ms,
         "lock-in completion carries no duration_ms: {}",
         lockin.message
+    );
+}
+
+/// Joint-GLS end-to-end progress contract.
+///
+/// Drives the real CLI with the joint harmonic estimator (pre-pulse
+/// calibration source, so no external artifacts) and pins the joint
+/// stream's machine protocol: the `(joint GLS, …)` completion marker, one
+/// consistent progress total reached exactly by the final chunk, the
+/// completion's `duration_ms` payload, and strictly increasing sequences.
+///
+/// The joint lock-in emits every progress event from its sequential
+/// assembly loop (never from rayon workers), so — unlike the boxcar
+/// per-harmonic path owned by t_cc52e9a2 — the observed order is the
+/// emission order and the assertions below are deterministic. Process exit
+/// is the only synchronization; there are no sleeps.
+#[test]
+fn log_message_contract_for_joint_gls_analyze() {
+    let temp = TempDir::new();
+    let run_dir = temp.0.join("run");
+    let config = temp.0.join("config.toml");
+    fs::create_dir_all(&run_dir).unwrap();
+    write_waveform_csv_with(&run_dir, JOINT_ORIGIN_S, JOINT_SAMPLES);
+    fs::write(&config, joint_config_text()).unwrap();
+
+    let run = run_analyze(&run_dir, &config);
+    assert!(run.success, "analyze failed:\n{}", run.stderr);
+    assert!(
+        !run.events.is_empty(),
+        "expected JSONL events on stdout, stderr was:\n{}",
+        run.stderr
+    );
+
+    // Machine protocol: strictly increasing sequence numbers, no error-level
+    // events on a passing run.
+    let mut previous: Option<u64> = None;
+    for event in &run.events {
+        if let Some(previous) = previous {
+            assert!(
+                event.sequence > previous,
+                "event sequences are not strictly increasing: {} !> {previous} in {:?}",
+                event.sequence,
+                event.message
+            );
+        }
+        previous = Some(event.sequence);
+        assert_ne!(
+            event.level, "error",
+            "unexpected error-level event: {}",
+            event.message
+        );
+    }
+
+    // Stage order and timeline markers (matched case-insensitively
+    // downstream): identical to the boxcar leg, so the monitor timeline
+    // completes under either estimator.
+    let mut previous_index: Option<usize> = None;
+    for marker in [
+        "sensor integrations completed",
+        "reference FFT: f_ref",
+        "signal means for channels",
+        "lock-in processing completed",
+        "phase analysis completed",
+        "Moke analysis completed",
+    ] {
+        let index = run.single_event_index(marker);
+        if let Some(previous_index) = previous_index {
+            assert!(
+                previous_index < index,
+                "stage order violated at {marker:?}: {previous_index} !< {index}"
+            );
+        }
+        previous_index = Some(index);
+    }
+    let lowered = messages(&run).join("\n").to_ascii_lowercase();
+    for marker in [
+        "fetched data",
+        "reference plot completed",
+        "sensor integrations completed",
+        "lock-in processing completed",
+        "signal means",
+        "phase analysis completed",
+        "moke analysis completed",
+    ] {
+        assert!(
+            lowered.contains(marker),
+            "monitor timeline marker {marker:?} has no matching event"
+        );
+    }
+
+    // Estimator identity: every lock-in completion line is the joint one.
+    // A silent fallback to boxcar_legacy (or a marker regression) leaves
+    // either zero joint markers or a mix, and both fail here.
+    for event in &run.events {
+        if event.message.contains("lock-in processing completed") {
+            assert!(
+                event.message.contains("(joint GLS,"),
+                "lock-in completion lost its joint marker: {}",
+                event.message
+            );
+        }
+    }
+    let completion = run.single_event_index("lock-in processing completed (joint GLS,");
+    let completion = &run.events[completion];
+    assert_eq!(completion.level, "success");
+    assert_eq!(completion.kind, "status");
+    assert!(
+        completion.message.contains(" workers, "),
+        "joint completion lost its worker-count attribution: {}",
+        completion.message
+    );
+    assert!(
+        completion.has_duration_ms,
+        "joint completion carries no duration_ms: {}",
+        completion.message
+    );
+
+    // Progress totals consistency on the real joint stream: one bar, one
+    // total, reached exactly by the final per-chunk increment. A drifted
+    // total (or a dropped/duplicated chunk) breaks the single-total or the
+    // exact-completion assertion below.
+    let joint_progress = run
+        .events
+        .iter()
+        .filter(|event| event.kind == "progress" && event.message.contains("joint GLS lock-in"))
+        .collect::<Vec<_>>();
+    assert!(
+        joint_progress.len() >= 3,
+        "expected initial, per-chunk, and final joint progress events, got {}: {:?}",
+        joint_progress.len(),
+        joint_progress
+            .iter()
+            .map(|event| &event.message)
+            .collect::<Vec<_>>()
+    );
+    let stream_id = &joint_progress[0].progress_id;
+    assert!(
+        !stream_id.is_empty(),
+        "joint progress stream has no progress_id"
+    );
+    assert!(
+        joint_progress[0].message.contains("processing with"),
+        "first joint progress event is not the bar initialization: {}",
+        joint_progress[0].message
+    );
+    let mut total: Option<u64> = None;
+    let mut previous_current: Option<u64> = None;
+    for event in &joint_progress {
+        assert_eq!(
+            event.progress_id, *stream_id,
+            "joint progress stream changed progress_id mid-run: {}",
+            event.message
+        );
+        let event_total = event
+            .progress_total
+            .unwrap_or_else(|| panic!("joint progress event carries no total: {}", event.message));
+        assert!(event_total > 0, "joint progress total is zero");
+        if let Some(total) = total {
+            assert_eq!(
+                event_total, total,
+                "joint progress total drifted mid-run: {event_total} != {total}"
+            );
+        } else {
+            total = Some(event_total);
+        }
+        let current = event.progress_current.unwrap_or_else(|| {
+            panic!(
+                "joint progress event carries no current count: {}",
+                event.message
+            )
+        });
+        assert!(
+            current <= event_total,
+            "joint progress current {current} exceeds total {event_total}"
+        );
+        if let Some(previous_current) = previous_current {
+            assert!(
+                current >= previous_current,
+                "joint progress current regressed: {current} < {previous_current}"
+            );
+        } else {
+            assert_eq!(
+                current, 0,
+                "joint progress stream does not start at zero: {current}"
+            );
+        }
+        previous_current = Some(current);
+    }
+    let total = total.expect("joint progress stream is empty");
+    assert_eq!(
+        previous_current,
+        Some(total),
+        "final joint progress chunk does not reach the total: {:?} != {total}",
+        previous_current
+    );
+
+    // The completion replaces the transient progress line in place: same
+    // progress_id, sequenced after the final chunk.
+    assert_eq!(
+        completion.progress_id, *stream_id,
+        "joint completion detached from its progress stream"
+    );
+    assert!(
+        completion.sequence > joint_progress.last().expect("stream is empty").sequence,
+        "joint completion is not sequenced after the final progress event"
     );
 }
