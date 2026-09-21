@@ -1,4 +1,4 @@
-use super::actions::monitor_actions;
+use super::actions::{MonitorAction, monitor_actions};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::Line;
 
@@ -57,7 +57,18 @@ impl UiLayout {
 }
 
 pub(super) fn workflow_panel_width(available_width: u16) -> u16 {
-    let content_width = monitor_actions()
+    workflow_panel_width_for(&monitor_actions(), available_width)
+}
+
+/// Panel width for an explicit action list. Production always passes the
+/// real registry via [`workflow_panel_width`]; the snapshot harness passes
+/// its pinned fixture to assert cross-leg parity (see
+/// `tests::snapshots::workflow_panel_width_matches_snapshot_fixture`).
+/// Behavior is identical to inlining the list: content width plus padding,
+/// floored at `WORKFLOW_MIN_WIDTH` and clamped so the activity panel keeps
+/// `ACTIVITY_MIN_WIDTH`.
+pub(super) fn workflow_panel_width_for(actions: &[MonitorAction], available_width: u16) -> u16 {
+    let content_width = actions
         .iter()
         .map(|action| display_width(&format!("▌   ●  {} STP", action.command_name())))
         .chain(
