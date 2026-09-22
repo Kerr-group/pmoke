@@ -15,6 +15,8 @@ fn test_gls() -> JointHarmonicGlsConfig {
         failure_policy: crate::config::GlsFailurePolicy::Error,
         calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: Vec::new(),
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     }
 }
 

@@ -70,6 +70,14 @@ pub const DEFAULT_FLOOR_RATIO: f64 = 0.05;
 pub const DEFAULT_MAX_LAG: usize = 256;
 /// Default identity shrinkage on the tapered correlation (A-005).
 pub const DEFAULT_CORRELATION_ETA: f64 = 0.01;
+/// Default SCS adequacy lag count (FR-06 split-half gate, frozen).
+pub const DEFAULT_ADEQUACY_LAGS: usize = 4;
+/// Default SCS adequacy minimum pairs per phase cell (frozen).
+pub const DEFAULT_ADEQUACY_MIN_PAIRS_PER_CELL: usize = 10;
+/// Default SCS adequacy training phase-spread gate (FR-06, frozen).
+pub const DEFAULT_ADEQUACY_MAX_PHASE_SPREAD: f64 = 0.2;
+/// Default SCS adequacy reserved-shift gate (FR-06, frozen).
+pub const DEFAULT_ADEQUACY_MAX_RESERVED_SHIFT: f64 = 0.2;
 /// Nuisance harmonics 1..=12 plus DC and a scaled linear trend.
 pub const NUISANCE_HARMONICS: usize = 12;
 /// Nuisance parameter count: DC + trend + 2 coefficients per harmonic.
@@ -1778,6 +1786,17 @@ pub struct AdequacyPolicy {
     pub max_reserved_shift: f64,
 }
 
+impl Default for AdequacyPolicy {
+    fn default() -> Self {
+        Self {
+            lags: DEFAULT_ADEQUACY_LAGS,
+            min_pairs_per_cell: DEFAULT_ADEQUACY_MIN_PAIRS_PER_CELL,
+            max_phase_spread: DEFAULT_ADEQUACY_MAX_PHASE_SPREAD,
+            max_reserved_shift: DEFAULT_ADEQUACY_MAX_RESERVED_SHIFT,
+        }
+    }
+}
+
 /// SCS adequacy verdict. A nonseparable process yields a model-mismatch
 /// diagnostic (`adequate: false` with a reason), never a false adequacy
 /// claim. Missing power/coverage yields unverified applicability.
@@ -1889,6 +1908,40 @@ pub fn scs_adequacy(
         }
     }
     const OCTANTS: usize = 8;
+    // Impossible support fails closed before any lag-sized allocation:
+    // lag_pairs only yields pairs for lag strictly shorter than the group,
+    // so a requested lag count at or beyond the shortest participating
+    // group can never produce pairs. Returning the typed
+    // insufficient_calibration error here (instead of allocating
+    // policy.lags-sized buffers first) keeps validated but unsatisfiable
+    // lag counts from panicking with capacity overflow.
+    let shortest = training
+        .iter()
+        .chain(reserved.iter())
+        .map(|group| group.standardized.len())
+        .min()
+        .unwrap_or(0);
+    if policy.lags >= shortest {
+        return Err(AnalysisError::new(
+            "insufficient_calibration",
+            format!(
+                "adequacy lags ({}) must be shorter than every adequacy group (shortest {})",
+                policy.lags, shortest
+            ),
+        ));
+    }
+    // Defense in depth: even satisfiable lag counts expand by the fixed
+    // octant factor below, so refuse counts whose plain f64 lag vector
+    // alone could not be allocated before materializing anything.
+    if policy.lags > (isize::MAX as usize) / std::mem::size_of::<f64>() {
+        return Err(AnalysisError::new(
+            "insufficient_calibration",
+            format!(
+                "adequacy lags ({}) exceed the addressable lag-vector size",
+                policy.lags
+            ),
+        ));
+    }
     // Per-role, per-lag, per-octant lag products plus pooled lag vectors.
     // roles: 0 = training, 1 = reserved.
     let mut pooled = vec![vec![0.0_f64; policy.lags]; 2];

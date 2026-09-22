@@ -33,11 +33,13 @@
 //! extends beyond the recorded timebase warns with both the requested and
 //! effective durations (never a silent truncation); a window holding no
 //! samples, or too few samples for the short-interval floor, is a hard
-//! error. The SCS adequacy gate (training phase spread <= 0.2) is
-//! mandatory and mode-independent: derivation runs for every `noise_mode`
-//! and the gate applies unchanged even with
-//! `noise_mode = "phase_correlated"`. The 0.2 threshold is never relaxed;
-//! on failure, retake the interval or data instead of lowering the bar.
+//! error. The SCS adequacy gate (training phase spread <= 0.2 by default)
+//! is mandatory and mode-independent: derivation runs for every
+//! `noise_mode` and the gate applies unchanged even with
+//! `noise_mode = "phase_correlated"`. The thresholds are tunable only
+//! through the explicit `lockin.estimator.scs_adequacy` config table
+//! (validated at load, recorded in the derivation digest); on failure,
+//! retake the interval or data instead of lowering the bar.
 
 use crate::config::{GlsNoiseMode, JointHarmonicGlsConfig, Window};
 use crate::lockin::joint::{ModelBinding, NoiseModelSource, gls_noise_mode_name};
@@ -45,7 +47,7 @@ use crate::lockin::model_loading::noise_model_from_artifact;
 use crate::utils::time_axis::TimeAxisRef;
 use anyhow::{Context, Result, bail};
 use pmoke_analysis_core::calibration::{
-    AcquisitionMeta, AdequacyGroup, AdequacyPolicy, ArtifactRequest, BlockPlanRequest,
+    AcquisitionMeta, AdequacyGroup, ArtifactRequest, BlockPlanRequest,
     CALIBRATION_PHASE_CONVENTION, CalibrationRole, CorrelationRecipe, HeldoutReport,
     ModelBinding as CoreBinding, PhaseVarianceRecipe, RoleInterval, TuningMode, assemble_samples,
     build_artifact, estimate_correlation, estimate_phase_variance, fit_nuisance, plan_blocks,
@@ -97,7 +99,12 @@ pub const PREPULSE_MAX_LAG: usize = 256;
 pub const PREPULSE_ABSENT_ACQUISITION: &str = "absent";
 
 /// Digest domain separator. The exact field layout is fixed here (FR-04).
-const PREPULSE_DIGEST_DOMAIN: &str = "pmoke-prepulse-calibration/v1";
+/// v2 adds the effective solver tolerances and SCS adequacy inputs: they
+/// steer the nuisance fit and the adequacy gate, so identical inputs yield
+/// identical digests only when they are hashed. Defaults are frozen, so v2
+/// digests of default configs differ from v1 by layout only; estimator
+/// outputs at defaults are unchanged.
+const PREPULSE_DIGEST_DOMAIN: &str = "pmoke-prepulse-calibration/v2";
 
 /// In-memory noise models derived once per LI run, served per channel.
 /// Created by [`derive_prepulse`]; never reads files.
@@ -170,13 +177,23 @@ pub fn prepulse_calibration_digest(
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(",");
+    let solver = gls.solver_tolerances;
+    let adequacy = gls.scs_adequacy;
     let canonical = format!(
-        "{PREPULSE_DIGEST_DOMAIN}\ninterval_start_bits={}\ninterval_end_bits={}\nsamples={sample_count}\nsample_interval_s_bits={}\nacquisition={acquisition_digest}\nfit_harmonics={harmonics}\nnoise_mode={}\nenvelope_degree={}\n",
+        "{PREPULSE_DIGEST_DOMAIN}\ninterval_start_bits={}\ninterval_end_bits={}\nsamples={sample_count}\nsample_interval_s_bits={}\nacquisition={acquisition_digest}\nfit_harmonics={harmonics}\nnoise_mode={}\nenvelope_degree={}\nrank_tol_bits={}\nmax_condition_bits={}\nmax_noise_condition_bits={}\nmax_jitter_v2_bits={}\nscs_lags={}\nscs_min_pairs_per_cell={}\nscs_max_phase_spread_bits={}\nscs_max_reserved_shift_bits={}\n",
         window_start.to_bits(),
         window_end.to_bits(),
         sample_interval_s.to_bits(),
         gls_noise_mode_name(gls.noise_mode),
         gls.envelope_degree,
+        solver.rank_tol.to_bits(),
+        solver.max_condition.to_bits(),
+        solver.max_noise_condition.to_bits(),
+        solver.max_jitter_v2.to_bits(),
+        adequacy.lags,
+        adequacy.min_pairs_per_cell,
+        adequacy.max_phase_spread.to_bits(),
+        adequacy.max_reserved_shift.to_bits(),
     );
     crate::utils::checksum::sha256_hex(canonical.as_bytes())
 }
@@ -333,7 +350,7 @@ pub fn derive_prepulse(
     }
 
     let sample_rate_hz = sample_interval_s.recip();
-    let tolerances = JointSolverTolerances::default();
+    let tolerances: JointSolverTolerances = gls.solver_tolerances.into();
     let needs_correlation = matches!(
         gls.noise_mode,
         GlsNoiseMode::StationaryCorrelated | GlsNoiseMode::PhaseCorrelated
@@ -492,17 +509,8 @@ fn derive_channel(
             );
         }
         let (head, tail) = groups.split_at(groups.len() / 2);
-        scs_adequacy(
-            head,
-            tail,
-            AdequacyPolicy {
-                lags: 4,
-                min_pairs_per_cell: 10,
-                max_phase_spread: 0.2,
-                max_reserved_shift: 0.2,
-            },
-        )
-        .context("pre-pulse adequacy assessment failed")?
+        scs_adequacy(head, tail, gls.scs_adequacy.into())
+            .context("pre-pulse adequacy assessment failed")?
     };
     if !adequacy.adequate {
         bail!(

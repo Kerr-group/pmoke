@@ -92,6 +92,16 @@ description: pmoke config schema version 7の自動生成fieldリファレンス
 | `lockin.estimator.failure_policy` | `string enum` | 任意 | `error`; `error` | 推定器失敗時方針 v1ではerrorのみ。失敗時は代替動作せずrun中断。 |
 | `lockin.estimator.calibration_source` | `string enum` | 任意 | `artifact`; `artifact`, `prepulse` | joint推定器のcalibration取得元 artifactはファイル束縛の現行動作。prepulseはpulse.background_beforeからLI実行毎にchannel毎の雑音モデルを一度だけ導出し、LI provenanceにprepulse_calibration_digestを記録。prepulse選択時はcalibrationsは空でなければならない。 |
 | `lockin.estimator.calibrations` | `table array` | 任意 | `[]` | 不変calibration束縛。lock-in channel毎に1件 channelとcalibration成果物パス＋期待SHA-256の束縛。未展開テンプレートは拒否。artifact方式ではchannel毎に1件必須。calibration_sourceがprepulseの場合は空でなければならない。 **制約:** exactly one entry per lockin.channels value (artifact mode) |
+| `lockin.estimator.solver_tolerances` | `table` | 任意 | `defaults` | joint solver許容値の上書き joint推定器とpre-pulse nuisance fit用のTOL-06/07ポリシー。すべて任意。テーブル欠落・キー欠落は凍結済み既定値を保持し、既存v7設定の動作はバイト同一。 |
+| `lockin.estimator.solver_tolerances.rank_tol` | `float` | 任意 | `1e-10` | ランク判定の相対特異値フロア 有限かつ正。既定1e-10。小さいほど弱い特異方向を残し、大きいほど早期に棄却。 **制約:** must be finite and positive |
+| `lockin.estimator.solver_tolerances.max_condition` | `float` | 任意 | `1e8` | スケール済みdesignの条件数棄却閾値 有限かつ正。既定1e8。超過ウィンドウは公開せず失敗扱い。 **制約:** must be finite and positive |
+| `lockin.estimator.solver_tolerances.max_noise_condition` | `float` | 任意 | `1e10` | 実現雑音共分散の条件数上限 有限かつ正。既定1e10。実行時共分散の条件付けを制限（TOL-07）。 **制約:** must be finite and positive |
+| `lockin.estimator.solver_tolerances.max_jitter_v2` | `float` · `normalized-lag units` | 任意 | `0.0` | 正規化lag単位のbounded-jitter上限 有限かつ非負。既定0.0（無効）。非SPD Toeplitz因子は暗黙正則化せず失敗扱い。 **制約:** must be finite and non-negative |
+| `lockin.estimator.scs_adequacy` | `table` | 任意 | `defaults` | SCS adequacyゲートの上書き pre-pulse導出用FR-06 split-halfポリシー。すべて任意で既定は凍結値。ゲート自体は全noise_modeで必須のまま。 |
+| `lockin.estimator.scs_adequacy.lags` | `integer` | 任意 | `4` | adequacyのlag数 正の整数。既定4。split-half検査で位相octant間にわたり比較するlag数。 **制約:** must be positive |
+| `lockin.estimator.scs_adequacy.min_pairs_per_cell` | `integer` | 任意 | `10` | 位相セル毎の最小lagペア数 正の整数。既定10。これ未満のセルはadequacy証拠なし扱い。 **制約:** must be positive |
+| `lockin.estimator.scs_adequacy.max_phase_spread` | `float` | 任意 | `0.2` | 学習位相spreadゲート 有限かつ非負。既定0.2。これを超える不一致は導出拒否。緩和は承認事項。失敗時は区間・データを再取得。 **制約:** must be finite and non-negative |
+| `lockin.estimator.scs_adequacy.max_reserved_shift` | `float` | 任意 | `0.2` | reserved-shiftゲート 有限かつ非負。既定0.2。これを超えるshiftは導出拒否。 **制約:** must be finite and non-negative |
 | `lockin.filter` | `tagged inline table` | 必須 | - | lock-in low-pass filter 設定 schema v6以前はboxcar_legacyのみ。v7ではlockin.window/lockin.estimatorに置換。 **制約:** fields from other filter kinds are rejected |
 | `lockin.filter.kind` | `string enum` | 必須 | `boxcar_legacy` | lock-in filter アルゴリズム 現在のLPFはboxcar_legacyのみ。過去のFIR/IIR kindは移行診断のためだけに読み取る。 |
 | `lockin.filter.half_window_cycles` | `float` · `reference cycles` | 必須 | - | 参照周期単位の半窓幅 boxcar積分窓を参照周期単位で指定する半窓幅。 **制約:** must be finite and positive |

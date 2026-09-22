@@ -263,6 +263,8 @@ fn legs_share_grid_and_never_touch_the_source() {
             path: "ch3.json".to_string(),
             sha256: digest,
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
     // Channels from test_config carry display factors; the LI estimator
     // inputs are never rescaled, so clear scaling on the signal channel
@@ -532,6 +534,8 @@ fn method_preserves_base_signal_model() {
             path: "ch3.json".to_string(),
             sha256: "0".repeat(64),
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
     let method = CompareMethod {
         name: "identity".to_string(),
