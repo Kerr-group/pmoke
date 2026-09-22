@@ -212,7 +212,17 @@ pub struct JointEstimate {
     pub rank: usize,
     /// Scaled-design condition number estimate.
     pub condition: f64,
-    /// Residual RMS in whitened units.
+    /// Standardized residual RMS per unit noise: the whitened RMS divided by
+    /// the square root of the variance scale, so identity and diagonal modes
+    /// report identical values for identical covariances. Dimensionless, not
+    /// volts: it is numerically equal to the raw volts RMS for Identity
+    /// noise when the reference variance is exactly 1 V^2 (more generally
+    /// whenever the effective covariance is the unit identity), and stays
+    /// dimensionless in that coincidence. Other modes normalize by their
+    /// own realized bins and/or correlation factor, so the reference
+    /// variance alone never sets the reading. Never the diagnostics-path
+    /// volts RMS of a raw nuisance residual (different estimator,
+    /// different normalization).
     pub residual_rms: f64,
     /// Bounded jitter actually applied to the normalized Toeplitz diagonal
     /// in V^2-normalized units (FR-017). Zero unless the factor needed it;
@@ -1542,8 +1552,10 @@ fn whiten_correlated(
 }
 
 /// Thin-QR least squares with explicit rank/condition gates (NUMERICS 5.1).
-/// Returns `(beta, residual_rms, rank, condition)` with strictly finite
-/// outputs; arithmetic overflow reports `non_finite_output`.
+/// Returns `(beta, whitened residual RMS, rank, condition)` with strictly
+/// finite outputs; arithmetic overflow reports `non_finite_output`. The
+/// returned RMS is pre-standardization: [`estimate_joint`] divides it by the
+/// square root of the variance scale before publishing `residual_rms`.
 pub fn solve_direct(
     whitened_design: &DMatrix<f64>,
     whitened_signal: &DVector<f64>,
