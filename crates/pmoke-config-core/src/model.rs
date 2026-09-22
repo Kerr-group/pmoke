@@ -375,6 +375,96 @@ pub(crate) struct JointHarmonicGlsConfigV7 {
     pub calibration_source: GlsCalibrationSourceV7,
     #[serde(default)]
     pub calibrations: Vec<EstimatorCalibrationV7>,
+    #[serde(default)]
+    pub solver_tolerances: SolverTolerancesV7,
+    #[serde(default)]
+    pub scs_adequacy: ScsAdequacyV7,
+}
+
+/// Browser-core mirror of the native solver-tolerance overrides. Literals
+/// repeat the frozen analysis-core defaults (this crate stays
+/// dependency-light); the native equivalence test pins the same values
+/// against the core constants.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SolverTolerancesV7 {
+    #[serde(default = "default_solver_rank_tol")]
+    pub rank_tol: f64,
+    #[serde(default = "default_solver_max_condition")]
+    pub max_condition: f64,
+    #[serde(default = "default_solver_max_noise_condition")]
+    pub max_noise_condition: f64,
+    #[serde(default = "default_solver_max_jitter_v2")]
+    pub max_jitter_v2: f64,
+}
+
+impl Default for SolverTolerancesV7 {
+    fn default() -> Self {
+        Self {
+            rank_tol: default_solver_rank_tol(),
+            max_condition: default_solver_max_condition(),
+            max_noise_condition: default_solver_max_noise_condition(),
+            max_jitter_v2: default_solver_max_jitter_v2(),
+        }
+    }
+}
+
+fn default_solver_rank_tol() -> f64 {
+    1e-10
+}
+
+fn default_solver_max_condition() -> f64 {
+    1e8
+}
+
+fn default_solver_max_noise_condition() -> f64 {
+    1e10
+}
+
+fn default_solver_max_jitter_v2() -> f64 {
+    0.0
+}
+
+/// Browser-core mirror of the native SCS adequacy overrides (frozen FR-06
+/// defaults, same dependency-light note as above).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScsAdequacyV7 {
+    #[serde(default = "default_scs_lags")]
+    pub lags: usize,
+    #[serde(default = "default_scs_min_pairs_per_cell")]
+    pub min_pairs_per_cell: usize,
+    #[serde(default = "default_scs_max_phase_spread")]
+    pub max_phase_spread: f64,
+    #[serde(default = "default_scs_max_reserved_shift")]
+    pub max_reserved_shift: f64,
+}
+
+impl Default for ScsAdequacyV7 {
+    fn default() -> Self {
+        Self {
+            lags: default_scs_lags(),
+            min_pairs_per_cell: default_scs_min_pairs_per_cell(),
+            max_phase_spread: default_scs_max_phase_spread(),
+            max_reserved_shift: default_scs_max_reserved_shift(),
+        }
+    }
+}
+
+fn default_scs_lags() -> usize {
+    4
+}
+
+fn default_scs_min_pairs_per_cell() -> usize {
+    10
+}
+
+fn default_scs_max_phase_spread() -> f64 {
+    0.2
+}
+
+fn default_scs_max_reserved_shift() -> f64 {
+    0.2
 }
 
 /// Pre-pulse calibration source (FR-01 mirror): `artifact` (default) keeps

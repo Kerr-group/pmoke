@@ -797,6 +797,86 @@ fn validate_window_estimator(lockin: &LockinV7, report: &mut ValidationReport) {
         );
     }
     validate_estimator_calibrations(config, &lockin.channels, report);
+    validate_gls_tolerances(config, report);
+}
+
+/// Browser-core mirror of the native tolerance validation: bounds match the
+/// runtime solver/adequacy gates exactly (see the native validator note).
+fn validate_gls_tolerances(config: &JointHarmonicGlsConfigV7, report: &mut ValidationReport) {
+    let solver = &config.solver_tolerances;
+    if !solver.rank_tol.is_finite() || solver.rank_tol <= 0.0 {
+        error(
+            report,
+            DiagnosticCode::InvalidRange,
+            "lockin.estimator.solver_tolerances.rank_tol",
+            format!(
+                "lockin.estimator.solver_tolerances.rank_tol must be finite and positive (got {})",
+                solver.rank_tol
+            ),
+        );
+    }
+    if !solver.max_condition.is_finite() || solver.max_condition <= 0.0 {
+        error(
+            report,
+            DiagnosticCode::InvalidRange,
+            "lockin.estimator.solver_tolerances.max_condition",
+            format!(
+                "lockin.estimator.solver_tolerances.max_condition must be finite and positive (got {})",
+                solver.max_condition
+            ),
+        );
+    }
+    if !solver.max_noise_condition.is_finite() || solver.max_noise_condition <= 0.0 {
+        error(
+            report,
+            DiagnosticCode::InvalidRange,
+            "lockin.estimator.solver_tolerances.max_noise_condition",
+            format!(
+                "lockin.estimator.solver_tolerances.max_noise_condition must be finite and positive (got {})",
+                solver.max_noise_condition
+            ),
+        );
+    }
+    if !solver.max_jitter_v2.is_finite() || solver.max_jitter_v2 < 0.0 {
+        error(
+            report,
+            DiagnosticCode::InvalidRange,
+            "lockin.estimator.solver_tolerances.max_jitter_v2",
+            format!(
+                "lockin.estimator.solver_tolerances.max_jitter_v2 must be finite and non-negative (got {})",
+                solver.max_jitter_v2
+            ),
+        );
+    }
+    let adequacy = &config.scs_adequacy;
+    positive_usize(report, "lockin.estimator.scs_adequacy.lags", adequacy.lags);
+    positive_usize(
+        report,
+        "lockin.estimator.scs_adequacy.min_pairs_per_cell",
+        adequacy.min_pairs_per_cell,
+    );
+    if !adequacy.max_phase_spread.is_finite() || adequacy.max_phase_spread < 0.0 {
+        error(
+            report,
+            DiagnosticCode::InvalidRange,
+            "lockin.estimator.scs_adequacy.max_phase_spread",
+            format!(
+                "lockin.estimator.scs_adequacy.max_phase_spread must be finite and non-negative (got {})",
+                adequacy.max_phase_spread
+            ),
+        );
+    }
+    if !adequacy.max_reserved_shift.is_finite() || adequacy.max_reserved_shift < 0.0 {
+        error(
+            report,
+            DiagnosticCode::InvalidRange,
+            "lockin.estimator.scs_adequacy.max_reserved_shift",
+            format!(
+                "lockin.estimator.scs_adequacy.max_reserved_shift must be finite and non-negative (got {})",
+                adequacy.max_reserved_shift
+            ),
+        );
+    }
 }
 
 fn validate_estimator_calibrations(
@@ -1544,6 +1624,108 @@ background_after = { start = 0.01, end = 0.02 }
             assert!(normalized.contains("reference_cycles"));
             let reparsed = validate_config_toml(&normalized);
             assert!(reparsed.valid, "{:#?}", reparsed.diagnostics);
+        }
+    }
+
+    #[test]
+    fn v7_tolerance_overrides_default_to_frozen_values() {
+        // Absent tables keep the frozen FR-06/TOL-06/07 defaults; the
+        // normalized output round-trips them.
+        let report = validate_config_toml(&valid_v7_gls());
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        let reparsed = validate_config_toml(&report.normalized_toml.unwrap());
+        assert!(reparsed.valid, "{:#?}", reparsed.diagnostics);
+        let parsed: ConfigV7 = toml::from_str(&valid_v7_gls()).unwrap();
+        let gls = match &parsed.lockin.estimator {
+            LockinEstimatorV7::JointHarmonicGls(gls) => gls,
+            LockinEstimatorV7::BoxcarLegacy {} => panic!("expected GLS estimator"),
+        };
+        assert_eq!(gls.solver_tolerances.rank_tol, 1e-10);
+        assert_eq!(gls.solver_tolerances.max_condition, 1e8);
+        assert_eq!(gls.solver_tolerances.max_noise_condition, 1e10);
+        assert_eq!(gls.solver_tolerances.max_jitter_v2, 0.0);
+        assert_eq!(gls.scs_adequacy.lags, 4);
+        assert_eq!(gls.scs_adequacy.min_pairs_per_cell, 10);
+        assert_eq!(gls.scs_adequacy.max_phase_spread, 0.2);
+        assert_eq!(gls.scs_adequacy.max_reserved_shift, 0.2);
+        // Non-default knobs are accepted and kept verbatim.
+        let text = valid_v7_gls()
+            + "\n[lockin.estimator.solver_tolerances]\nrank_tol = 1e-9\n[lockin.estimator.scs_adequacy]\nmax_phase_spread = 0.5\n";
+        let report = validate_config_toml(&text);
+        assert!(report.valid, "{:#?}", report.diagnostics);
+        let reparsed: ConfigV7 = toml::from_str(&report.normalized_toml.unwrap()).unwrap();
+        let gls = match &reparsed.lockin.estimator {
+            LockinEstimatorV7::JointHarmonicGls(gls) => gls,
+            LockinEstimatorV7::BoxcarLegacy {} => panic!("expected GLS estimator"),
+        };
+        assert_eq!(gls.solver_tolerances.rank_tol, 1e-9);
+        assert_eq!(gls.scs_adequacy.max_phase_spread, 0.5);
+    }
+
+    #[test]
+    fn v7_tolerance_tables_reject_unknown_keys() {
+        // `deny_unknown_fields` stays: typos in the new tables are schema
+        // mismatches, never silent defaults.
+        let solver_typo =
+            valid_v7_gls() + "\n[lockin.estimator.solver_tolerances]\nrank_tol_typo = 1e-9\n";
+        let report = validate_config_toml(&solver_typo);
+        assert!(!report.valid);
+        assert_eq!(report.diagnostics[0].code, DiagnosticCode::SchemaMismatch);
+        let adequacy_typo =
+            valid_v7_gls() + "\n[lockin.estimator.scs_adequacy]\nmax_spread = 0.2\n";
+        let report = validate_config_toml(&adequacy_typo);
+        assert!(!report.valid);
+        assert_eq!(report.diagnostics[0].code, DiagnosticCode::SchemaMismatch);
+    }
+
+    #[test]
+    fn v7_tolerance_overrides_reject_out_of_range() {
+        let cases = [
+            (
+                "[lockin.estimator.solver_tolerances]\nrank_tol = 0.0\n",
+                "lockin.estimator.solver_tolerances.rank_tol",
+            ),
+            (
+                "[lockin.estimator.solver_tolerances]\nmax_condition = -1.0\n",
+                "lockin.estimator.solver_tolerances.max_condition",
+            ),
+            (
+                "[lockin.estimator.solver_tolerances]\nmax_noise_condition = 0.0\n",
+                "lockin.estimator.solver_tolerances.max_noise_condition",
+            ),
+            (
+                "[lockin.estimator.solver_tolerances]\nmax_jitter_v2 = -0.5\n",
+                "lockin.estimator.solver_tolerances.max_jitter_v2",
+            ),
+            (
+                "[lockin.estimator.scs_adequacy]\nlags = 0\n",
+                "lockin.estimator.scs_adequacy.lags",
+            ),
+            (
+                "[lockin.estimator.scs_adequacy]\nmin_pairs_per_cell = 0\n",
+                "lockin.estimator.scs_adequacy.min_pairs_per_cell",
+            ),
+            (
+                "[lockin.estimator.scs_adequacy]\nmax_phase_spread = -0.1\n",
+                "lockin.estimator.scs_adequacy.max_phase_spread",
+            ),
+            (
+                "[lockin.estimator.scs_adequacy]\nmax_reserved_shift = -0.1\n",
+                "lockin.estimator.scs_adequacy.max_reserved_shift",
+            ),
+        ];
+        for (table, path) in cases {
+            let report = validate_config_toml(&(valid_v7_gls() + "\n" + table));
+            assert!(!report.valid, "table {table:?} validated unexpectedly");
+            assert!(
+                report
+                    .diagnostics
+                    .iter()
+                    .any(|item| item.path.as_deref() == Some(path)
+                        && item.code == DiagnosticCode::InvalidRange),
+                "table {table:?} produced {:#?}",
+                report.diagnostics
+            );
         }
     }
 }

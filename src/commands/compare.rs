@@ -253,6 +253,8 @@ fn apply_method_estimator(cfg: &mut Config, method: &CompareMethod) -> Result<()
                     failure_policy: base.failure_policy,
                     calibration_source: base.calibration_source,
                     calibrations: base.calibrations,
+                    solver_tolerances: base.solver_tolerances,
+                    scs_adequacy: base.scs_adequacy,
                 });
             Ok(())
         }

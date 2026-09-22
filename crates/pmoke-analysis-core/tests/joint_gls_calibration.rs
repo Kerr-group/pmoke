@@ -897,6 +897,73 @@ fn adequacy_gates_reject_unverifiable_inputs() {
     );
 }
 
+// Issue #301 follow-up: a validated but unsatisfiable lag count must fail
+// with the typed insufficient_calibration error before any lag-sized
+// allocation (no capacity-overflow panic, no huge allocation). The
+// boundary lag == shortest group length fails the same way; a small
+// satisfiable lag on the same groups still reaches the verdict path.
+#[test]
+fn adequacy_rejects_impossible_lag_support_before_allocation() {
+    let samples = 64usize;
+    let phases: Vec<f64> = (0..samples)
+        .map(|i| i as f64 / samples as f64 * std::f64::consts::TAU)
+        .collect();
+    let group = || AdequacyGroup {
+        standardized: (0..samples)
+            .map(|i| ((i * 37) as f64 / samples as f64).sin())
+            .collect(),
+        phases: phases.clone(),
+    };
+    let train = group();
+    let reserved = group();
+    let policy = AdequacyPolicy {
+        lags: 4,
+        min_pairs_per_cell: 1,
+        max_phase_spread: 0.5,
+        max_reserved_shift: 0.5,
+    };
+    // Control: a small satisfiable lag count reaches a verdict, not an error.
+    assert!(
+        scs_adequacy(
+            std::slice::from_ref(&train),
+            std::slice::from_ref(&reserved),
+            policy
+        )
+        .is_ok()
+    );
+    // Boundary: lag support equal to the shortest group length has no pairs.
+    let boundary = AdequacyPolicy {
+        lags: samples,
+        ..policy
+    };
+    assert_eq!(
+        scs_adequacy(
+            std::slice::from_ref(&train),
+            std::slice::from_ref(&reserved),
+            boundary
+        )
+        .unwrap_err()
+        .code(),
+        "insufficient_calibration"
+    );
+    // The validated TOML-representable reproducer (i64::MAX) must surface
+    // the same typed error instead of panicking on allocation.
+    let oversized = AdequacyPolicy {
+        lags: i64::MAX as usize,
+        ..policy
+    };
+    assert_eq!(
+        scs_adequacy(
+            std::slice::from_ref(&train),
+            std::slice::from_ref(&reserved),
+            oversized
+        )
+        .unwrap_err()
+        .code(),
+        "insufficient_calibration"
+    );
+}
+
 // F3: pool-then-normalize analytical anchor with unequal block power.
 #[test]
 fn correlation_pool_order_anchor() {

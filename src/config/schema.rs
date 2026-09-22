@@ -454,6 +454,96 @@ pub(super) struct JointHarmonicGlsConfigV7 {
     pub(super) calibration_source: GlsCalibrationSourceV7,
     #[serde(default)]
     pub(super) calibrations: Vec<EstimatorCalibrationV7>,
+    #[serde(default)]
+    pub(super) solver_tolerances: SolverTolerancesV7,
+    #[serde(default)]
+    pub(super) scs_adequacy: ScsAdequacyV7,
+}
+
+/// Raw v7 solver-tolerance overrides (TOL-06/07 policy carriers). Every key
+/// is optional; an absent table or absent key keeps the frozen default, so
+/// existing v7 configs parse byte-identically to before.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SolverTolerancesV7 {
+    #[serde(default = "default_solver_rank_tol")]
+    pub(super) rank_tol: f64,
+    #[serde(default = "default_solver_max_condition")]
+    pub(super) max_condition: f64,
+    #[serde(default = "default_solver_max_noise_condition")]
+    pub(super) max_noise_condition: f64,
+    #[serde(default = "default_solver_max_jitter_v2")]
+    pub(super) max_jitter_v2: f64,
+}
+
+impl Default for SolverTolerancesV7 {
+    fn default() -> Self {
+        Self {
+            rank_tol: default_solver_rank_tol(),
+            max_condition: default_solver_max_condition(),
+            max_noise_condition: default_solver_max_noise_condition(),
+            max_jitter_v2: default_solver_max_jitter_v2(),
+        }
+    }
+}
+
+fn default_solver_rank_tol() -> f64 {
+    pmoke_analysis_core::joint::DEFAULT_RANK_TOL
+}
+
+fn default_solver_max_condition() -> f64 {
+    pmoke_analysis_core::joint::DEFAULT_MAX_CONDITION
+}
+
+fn default_solver_max_noise_condition() -> f64 {
+    pmoke_analysis_core::joint::DEFAULT_MAX_NOISE_CONDITION
+}
+
+fn default_solver_max_jitter_v2() -> f64 {
+    pmoke_analysis_core::joint::DEFAULT_MAX_JITTER
+}
+
+/// Raw v7 SCS adequacy overrides (FR-06 split-half gate). Every key is
+/// optional; an absent table or absent key keeps the frozen default, so
+/// existing v7 configs parse byte-identically to before.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ScsAdequacyV7 {
+    #[serde(default = "default_scs_lags")]
+    pub(super) lags: usize,
+    #[serde(default = "default_scs_min_pairs_per_cell")]
+    pub(super) min_pairs_per_cell: usize,
+    #[serde(default = "default_scs_max_phase_spread")]
+    pub(super) max_phase_spread: f64,
+    #[serde(default = "default_scs_max_reserved_shift")]
+    pub(super) max_reserved_shift: f64,
+}
+
+impl Default for ScsAdequacyV7 {
+    fn default() -> Self {
+        Self {
+            lags: default_scs_lags(),
+            min_pairs_per_cell: default_scs_min_pairs_per_cell(),
+            max_phase_spread: default_scs_max_phase_spread(),
+            max_reserved_shift: default_scs_max_reserved_shift(),
+        }
+    }
+}
+
+fn default_scs_lags() -> usize {
+    pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_LAGS
+}
+
+fn default_scs_min_pairs_per_cell() -> usize {
+    pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MIN_PAIRS_PER_CELL
+}
+
+fn default_scs_max_phase_spread() -> f64 {
+    pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MAX_PHASE_SPREAD
+}
+
+fn default_scs_max_reserved_shift() -> f64 {
+    pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MAX_RESERVED_SHIFT
 }
 
 /// Pre-pulse calibration source (FR-01): `artifact` keeps the current

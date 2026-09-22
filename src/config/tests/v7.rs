@@ -416,6 +416,8 @@ fn gls_config(calibrations: Vec<crate::config::EstimatorCalibration>) -> JointHa
         failure_policy: GlsFailurePolicy::Error,
         calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations,
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     }
 }
 
@@ -593,4 +595,140 @@ fn raw_v7_structs_reject_unknown_fields_directly() {
         .is_ok()
     );
     assert!(toml::from_str::<LockinEstimatorV7>("kind = \"boxcar_legacy\"").is_ok());
+}
+
+fn gls_estimator(config: &crate::config::Config) -> JointHarmonicGlsConfig {
+    match &config.lockin.estimator {
+        LockinEstimator::JointHarmonicGls(gls) => gls.clone(),
+        LockinEstimator::BoxcarLegacy => panic!("expected GLS estimator"),
+    }
+}
+
+#[test]
+fn v7_gls_tolerances_default_to_frozen_core_values() {
+    let gls = gls_estimator(&ready_config(&v7_gls_config()));
+    let solver: pmoke_analysis_core::joint::JointSolverTolerances = gls.solver_tolerances.into();
+    assert_eq!(
+        solver,
+        pmoke_analysis_core::joint::JointSolverTolerances::default()
+    );
+    let policy: pmoke_analysis_core::calibration::AdequacyPolicy = gls.scs_adequacy.into();
+    assert_eq!(
+        policy,
+        pmoke_analysis_core::calibration::AdequacyPolicy::default()
+    );
+    // Frozen literals pinned explicitly: any upstream default drift fails here.
+    assert_eq!(solver.rank_tol, 1e-10);
+    assert_eq!(solver.max_condition, 1e8);
+    assert_eq!(solver.max_noise_condition, 1e10);
+    assert_eq!(solver.max_jitter_v2, 0.0);
+    assert_eq!(policy.lags, 4);
+    assert_eq!(policy.min_pairs_per_cell, 10);
+    assert_eq!(policy.max_phase_spread, 0.2);
+    assert_eq!(policy.max_reserved_shift, 0.2);
+}
+
+#[test]
+fn v7_gls_explicit_frozen_tolerances_match_implicit_defaults() {
+    let implicit = gls_estimator(&ready_config(&v7_gls_config()));
+    let text = v7_gls_config()
+        + "\n[lockin.estimator.solver_tolerances]\nrank_tol = 1e-10\nmax_condition = 1e8\nmax_noise_condition = 1e10\nmax_jitter_v2 = 0.0\n[lockin.estimator.scs_adequacy]\nlags = 4\nmin_pairs_per_cell = 10\nmax_phase_spread = 0.2\nmax_reserved_shift = 0.2\n";
+    let explicit = gls_estimator(&ready_config(&text));
+    assert_eq!(implicit, explicit);
+}
+
+#[test]
+fn v7_gls_partial_tolerance_table_keeps_remaining_defaults() {
+    let text = v7_gls_config() + "\n[lockin.estimator.solver_tolerances]\nrank_tol = 1e-9\n";
+    let gls = gls_estimator(&ready_config(&text));
+    assert_eq!(gls.solver_tolerances.rank_tol, 1e-9);
+    assert_eq!(gls.solver_tolerances.max_condition, 1e8);
+    assert_eq!(gls.solver_tolerances.max_noise_condition, 1e10);
+    assert_eq!(gls.solver_tolerances.max_jitter_v2, 0.0);
+    let text = v7_gls_config() + "\n[lockin.estimator.scs_adequacy]\nmax_phase_spread = 0.5\n";
+    let gls = gls_estimator(&ready_config(&text));
+    assert_eq!(gls.scs_adequacy.lags, 4);
+    assert_eq!(gls.scs_adequacy.min_pairs_per_cell, 10);
+    assert_eq!(gls.scs_adequacy.max_phase_spread, 0.5);
+    assert_eq!(gls.scs_adequacy.max_reserved_shift, 0.2);
+}
+
+#[test]
+fn v7_gls_nondefault_tolerances_validate_and_plumb() {
+    let text = v7_gls_config()
+        + "\n[lockin.estimator.solver_tolerances]\nrank_tol = 1e-9\nmax_jitter_v2 = 1e-6\n[lockin.estimator.scs_adequacy]\nmax_phase_spread = 0.5\n";
+    let gls = gls_estimator(&ready_config(&text));
+    let solver: pmoke_analysis_core::joint::JointSolverTolerances = gls.solver_tolerances.into();
+    assert_eq!(solver.rank_tol, 1e-9);
+    assert_eq!(solver.max_condition, 1e8);
+    assert_eq!(solver.max_jitter_v2, 1e-6);
+    let policy: pmoke_analysis_core::calibration::AdequacyPolicy = gls.scs_adequacy.into();
+    assert_eq!(policy.max_phase_spread, 0.5);
+    assert_eq!(policy.lags, 4);
+}
+
+#[test]
+fn v7_gls_tolerance_tables_reject_unknown_keys() {
+    let text = v7_gls_config() + "\n[lockin.estimator.solver_tolerances]\nrank_tol_typo = 1e-9\n";
+    let paths = diagnostic_paths(&text);
+    assert!(
+        paths.iter().any(|entry| entry.contains("rank_tol_typo")),
+        "unexpected diagnostics: {paths:?}"
+    );
+    let text = v7_gls_config() + "\n[lockin.estimator.scs_adequacy]\nmax_spread = 0.2\n";
+    let paths = diagnostic_paths(&text);
+    assert!(
+        paths.iter().any(|entry| entry.contains("max_spread")),
+        "unexpected diagnostics: {paths:?}"
+    );
+}
+
+#[test]
+fn v7_gls_tolerances_reject_out_of_range() {
+    let cases = [
+        (
+            "[lockin.estimator.solver_tolerances]\nrank_tol = 0.0\n",
+            "lockin.estimator.solver_tolerances.rank_tol",
+        ),
+        (
+            "[lockin.estimator.solver_tolerances]\nrank_tol = nan\n",
+            "lockin.estimator.solver_tolerances.rank_tol",
+        ),
+        (
+            "[lockin.estimator.solver_tolerances]\nmax_condition = -1.0\n",
+            "lockin.estimator.solver_tolerances.max_condition",
+        ),
+        (
+            "[lockin.estimator.solver_tolerances]\nmax_noise_condition = 0.0\n",
+            "lockin.estimator.solver_tolerances.max_noise_condition",
+        ),
+        (
+            "[lockin.estimator.solver_tolerances]\nmax_jitter_v2 = -0.5\n",
+            "lockin.estimator.solver_tolerances.max_jitter_v2",
+        ),
+        (
+            "[lockin.estimator.scs_adequacy]\nlags = 0\n",
+            "lockin.estimator.scs_adequacy.lags",
+        ),
+        (
+            "[lockin.estimator.scs_adequacy]\nmin_pairs_per_cell = 0\n",
+            "lockin.estimator.scs_adequacy.min_pairs_per_cell",
+        ),
+        (
+            "[lockin.estimator.scs_adequacy]\nmax_phase_spread = -0.1\n",
+            "lockin.estimator.scs_adequacy.max_phase_spread",
+        ),
+        (
+            "[lockin.estimator.scs_adequacy]\nmax_reserved_shift = -0.1\n",
+            "lockin.estimator.scs_adequacy.max_reserved_shift",
+        ),
+    ];
+    for (table, path) in cases {
+        let text = v7_gls_config() + "\n" + table;
+        let paths = diagnostic_paths(&text);
+        assert!(
+            paths.iter().any(|entry| entry.starts_with(path)),
+            "table {table:?} produced {paths:?}"
+        );
+    }
 }

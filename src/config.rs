@@ -487,6 +487,97 @@ pub struct JointHarmonicGlsConfig {
     pub failure_policy: GlsFailurePolicy,
     pub calibration_source: GlsCalibrationSource,
     pub calibrations: Vec<EstimatorCalibration>,
+    pub solver_tolerances: GlsSolverTolerances,
+    pub scs_adequacy: GlsScsAdequacy,
+}
+
+/// Validated solver tolerances (TOL-06/07 policy carriers). Defaults are
+/// frozen to the analysis-core defaults: changing a default value needs
+/// separate approval and is never part of this binding.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct GlsSolverTolerances {
+    pub rank_tol: f64,
+    pub max_condition: f64,
+    pub max_noise_condition: f64,
+    pub max_jitter_v2: f64,
+}
+
+impl Default for GlsSolverTolerances {
+    fn default() -> Self {
+        Self {
+            rank_tol: pmoke_analysis_core::joint::DEFAULT_RANK_TOL,
+            max_condition: pmoke_analysis_core::joint::DEFAULT_MAX_CONDITION,
+            max_noise_condition: pmoke_analysis_core::joint::DEFAULT_MAX_NOISE_CONDITION,
+            max_jitter_v2: pmoke_analysis_core::joint::DEFAULT_MAX_JITTER,
+        }
+    }
+}
+
+impl From<GlsSolverTolerances> for pmoke_analysis_core::joint::JointSolverTolerances {
+    fn from(value: GlsSolverTolerances) -> Self {
+        Self {
+            rank_tol: value.rank_tol,
+            max_condition: value.max_condition,
+            max_noise_condition: value.max_noise_condition,
+            max_jitter_v2: value.max_jitter_v2,
+        }
+    }
+}
+
+impl From<SolverTolerancesV7> for GlsSolverTolerances {
+    fn from(value: SolverTolerancesV7) -> Self {
+        Self {
+            rank_tol: value.rank_tol,
+            max_condition: value.max_condition,
+            max_noise_condition: value.max_noise_condition,
+            max_jitter_v2: value.max_jitter_v2,
+        }
+    }
+}
+
+/// Validated SCS adequacy policy (FR-06 split-half gate). Defaults are
+/// frozen to the analysis-core adequacy defaults.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct GlsScsAdequacy {
+    pub lags: usize,
+    pub min_pairs_per_cell: usize,
+    pub max_phase_spread: f64,
+    pub max_reserved_shift: f64,
+}
+
+impl Default for GlsScsAdequacy {
+    fn default() -> Self {
+        Self {
+            lags: pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_LAGS,
+            min_pairs_per_cell:
+                pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MIN_PAIRS_PER_CELL,
+            max_phase_spread: pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MAX_PHASE_SPREAD,
+            max_reserved_shift:
+                pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MAX_RESERVED_SHIFT,
+        }
+    }
+}
+
+impl From<GlsScsAdequacy> for pmoke_analysis_core::calibration::AdequacyPolicy {
+    fn from(value: GlsScsAdequacy) -> Self {
+        Self {
+            lags: value.lags,
+            min_pairs_per_cell: value.min_pairs_per_cell,
+            max_phase_spread: value.max_phase_spread,
+            max_reserved_shift: value.max_reserved_shift,
+        }
+    }
+}
+
+impl From<ScsAdequacyV7> for GlsScsAdequacy {
+    fn from(value: ScsAdequacyV7) -> Self {
+        Self {
+            lags: value.lags,
+            min_pairs_per_cell: value.min_pairs_per_cell,
+            max_phase_spread: value.max_phase_spread,
+            max_reserved_shift: value.max_reserved_shift,
+        }
+    }
 }
 
 /// Where the joint GLS noise model comes from (FR-01). `Artifact` is the
@@ -936,6 +1027,8 @@ impl From<JointHarmonicGlsConfigV7> for JointHarmonicGlsConfig {
             failure_policy: value.failure_policy.into(),
             calibration_source: value.calibration_source.into(),
             calibrations: value.calibrations.into_iter().map(Into::into).collect(),
+            solver_tolerances: value.solver_tolerances.into(),
+            scs_adequacy: value.scs_adequacy.into(),
         }
     }
 }
