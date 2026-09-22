@@ -9,13 +9,16 @@
 //! (all four noise modes, estimate path): rank, residual bits, beta hash,
 //! and covariance hashes identical on every window; condition differs by
 //! at most a few ulps. That comparison is recorded in the P3 PR; the tests
-//! below pin the property and the outputs permanently.
+//! below pin the property permanently and freeze the outputs against the
+//! committed fixture to bounded tolerance (machine-local bit-identity of
+//! the reuse itself is pinned exactly by the combined test; see below).
 
 use pmoke_analysis_core::{
     CorrelationKernel, HarmonicSignalModel, JointHarmonicSettings, JointScratch,
     JointSolverTolerances, NoiseMode, NoiseModel, PreparedNoisePlan, design_matrix, estimate_joint,
     estimate_joint_with_scratch, solve_direct_and_covariance, whiten,
 };
+use serde::Deserialize;
 use std::time::Instant;
 
 const N: usize = 97;
@@ -179,65 +182,101 @@ fn thin_r_diagnostic_matches_design_diagnostic() {
 }
 
 /// Golden outputs on two fixtures (identity + phase-correlated, first
-/// window): estimator fields are pinned bit-for-bit, condition by 1e-12.
-/// Base-vs-patched comparison showed these fields bit-identical (condition
-/// within a few ulps); the goldens below freeze that behavior.
+/// window): rank is pinned exactly; residual, beta, covariances, and
+/// condition are pinned by bounded relative tolerance (1e-12) against the
+/// committed fixture (`fixtures/joint-gls/solve-temp-reuse-golden.json`).
+///
+/// Why tolerance instead of bit-exact goldens: the estimator pipeline
+/// (fixture/design trig through a least-squares solve) reproduces
+/// bit-exactly on one machine but drifts a few ulps across machines.
+/// Three hosts — the PR author's M4 Pro, a second M4, and ubuntu x86-64
+/// CI — produced three `residual_rms` values spread over 5 ulps with
+/// matching drift in the beta/covariance hashes, while every
+/// same-machine bit-identity check passed on all three. The drift sources
+/// (system libm trig, codegen/FMA contraction) are outside this crate's
+/// control, and every other golden in this suite already uses bounded
+/// tolerance for the same reason (`joint_gls_legacy.rs`: "covers platform
+/// float drift"). 1e-12 keeps ~1000x headroom over the observed ~1e-15
+/// spread while still freezing behavior: any algorithmic change shifting
+/// outputs beyond 1e-12 fails on every platform. Machine-local
+/// bit-identity of the reuse itself stays pinned exactly by
+/// `solve_reuse_combined_matches_sequential` below.
+///
+/// Committed fixture provenance: per-element `estimate_joint` outputs
+/// recorded locally (see the fixture's `generator` field); serde_json
+/// round-trips f64 exactly, so the reference values are bit-exact and
+/// only the comparison is bounded.
+#[derive(Deserialize)]
+struct SolveReuseGolden {
+    schema_version: u32,
+    cases: Vec<SolveReuseGoldenCase>,
+}
+
+#[derive(Deserialize)]
+struct SolveReuseGoldenCase {
+    name: String,
+    rank: usize,
+    residual_rms: f64,
+    beta: Vec<f64>,
+    covariance_beta: Vec<Vec<f64>>,
+    covariance_xy: Vec<Vec<f64>>,
+    condition: f64,
+}
+
+/// Bounded-closeness assert following the suite convention
+/// (`joint_gls_fixtures.rs::close`): relative tolerance with a unit floor
+/// so near-zero entries still carry a finite absolute bound.
+fn assert_close(got: f64, want: f64, tol: f64, context: &str) {
+    assert!(
+        (got - want).abs() <= tol * (1.0 + want.abs()),
+        "{context}: {got} vs {want}"
+    );
+}
+
+fn assert_matrix_close(got: &[Vec<f64>], want: &[Vec<f64>], tol: f64, label: &str) {
+    assert_eq!(got.len(), want.len(), "{label}: row count");
+    for (row, (got_row, want_row)) in got.iter().zip(want.iter()).enumerate() {
+        assert_eq!(
+            got_row.len(),
+            want_row.len(),
+            "{label}[{row}]: column count"
+        );
+        for (col, (got, want)) in got_row.iter().zip(want_row.iter()).enumerate() {
+            assert_close(*got, *want, tol, &format!("{label}[{row}][{col}]"));
+        }
+    }
+}
+
 #[test]
 fn solve_reuse_outputs_golden() {
+    const TOL: f64 = 1e-12;
+    let golden: SolveReuseGolden = serde_json::from_str(include_str!(
+        "fixtures/joint-gls/solve-temp-reuse-golden.json"
+    ))
+    .unwrap();
+    assert_eq!(golden.schema_version, 1);
+    assert_eq!(golden.cases.len(), 2);
     let sample_rate = 1.0 / DT;
     let tolerances = JointSolverTolerances::default();
     let model = model();
-    // Frozen goldens (measured post-change; base-vs-patched field comparison
-    // on the N=2003 reference geometry showed these estimator fields
-    // bit-identical, condition within a few ulps). Fields: rank,
-    // residual_bits, beta_xor, cov_beta_xor, cov_xy_xor, condition
-    // (closeness).
-    struct Golden {
-        rank: usize,
-        residual_bits: u64,
-        beta_xor: u64,
-        cov_beta_xor: u64,
-        cov_xy_xor: u64,
-        condition: f64,
-    }
-    let cases: Vec<(&str, NoiseModel, Golden)> = vec![
-        (
-            "identity",
-            identity_noise(),
-            Golden {
-                rank: 25,
-                residual_bits: 0x3fbfddcb9c69a01b,
-                beta_xor: 0x3eeebd7a7d739461,
-                cov_beta_xor: 0x3f1a84ac3f55d2ec,
-                cov_xy_xor: 0x00004778d4085690,
-                condition: 1.424_504_738_966_122_7,
-            },
-        ),
-        (
-            "phase_correlated",
-            correlated_noise(true),
-            Golden {
-                rank: 25,
-                residual_bits: 0x3fa9c86d6bb91882,
-                beta_xor: 0x3f66b7708911e359,
-                cov_beta_xor: 0x3f965ea966cbb00a,
-                cov_xy_xor: 0x00033402550cee54,
-                condition: 1.502_340_373_109_660_3,
-            },
-        ),
-    ];
-    for (mode_name, noise, golden) in cases {
+    for expect in &golden.cases {
+        let noise = match expect.name.as_str() {
+            "identity" => identity_noise(),
+            "phase_correlated" => correlated_noise(true),
+            other => panic!("unknown solve-temp-reuse golden case: {other}"),
+        };
         let settings = JointHarmonicSettings {
             model: model.clone(),
-            noise: noise.clone(),
+            noise,
             tolerances,
         };
         let (times, signal) = window_fixture(0.0);
         let estimate =
             estimate_joint(&times, &signal, F_REF, PHASE, sample_rate, &settings).unwrap();
         println!(
-            "{mode_name}: rank={} residual_bits={:016x} beta_xor={:016x} \
+            "{}: rank={} residual_bits={:016x} beta_xor={:016x} \
              cov_beta_xor={:016x} cov_xy_xor={:016x} condition={:.17e}",
+            expect.name,
             estimate.rank,
             estimate.residual_rms.to_bits(),
             bit_xor(&estimate.beta),
@@ -245,29 +284,36 @@ fn solve_reuse_outputs_golden() {
             bit_xor(&estimate.covariance_xy.concat()),
             estimate.condition,
         );
-        assert_eq!(estimate.rank, golden.rank, "{mode_name}: rank");
-        assert_eq!(
-            estimate.residual_rms.to_bits(),
-            golden.residual_bits,
-            "{mode_name}: residual_rms"
+        assert_eq!(estimate.rank, expect.rank, "{}: rank", expect.name);
+        assert_close(
+            estimate.residual_rms,
+            expect.residual_rms,
+            TOL,
+            &format!("{}: residual_rms", expect.name),
         );
         assert_eq!(
-            bit_xor(&estimate.beta),
-            golden.beta_xor,
-            "{mode_name}: beta"
+            estimate.beta.len(),
+            expect.beta.len(),
+            "{}: beta length",
+            expect.name
         );
-        assert_eq!(
-            bit_xor(&estimate.covariance_beta.concat()),
-            golden.cov_beta_xor,
-            "{mode_name}: covariance_beta"
+        for (index, (got, want)) in estimate.beta.iter().zip(expect.beta.iter()).enumerate() {
+            assert_close(*got, *want, TOL, &format!("{}: beta[{index}]", expect.name));
+        }
+        assert_matrix_close(
+            &estimate.covariance_beta,
+            &expect.covariance_beta,
+            TOL,
+            &format!("{}: covariance_beta", expect.name),
         );
-        assert_eq!(
-            bit_xor(&estimate.covariance_xy.concat()),
-            golden.cov_xy_xor,
-            "{mode_name}: covariance_xy"
+        assert_matrix_close(
+            &estimate.covariance_xy,
+            &expect.covariance_xy,
+            TOL,
+            &format!("{}: covariance_xy", expect.name),
         );
-        let rel = (estimate.condition - golden.condition).abs() / golden.condition.abs();
-        assert!(rel <= 1e-12, "{mode_name}: condition drifted {rel:e}");
+        let rel = (estimate.condition - expect.condition).abs() / expect.condition.abs();
+        assert!(rel <= TOL, "{}: condition drifted {rel:e}", expect.name);
     }
 }
 
