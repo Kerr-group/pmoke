@@ -1584,7 +1584,13 @@ pub type QrSolveWithCovariance = (DVector<f64>, f64, usize, f64, DMatrix<f64>);
 /// are bit-identical to the sequential pair; rank is unchanged and the
 /// reported condition agrees to ~1e-15 relative (see the P3 test). Gate
 /// thresholds, error precedence, and every other value are unchanged
-/// while the duplicate `N x P` traffic is gone. Arithmetic, gates, and error
+/// while the duplicate `N x P` traffic is gone; two compatibility guards
+/// keep the observable admission identical to the design-SVD path without
+/// touching thresholds: QR overflow to nonfinite `R` defers to the base
+/// design diagnostic (typed `non_finite_output` downstream, never an SVD
+/// panic), and borderline gates within 1e-12 relative defer to the base
+/// diagnostic so configured boundaries admit exactly as before.
+/// Arithmetic, gates, and error
 /// precedence match [`solve_direct`] step for step; only the duplicate
 /// factorization cost is hoisted, never any value.
 fn solve_direct_with_factor(
@@ -1629,51 +1635,145 @@ fn solve_direct_with_factor(
     // The factorization below runs on the single N x P clone. The SVD
     // diagnostic reuses its thin R factor (P3) instead of cloning the
     // design a second time; the gate checks keep their original order, so
-    // error precedence is unchanged (the QR computation itself is
-    // infallible on finite input, which the finiteness gate above proves).
+    // error precedence is unchanged.
+    //
+    // Compatibility guards (thresholds untouched):
+    // - F1: QR arithmetic can overflow finite input to a nonfinite R, and
+    //   nalgebra's SVD panics on nonfinite input. The finiteness gate above
+    //   proves the design finite, not the factor, so check `upper` before
+    //   any SVD and defer overflow cases to the base design diagnostic.
+    //   The subsequent back-substitution/residual gates then report the
+    //   same typed `non_finite_output` the base path reports.
+    // - F2: thin-R singulars drift a few ULP versus the design SVD, which
+    //   can flip a configured `max_condition`/`rank_tol` boundary. Any
+    //   rejection, and any acceptance within 1e-12 relative of a boundary,
+    //   is re-decided with the exact base diagnostic
+    //   (`svd(false, false)` on the whitened design). Clear acceptances
+    //   keep the P3 saving; only rare borderline/error paths pay the extra
+    //   N x P clone, and the 1e-12 band is a compatibility trigger, never
+    //   a threshold change.
     let qr = whitened_design.clone().qr();
     let projected = qr.q().tr_mul(whitened_signal);
     let upper = qr.r();
-    // Rank and conditioning from the SVD diagnostic on the thin R factor.
-    // In exact arithmetic these singular values are the design's
-    // (A = Q1 R1 with orthonormal Q1); in floating point they agree to
-    // ~1e-15 relative, so rank and gate verdicts are unchanged while the
-    // duplicate N x P clone is gone. `upper` is still borrowed below by
-    // the back-substitution, hence the P x P clone (negligible traffic).
-    // NOTE (#297 convergence): the U factor stays computed (`svd(true,
-    // false)`): pinned nalgebra 0.35.0 skips the 2x2 normalization for
-    // values-only SVD, shifting singulars a few ULP and gate decisions, so
-    // `svd(false, false)` is not adopted here. P3 already subsumes P2's
-    // N x P U saving on this path (the diagnostic runs on P x P `upper`).
-    let svd = upper.clone().svd(true, false);
-    let singular = svd.singular_values;
-    let sigma_max = singular[0];
-    if !(sigma_max.is_finite() && sigma_max > 0.0) {
-        return Err(AnalysisError::new(
-            "rank_deficient_design",
-            "whitened design has no finite nonzero singular value",
-        ));
-    }
-    let mut rank = 0;
-    for value in singular.iter() {
-        if *value > tolerances.rank_tol * sigma_max {
-            rank += 1;
+    // Base design-SVD gates, bit-for-bit the pre-reuse diagnostic. Used for
+    // F1 overflow and for F2 borderline/rejection verification.
+    let base_gates = |singular: &nalgebra::DVector<f64>| -> Result<(usize, f64)> {
+        let sigma_max = singular[0];
+        if !(sigma_max.is_finite() && sigma_max > 0.0) {
+            return Err(AnalysisError::new(
+                "rank_deficient_design",
+                "whitened design has no finite nonzero singular value",
+            ));
         }
-    }
-    if rank < columns {
-        return Err(AnalysisError::new(
-            "rank_deficient_design",
-            format!("whitened design rank {rank} below {columns} columns"),
-        ));
-    }
-    let sigma_min = singular[columns - 1];
-    let condition = sigma_max / sigma_min;
-    if !(condition.is_finite()) || condition > tolerances.max_condition {
-        return Err(AnalysisError::new(
-            "ill_conditioned_design",
-            format!("scaled-design condition {condition:.6e} exceeds limit"),
-        ));
-    }
+        let mut rank = 0;
+        for value in singular.iter() {
+            if *value > tolerances.rank_tol * sigma_max {
+                rank += 1;
+            }
+        }
+        if rank < columns {
+            return Err(AnalysisError::new(
+                "rank_deficient_design",
+                format!("whitened design rank {rank} below {columns} columns"),
+            ));
+        }
+        let sigma_min = singular[columns - 1];
+        let condition = sigma_max / sigma_min;
+        if !(condition.is_finite()) || condition > tolerances.max_condition {
+            return Err(AnalysisError::new(
+                "ill_conditioned_design",
+                format!("scaled-design condition {condition:.6e} exceeds limit"),
+            ));
+        }
+        Ok((rank, condition))
+    };
+    const GATE_COMPAT_REL: f64 = 1e-12;
+    let (rank, condition) = if !upper.iter().all(|v| v.is_finite()) {
+        // F1: overflowed factor; run base gates, then fall through to the
+        // shared back-substitution/residual path which yields the base
+        // typed `non_finite_output`.
+        let svd_base = whitened_design.clone().svd(false, false);
+        base_gates(&svd_base.singular_values)?
+    } else {
+        // Rank and conditioning from the SVD diagnostic on the thin R factor.
+        // In exact arithmetic these singular values are the design's
+        // (A = Q1 R1 with orthonormal Q1); in floating point they agree to
+        // ~1e-15 relative. `upper` is still borrowed below by
+        // the back-substitution, hence the P x P clone (negligible traffic).
+        // NOTE (#297 convergence): the U factor stays computed (`svd(true,
+        // false)`): pinned nalgebra 0.35.0 skips the 2x2 normalization for
+        // values-only SVD, shifting singulars a few ULP and gate decisions, so
+        // `svd(false, false)` is not adopted here. P3 already subsumes P2's
+        // N x P U saving on this path (the diagnostic runs on P x P `upper`).
+        let svd = upper.clone().svd(true, false);
+        let singular = svd.singular_values;
+        let sigma_max = singular[0];
+        // Fast-path gate values; rejections and borderline acceptances are
+        // verified against the base diagnostic below.
+        let mut rank_r = 0;
+        let sigma_max_ok = sigma_max.is_finite() && sigma_max > 0.0;
+        if sigma_max_ok {
+            for value in singular.iter() {
+                if *value > tolerances.rank_tol * sigma_max {
+                    rank_r += 1;
+                }
+            }
+        }
+        let sigma_min_r = singular[columns - 1];
+        let condition_r = sigma_max / sigma_min_r;
+        let rejects_r = !sigma_max_ok
+            || rank_r < columns
+            || !(condition_r.is_finite())
+            || condition_r > tolerances.max_condition;
+        // Borderline acceptance: within the compatibility band of either
+        // gate, where few-ULP drift could flip the base verdict.
+        let mut borderline = false;
+        if !rejects_r {
+            let cond_gap =
+                (tolerances.max_condition - condition_r).abs() / tolerances.max_condition.abs();
+            if cond_gap <= GATE_COMPAT_REL {
+                borderline = true;
+            } else {
+                let threshold_r = tolerances.rank_tol * sigma_max;
+                for value in singular.iter() {
+                    let gap = (*value - threshold_r).abs() / threshold_r.abs();
+                    if gap <= GATE_COMPAT_REL {
+                        borderline = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if rejects_r || borderline {
+            // F2: re-decide with the exact base diagnostic so configured
+            // boundaries admit exactly as before. Thresholds unchanged.
+            let svd_base = whitened_design.clone().svd(false, false);
+            base_gates(&svd_base.singular_values)?
+        } else {
+            // Clear acceptance far from any boundary: keep the reused
+            // diagnostic values (agree with base to ~1e-15, well inside the
+            // 1e-12 golden band).
+            if !sigma_max_ok {
+                return Err(AnalysisError::new(
+                    "rank_deficient_design",
+                    "whitened design has no finite nonzero singular value",
+                ));
+            }
+            if rank_r < columns {
+                return Err(AnalysisError::new(
+                    "rank_deficient_design",
+                    format!("whitened design rank {rank_r} below {columns} columns"),
+                ));
+            }
+            if !(condition_r.is_finite()) || condition_r > tolerances.max_condition {
+                return Err(AnalysisError::new(
+                    "ill_conditioned_design",
+                    format!("scaled-design condition {condition_r:.6e} exceeds limit"),
+                ));
+            }
+            (rank_r, condition_r)
+        }
+    };
     // Back-substitution R1 x = c on the same factor the diagnostic above
     // already reused; `projected` and `upper` were computed before the
     // gates but only read here, after them.
