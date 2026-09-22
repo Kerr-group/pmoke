@@ -1588,8 +1588,9 @@ pub type QrSolveWithCovariance = (DVector<f64>, f64, usize, f64, DMatrix<f64>);
 /// keep the observable admission identical to the design-SVD path without
 /// touching thresholds: QR overflow to nonfinite `R` defers to the base
 /// design diagnostic (typed `non_finite_output` downstream, never an SVD
-/// panic), and borderline gates within 1e-12 relative defer to the base
-/// diagnostic so configured boundaries admit exactly as before.
+/// panic), and acceptances whose gate distance lies within the
+/// diagnostic-uncertainty bound below defer to the base diagnostic so
+/// configured boundaries admit exactly as before.
 /// Arithmetic, gates, and error
 /// precedence match [`solve_direct`] step for step; only the duplicate
 /// factorization cost is hoisted, never any value.
@@ -1644,14 +1645,14 @@ fn solve_direct_with_factor(
     //   any SVD and defer overflow cases to the base design diagnostic.
     //   The subsequent back-substitution/residual gates then report the
     //   same typed `non_finite_output` the base path reports.
-    // - F2: thin-R singulars drift a few ULP versus the design SVD, which
-    //   can flip a configured `max_condition`/`rank_tol` boundary. Any
-    //   rejection, and any acceptance within 1e-12 relative of a boundary,
-    //   is re-decided with the exact base diagnostic
-    //   (`svd(false, false)` on the whitened design). Clear acceptances
-    //   keep the P3 saving; only rare borderline/error paths pay the extra
-    //   N x P clone, and the 1e-12 band is a compatibility trigger, never
-    //   a threshold change.
+    // - F2: thin-R singulars drift versus the design SVD, which can flip a
+    //   configured `max_condition`/`rank_tol` boundary. Any rejection is
+    //   re-decided with the exact base diagnostic (`svd(false, false)` on
+    //   the whitened design). An acceptance is re-decided too whenever the
+    //   gate distance lies within the diagnostic-uncertainty bound derived
+    //   below, where the base verdict could differ. Clear acceptances keep
+    //   the P3 saving; only rare borderline/error paths pay the extra N x P
+    //   clone.
     let qr = whitened_design.clone().qr();
     let projected = qr.q().tr_mul(whitened_signal);
     let upper = qr.r();
@@ -1687,7 +1688,21 @@ fn solve_direct_with_factor(
         }
         Ok((rank, condition))
     };
-    const GATE_COMPAT_REL: f64 = 1e-12;
+    // Diagnostic-uncertainty bound (F2). Householder QR followed by the
+    // bidiagonal-QR SVD each carry backward error `||dA|| <= c(m,n) eps
+    // ||A||` with a small polynomial `c`, so by Weyl each computed
+    // singular value lies within `c eps sigma_max` of truth -- for both
+    // the thin-R chain and the design-SVD reference. The absolute
+    // tolerance below, `64 eps max(m,n) sigma_max`, exceeds textbook
+    // constants (order a few x m n on these shapes) by more than an order
+    // of magnitude and additionally covers the computed-U versus
+    // values-only few-ULP implementation drift (see NOTE #297 above).
+    // Gate distances are measured against it, never against a fixed
+    // relative band: the condition uncertainty scales with the condition
+    // itself (the review's `~8.5e4` fixture needs `~2.4e-8` while its real
+    // drift is `4.5e-12`), whereas a fixed band either misses such gates
+    // or needlessly punts well-conditioned solves to the base path.
+    let gate_dim = rows.max(columns) as f64;
     let (rank, condition) = if !upper.iter().all(|v| v.is_finite()) {
         // F1: overflowed factor; run base gates, then fall through to the
         // shared back-substitution/residual path which yields the base
@@ -1708,6 +1723,8 @@ fn solve_direct_with_factor(
         let svd = upper.clone().svd(true, false);
         let singular = svd.singular_values;
         let sigma_max = singular[0];
+        // Absolute singular tolerance from the uncertainty bound above.
+        let sigma_abs_tol = 64.0 * f64::EPSILON * gate_dim * sigma_max;
         // Fast-path gate values; rejections and borderline acceptances are
         // verified against the base diagnostic below.
         let mut rank_r = 0;
@@ -1725,19 +1742,26 @@ fn solve_direct_with_factor(
             || rank_r < columns
             || !(condition_r.is_finite())
             || condition_r > tolerances.max_condition;
-        // Borderline acceptance: within the compatibility band of either
-        // gate, where few-ULP drift could flip the base verdict.
+        // Borderline acceptance: within diagnostic uncertainty of either
+        // gate, where the base verdict could differ. Rejections are exact
+        // by construction (always re-decided); here `condition_r` is finite
+        // with `condition_r <= limit` and every singular exceeds its
+        // threshold, so the one-sided gaps below are non-negative.
         let mut borderline = false;
         if !rejects_r {
-            let cond_gap =
-                (tolerances.max_condition - condition_r).abs() / tolerances.max_condition.abs();
-            if cond_gap <= GATE_COMPAT_REL {
+            // Condition: `(limit - cond_R) / limit` against the linearized
+            // quotient uncertainty `4 sigma_abs_tol / sigma_min_R`
+            // (sigma_min error dominates, plus sigma_max-proxy slack).
+            let cond_gap = (tolerances.max_condition - condition_r) / tolerances.max_condition;
+            if cond_gap <= 4.0 * sigma_abs_tol / sigma_min_r {
                 borderline = true;
             } else {
+                // Rank: any singular within `2 sigma_abs_tol` above the
+                // `rank_tol sigma_max` threshold (factor 2 for the
+                // threshold's own sigma_max-proxy error).
                 let threshold_r = tolerances.rank_tol * sigma_max;
                 for value in singular.iter() {
-                    let gap = (*value - threshold_r).abs() / threshold_r.abs();
-                    if gap <= GATE_COMPAT_REL {
+                    if *value - threshold_r <= 2.0 * sigma_abs_tol {
                         borderline = true;
                         break;
                     }
