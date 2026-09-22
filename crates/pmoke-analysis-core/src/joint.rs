@@ -12,7 +12,9 @@
 //! Backend: nalgebra 0.35.0, no-default plus `std` (A-010 spike). The
 //! rectangular solve uses only public APIs: thin `Q`, `Q^T y`, and manual
 //! back-substitution on the upper-trapezoidal `R`. Rank and conditioning
-//! come from an SVD diagnostic on the same whitened design; the independent
+//! come from an SVD diagnostic on the thin `R` factor of the same whitened
+//! design (P3: reuses the QR factorization instead of cloning the `N x P`
+//! design a second time); the independent
 //! cross-check is the SciPy oracle, not a second nalgebra path.
 //!
 //! Scaling policy: the solver factors the supplied whitened design as-is,
@@ -1574,7 +1576,25 @@ pub type QrSolveWithCovariance = (DVector<f64>, f64, usize, f64, DMatrix<f64>);
 /// Thin-QR least squares that also returns the thin R factor, so the
 /// design-model covariance can reuse the exact same factorization instead
 /// of running a second QR over the same matrix (see
-/// [`solve_direct_and_covariance`]). Arithmetic, gates, and error
+/// [`solve_direct_and_covariance`]). The SVD rank/condition diagnostic
+/// likewise reuses this factor (P3) instead of cloning the `N x P` design
+/// a second time: for thin QR (`A = Q1 R1` with orthonormal `Q1`) the
+/// singular values of `R1` coincide with the design's in exact arithmetic
+/// (measured agreement ~1e-15 relative). Beta, residual, and covariance
+/// are bit-identical to the sequential pair; rank is unchanged and the
+/// reported condition agrees to ~1e-15 relative (see the P3 test). Gate
+/// thresholds, error precedence, and every other value are unchanged
+/// while the duplicate `N x P` traffic is gone; three compatibility guards
+/// keep the observable admission identical to the design-SVD path without
+/// touching thresholds: QR overflow to nonfinite `R` defers to the base
+/// design diagnostic (typed `non_finite_output` downstream, never an SVD
+/// panic), acceptances whose gate distance lies within the
+/// diagnostic-uncertainty bound below defer to the base diagnostic so
+/// configured boundaries admit exactly as before, and factors whose
+/// Householder arithmetic left the relative-accuracy domain (squared
+/// column norms near/below the normal range, where the uncertainty bound
+/// does not apply) likewise defer to the base diagnostic.
+/// Arithmetic, gates, and error
 /// precedence match [`solve_direct`] step for step; only the duplicate
 /// factorization cost is hoisted, never any value.
 fn solve_direct_with_factor(
@@ -1615,42 +1635,220 @@ fn solve_direct_with_factor(
             "max_condition must be positive finite",
         ));
     }
-    // Rank and conditioning from the SVD diagnostic on the same matrix.
-    // Values-only SVD: the thin U factor (N x p) is never read — only the
-    // singular values feed the rank/condition gates below — so skip it.
-    let svd = whitened_design.clone().svd(false, false);
-    let singular = svd.singular_values;
-    let sigma_max = singular[0];
-    if !(sigma_max.is_finite() && sigma_max > 0.0) {
-        return Err(AnalysisError::new(
-            "rank_deficient_design",
-            "whitened design has no finite nonzero singular value",
-        ));
-    }
-    let mut rank = 0;
-    for value in singular.iter() {
-        if *value > tolerances.rank_tol * sigma_max {
-            rank += 1;
-        }
-    }
-    if rank < columns {
-        return Err(AnalysisError::new(
-            "rank_deficient_design",
-            format!("whitened design rank {rank} below {columns} columns"),
-        ));
-    }
-    let sigma_min = singular[columns - 1];
-    let condition = sigma_max / sigma_min;
-    if !(condition.is_finite()) || condition > tolerances.max_condition {
-        return Err(AnalysisError::new(
-            "ill_conditioned_design",
-            format!("scaled-design condition {condition:.6e} exceeds limit"),
-        ));
-    }
     // Solution through thin QR: c = Q^T y, then back-substitute R1 x = c.
+    // The factorization below runs on the single N x P clone. The SVD
+    // diagnostic reuses its thin R factor (P3) instead of cloning the
+    // design a second time; the gate checks keep their original order, so
+    // error precedence is unchanged.
+    //
+    // Compatibility guards (thresholds untouched):
+    // - F1: QR arithmetic can overflow finite input to a nonfinite R, and
+    //   nalgebra's SVD panics on nonfinite input. The finiteness gate above
+    //   proves the design finite, not the factor, so check `upper` before
+    //   any SVD and defer overflow cases to the base design diagnostic.
+    //   The subsequent back-substitution/residual gates then report the
+    //   same typed `non_finite_output` the base path reports.
+    // - F2: thin-R singulars drift versus the design SVD, which can flip a
+    //   configured `max_condition`/`rank_tol` boundary. Any rejection is
+    //   re-decided with the exact base diagnostic (`svd(false, false)` on
+    //   the whitened design). An acceptance is re-decided too whenever the
+    //   gate distance lies within the diagnostic-uncertainty bound derived
+    //   below, where the base verdict could differ. Clear acceptances keep
+    //   the P3 saving; only rare borderline/error paths pay the extra N x P
+    //   clone.
+    // - F3: finite `R` is not sufficient for the F2 bound. The Householder
+    //   norms behind it are formed unscaled (`norm_squared`, a raw sum of
+    //   squares), so on tiny-magnitude finite inputs the squared norms can
+    //   enter the subnormal range and lose mantissa bits while `R` stays
+    //   finite. The relative backward-error model then does not apply and
+    //   the `sigma_abs_tol` band below can miss real gate drift. The
+    //   diagonal magnitudes `|R_kk|` are exactly the column norms formed
+    //   at each Householder step, so a diagonal floor derived from
+    //   `sqrt(f64::MIN_POSITIVE)` tests the whole chain: below it the
+    //   gates are re-decided with the base diagnostic (which pre-scales
+    //   before bidiagonalization). No solve arithmetic is rescaled; only
+    //   the diagnostic source changes, exactly as in F1/F2.
     let qr = whitened_design.clone().qr();
     let projected = qr.q().tr_mul(whitened_signal);
     let upper = qr.r();
+    // Base design-SVD gates, bit-for-bit the pre-reuse diagnostic. Used for
+    // F1 overflow and for F2 borderline/rejection verification.
+    let base_gates = |singular: &nalgebra::DVector<f64>| -> Result<(usize, f64)> {
+        let sigma_max = singular[0];
+        if !(sigma_max.is_finite() && sigma_max > 0.0) {
+            return Err(AnalysisError::new(
+                "rank_deficient_design",
+                "whitened design has no finite nonzero singular value",
+            ));
+        }
+        let mut rank = 0;
+        for value in singular.iter() {
+            if *value > tolerances.rank_tol * sigma_max {
+                rank += 1;
+            }
+        }
+        if rank < columns {
+            return Err(AnalysisError::new(
+                "rank_deficient_design",
+                format!("whitened design rank {rank} below {columns} columns"),
+            ));
+        }
+        let sigma_min = singular[columns - 1];
+        let condition = sigma_max / sigma_min;
+        if !(condition.is_finite()) || condition > tolerances.max_condition {
+            return Err(AnalysisError::new(
+                "ill_conditioned_design",
+                format!("scaled-design condition {condition:.6e} exceeds limit"),
+            ));
+        }
+        Ok((rank, condition))
+    };
+    // Diagnostic-uncertainty bound (F2). Householder QR followed by the
+    // bidiagonal-QR SVD each carry backward error `||dA|| <= c(m,n) eps
+    // ||A||` with a small polynomial `c`, so by Weyl each computed
+    // singular value lies within `c eps sigma_max` of truth -- for both
+    // the thin-R chain and the design-SVD reference. The absolute
+    // tolerance below, `64 eps max(m,n) sigma_max`, exceeds textbook
+    // constants (order a few x m n on these shapes) by more than an order
+    // of magnitude and additionally covers the computed-U versus
+    // values-only few-ULP implementation drift (see NOTE #297 above).
+    // Gate distances are measured against it, never against a fixed
+    // relative band: the condition uncertainty scales with the condition
+    // itself (the review's `~8.5e4` fixture needs `~2.4e-8` while its real
+    // drift is `4.5e-12`), whereas a fixed band either misses such gates
+    // or needlessly punts well-conditioned solves to the base path.
+    //
+    // Diagnostic-domain floor (F3). The backward-error model above is a
+    // relative statement: it holds only while the Householder squared
+    // norms are evaluated with full 53-bit mantissas, i.e. while they
+    // stay in the normal range. Pinned nalgebra 0.35.0 forms each norm
+    // unscaled (`reflection_axis_mut` over `column.norm_squared()`), so
+    // tiny-magnitude finite inputs push those sums into the subnormal
+    // range -- fewer effective bits, relative drift far beyond
+    // `sigma_abs_tol` -- while `R` itself stays finite (the design SVD
+    // instead divides by the maximum magnitude before bidiagonalizing,
+    // so it is unaffected). Each step's norm survives as the diagonal
+    // magnitude `|R_kk|`, hence the whole chain is in-domain exactly when
+    // every `|R_kk|^2` is safely normal. The floor below,
+    // `8 * sqrt(f64::MIN_POSITIVE)` (exact: `8 * 2^-511`; squared it sits
+    // 64x above `MIN_POSITIVE`), leaves summation rounding (`~m eps`
+    // relative, far below a 64x gap) no room to blur the boundary: above
+    // it the relative model genuinely applies, below it the gates defer
+    // to the base diagnostic. The narrow over-deferral band (true norms
+    // within 8x of `2^-511`, i.e. designs near `1e-154`) only ever costs
+    // one extra diagnostic, never a verdict.
+    let gate_dim = rows.max(columns) as f64;
+    let qr_domain_floor = 8.0 * f64::MIN_POSITIVE.sqrt();
+    let (rank, condition) = if !upper.iter().all(|v| v.is_finite()) {
+        // F1: overflowed factor; run base gates, then fall through to the
+        // shared back-substitution/residual path which yields the base
+        // typed `non_finite_output`.
+        let svd_base = whitened_design.clone().svd(false, false);
+        base_gates(&svd_base.singular_values)?
+    } else {
+        // Rank and conditioning from the SVD diagnostic on the thin R factor.
+        // In exact arithmetic these singular values are the design's
+        // (A = Q1 R1 with orthonormal Q1); in floating point they agree to
+        // ~1e-15 relative. `upper` is still borrowed below by
+        // the back-substitution, hence the P x P clone (negligible traffic).
+        // NOTE (#297 convergence): the U factor stays computed (`svd(true,
+        // false)`): pinned nalgebra 0.35.0 skips the 2x2 normalization for
+        // values-only SVD, shifting singulars a few ULP and gate decisions, so
+        // `svd(false, false)` is not adopted here. P3 already subsumes P2's
+        // N x P U saving on this path (the diagnostic runs on P x P `upper`).
+        // F3: a finite `R` whose Householder chain left the
+        // relative-accuracy domain (some `|R_kk|` below the floor above)
+        // carries drift the F2 band cannot bound, so the gates below are
+        // re-decided with the base diagnostic whether or not they look
+        // borderline. This check is O(p) on already-computed entries.
+        let mut qr_in_domain = true;
+        for diagonal in 0..columns {
+            if upper[(diagonal, diagonal)].abs() < qr_domain_floor {
+                qr_in_domain = false;
+                break;
+            }
+        }
+        let svd = upper.clone().svd(true, false);
+        let singular = svd.singular_values;
+        let sigma_max = singular[0];
+        // Absolute singular tolerance from the uncertainty bound above.
+        let sigma_abs_tol = 64.0 * f64::EPSILON * gate_dim * sigma_max;
+        // Fast-path gate values; rejections and borderline acceptances are
+        // verified against the base diagnostic below.
+        let mut rank_r = 0;
+        let sigma_max_ok = sigma_max.is_finite() && sigma_max > 0.0;
+        if sigma_max_ok {
+            for value in singular.iter() {
+                if *value > tolerances.rank_tol * sigma_max {
+                    rank_r += 1;
+                }
+            }
+        }
+        let sigma_min_r = singular[columns - 1];
+        let condition_r = sigma_max / sigma_min_r;
+        let rejects_r = !sigma_max_ok
+            || rank_r < columns
+            || !(condition_r.is_finite())
+            || condition_r > tolerances.max_condition;
+        // Borderline acceptance: within diagnostic uncertainty of either
+        // gate, where the base verdict could differ. Rejections are exact
+        // by construction (always re-decided); here `condition_r` is finite
+        // with `condition_r <= limit` and every singular exceeds its
+        // threshold, so the one-sided gaps below are non-negative.
+        let mut borderline = false;
+        if !rejects_r {
+            // Condition: `(limit - cond_R) / limit` against the linearized
+            // quotient uncertainty `4 sigma_abs_tol / sigma_min_R`
+            // (sigma_min error dominates, plus sigma_max-proxy slack).
+            let cond_gap = (tolerances.max_condition - condition_r) / tolerances.max_condition;
+            if cond_gap <= 4.0 * sigma_abs_tol / sigma_min_r {
+                borderline = true;
+            } else {
+                // Rank: any singular within `2 sigma_abs_tol` above the
+                // `rank_tol sigma_max` threshold (factor 2 for the
+                // threshold's own sigma_max-proxy error).
+                let threshold_r = tolerances.rank_tol * sigma_max;
+                for value in singular.iter() {
+                    if *value - threshold_r <= 2.0 * sigma_abs_tol {
+                        borderline = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if rejects_r || borderline || !qr_in_domain {
+            // F2/F3: re-decide with the exact base diagnostic so configured
+            // boundaries admit exactly as before. Thresholds unchanged.
+            let svd_base = whitened_design.clone().svd(false, false);
+            base_gates(&svd_base.singular_values)?
+        } else {
+            // Clear acceptance far from any boundary: keep the reused
+            // diagnostic values (agree with base to ~1e-15, well inside the
+            // 1e-12 golden band).
+            if !sigma_max_ok {
+                return Err(AnalysisError::new(
+                    "rank_deficient_design",
+                    "whitened design has no finite nonzero singular value",
+                ));
+            }
+            if rank_r < columns {
+                return Err(AnalysisError::new(
+                    "rank_deficient_design",
+                    format!("whitened design rank {rank_r} below {columns} columns"),
+                ));
+            }
+            if !(condition_r.is_finite()) || condition_r > tolerances.max_condition {
+                return Err(AnalysisError::new(
+                    "ill_conditioned_design",
+                    format!("scaled-design condition {condition_r:.6e} exceeds limit"),
+                ));
+            }
+            (rank_r, condition_r)
+        }
+    };
+    // Back-substitution R1 x = c on the same factor the diagnostic above
+    // already reused; `projected` and `upper` were computed before the
+    // gates but only read here, after them.
     let mut beta = DVector::zeros(columns);
     for column in (0..columns).rev() {
         let mut accumulator = projected[column];
@@ -1788,7 +1986,9 @@ fn covariance_from_factor(
 /// [`covariance_from_qr`] scale gate and forward substitution on the exact
 /// same factor object — so every output is bit-identical to running the two
 /// entry points in sequence, while the second `O(N p^2)` QR factorization
-/// and its matrix clone are gone. Returns
+/// and its matrix clone are gone (and the SVD diagnostic now also reuses
+/// that factor instead of cloning the design again — see
+/// [`solve_direct`]). Returns
 /// `(beta, residual_rms, rank, condition, covariance_beta)`.
 pub fn solve_direct_and_covariance(
     whitened_design: &DMatrix<f64>,
