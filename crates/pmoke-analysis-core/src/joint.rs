@@ -1584,13 +1584,16 @@ pub type QrSolveWithCovariance = (DVector<f64>, f64, usize, f64, DMatrix<f64>);
 /// are bit-identical to the sequential pair; rank is unchanged and the
 /// reported condition agrees to ~1e-15 relative (see the P3 test). Gate
 /// thresholds, error precedence, and every other value are unchanged
-/// while the duplicate `N x P` traffic is gone; two compatibility guards
+/// while the duplicate `N x P` traffic is gone; three compatibility guards
 /// keep the observable admission identical to the design-SVD path without
 /// touching thresholds: QR overflow to nonfinite `R` defers to the base
 /// design diagnostic (typed `non_finite_output` downstream, never an SVD
-/// panic), and acceptances whose gate distance lies within the
+/// panic), acceptances whose gate distance lies within the
 /// diagnostic-uncertainty bound below defer to the base diagnostic so
-/// configured boundaries admit exactly as before.
+/// configured boundaries admit exactly as before, and factors whose
+/// Householder arithmetic left the relative-accuracy domain (squared
+/// column norms near/below the normal range, where the uncertainty bound
+/// does not apply) likewise defer to the base diagnostic.
 /// Arithmetic, gates, and error
 /// precedence match [`solve_direct`] step for step; only the duplicate
 /// factorization cost is hoisted, never any value.
@@ -1653,6 +1656,18 @@ fn solve_direct_with_factor(
     //   below, where the base verdict could differ. Clear acceptances keep
     //   the P3 saving; only rare borderline/error paths pay the extra N x P
     //   clone.
+    // - F3: finite `R` is not sufficient for the F2 bound. The Householder
+    //   norms behind it are formed unscaled (`norm_squared`, a raw sum of
+    //   squares), so on tiny-magnitude finite inputs the squared norms can
+    //   enter the subnormal range and lose mantissa bits while `R` stays
+    //   finite. The relative backward-error model then does not apply and
+    //   the `sigma_abs_tol` band below can miss real gate drift. The
+    //   diagonal magnitudes `|R_kk|` are exactly the column norms formed
+    //   at each Householder step, so a diagonal floor derived from
+    //   `sqrt(f64::MIN_POSITIVE)` tests the whole chain: below it the
+    //   gates are re-decided with the base diagnostic (which pre-scales
+    //   before bidiagonalization). No solve arithmetic is rescaled; only
+    //   the diagnostic source changes, exactly as in F1/F2.
     let qr = whitened_design.clone().qr();
     let projected = qr.q().tr_mul(whitened_signal);
     let upper = qr.r();
@@ -1702,7 +1717,28 @@ fn solve_direct_with_factor(
     // itself (the review's `~8.5e4` fixture needs `~2.4e-8` while its real
     // drift is `4.5e-12`), whereas a fixed band either misses such gates
     // or needlessly punts well-conditioned solves to the base path.
+    //
+    // Diagnostic-domain floor (F3). The backward-error model above is a
+    // relative statement: it holds only while the Householder squared
+    // norms are evaluated with full 53-bit mantissas, i.e. while they
+    // stay in the normal range. Pinned nalgebra 0.35.0 forms each norm
+    // unscaled (`reflection_axis_mut` over `column.norm_squared()`), so
+    // tiny-magnitude finite inputs push those sums into the subnormal
+    // range -- fewer effective bits, relative drift far beyond
+    // `sigma_abs_tol` -- while `R` itself stays finite (the design SVD
+    // instead divides by the maximum magnitude before bidiagonalizing,
+    // so it is unaffected). Each step's norm survives as the diagonal
+    // magnitude `|R_kk|`, hence the whole chain is in-domain exactly when
+    // every `|R_kk|^2` is safely normal. The floor below,
+    // `8 * sqrt(f64::MIN_POSITIVE)` (exact: `8 * 2^-511`; squared it sits
+    // 64x above `MIN_POSITIVE`), leaves summation rounding (`~m eps`
+    // relative, far below a 64x gap) no room to blur the boundary: above
+    // it the relative model genuinely applies, below it the gates defer
+    // to the base diagnostic. The narrow over-deferral band (true norms
+    // within 8x of `2^-511`, i.e. designs near `1e-154`) only ever costs
+    // one extra diagnostic, never a verdict.
     let gate_dim = rows.max(columns) as f64;
+    let qr_domain_floor = 8.0 * f64::MIN_POSITIVE.sqrt();
     let (rank, condition) = if !upper.iter().all(|v| v.is_finite()) {
         // F1: overflowed factor; run base gates, then fall through to the
         // shared back-substitution/residual path which yields the base
@@ -1720,6 +1756,18 @@ fn solve_direct_with_factor(
         // values-only SVD, shifting singulars a few ULP and gate decisions, so
         // `svd(false, false)` is not adopted here. P3 already subsumes P2's
         // N x P U saving on this path (the diagnostic runs on P x P `upper`).
+        // F3: a finite `R` whose Householder chain left the
+        // relative-accuracy domain (some `|R_kk|` below the floor above)
+        // carries drift the F2 band cannot bound, so the gates below are
+        // re-decided with the base diagnostic whether or not they look
+        // borderline. This check is O(p) on already-computed entries.
+        let mut qr_in_domain = true;
+        for diagonal in 0..columns {
+            if upper[(diagonal, diagonal)].abs() < qr_domain_floor {
+                qr_in_domain = false;
+                break;
+            }
+        }
         let svd = upper.clone().svd(true, false);
         let singular = svd.singular_values;
         let sigma_max = singular[0];
@@ -1768,8 +1816,8 @@ fn solve_direct_with_factor(
                 }
             }
         }
-        if rejects_r || borderline {
-            // F2: re-decide with the exact base diagnostic so configured
+        if rejects_r || borderline || !qr_in_domain {
+            // F2/F3: re-decide with the exact base diagnostic so configured
             // boundaries admit exactly as before. Thresholds unchanged.
             let svd_base = whitened_design.clone().svd(false, false);
             base_gates(&svd_base.singular_values)?

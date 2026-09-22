@@ -14,6 +14,17 @@
 //!   near-dependent variants -- on both public entry points -- using the
 //!   old numerical path below as the oracle. Thresholds and the 1e-12
 //!   portable golden bound are unchanged.
+//! - F3-underflow: finite thin-R is not sufficient for the F2 uncertainty
+//!   model. On tiny-magnitude finite NORMAL inputs (~1e-157) the unscaled
+//!   Householder squared norms enter the subnormal range while R stays
+//!   finite, so gate drift exceeds the computed band at configured
+//!   boundaries. The solver re-decides out-of-domain factors with the base
+//!   design diagnostic (no solve arithmetic rescaled). Regressions cover
+//!   the review's fixed fixture at its literal gate configurations, plus
+//!   runtime-derived midpoint/ULP-neighbor thresholds, rescaled variants
+//!   across the subnormal transition, and ill-conditioned ordinary-scale
+//!   designs -- on both public entry points, against the old path below
+//!   (sequential base for the combined API, preserving error precedence).
 
 use nalgebra::{DMatrix, DVector};
 use pmoke_analysis_core::{
@@ -330,6 +341,29 @@ fn assert_parity_with_old_path(
             want.code(),
             got.code()
         ),
+        (Ok(_), Err(got)) => {
+            // Accepted solve, failing covariance: the sequential base (the
+            // literal solve above, then the literal `covariance_from_qr` on
+            // the same design) must fail at the same covariance step with
+            // the same code. On ordinary scales the covariance succeeds
+            // whenever the solve does, so this arm only fires where an
+            // accepted solve overflows `(R^T R)^-1` -- e.g. the F3 tiny
+            // fixtures -- and both paths must preserve that error
+            // precedence identically.
+            match covariance_from_qr(design, 1.0) {
+                Err(want_cov) => assert_eq!(
+                    got.code(),
+                    want_cov.code(),
+                    "{context}: combined error code differs from sequential base (want {}, got {})",
+                    want_cov.code(),
+                    got.code()
+                ),
+                Ok(_) => panic!(
+                    "{context}: combined admission differs (want Ok, got {})",
+                    got.code()
+                ),
+            }
+        }
         (Ok(want), Ok(got)) => {
             assert!(
                 want.0
@@ -446,14 +480,17 @@ fn midpoint_thresholds_match_base_on_both_apis() {
 /// More ill-conditioned full-rank variants: near-dependent columns with
 /// tunable dependence `delta`. Each variant must preserve the base
 /// admission decision at runtime-derived midpoint thresholds on both
-/// entry points.
+/// entry points. The condition legs configure the earlier rank gate to
+/// admit (a runtime-derived fraction of the base ratio): with the default
+/// `rank_tol` the rank gate would preempt the condition gate for the
+/// smaller deltas and the test would not exercise the condition boundary.
 #[test]
 fn near_dependent_variants_match_base() {
     let (_, signal) = false_acceptance_fixture();
     let base = false_acceptance_fixture().0;
     let col0: Vec<f64> = (0..5).map(|r| base[(r, 0)]).collect();
     let col2: Vec<f64> = (0..5).map(|r| base[(r, 2)]).collect();
-    for delta in [1e-4, 1e-6, 1e-8] {
+    for delta in [1e-4, 1e-6, 1e-8, 1e-10] {
         let mut variant = base.clone();
         for r in 0..5 {
             variant[(r, 2)] = col0[r] + delta * (col2[r] - col0[r]);
@@ -463,9 +500,15 @@ fn near_dependent_variants_match_base() {
         let cond_base = sigma_base[0] / sigma_base[2];
         let cond_r = sigma_r[0] / sigma_r[2];
         assert!(cond_base.is_finite() && cond_base > 0.0);
+        assert!(cond_r.is_finite() && cond_r > 0.0);
         println!("delta={delta:e} base condition {cond_base:.17e}, thin-R condition {cond_r:.17e}");
+        let ratio_base = sigma_base[2] / sigma_base[0];
+        assert!(ratio_base.is_finite() && ratio_base > 0.0);
         let cond_tol = JointSolverTolerances {
             max_condition: (cond_base + cond_r) / 2.0,
+            // Admit the earlier rank gate with two orders of margin so the
+            // midpoint condition threshold decides.
+            rank_tol: ratio_base / 100.0,
             ..Default::default()
         };
         assert_parity_with_old_path(
@@ -474,7 +517,6 @@ fn near_dependent_variants_match_base() {
             cond_tol,
             &format!("delta={delta:e} condition"),
         );
-        let ratio_base = sigma_base[2] / sigma_base[0];
         let ratio_r = sigma_r[2] / sigma_r[0];
         let rank_tol = JointSolverTolerances {
             rank_tol: (ratio_base + ratio_r) / 2.0,
@@ -514,4 +556,207 @@ fn ordinary_controls_match_old_path_bitwise() {
         );
     }
     println!("100 ordinary 9x4 controls: parity with old path on both entry points");
+}
+
+/// F3: fixed tiny-magnitude fixture from the PR #300 review (column-major;
+/// every element is a finite NORMAL f64 ~1e-157, so the finding is about
+/// QR arithmetic, not non-finite input).
+fn underflow_fixture() -> (DMatrix<f64>, DVector<f64>) {
+    let design = DMatrix::<f64>::from_column_slice(
+        5,
+        3,
+        &[
+            -2.3771732619373227e-157,
+            2.4756625381271587e-157,
+            1.1578551364477937e-158,
+            -3.2016246865982624e-157,
+            4.725671314859632e-157,
+            3.4184532763471936e-157,
+            -4.5348553048223886e-157,
+            4.333211744700642e-157,
+            4.3685608295646896e-157,
+            1.2528523644861352e-157,
+            -3.1824965957250256e-157,
+            3.8947147077724334e-157,
+            -1.224259554576648e-157,
+            -1.5407901340124156e-157,
+            2.0343209514464707e-157,
+        ],
+    );
+    (design, DVector::from_element(5, 1.0))
+}
+
+/// F3: pin the arithmetic domain of the fixed fixture on any platform --
+/// finite NORMAL inputs, finite thin-R, but a subnormal first squared
+/// column norm, which is exactly what invalidates the relative
+/// uncertainty model.
+fn assert_underflow_domain_preconditions(design: &DMatrix<f64>) {
+    assert!(
+        design.iter().all(|x| x.is_normal()),
+        "underflow fixture inputs must stay finite NORMAL f64"
+    );
+    let upper = design.clone().qr().r();
+    assert!(
+        upper.iter().all(|x| x.is_finite()),
+        "underflow fixture thin-R must stay finite (F1 guard must not fire)"
+    );
+    assert!(
+        design.column(0).norm_squared().is_subnormal(),
+        "underflow fixture must keep a subnormal squared column norm"
+    );
+}
+
+/// F3: the review's literal gate configurations. The literal base rejects
+/// (`ill_conditioned_design` / `rank_deficient_design`) while the
+/// uncertainty band admitted the direct solve and the combined API changed
+/// the error code; the solver must preserve the base decision and error
+/// precedence on both entry points. The expected codes are the literal
+/// base outcomes on the review machine; the parity helper re-derives the
+/// base verdict at runtime, so any platform divergence fails loudly here
+/// rather than passing silently.
+#[test]
+fn underflow_fixture_matches_base_at_both_gates() {
+    let (design, signal) = underflow_fixture();
+    assert_underflow_domain_preconditions(&design);
+    let sigma_base = design.clone().svd(false, false).singular_values;
+    let cond_base = sigma_base[0] / sigma_base[2];
+    println!("underflow fixture base condition: {cond_base:.17e}");
+    // f64-shortest forms of the review's literal thresholds (verified
+    // bit-identical to the 17-digit strings 6.10572423092239269 and
+    // 1.63780734631857050e-1; the longer forms trip excessive_precision).
+    let condition_case = JointSolverTolerances {
+        max_condition: 6.105724230922393,
+        ..Default::default()
+    };
+    assert_parity_with_old_path(&design, &signal, condition_case, "underflow condition gate");
+    let rank_case = JointSolverTolerances {
+        rank_tol: 1.6378073463185705e-1,
+        ..Default::default()
+    };
+    assert_parity_with_old_path(&design, &signal, rank_case, "underflow rank gate");
+}
+
+/// F3 portable: runtime-derived midpoint and ULP-neighbor thresholds at
+/// both gates on the underflow fixture, plus a default-tolerance accepted
+/// solve (the base admits; the direct solve must match it bit-for-bit and
+/// the combined API must preserve the sequential-base error precedence).
+/// The condition legs configure the earlier rank gate to admit so the
+/// condition boundary actually decides.
+#[test]
+fn underflow_fixture_midpoint_thresholds_match_base() {
+    let (design, signal) = underflow_fixture();
+    assert_underflow_domain_preconditions(&design);
+    let sigma_base = design.clone().svd(false, false).singular_values;
+    let sigma_r = design.clone().qr().r().svd(true, false).singular_values;
+    let cond_base = sigma_base[0] / sigma_base[2];
+    let cond_r = sigma_r[0] / sigma_r[2];
+    assert!(cond_base.is_finite() && cond_r.is_finite() && cond_base > 0.0 && cond_r > 0.0);
+    println!("underflow base condition {cond_base:.17e}, thin-R condition {cond_r:.17e}");
+    for limit in [
+        cond_base.next_down(),
+        cond_base,
+        cond_base.next_up(),
+        (cond_base + cond_r) / 2.0,
+    ] {
+        let tol = JointSolverTolerances {
+            max_condition: limit,
+            rank_tol: 1e-14,
+            ..Default::default()
+        };
+        assert_parity_with_old_path(
+            &design,
+            &signal,
+            tol,
+            &format!("underflow condition limit {limit:.17e}"),
+        );
+    }
+    let ratio_base = sigma_base[2] / sigma_base[0];
+    let ratio_r = sigma_r[2] / sigma_r[0];
+    assert!(ratio_base.is_finite() && ratio_r.is_finite() && ratio_base > 0.0 && ratio_r > 0.0);
+    for rank_tol in [
+        ratio_base.next_down(),
+        ratio_base,
+        ratio_base.next_up(),
+        (ratio_base + ratio_r) / 2.0,
+    ] {
+        let tol = JointSolverTolerances {
+            rank_tol,
+            max_condition: 1e16,
+            ..Default::default()
+        };
+        assert_parity_with_old_path(
+            &design,
+            &signal,
+            tol,
+            &format!("underflow rank_tol {rank_tol:.17e}"),
+        );
+    }
+    assert_parity_with_old_path(
+        &design,
+        &signal,
+        JointSolverTolerances::default(),
+        "underflow default tolerances (base admits)",
+    );
+}
+
+/// F3 scale-varied: the underflow fixture rescaled across the subnormal
+/// transition -- zero R diagonals (identical solve errors on both paths),
+/// the subnormal drift zone (base diagnostic deferral), and the normal
+/// domain (fast path) -- each at default tolerances plus
+/// runtime-derived midpoint thresholds at both gates wherever both
+/// diagnostics stay finite-positive, on both entry points.
+#[test]
+fn underflow_rescaled_variants_match_base() {
+    let (base_design, signal) = underflow_fixture();
+    for exponent in [-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4] {
+        let design = &base_design * 10f64.powi(exponent);
+        assert!(
+            design.iter().all(|x| x.is_finite()),
+            "scale 1e{exponent}: rescaled inputs must stay finite"
+        );
+        let context = format!("scale 1e{exponent}");
+        assert_parity_with_old_path(
+            &design,
+            &signal,
+            JointSolverTolerances::default(),
+            &format!("{context} default"),
+        );
+        let sigma_base = design.clone().svd(false, false).singular_values;
+        let upper = design.clone().qr().r();
+        if !upper.iter().all(|x| x.is_finite()) {
+            continue;
+        }
+        let sigma_r = upper.svd(true, false).singular_values;
+        let cond_base = sigma_base[0] / sigma_base[2];
+        let cond_r = sigma_r[0] / sigma_r[2];
+        let ratio_base = sigma_base[2] / sigma_base[0];
+        let ratio_r = sigma_r[2] / sigma_r[0];
+        if !(cond_base.is_finite()
+            && cond_base > 0.0
+            && cond_r.is_finite()
+            && cond_r > 0.0
+            && ratio_base.is_finite()
+            && ratio_base > 0.0
+            && ratio_r.is_finite()
+            && ratio_r > 0.0)
+        {
+            // Degenerate R (e.g. zero diagonals from fully underflowed
+            // norms): the default-tolerance parity above already covers
+            // this scale; no midpoint threshold is well-defined.
+            println!("{context}: degenerate thin-R diagnostic, default parity only");
+            continue;
+        }
+        let cond_tol = JointSolverTolerances {
+            max_condition: (cond_base + cond_r) / 2.0,
+            rank_tol: ratio_base / 100.0,
+            ..Default::default()
+        };
+        assert_parity_with_old_path(&design, &signal, cond_tol, &format!("{context} condition"));
+        let rank_tol = JointSolverTolerances {
+            rank_tol: (ratio_base + ratio_r) / 2.0,
+            max_condition: 1e16,
+            ..Default::default()
+        };
+        assert_parity_with_old_path(&design, &signal, rank_tol, &format!("{context} rank"));
+    }
 }
