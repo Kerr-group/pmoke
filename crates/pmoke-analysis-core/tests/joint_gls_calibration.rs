@@ -467,6 +467,7 @@ fn artifact_bytes_bind_training_only() {
         sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
         reference_frequency_hz: case.f_ref,
         frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+        reference_frequency_rel_uncertainty: None,
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
         acquisition: AcquisitionMeta {
             device: Some("synthetic".to_string()),
@@ -495,6 +496,7 @@ fn artifact_bytes_bind_training_only() {
             profile_rmse_v2: Some(0.01),
             standardized_lag1: Some(0.02),
         },
+        frequency_tol_overridden: false,
     };
     let first = build_artifact(request.clone()).unwrap();
     assert_eq!(
@@ -618,6 +620,7 @@ fn applicability_binding() {
             sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
             reference_frequency_hz: case.f_ref,
             frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+            reference_frequency_rel_uncertainty: None,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
                 device: Some("synthetic".to_string()),
@@ -638,6 +641,7 @@ fn applicability_binding() {
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     let built = build_artifact(request).unwrap();
     assert_eq!(built.artifact.capabilities.modes.len(), 2);
@@ -653,6 +657,7 @@ fn applicability_binding() {
             gain: Some(2.0),
             bandwidth_hz: Some(50_000.0),
         },
+        reference_frequency_rel_uncertainty: None,
     };
     let report = inspect_applicability(&built.artifact, &good);
     // Fully matching acquisition: compatible with no warnings.
@@ -892,6 +897,73 @@ fn adequacy_gates_reject_unverifiable_inputs() {
     );
 }
 
+// Issue #301 follow-up: a validated but unsatisfiable lag count must fail
+// with the typed insufficient_calibration error before any lag-sized
+// allocation (no capacity-overflow panic, no huge allocation). The
+// boundary lag == shortest group length fails the same way; a small
+// satisfiable lag on the same groups still reaches the verdict path.
+#[test]
+fn adequacy_rejects_impossible_lag_support_before_allocation() {
+    let samples = 64usize;
+    let phases: Vec<f64> = (0..samples)
+        .map(|i| i as f64 / samples as f64 * std::f64::consts::TAU)
+        .collect();
+    let group = || AdequacyGroup {
+        standardized: (0..samples)
+            .map(|i| ((i * 37) as f64 / samples as f64).sin())
+            .collect(),
+        phases: phases.clone(),
+    };
+    let train = group();
+    let reserved = group();
+    let policy = AdequacyPolicy {
+        lags: 4,
+        min_pairs_per_cell: 1,
+        max_phase_spread: 0.5,
+        max_reserved_shift: 0.5,
+    };
+    // Control: a small satisfiable lag count reaches a verdict, not an error.
+    assert!(
+        scs_adequacy(
+            std::slice::from_ref(&train),
+            std::slice::from_ref(&reserved),
+            policy
+        )
+        .is_ok()
+    );
+    // Boundary: lag support equal to the shortest group length has no pairs.
+    let boundary = AdequacyPolicy {
+        lags: samples,
+        ..policy
+    };
+    assert_eq!(
+        scs_adequacy(
+            std::slice::from_ref(&train),
+            std::slice::from_ref(&reserved),
+            boundary
+        )
+        .unwrap_err()
+        .code(),
+        "insufficient_calibration"
+    );
+    // The validated TOML-representable reproducer (i64::MAX) must surface
+    // the same typed error instead of panicking on allocation.
+    let oversized = AdequacyPolicy {
+        lags: i64::MAX as usize,
+        ..policy
+    };
+    assert_eq!(
+        scs_adequacy(
+            std::slice::from_ref(&train),
+            std::slice::from_ref(&reserved),
+            oversized
+        )
+        .unwrap_err()
+        .code(),
+        "insufficient_calibration"
+    );
+}
+
 // F3: pool-then-normalize analytical anchor with unequal block power.
 #[test]
 fn correlation_pool_order_anchor() {
@@ -945,6 +1017,7 @@ fn artifact_constructor_rejects_invalid_models() {
         sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
         reference_frequency_hz: case.f_ref,
         frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+        reference_frequency_rel_uncertainty: None,
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
         acquisition: AcquisitionMeta {
             device: None,
@@ -974,6 +1047,7 @@ fn artifact_constructor_rejects_invalid_models() {
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     // Empty phase table advertises no bins: rejected, not hashed.
     let mut empty = base.clone();
@@ -1036,6 +1110,7 @@ fn rebuilt_artifact_hashes_track_data_mutations() {
         sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
         reference_frequency_hz: case.f_ref,
         frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+        reference_frequency_rel_uncertainty: None,
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
         acquisition: AcquisitionMeta {
             device: None,
@@ -1094,6 +1169,7 @@ fn rebuilt_artifact_hashes_track_data_mutations() {
                 profile_rmse_v2: None,
                 standardized_lag1: None,
             },
+            frequency_tol_overridden: false,
         })
         .unwrap()
     };
@@ -1241,6 +1317,7 @@ fn artifact_constructor_rejects_invalid_recipes() {
             sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
             reference_frequency_hz: case.f_ref,
             frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+            reference_frequency_rel_uncertainty: None,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
                 device: None,
@@ -1265,6 +1342,7 @@ fn artifact_constructor_rejects_invalid_recipes() {
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     // Positive control: the valid request still builds.
     build_artifact(base.clone()).unwrap();
@@ -1351,6 +1429,7 @@ fn artifact_constructor_rejects_inconsistent_lag_clock() {
             sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
             reference_frequency_hz: case.f_ref,
             frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+            reference_frequency_rel_uncertainty: None,
             phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
             acquisition: AcquisitionMeta {
                 device: None,
@@ -1375,6 +1454,7 @@ fn artifact_constructor_rejects_inconsistent_lag_clock() {
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     let built = build_artifact(base.clone()).unwrap();
     let stored = built.artifact.correlation.unwrap();
@@ -1427,6 +1507,7 @@ fn applicability_unknown_state_matrix() {
                 sample_interval_rel_tol: DEFAULT_DT_REL_TOL,
                 reference_frequency_hz: case.f_ref,
                 frequency_rel_tol: DEFAULT_FREQ_REL_TOL,
+                reference_frequency_rel_uncertainty: None,
                 phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
                 acquisition,
             },
@@ -1443,6 +1524,7 @@ fn applicability_unknown_state_matrix() {
                 profile_rmse_v2: None,
                 standardized_lag1: None,
             },
+            frequency_tol_overridden: false,
         })
         .unwrap()
         .artifact
@@ -1455,6 +1537,7 @@ fn applicability_unknown_state_matrix() {
         phase_convention: CALIBRATION_PHASE_CONVENTION.to_string(),
         adc_scale_provenance: adc,
         acquisition,
+        reference_frequency_rel_uncertainty: None,
     };
     let verified: Vec<String> = vec![];
     // Equal known states: compatible with no warnings.

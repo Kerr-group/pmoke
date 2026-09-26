@@ -99,6 +99,8 @@ fn source_for(dir: &std::path::Path, digest: &str, bytes_name: &str) -> FileNois
         PIPELINE_VOLTAGE_UNIT.to_string(),
         DT,
         F_REF,
+        // Fixture artifacts predate uncertainty recording: floor gate.
+        None,
     )
     .unwrap()
 }
@@ -151,6 +153,7 @@ fn malformed_expected_digest_fails_before_file_access() {
         PIPELINE_VOLTAGE_UNIT.to_string(),
         DT,
         F_REF,
+        None,
     );
     assert!(result.is_err());
     for bad in ["abc", &"A".repeat(64), &"g".repeat(64), ""] {
@@ -254,6 +257,7 @@ fn wrong_binding_fields_fail() {
         PIPELINE_VOLTAGE_UNIT.to_string(),
         2.0 * DT,
         F_REF,
+        None,
     )
     .unwrap();
     assert!(source.load(CHANNEL, GlsNoiseMode::Identity).is_err());
@@ -336,6 +340,7 @@ fn missing_components_and_scaled_channels_fail() {
             PIPELINE_VOLTAGE_UNIT.to_string(),
             DT,
             F_REF,
+            None,
         )
         .is_err()
     );
@@ -357,6 +362,53 @@ fn unvalidated_correlation_is_rejected_for_correlated_modes() {
             .is_err()
     );
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn uncertainty_combination_admits_ppb_pair_and_refuses_mismatch() {
+    use pmoke_analysis_core::calibration::{CalibrationArtifact, frequency_rel_tol_bound};
+    // Artifact with a recorded build-side uncertainty (tol widened at
+    // build through the combination rule, Issue #274 FR-01).
+    let mut artifact: CalibrationArtifact = serde_json::from_str(&artifact_json()).unwrap();
+    artifact.binding.reference_frequency_rel_uncertainty = Some(2e-9);
+    artifact.binding.frequency_rel_tol = frequency_rel_tol_bound(Some(2e-9), None);
+    // Same-condition pair at 5.852e-9 with inference-side uncertainty
+    // (Issue #274 FR-02/FR-06): the combination covers it.
+    let (model, _) = noise_model_from_artifact(
+        &artifact,
+        CHANNEL,
+        GlsNoiseMode::Identity,
+        DT,
+        F_REF * (1.0 + 5.852e-9),
+        PIPELINE_VOLTAGE_UNIT,
+        Some(2e-9),
+    )
+    .unwrap();
+    assert!(model.reference_variance_v2 > 0.0);
+    // The stored build-side widening alone already admits the pair.
+    noise_model_from_artifact(
+        &artifact,
+        CHANNEL,
+        GlsNoiseMode::Identity,
+        DT,
+        F_REF * (1.0 + 5.852e-9),
+        PIPELINE_VOLTAGE_UNIT,
+        None,
+    )
+    .unwrap();
+    // A true 2.5% mismatch still refuses (FR-06).
+    assert!(
+        noise_model_from_artifact(
+            &artifact,
+            CHANNEL,
+            GlsNoiseMode::Identity,
+            DT,
+            F_REF * 1.025,
+            PIPELINE_VOLTAGE_UNIT,
+            Some(2e-9),
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -389,11 +441,14 @@ fn joint_end_to_end_through_run_li() {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![EstimatorCalibration {
             channel: CHANNEL,
             path: "ch3.json".to_string(),
             sha256: digest,
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
 
     let dt = DT;
@@ -535,11 +590,14 @@ fn retained_calibration_survives_external_removal() {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![EstimatorCalibration {
             channel: CHANNEL,
             path: "ch3.json".to_string(),
             sha256: digest.clone(),
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
 
     let dt = DT;

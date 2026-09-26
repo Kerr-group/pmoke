@@ -192,14 +192,17 @@ fn clicking_workflow_moves_focus_from_output_to_commands() {
     app.focus_output();
     let area = Rect::new(0, 0, 120, 28);
     let workflow = dashboard_layout(area).workflow;
+    // S2: the runs browser owns the top of the workflow panel, so the
+    // workflow list section is the click target here.
+    let (_, list) = runs_layout(workflow);
 
     handle_mouse(
         &mut app,
         area,
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: workflow.x + 1,
-            row: workflow.y + 1,
+            column: list.x + 1,
+            row: list.y + 1,
             modifiers: KeyModifiers::NONE,
         },
     )
@@ -235,6 +238,10 @@ fn clicking_inspector_only_changes_focus() {
 fn keyboard_navigation_cycles_visible_dashboard_panes() {
     let mut app = test_app();
     assert_eq!(app.focus, FocusPane::Commands);
+
+    // S2 four-pane ring: Runs sits between the workflow list and inspector.
+    focus_next_pane(&mut app);
+    assert_eq!(app.focus, FocusPane::Runs);
 
     focus_next_pane(&mut app);
     assert_eq!(app.focus, FocusPane::Inspector);
@@ -342,12 +349,14 @@ fn command_panel_border_click_focuses_commands_without_changing_selection() {
     let mut app = test_app();
     app.workflow_cursor = 2;
     let area = Rect::new(0, 0, 120, 28);
-    let commands = dashboard_layout(area).workflow;
+    // S2: border targets live in the workflow list section, below the runs
+    // browser that now owns the top of the panel.
+    let (_, list) = runs_layout(dashboard_layout(area).workflow);
 
     for (column, row) in [
-        (commands.x + 2, commands.y),
-        (commands.x, commands.y + 2),
-        (commands.right() - 1, commands.y + 2),
+        (list.x + 2, list.y),
+        (list.x, list.y + 2),
+        (list.right() - 1, list.y + 2),
     ] {
         app.focus_output();
         handle_mouse(
@@ -372,15 +381,18 @@ fn command_panel_content_click_focuses_and_selects_the_clicked_action() {
     app.workflow_cursor = 2;
     app.focus_output();
     let area = Rect::new(0, 0, 120, 28);
-    let commands = dashboard_layout(area).workflow;
+    // S2: the first inner row of the workflow list section (below runs).
+    let (_, list) = runs_layout(dashboard_layout(area).workflow);
+    let (list_area, _) = workflow_layout(list);
+    let inner = bordered_inner(list_area);
 
     handle_mouse(
         &mut app,
         area,
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: commands.x + 1,
-            row: commands.y + 1,
+            column: inner.x + 1,
+            row: inner.y,
             modifiers: KeyModifiers::NONE,
         },
     )

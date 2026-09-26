@@ -263,7 +263,99 @@ fn is_safe_debug_label(label: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+/// Sensor-stage required config items (FR-02, Issue #264, Card B): the exact
+/// set `pmoke sensor` may read. Load-time rules (`validate_common`) cover
+/// the value contracts (plot/lockin positivity, window finiteness, channel
+/// consistency); the Sensor arm of [`validate_for_target`] covers presence
+/// of the role/metadata/recorded-data items. Reads outside this set are
+/// forbidden and minimal-config fixture tests enforce the boundary:
+///
+/// - `version`: always-required core.
+/// - `sensors[].channel` / `sensors[].scale` / `sensors[].label` /
+///   `sensors[].unit`: derive `roles.sensor_ch` and the per-channel scale,
+///   label, and unit (`validate_sensor_roles`, `validate_sensor_metadata`,
+///   `extract_sensor_metadata`).
+/// - `pulse.background_before` / `pulse.background_after`: sensor background
+///   averaging (`calculate_background_averages`).
+/// - `lockin.stride_samples` / `lockin.save_npy`: FR-05 defaulted
+///   cross-reads (Card A inert defaults: stride 100, no npy); the sensor
+///   decimation grid and the artifact writer.
+/// - `plot.max_points` / `plot.output_dir` / `plot.mode`: plot-class items
+///   honored by `run_plot` (mode `off` skips rendering).
+/// - `data.input` plus the recorded input file (`waveform.csv` or the raw
+///   manifest): recorded-data selection (`validate_analysis_input_exists`,
+///   `read_waveform_channels`).
+pub const SENSOR_REQUIRED_ITEMS: &[&str] = &[
+    "version",
+    "sensors[].channel",
+    "sensors[].scale",
+    "sensors[].label",
+    "sensors[].unit",
+    "pulse.background_before",
+    "pulse.background_after",
+    "lockin.stride_samples",
+    "lockin.save_npy",
+    "plot.max_points",
+    "plot.output_dir",
+    "plot.mode",
+    "data.input",
+];
+
+/// Lock-in-stage required config items (FR-02, Issue #264, Card B): the
+/// Sensor set plus the reference/signal/lockin-class items `pmoke li` reads
+/// (`run_sensor_stage` runs first, so every Sensor item stays required):
+/// - `reference.channel` / `reference.fft_window` /
+///   `reference.stride_samples` / `reference.window_samples`: reference role
+///   and fit geometry (`validate_reference_roles`, `run_fit_ref_core`).
+/// - `lockin.channels`: derives `roles.signal_ch` (`validate_signal_roles`,
+///   `build_channel_list`).
+/// - `lockin.workers` / `lockin.window` / `lockin.estimator`: demodulation
+///   geometry and dispatch (`LockinParams::from_geometry`, `li_process`).
+pub const LI_REQUIRED_ITEMS: &[&str] = &[
+    "version",
+    "sensors[].channel",
+    "sensors[].scale",
+    "sensors[].label",
+    "sensors[].unit",
+    "pulse.background_before",
+    "pulse.background_after",
+    "lockin.stride_samples",
+    "lockin.save_npy",
+    "plot.max_points",
+    "plot.output_dir",
+    "plot.mode",
+    "data.input",
+    "reference.channel",
+    "reference.fft_window",
+    "reference.stride_samples",
+    "reference.window_samples",
+    "lockin.channels",
+    "lockin.workers",
+    "lockin.window",
+    "lockin.estimator",
+];
+
+/// Declared per-command required-item set for a validation target
+/// (FR-02, Issue #264, Card B). Returns `None` for targets Card B does not
+/// declare (acquisition commands and the other analysis stages keep their
+/// existing behavior; `pmoke config validate` with no target keeps full
+/// load-time validation).
+pub fn required_items_for_target(target: ValidationTarget) -> Option<&'static [&'static str]> {
+    match target {
+        ValidationTarget::Sensor => Some(SENSOR_REQUIRED_ITEMS),
+        ValidationTarget::Li => Some(LI_REQUIRED_ITEMS),
+        _ => None,
+    }
+}
+
 pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()> {
+    // FR-03 (Issue #264, Card B): the Sensor and Li stages analyze
+    // already-fetched waveforms and never touch instruments, so their arms
+    // below must not require `[instruments.*]`. Acquisition-command arms
+    // (Single/Fetch/Screenshot/Process/Auto, Trigger/Autoshot/Automeasure)
+    // keep their requirements unchanged, other analysis stages
+    // (Reference/Signal/Phase/Moke/Analyze/Process/Auto) stay as-is, and
+    // `pmoke config validate` (no target) keeps full load-time validation.
     match target {
         ValidationTarget::Single
         | ValidationTarget::Fetch
@@ -305,13 +397,15 @@ pub fn validate_for_target(cfg: &Config, target: ValidationTarget) -> Result<()>
             validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Sensor => {
-            validate_oscilloscope_required(cfg)?;
+            // FR-03: no instruments requirement; the recorded-data lookup
+            // below is the only environment gate.
             validate_sensor_roles(cfg)?;
             validate_sensor_metadata(cfg)?;
             validate_analysis_input_exists(cfg)?;
         }
         ValidationTarget::Li => {
-            validate_oscilloscope_required(cfg)?;
+            // FR-03: no instruments requirement; the recorded-data lookup
+            // below is the only environment gate.
             validate_reference_roles(cfg)?;
             validate_sensor_roles(cfg)?;
             validate_signal_roles(cfg)?;
@@ -593,6 +687,99 @@ fn validate_estimator(lockin: &Lockin, signal_ch: &[u8], errors: &mut Vec<Config
         ));
     }
     validate_estimator_calibrations(config, signal_ch, errors);
+    validate_gls_tolerances(config, errors);
+}
+
+/// Validates the `[lockin.estimator.solver_tolerances]` and
+/// `[lockin.estimator.scs_adequacy]` overrides. Bounds mirror the runtime
+/// solver/adequacy gates exactly (joint `solve_direct`, `cholesky_factor`,
+/// TOL-07 caps, `scs_adequacy`): a config rejected here would fail at
+/// execution, so it fails at load with the offending path instead.
+fn validate_gls_tolerances(config: &JointHarmonicGlsConfig, errors: &mut Vec<ConfigDiagnostic>) {
+    let solver = &config.solver_tolerances;
+    if !solver.rank_tol.is_finite() || solver.rank_tol <= 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.solver_tolerances.rank_tol".to_string()),
+            format!(
+                "lockin.estimator.solver_tolerances.rank_tol must be finite and positive (got {})",
+                solver.rank_tol
+            ),
+            Some("use the default 1e-10 unless trading rank robustness for speed".to_string()),
+        ));
+    }
+    if !solver.max_condition.is_finite() || solver.max_condition <= 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.solver_tolerances.max_condition".to_string()),
+            format!(
+                "lockin.estimator.solver_tolerances.max_condition must be finite and positive (got {})",
+                solver.max_condition
+            ),
+            Some("use the default 1e8 unless trading conditioning strictness".to_string()),
+        ));
+    }
+    if !solver.max_noise_condition.is_finite() || solver.max_noise_condition <= 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.solver_tolerances.max_noise_condition".to_string()),
+            format!(
+                "lockin.estimator.solver_tolerances.max_noise_condition must be finite and positive (got {})",
+                solver.max_noise_condition
+            ),
+            Some("use the default 1e10 unless trading noise-covariance strictness".to_string()),
+        ));
+    }
+    if !solver.max_jitter_v2.is_finite() || solver.max_jitter_v2 < 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.solver_tolerances.max_jitter_v2".to_string()),
+            format!(
+                "lockin.estimator.solver_tolerances.max_jitter_v2 must be finite and non-negative (got {})",
+                solver.max_jitter_v2
+            ),
+            Some("use the default 0.0 (non-SPD factors fail instead of regularizing)".to_string()),
+        ));
+    }
+    let adequacy = &config.scs_adequacy;
+    if adequacy.lags == 0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.scs_adequacy.lags".to_string()),
+            "lockin.estimator.scs_adequacy.lags must be positive",
+            Some("use the default 4".to_string()),
+        ));
+    }
+    if adequacy.min_pairs_per_cell == 0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.scs_adequacy.min_pairs_per_cell".to_string()),
+            "lockin.estimator.scs_adequacy.min_pairs_per_cell must be positive",
+            Some("use the default 10".to_string()),
+        ));
+    }
+    if !adequacy.max_phase_spread.is_finite() || adequacy.max_phase_spread < 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.scs_adequacy.max_phase_spread".to_string()),
+            format!(
+                "lockin.estimator.scs_adequacy.max_phase_spread must be finite and non-negative (got {})",
+                adequacy.max_phase_spread
+            ),
+            Some("use the default 0.2; lowering the bar needs approval, never silent".to_string()),
+        ));
+    }
+    if !adequacy.max_reserved_shift.is_finite() || adequacy.max_reserved_shift < 0.0 {
+        errors.push(ConfigDiagnostic::new(
+            DiagnosticKind::Validation,
+            Some("lockin.estimator.scs_adequacy.max_reserved_shift".to_string()),
+            format!(
+                "lockin.estimator.scs_adequacy.max_reserved_shift must be finite and non-negative (got {})",
+                adequacy.max_reserved_shift
+            ),
+            Some("use the default 0.2".to_string()),
+        ));
+    }
 }
 
 fn validate_estimator_calibrations(
@@ -601,6 +788,24 @@ fn validate_estimator_calibrations(
     errors: &mut Vec<ConfigDiagnostic>,
 ) {
     const BASE: &str = "lockin.estimator.calibrations";
+    // FR-05: prepulse derives every channel model from background_before, so
+    // any file binding alongside it is ambiguous and rejected. The
+    // per-channel artifact rule below applies to artifact mode only.
+    if matches!(config.calibration_source, GlsCalibrationSource::Prepulse) {
+        if !config.calibrations.is_empty() {
+            errors.push(ConfigDiagnostic::new(
+                DiagnosticKind::Validation,
+                Some("lockin.estimator.calibration_source".to_string()),
+                format!(
+                    "lockin.estimator.calibration_source is prepulse, so {BASE} must be empty \
+                     (got {} entries); prepulse derives every channel model and file bindings alongside it are ambiguous",
+                    config.calibrations.len()
+                ),
+                Some("remove the calibrations entries or switch calibration_source back to artifact".to_string()),
+            ));
+        }
+        return;
+    }
     let mut seen: Vec<u8> = Vec::with_capacity(config.calibrations.len());
     for (idx, calibration) in config.calibrations.iter().enumerate() {
         if !signal_ch.contains(&calibration.channel) {

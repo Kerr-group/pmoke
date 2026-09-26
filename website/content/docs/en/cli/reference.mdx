@@ -7,7 +7,7 @@ description: Generated command and option reference for the complete pmoke featu
 
 > Generated from typed clap metadata. Manual edits are overwritten.
 
-<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={7} />
+<ReferenceMetadata pmokeVersion="0.5.0" schemaVersion={7} />
 
 ## Command index
 
@@ -576,16 +576,25 @@ pmoke calibrate [-h, --help] <COMMAND>
 
 ### `pmoke calibrate build`
 
-Build an immutable calibration artifact from a recorded waveform CSV
+Build an immutable calibration artifact from recorded waveforms (CSV request or direct RAW run)
 
 ```text
-pmoke calibrate build --request <FILE> [--output <DIR>] [-h, --help]
+pmoke calibrate build [--request <FILE>] [--output <DIR>] [--run <DIR>] [--channel <N>] [--model-id <ID>] [--reference-channel <N>] [--reference-frequency-hz <HZ>] [--reference-phase-rad <RAD>] [--block-len <N>] [--seed <N>] [--frequency-rel-tol <TOL>] [-h, --help]
 ```
 
 | Option | Required | Default / values | Description | Conflicts |
 | --- | :---: | --- | --- | --- |
-| `--request <FILE>` | yes | - | Path to the calibration build request file | - |
+| `--request <FILE>` | - | - | Path to the calibration build request file | `block_len`, `channel`, `model_id`, `reference_channel`, `reference_frequency_hz`, `reference_phase_rad`, `run`, `seed` |
 | `--output <DIR>` | - | - | Override the output directory from the request | - |
+| `--run <DIR>` | - | - | Recorded run directory for a direct build (defaults to the current directory) | `request` |
+| `--channel <N>` | - | - | Target channel for a direct build; repeat for several (defaults to the run signal channels) | `request` |
+| `--model-id <ID>` | - | - | Model identifier for a single-channel direct build | `request` |
+| `--reference-channel <N>` | - | - | Reference channel for the same-run reference fit of a direct build | `request` |
+| `--reference-frequency-hz <HZ>` | - | - | Reference frequency in Hz for a direct build (defaults to the same-run fit) | `request` |
+| `--reference-phase-rad <RAD>` | - | - | Reference phase in radians for a direct build (defaults to the same-run fit) | `request` |
+| `--block-len <N>` | - | - | Block length in samples for a direct build (defaults to samples divided by 40) | `request` |
+| `--seed <N>` | - | - | Random seed for a direct build (defaults to 0) | `request` |
+| `--frequency-rel-tol <TOL>` | - | - | Reference-frequency applicability tolerance override (relative) for a direct build (defaults to the uncertainty combination; the value is recorded and marked overridden) | `request` |
 | `-h, --help` | - | - | Print help | - |
 
 

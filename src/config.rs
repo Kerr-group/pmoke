@@ -35,9 +35,11 @@ pub use render::render_normalized_config;
 use render::{render_config_v4, render_config_v5, render_config_v6, render_config_v7};
 use schema::*;
 use validation::validate_common;
-pub use validation::validate_for_target;
 #[cfg(test)]
 use validation::validate_sensor_metadata;
+pub use validation::{
+    LI_REQUIRED_ITEMS, SENSOR_REQUIRED_ITEMS, required_items_for_target, validate_for_target,
+};
 
 fn usbtmc_supported() -> bool {
     cfg!(all(target_os = "windows", feature = "hw-gpib"))
@@ -483,7 +485,110 @@ pub struct JointHarmonicGlsConfig {
     pub noise_mode: GlsNoiseMode,
     pub covariance_output: GlsCovarianceOutput,
     pub failure_policy: GlsFailurePolicy,
+    pub calibration_source: GlsCalibrationSource,
     pub calibrations: Vec<EstimatorCalibration>,
+    pub solver_tolerances: GlsSolverTolerances,
+    pub scs_adequacy: GlsScsAdequacy,
+}
+
+/// Validated solver tolerances (TOL-06/07 policy carriers). Defaults are
+/// frozen to the analysis-core defaults: changing a default value needs
+/// separate approval and is never part of this binding.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct GlsSolverTolerances {
+    pub rank_tol: f64,
+    pub max_condition: f64,
+    pub max_noise_condition: f64,
+    pub max_jitter_v2: f64,
+}
+
+impl Default for GlsSolverTolerances {
+    fn default() -> Self {
+        Self {
+            rank_tol: pmoke_analysis_core::joint::DEFAULT_RANK_TOL,
+            max_condition: pmoke_analysis_core::joint::DEFAULT_MAX_CONDITION,
+            max_noise_condition: pmoke_analysis_core::joint::DEFAULT_MAX_NOISE_CONDITION,
+            max_jitter_v2: pmoke_analysis_core::joint::DEFAULT_MAX_JITTER,
+        }
+    }
+}
+
+impl From<GlsSolverTolerances> for pmoke_analysis_core::joint::JointSolverTolerances {
+    fn from(value: GlsSolverTolerances) -> Self {
+        Self {
+            rank_tol: value.rank_tol,
+            max_condition: value.max_condition,
+            max_noise_condition: value.max_noise_condition,
+            max_jitter_v2: value.max_jitter_v2,
+        }
+    }
+}
+
+impl From<SolverTolerancesV7> for GlsSolverTolerances {
+    fn from(value: SolverTolerancesV7) -> Self {
+        Self {
+            rank_tol: value.rank_tol,
+            max_condition: value.max_condition,
+            max_noise_condition: value.max_noise_condition,
+            max_jitter_v2: value.max_jitter_v2,
+        }
+    }
+}
+
+/// Validated SCS adequacy policy (FR-06 split-half gate). Defaults are
+/// frozen to the analysis-core adequacy defaults.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct GlsScsAdequacy {
+    pub lags: usize,
+    pub min_pairs_per_cell: usize,
+    pub max_phase_spread: f64,
+    pub max_reserved_shift: f64,
+}
+
+impl Default for GlsScsAdequacy {
+    fn default() -> Self {
+        Self {
+            lags: pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_LAGS,
+            min_pairs_per_cell:
+                pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MIN_PAIRS_PER_CELL,
+            max_phase_spread: pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MAX_PHASE_SPREAD,
+            max_reserved_shift:
+                pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MAX_RESERVED_SHIFT,
+        }
+    }
+}
+
+impl From<GlsScsAdequacy> for pmoke_analysis_core::calibration::AdequacyPolicy {
+    fn from(value: GlsScsAdequacy) -> Self {
+        Self {
+            lags: value.lags,
+            min_pairs_per_cell: value.min_pairs_per_cell,
+            max_phase_spread: value.max_phase_spread,
+            max_reserved_shift: value.max_reserved_shift,
+        }
+    }
+}
+
+impl From<ScsAdequacyV7> for GlsScsAdequacy {
+    fn from(value: ScsAdequacyV7) -> Self {
+        Self {
+            lags: value.lags,
+            min_pairs_per_cell: value.min_pairs_per_cell,
+            max_phase_spread: value.max_phase_spread,
+            max_reserved_shift: value.max_reserved_shift,
+        }
+    }
+}
+
+/// Where the joint GLS noise model comes from (FR-01). `Artifact` is the
+/// historical file-bound behavior and the default; `Prepulse` derives the
+/// per-channel model once per LI run from `pulse.background_before`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GlsCalibrationSource {
+    #[default]
+    Artifact,
+    Prepulse,
 }
 
 /// GLS noise mode (NUMERICS section 4 names).
@@ -902,6 +1007,15 @@ impl From<EstimatorCalibrationV7> for EstimatorCalibration {
     }
 }
 
+impl From<GlsCalibrationSourceV7> for GlsCalibrationSource {
+    fn from(value: GlsCalibrationSourceV7) -> Self {
+        match value {
+            GlsCalibrationSourceV7::Artifact => Self::Artifact,
+            GlsCalibrationSourceV7::Prepulse => Self::Prepulse,
+        }
+    }
+}
+
 impl From<JointHarmonicGlsConfigV7> for JointHarmonicGlsConfig {
     fn from(value: JointHarmonicGlsConfigV7) -> Self {
         Self {
@@ -911,7 +1025,10 @@ impl From<JointHarmonicGlsConfigV7> for JointHarmonicGlsConfig {
             noise_mode: value.noise_mode.into(),
             covariance_output: value.covariance_output.into(),
             failure_policy: value.failure_policy.into(),
+            calibration_source: value.calibration_source.into(),
             calibrations: value.calibrations.into_iter().map(Into::into).collect(),
+            solver_tolerances: value.solver_tolerances.into(),
+            scs_adequacy: value.scs_adequacy.into(),
         }
     }
 }

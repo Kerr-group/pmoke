@@ -604,7 +604,10 @@ fn joint_gls_setup() -> JointGlsSetup {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: pmoke::config::GlsCalibrationSource::Artifact,
         calibrations: Vec::new(),
+        solver_tolerances: pmoke::config::GlsSolverTolerances::default(),
+        scs_adequacy: pmoke::config::GlsScsAdequacy::default(),
     };
     lockin.estimator = pmoke::config::LockinEstimator::JointHarmonicGls(gls.clone());
     JointGlsSetup {
@@ -626,7 +629,7 @@ fn run_joint_gls_apply(setup: &JointGlsSetup, times: &[f64], signal: &[f64]) -> 
             f_ref: 10_000.0,
             omega_tref: 0.2,
             sample_rate: 1.0 / (times[1] - times[0]),
-            tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
+            tolerances: setup.gls.solver_tolerances.into(),
         },
         &[3],
         &[signal],

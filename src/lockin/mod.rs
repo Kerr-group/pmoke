@@ -5,6 +5,7 @@ pub mod lockin_core;
 pub mod lockin_params;
 pub mod lockin_plot;
 pub mod model_loading;
+pub mod prepulse;
 pub mod provenance;
 pub mod reference;
 pub mod resolve;
@@ -30,9 +31,9 @@ pub struct LockinProcessOutput {
     pub result: Vec<Vec<Vec<f64>>>,
     /// Per-channel quality rows for GLS executions; None for boxcar_legacy.
     pub quality: Option<Vec<Vec<crate::lockin::joint::QualityRow>>>,
-    /// Per-channel, per-output XY covariance for GLS executions; None for
+    /// Per-channel packed covariance rows for GLS executions; None for
     /// boxcar_legacy.
-    pub covariance: Option<Vec<crate::lockin::joint::XyCovariances>>,
+    pub covariance: Option<Vec<crate::lockin::joint::PackedCovariances>>,
     /// Per-channel frozen estimator snapshots; None for boxcar_legacy.
     pub estimator_snapshots: Option<Vec<crate::lockin::estimator_snapshot::EstimatorSnapshot>>,
     /// Per-channel retained calibration bindings (exact validated bytes);
@@ -261,6 +262,7 @@ pub fn execute_lockin<'a>(
                 crate::config::GlsCovarianceOutput::None
             }
         };
+        let t_diagnostics = std::time::Instant::now();
         for ((((sig_ch, rows), covariances), snapshot), binding) in signal_ch
             .iter()
             .zip(quality.iter())
@@ -306,7 +308,8 @@ pub fn execute_lockin<'a>(
             }
         }
         ui::saved(format!(
-            "joint GLS diagnostics for signals {signal_ch:?} (quality always, covariance {mode:?})"
+            "joint GLS diagnostics for signals {signal_ch:?} (quality always, covariance {mode:?}, {})",
+            ui::fmt_duration(t_diagnostics.elapsed())
         ));
     }
 
@@ -425,7 +428,10 @@ pub fn li_process<'a>(
 
 /// Joint-harmonic GLS estimation over the shared legacy-trim grid.
 /// Calibration-backed models only (FR-048): any loading failure aborts,
-/// never falls back to boxcar_legacy.
+/// never falls back to boxcar_legacy. With `calibration_source` set to
+/// `prepulse`, the per-channel models are derived once from
+/// `pulse.background_before` before estimation (FR-03) and the derivation
+/// digest is recorded on the provenance (FR-04).
 fn li_process_joint<'a>(
     cfg: &Config,
     t: impl Into<TimeAxisRef<'a>>,
@@ -434,29 +440,71 @@ fn li_process_joint<'a>(
     ref_fit_params: RefFitParams,
     gls: &crate::config::JointHarmonicGlsConfig,
 ) -> Result<LockinProcessOutput> {
-    use crate::lockin::joint::{JointRunInputs, run_joint_li};
+    use crate::lockin::joint::{JointRunInputs, NoiseModelSource, run_joint_li};
     use crate::lockin::model_loading::{FileNoiseModelSource, PIPELINE_VOLTAGE_UNIT};
 
     let t = t.into();
     let sample_interval_s = t
         .dt()
         .ok_or_else(|| anyhow::anyhow!("joint_harmonic_gls execution needs a uniform timebase"))?;
-    // Calibration paths resolve against the declaring configuration file
-    // directory, never an unspecified cwd (INTERFACES section 5).
-    let base_dir = cfg
-        .source_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let source = FileNoiseModelSource::new(
-        base_dir,
-        &gls.calibrations,
-        PIPELINE_VOLTAGE_UNIT.to_string(),
-        sample_interval_s,
-        ref_fit_params.f_ref,
-    )
-    .context("joint_harmonic_gls model source is not usable")?;
+    // FR-03: exactly one derivation per LI run, before any estimation.
+    let mut prepulse_digest: Option<String> = None;
+    let mut prepulse_interval: Option<crate::lockin::provenance::PrepulseIntervalProvenance> = None;
+    let source: Box<dyn NoiseModelSource> = match gls.calibration_source {
+        crate::config::GlsCalibrationSource::Prepulse => {
+            let derivation = crate::lockin::prepulse::derive_prepulse(
+                cfg.pulse.bg_window_before,
+                t,
+                signal_ch,
+                signal_data,
+                ref_fit_params.f_ref,
+                ref_fit_params.omega_tref,
+                sample_interval_s,
+                gls,
+                &crate::lockin::prepulse::acquisition_digest_for(cfg),
+                // Same-run reference-fit uncertainty into each derived
+                // artifact binding (Issue #274 FR-01).
+                ref_fit_params.f_ref_rel_uncertainty,
+            )
+            .context(
+                "pre-pulse calibration derivation failed; refusing to fall back to artifact mode",
+            )?;
+            prepulse_digest = Some(derivation.digest);
+            // Issue #269 FR-01: record the requested window alongside the
+            // effective sample range in the LI provenance.
+            prepulse_interval = Some(crate::lockin::provenance::PrepulseIntervalProvenance {
+                requested_start: derivation.requested_window.start,
+                requested_end: derivation.requested_window.end,
+                effective_start: derivation.effective_start,
+                effective_end: derivation.effective_end,
+                effective_samples: derivation.effective_end - derivation.effective_start,
+            });
+            Box::new(derivation.source)
+        }
+        crate::config::GlsCalibrationSource::Artifact => {
+            // Calibration paths resolve against the declaring configuration file
+            // directory, never an unspecified cwd (INTERFACES section 5).
+            let base_dir = cfg
+                .source_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            Box::new(
+                FileNoiseModelSource::new(
+                    base_dir,
+                    &gls.calibrations,
+                    PIPELINE_VOLTAGE_UNIT.to_string(),
+                    sample_interval_s,
+                    ref_fit_params.f_ref,
+                    // Inference-side uncertainty from the run's own
+                    // reference fit (Issue #274 FR-02).
+                    ref_fit_params.f_ref_rel_uncertainty,
+                )
+                .context("joint_harmonic_gls model source is not usable")?,
+            )
+        }
+    };
     let inputs = JointRunInputs {
         lockin: &cfg.lockin,
         gls,
@@ -464,9 +512,17 @@ fn li_process_joint<'a>(
         f_ref: ref_fit_params.f_ref,
         omega_tref: ref_fit_params.omega_tref,
         sample_rate: sample_interval_s.recip(),
-        tolerances: pmoke_analysis_core::joint::JointSolverTolerances::default(),
+        tolerances: gls.solver_tolerances.into(),
     };
-    let output = run_joint_li(&inputs, signal_ch, signal_data, &source)?;
+    let output = run_joint_li(&inputs, signal_ch, signal_data, source.as_ref())?;
+    let provenance = match (prepulse_digest, prepulse_interval) {
+        (Some(digest), Some(interval)) => output
+            .provenance
+            .with_prepulse_digest(digest)
+            .with_prepulse_interval(interval),
+        (Some(digest), None) => output.provenance.with_prepulse_digest(digest),
+        _ => output.provenance,
+    };
     Ok(LockinProcessOutput {
         result: output.result,
         quality: Some(output.quality),
@@ -475,7 +531,7 @@ fn li_process_joint<'a>(
         bindings: Some(output.bindings),
         base_index_range: output.base_index_range,
         output_index_range: output.output_index_range,
-        provenance: output.provenance,
+        provenance,
     })
 }
 
@@ -605,7 +661,11 @@ pub fn li_process_boxcar<'a>(
                 harmonics
                     .par_iter()
                     .map(|&harmonic| {
-                        progress.set_message(format!("lock-in ch{sig_ch} h{harmonic}"));
+                        // No per-harmonic set_message here: the channel-level
+                        // message above already orients the bar, and a message
+                        // per harmonic from every worker thread interleaves
+                        // JSONL progress events with racy bar text. The
+                        // per-harmonic count below preserves exact progress.
                         let result = li_processor.compute_harmonic_detailed(harmonic, false);
                         progress.inc(1);
                         result

@@ -257,11 +257,14 @@ fn legs_share_grid_and_never_touch_the_source() {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: crate::config::GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![crate::config::EstimatorCalibration {
             channel: 3,
             path: "ch3.json".to_string(),
             sha256: digest,
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
     // Channels from test_config carry display factors; the LI estimator
     // inputs are never rescaled, so clear scaling on the signal channel
@@ -525,11 +528,14 @@ fn method_preserves_base_signal_model() {
         noise_mode: GlsNoiseMode::PhaseDiagonal,
         covariance_output: GlsCovarianceOutput::Full,
         failure_policy: crate::config::GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: vec![crate::config::EstimatorCalibration {
             channel: 3,
             path: "ch3.json".to_string(),
             sha256: "0".repeat(64),
         }],
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
     let method = CompareMethod {
         name: "identity".to_string(),

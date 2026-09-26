@@ -820,3 +820,77 @@ fn output_scrollbar_reaches_top_at_oldest() {
 
     assert_eq!(thumb_start, 0);
 }
+
+#[test]
+fn retimed_stage_completions_render_without_transient_state() {
+    let mut app = test_app();
+    // Signal completion: Success/Save with compute+save attribution already
+    // in the message (no duration_ms field on plain saved events).
+    app.push_structured_output(UiEvent {
+        event_type: "event".to_string(),
+        sequence: 50,
+        elapsed_ms: 1_500,
+        level: EventLevel::Success,
+        kind: EventKind::Save,
+        stage: None,
+        message: "signal means for channels [4] (compute 1.20s, save 3.00ms)".to_string(),
+        fields: Vec::new(),
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
+    });
+    assert_eq!(app.run_output.len(), 1);
+    assert_eq!(app.run_output[0].kind, LogKind::Save);
+    assert!(!app.run_output[0].transient);
+    assert!(
+        app.run_output[0]
+            .text
+            .contains("signal means for channels [4] (compute 1.20s, save 3.00ms)")
+    );
+
+    // Joint GLS completion under the boxcar marker: Success/Status with a
+    // progress duration replaces the transient progress line in place.
+    let progress = |sequence: u64, current: u64| UiEvent {
+        event_type: "event".to_string(),
+        sequence,
+        elapsed_ms: current * 100,
+        level: EventLevel::Info,
+        kind: EventKind::Progress,
+        stage: None,
+        message: "joint GLS lock-in ch3".to_string(),
+        fields: Vec::new(),
+        progress_id: Some("progress:9".to_string()),
+        progress_current: Some(current),
+        progress_total: Some(1),
+        duration_ms: None,
+    };
+    app.push_structured_output(progress(51, 0));
+    app.push_structured_output(progress(52, 1));
+    assert_eq!(app.run_output.len(), 2);
+    assert!(app.run_output[1].transient);
+    app.push_structured_output(UiEvent {
+        event_type: "event".to_string(),
+        sequence: 53,
+        elapsed_ms: 2_500,
+        level: EventLevel::Success,
+        kind: EventKind::Status,
+        stage: None,
+        message: "lock-in processing completed (joint GLS, 2 workers, 2.30s)".to_string(),
+        fields: Vec::new(),
+        progress_id: Some("progress:9".to_string()),
+        progress_current: None,
+        progress_total: None,
+        duration_ms: Some(2_300),
+    });
+
+    assert_eq!(app.run_output.len(), 2);
+    assert_eq!(app.run_output[1].kind, LogKind::Success);
+    assert!(!app.run_output[1].transient);
+    assert!(app.run_output[1].progress_id.is_none());
+    assert!(
+        app.run_output[1]
+            .text
+            .contains("lock-in processing completed (joint GLS, 2 workers, 2.30s) · 2.3s")
+    );
+}

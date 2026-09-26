@@ -1,4 +1,4 @@
-use super::actions::monitor_actions;
+use super::actions::{MonitorAction, monitor_actions};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::Line;
 
@@ -57,7 +57,18 @@ impl UiLayout {
 }
 
 pub(super) fn workflow_panel_width(available_width: u16) -> u16 {
-    let content_width = monitor_actions()
+    workflow_panel_width_for(&monitor_actions(), available_width)
+}
+
+/// Panel width for an explicit action list. Production always passes the
+/// real registry via [`workflow_panel_width`]; the snapshot harness passes
+/// its pinned fixture to assert cross-leg parity (see
+/// `tests::snapshots::workflow_panel_width_matches_snapshot_fixture`).
+/// Behavior is identical to inlining the list: content width plus padding,
+/// floored at `WORKFLOW_MIN_WIDTH` and clamped so the activity panel keeps
+/// `ACTIVITY_MIN_WIDTH`.
+pub(super) fn workflow_panel_width_for(actions: &[MonitorAction], available_width: u16) -> u16 {
+    let content_width = actions
         .iter()
         .map(|action| display_width(&format!("▌   ●  {} STP", action.command_name())))
         .chain(
@@ -86,6 +97,29 @@ pub(super) fn workflow_layout(area: Rect) -> (Rect, Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(4), Constraint::Length(description_height)])
+        .split(area);
+    (chunks[0], chunks[1])
+}
+
+/// S2: split the workflow panel into the runs browser (top) and the workflow
+/// list (bottom). The browser keeps a compact fixed height so the workflow
+/// list stays usable at small terminal sizes; click handling (`select_run_at`)
+/// and rendering (`render_runs_panel`) share this split.
+pub(super) fn runs_layout(area: Rect) -> (Rect, Rect) {
+    if area.height <= 1 {
+        return (Rect::default(), area);
+    }
+    let compact = if area.height >= 16 {
+        7
+    } else if area.height >= 10 {
+        5
+    } else {
+        4
+    };
+    let runs_height = compact.min(area.height.saturating_sub(2).max(1));
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(runs_height), Constraint::Min(2)])
         .split(area);
     (chunks[0], chunks[1])
 }

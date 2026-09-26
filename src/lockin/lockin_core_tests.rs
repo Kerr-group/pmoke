@@ -105,7 +105,10 @@ fn gls_estimator_is_rejected_without_fallback() {
         noise_mode: GlsNoiseMode::Identity,
         covariance_output: GlsCovarianceOutput::Diagonal,
         failure_policy: GlsFailurePolicy::Error,
+        calibration_source: crate::config::GlsCalibrationSource::Artifact,
         calibrations: Vec::new(),
+        solver_tolerances: crate::config::GlsSolverTolerances::default(),
+        scs_adequacy: crate::config::GlsScsAdequacy::default(),
     });
     let error = LockinProcessor::new(&time, &signal, 1_000.0, 0.0, &lockin)
         .err()

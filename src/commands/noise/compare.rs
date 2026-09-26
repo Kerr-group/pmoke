@@ -1132,6 +1132,9 @@ pub(super) fn build_mode_artifact(
             sample_interval_rel_tol: pmoke_analysis_core::calibration::DEFAULT_DT_REL_TOL,
             reference_frequency_hz,
             frequency_rel_tol: pmoke_analysis_core::calibration::DEFAULT_FREQ_REL_TOL,
+            // Frozen compare models declare an explicit reference: no
+            // same-run fit uncertainty is recorded (Issue #274 FR-01).
+            reference_frequency_rel_uncertainty: None,
             phase_convention: pmoke_analysis_core::calibration::CALIBRATION_PHASE_CONVENTION
                 .to_string(),
             acquisition: AcquisitionMeta {
@@ -1153,6 +1156,7 @@ pub(super) fn build_mode_artifact(
             profile_rmse_v2: None,
             standardized_lag1: None,
         },
+        frequency_tol_overridden: false,
     };
     let built = build_artifact(artifact_request)?;
     if built.json_bytes.len() > max_model_bytes {
@@ -2364,12 +2368,91 @@ fn write_json(path: &Path, value: &impl Serialize, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Atomic JSON publication for the staging manifest (PN-FR-031): the bytes
+/// land in a sibling temp file (fsynced) and appear at `path` via a single
+/// atomic rename, so the manifest bytes at `path` are never truncated. A
+/// SIGKILL between the sibling create and the rename instead leaves an
+/// orphan `staging-manifest.tmp-<pid>` sibling beside the manifest; the
+/// retry startup in `run_compare` sweeps that residue and the staged-file
+/// inventory ignores it, so the retry is never wedged by the dead pid's
+/// temp file. A torn manifest at `path` can only come from a pre-fix write
+/// or external corruption; `run_compare` treats that residue as stale
+/// staging and reclaims it.
+fn write_json_atomic(path: &Path, value: &impl Serialize, label: &str) -> Result<()> {
+    let text =
+        serde_json::to_string_pretty(value).with_context(|| format!("cannot encode {label}"))?;
+    let bytes = format!("{text}\n");
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    {
+        let mut file = std::fs::File::create(&tmp)
+            .with_context(|| format!("cannot write {}", tmp.display()))?;
+        {
+            use std::io::Write as _;
+            file.write_all(bytes.as_bytes())
+                .with_context(|| format!("cannot write {}", tmp.display()))?;
+        }
+        file.sync_all()
+            .with_context(|| format!("cannot fsync {}", tmp.display()))?;
+    }
+    std::fs::rename(&tmp, path).with_context(|| format!("cannot publish {}", path.display()))?;
+    // Best-effort directory fsync so the rename itself survives an OS crash.
+    // A SIGKILL needs no fsync (the OS preserves the completed rename), so a
+    // failure here must never fail publication.
+    #[cfg(unix)]
+    if let Some(parent) = path.parent()
+        && let Ok(dir) = std::fs::File::open(parent)
+    {
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
 fn ensure_absent_dir(path: &Path) -> Result<()> {
     if path.exists() {
         bail!(
             "noise compare output already exists (no overwrite by default): {}",
             path.display()
         );
+    }
+    Ok(())
+}
+
+/// True for the orphan sibling `write_json_atomic` can leave behind: a
+/// top-level `staging-manifest.tmp-<pid>` file (never a nested path, never
+/// the manifest itself). The pid suffix belongs to a dead publisher, so no
+/// live retry will ever overwrite it; it must be swept, not audited.
+fn is_orphan_manifest_tmp(relative: &str) -> bool {
+    !relative.contains('/') && relative.starts_with("staging-manifest.tmp-")
+}
+
+/// Removes orphan atomic-publish siblings from a resume-candidate staging
+/// directory so the closure audits below never see a dead pid's temp file.
+/// Warns like the torn-manifest reclaim: the residue is expected after a
+/// kill, never a silent state to hide.
+fn sweep_orphan_manifest_tmps(staging: &Path) -> Result<()> {
+    let entries = std::fs::read_dir(staging)
+        .with_context(|| format!("cannot list staging directory {}", staging.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("cannot list staging {}", staging.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("cannot stat staged entry {}", entry.path().display()))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !is_orphan_manifest_tmp(name) {
+            continue;
+        }
+        crate::ui::warn(format!(
+            "reclaiming orphan compare staging sibling: {}; recomputing",
+            entry.path().display()
+        ));
+        std::fs::remove_file(entry.path())
+            .with_context(|| format!("cannot sweep {}", entry.path().display()))?;
     }
     Ok(())
 }
@@ -2432,30 +2515,56 @@ pub fn run_compare(
         // hard error, never a silent reuse (PN-FR-031). Schema v2 generations
         // additionally verify their full file-digest closure and semantic
         // ownership before any file is rewritten (PN-FR-023 addendum).
+        //
+        // Sweep first: a SIGKILL between the atomic manifest sibling create
+        // and its rename leaves an orphan staging-manifest.tmp-<pid> that no
+        // retry will ever overwrite. Reclaim it here so the closure audits
+        // below (and the committed destination) never see the dead pid's
+        // temp file.
+        sweep_orphan_manifest_tmps(&staging)?;
         let manifest_path = staging.join("staging-manifest.json");
         if manifest_path.is_file() {
             let text = std::fs::read_to_string(&manifest_path).with_context(|| {
                 format!("cannot read staging manifest: {}", manifest_path.display())
             })?;
-            let manifest: StagingManifest = serde_json::from_str(&text).with_context(|| {
-                format!("invalid staging manifest: {}", manifest_path.display())
-            })?;
-            if manifest.schema_version > 2 {
-                bail!(
-                    "noise compare staging manifest schema_version {} is unsupported (code=staging_mismatch)",
-                    manifest.schema_version
-                );
+            match serde_json::from_str::<StagingManifest>(&text) {
+                Ok(manifest) => {
+                    if manifest.schema_version > 2 {
+                        bail!(
+                            "noise compare staging manifest schema_version {} is unsupported (code=staging_mismatch)",
+                            manifest.schema_version
+                        );
+                    }
+                    if manifest.request_sha256 != request_sha {
+                        bail!(
+                            "noise compare staging manifest binds a different request (code=staging_mismatch); remove {} and retry",
+                            staging.display()
+                        );
+                    }
+                    if manifest.schema_version >= 2 {
+                        verify_manifest_closure(&staging, &manifest)?;
+                    }
+                    prior_manifest = Some(manifest);
+                }
+                Err(_) => {
+                    // Torn-manifest residue: a kill landed inside a pre-fix
+                    // non-atomic write (or the file was externally
+                    // truncated). It carries no valid digests, so it is not
+                    // a resume candidate; reclaim it exactly like
+                    // absent-manifest stale staging and recompute clean.
+                    // Parseable-but-mismatched manifests stay hard errors
+                    // below and above; only unreadable bytes are reclaimed.
+                    crate::ui::warn(format!(
+                        "reclaiming stale compare staging with an unreadable manifest: {}; recomputing",
+                        staging.display()
+                    ));
+                    std::fs::remove_dir_all(&staging).with_context(|| {
+                        format!("cannot clear stale compare staging: {}", staging.display())
+                    })?;
+                    std::fs::create_dir_all(&staging)
+                        .with_context(|| format!("cannot create staging: {}", staging.display()))?;
+                }
             }
-            if manifest.request_sha256 != request_sha {
-                bail!(
-                    "noise compare staging manifest binds a different request (code=staging_mismatch); remove {} and retry",
-                    staging.display()
-                );
-            }
-            if manifest.schema_version >= 2 {
-                verify_manifest_closure(&staging, &manifest)?;
-            }
-            prior_manifest = Some(manifest);
         } else {
             bail!(
                 "noise compare staging directory already exists: {} (remove it or recover explicitly; refusing to mix generations)",
@@ -4028,7 +4137,7 @@ fn run_compare_staged(
             );
         }
     }
-    write_json(
+    write_json_atomic(
         &staging.join("staging-manifest.json"),
         &manifest,
         "staging manifest",
@@ -4065,7 +4174,15 @@ fn collect_staged_files_into(dir: &Path, prefix: &Path, files: &mut Vec<String>)
                 .ok_or_else(|| anyhow::anyhow!("non-UTF8 staged path: {}", path.display()))?;
             // Manifest keys are portable: staged paths always use `/`, even on
             // Windows, so the closure audit and the resume digest map agree.
-            files.push(path_text.replace('\\', "/"));
+            let portable = path_text.replace('\\', "/");
+            // Orphan atomic-publish siblings (a kill between the sibling
+            // create and its rename) are reclaim residue, not generation
+            // files: the retry startup sweeps them, and the closure audits
+            // ignore any that remain so they can never wedge a resume.
+            if is_orphan_manifest_tmp(&portable) {
+                continue;
+            }
+            files.push(portable);
         } else {
             bail!(
                 "staging holds a non-regular entry (code=staging_unreferenced_file): {}",

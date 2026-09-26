@@ -7,7 +7,7 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 
 > 型付きclap metadataから自動生成。手動編集は上書き対象。
 
-<ReferenceMetadata pmokeVersion="0.4.1" schemaVersion={7} />
+<ReferenceMetadata pmokeVersion="0.5.0" schemaVersion={7} />
 
 ## コマンド索引
 
@@ -576,16 +576,25 @@ pmoke calibrate [-h, --help] <COMMAND>
 
 ### `pmoke calibrate build`
 
-記録済み波形CSVからの不変較正artifactのbuild
+記録波形からの不変較正artifactのbuild（CSV requestまたはRAW run直接）
 
 ```text
-pmoke calibrate build --request <FILE> [--output <DIR>] [-h, --help]
+pmoke calibrate build [--request <FILE>] [--output <DIR>] [--run <DIR>] [--channel <N>] [--model-id <ID>] [--reference-channel <N>] [--reference-frequency-hz <HZ>] [--reference-phase-rad <RAD>] [--block-len <N>] [--seed <N>] [--frequency-rel-tol <TOL>] [-h, --help]
 ```
 
 | option | 必須 | 既定値 / 候補 | 説明 | 競合 |
 | --- | :---: | --- | --- | --- |
-| `--request <FILE>` | 必須 | - | 較正build requestファイルのpath | - |
+| `--request <FILE>` | - | - | 較正build requestファイルのpath | `block_len`, `channel`, `model_id`, `reference_channel`, `reference_frequency_hz`, `reference_phase_rad`, `run`, `seed` |
 | `--output <DIR>` | - | - | requestの出力directoryの上書き | - |
+| `--run <DIR>` | - | - | 直接build用の記録済みrun directory（既定: カレントdirectory） | `request` |
+| `--channel <N>` | - | - | 直接buildの対象channel（複数可。既定: run設定のsignal channel） | `request` |
+| `--model-id <ID>` | - | - | 単一channel直接build用のmodel識別子 | `request` |
+| `--reference-channel <N>` | - | - | 直接buildの同run参照fitに使う参照channel | `request` |
+| `--reference-frequency-hz <HZ>` | - | - | 直接build用の参照周波数Hz（既定: 同runのfit値） | `request` |
+| `--reference-phase-rad <RAD>` | - | - | 直接build用の参照位相rad（既定: 同runのfit値） | `request` |
+| `--block-len <N>` | - | - | 直接build用のblock長サンプル数（既定: サンプル数÷40） | `request` |
+| `--seed <N>` | - | - | 直接build用の乱数seed（既定: 0） | `request` |
+| `--frequency-rel-tol <TOL>` | - | - | 直接build用の参照周波数適用tolerance上書き（相対値。既定: 不確かさ合成; 値は記録され上書きが明示される） | `request` |
 | `-h, --help` | - | - | help表示 | - |
 
 

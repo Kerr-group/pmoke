@@ -125,6 +125,20 @@ pub(super) struct ScopeV4 {
     pub(super) connection: String,
 }
 
+/// Inert stage-minimal default (FR-01, Issue #264, Card A): a well-formed
+/// dummy so recorded-data stages can load without `[scope]`. The loopback
+/// discard port parses but fails fast at dial time and is never routable;
+/// no acquisition target may treat it as real hardware (per-target required
+/// sets are owned by Card B).
+impl Default for ScopeV4 {
+    fn default() -> Self {
+        Self {
+            model: "DHO5108".to_string(),
+            connection: "tcp://127.0.0.1:9".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GeneratorV4 {
@@ -139,6 +153,19 @@ pub(super) struct DataV4 {
     pub(super) input: FetchAnalysisInput,
     #[serde(default)]
     pub(super) screenshot: bool,
+}
+
+/// Inert stage-minimal default (FR-01, Issue #264, Card A): mirrors the
+/// native [`Fetch`] default. A wrong guess only misdirects the recorded-data
+/// lookup (a loud file-not-found diagnostic), never hardware.
+impl Default for DataV4 {
+    fn default() -> Self {
+        Self {
+            output: DataOutputV4::Csv,
+            input: FetchAnalysisInput::Csv,
+            screenshot: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -193,6 +220,25 @@ pub(super) struct PulseV4 {
     pub(super) background_after: Window,
 }
 
+/// Inert stage-minimal default (FR-01, Issue #264, Card A): disjoint finite
+/// windows matching the canonical fixture shape. Pre-pulse GLS calibration
+/// reads `background_before`, so li-class minimal configs carry `[pulse]`
+/// explicitly (FR-02, Card B); this default only lets unrelated stages load.
+impl Default for PulseV4 {
+    fn default() -> Self {
+        Self {
+            background_before: Window {
+                start: -0.005,
+                end: -0.001,
+            },
+            background_after: Window {
+                start: 0.01,
+                end: 0.02,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ReferenceV4 {
@@ -200,6 +246,25 @@ pub(super) struct ReferenceV4 {
     pub(super) fft_window: Window,
     pub(super) stride_samples: usize,
     pub(super) window_samples: usize,
+}
+
+/// Inert stage-minimal default (FR-01, Issue #264, Card A): channel `0` is
+/// the established unspecified sentinel (requirements.md compatibility;
+/// `validate_current_fields` assigns no hardware channel for it and
+/// reference-gated targets reject it), so no reference-gated stage can act
+/// on this default.
+impl Default for ReferenceV4 {
+    fn default() -> Self {
+        Self {
+            channel: 0,
+            fft_window: Window {
+                start: 0.0,
+                end: 0.005,
+            },
+            stride_samples: 100,
+            window_samples: 1000,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -249,16 +314,29 @@ pub(super) struct LockinV5 {
 #[serde(deny_unknown_fields)]
 pub(super) struct ConfigV7 {
     pub(super) version: u32,
+    // FR-01 (Issue #264, Card A): absent unrelated sections fill with inert
+    // defaults at parse so stage-minimal configs load. `deny_unknown_fields`
+    // stays, so misspelled keys are still rejected. `version` and the
+    // roles/channels core (derived from sensors/signals/reference) stay
+    // required: an empty sensor set still fails validation. No schema version
+    // bump (still v7).
+    #[serde(default)]
     pub(super) scope: ScopeV4,
     #[serde(default)]
     pub(super) generator: Option<GeneratorV4>,
+    #[serde(default)]
     pub(super) data: DataV4,
     #[serde(default)]
     pub(super) sensors: Vec<SensorV4>,
+    #[serde(default)]
     pub(super) pulse: PulseV4,
+    #[serde(default)]
     pub(super) reference: ReferenceV4,
+    #[serde(default)]
     pub(super) lockin: LockinV7,
+    #[serde(default)]
     pub(super) phase: PhaseV4,
+    #[serde(default)]
     pub(super) moke: MokeV6,
     #[serde(default)]
     pub(super) signals: Vec<SignalV4>,
@@ -289,6 +367,30 @@ pub(super) struct LockinV7 {
     pub(super) save_npy: bool,
 }
 
+/// Inert stage-minimal default (FR-01, Issue #264, Card A): the legacy
+/// boxcar contract with an empty channel set, so every signal-gated target
+/// (`validate_signal_roles`) rejects configs that rely on this default.
+/// `stride_samples` mirrors the canonical fixture because `sensor` cross-reads
+/// it (FR-05, Card B resolves the coupling; the value only matters once an
+/// explicit `[lockin]` replaces this default).
+impl Default for LockinV7 {
+    fn default() -> Self {
+        Self {
+            channels: Vec::new(),
+            workers: 1,
+            stride_samples: 100,
+            window: LockinWindowV7::default(),
+            estimator: LockinEstimatorV7::default(),
+            debug_output: false,
+            debug_label: None,
+            debug_overwrite: false,
+            snr_background_window: None,
+            snr_signal_window: None,
+            save_npy: false,
+        }
+    }
+}
+
 /// Raw v7 window contract. Unknown keys (including the removed
 /// `lockin.filter` table) are rejected by `deny_unknown_fields`.
 #[derive(Debug, Deserialize)]
@@ -297,6 +399,16 @@ pub(super) struct LockinWindowV7 {
     pub(super) kind: LockinWindowKindV7,
     pub(super) half_window_cycles: f64,
     pub(super) edge_policy: LockinEdgePolicyV7,
+}
+
+impl Default for LockinWindowV7 {
+    fn default() -> Self {
+        Self {
+            kind: LockinWindowKindV7::ReferenceCycles,
+            half_window_cycles: 1.0,
+            edge_policy: LockinEdgePolicyV7::LegacyTrim,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -320,6 +432,12 @@ pub(super) enum LockinEstimatorV7 {
     JointHarmonicGls(JointHarmonicGlsConfigV7),
 }
 
+impl Default for LockinEstimatorV7 {
+    fn default() -> Self {
+        Self::BoxcarLegacy {}
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct JointHarmonicGlsConfigV7 {
@@ -333,7 +451,110 @@ pub(super) struct JointHarmonicGlsConfigV7 {
     #[serde(default)]
     pub(super) failure_policy: GlsFailurePolicyV7,
     #[serde(default)]
+    pub(super) calibration_source: GlsCalibrationSourceV7,
+    #[serde(default)]
     pub(super) calibrations: Vec<EstimatorCalibrationV7>,
+    #[serde(default)]
+    pub(super) solver_tolerances: SolverTolerancesV7,
+    #[serde(default)]
+    pub(super) scs_adequacy: ScsAdequacyV7,
+}
+
+/// Raw v7 solver-tolerance overrides (TOL-06/07 policy carriers). Every key
+/// is optional; an absent table or absent key keeps the frozen default, so
+/// existing v7 configs parse byte-identically to before.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SolverTolerancesV7 {
+    #[serde(default = "default_solver_rank_tol")]
+    pub(super) rank_tol: f64,
+    #[serde(default = "default_solver_max_condition")]
+    pub(super) max_condition: f64,
+    #[serde(default = "default_solver_max_noise_condition")]
+    pub(super) max_noise_condition: f64,
+    #[serde(default = "default_solver_max_jitter_v2")]
+    pub(super) max_jitter_v2: f64,
+}
+
+impl Default for SolverTolerancesV7 {
+    fn default() -> Self {
+        Self {
+            rank_tol: default_solver_rank_tol(),
+            max_condition: default_solver_max_condition(),
+            max_noise_condition: default_solver_max_noise_condition(),
+            max_jitter_v2: default_solver_max_jitter_v2(),
+        }
+    }
+}
+
+fn default_solver_rank_tol() -> f64 {
+    pmoke_analysis_core::joint::DEFAULT_RANK_TOL
+}
+
+fn default_solver_max_condition() -> f64 {
+    pmoke_analysis_core::joint::DEFAULT_MAX_CONDITION
+}
+
+fn default_solver_max_noise_condition() -> f64 {
+    pmoke_analysis_core::joint::DEFAULT_MAX_NOISE_CONDITION
+}
+
+fn default_solver_max_jitter_v2() -> f64 {
+    pmoke_analysis_core::joint::DEFAULT_MAX_JITTER
+}
+
+/// Raw v7 SCS adequacy overrides (FR-06 split-half gate). Every key is
+/// optional; an absent table or absent key keeps the frozen default, so
+/// existing v7 configs parse byte-identically to before.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ScsAdequacyV7 {
+    #[serde(default = "default_scs_lags")]
+    pub(super) lags: usize,
+    #[serde(default = "default_scs_min_pairs_per_cell")]
+    pub(super) min_pairs_per_cell: usize,
+    #[serde(default = "default_scs_max_phase_spread")]
+    pub(super) max_phase_spread: f64,
+    #[serde(default = "default_scs_max_reserved_shift")]
+    pub(super) max_reserved_shift: f64,
+}
+
+impl Default for ScsAdequacyV7 {
+    fn default() -> Self {
+        Self {
+            lags: default_scs_lags(),
+            min_pairs_per_cell: default_scs_min_pairs_per_cell(),
+            max_phase_spread: default_scs_max_phase_spread(),
+            max_reserved_shift: default_scs_max_reserved_shift(),
+        }
+    }
+}
+
+fn default_scs_lags() -> usize {
+    pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_LAGS
+}
+
+fn default_scs_min_pairs_per_cell() -> usize {
+    pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MIN_PAIRS_PER_CELL
+}
+
+fn default_scs_max_phase_spread() -> f64 {
+    pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MAX_PHASE_SPREAD
+}
+
+fn default_scs_max_reserved_shift() -> f64 {
+    pmoke_analysis_core::calibration::DEFAULT_ADEQUACY_MAX_RESERVED_SHIFT
+}
+
+/// Pre-pulse calibration source (FR-01): `artifact` keeps the current
+/// file-bound behavior; `prepulse` derives the per-channel noise model once
+/// per LI run from `pulse.background_before` with no artifact files.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum GlsCalibrationSourceV7 {
+    #[default]
+    Artifact,
+    Prepulse,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -438,6 +659,18 @@ pub(super) struct PhaseV4 {
     pub(super) offsets: Vec<f64>,
 }
 
+/// Inert stage-minimal default (FR-01, Issue #264, Card A): six zero offsets
+/// satisfy the length-6 finite validation; the phase stage additionally
+/// requires published lock-in results, so a fresh minimal config cannot act
+/// on this default.
+impl Default for PhaseV4 {
+    fn default() -> Self {
+        Self {
+            offsets: vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct KerrV4 {
@@ -452,6 +685,21 @@ pub(super) struct MokeV6 {
     pub(super) sensor: u8,
     pub(super) method: MokeType,
     pub(super) factor: f64,
+}
+
+/// Inert stage-minimal default (FR-01, Issue #264, Card A): sensor channel 1
+/// is the canonical first sensor channel, so canonical minimal skeletons
+/// (sensor on channel 1) keep loading; skeletons using other sensor channels
+/// must carry an explicit `[moke]`. The moke stage additionally requires a
+/// non-empty signal set, so this default alone never authorizes a moke run.
+impl Default for MokeV6 {
+    fn default() -> Self {
+        Self {
+            sensor: 1,
+            method: MokeType::Standard,
+            factor: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

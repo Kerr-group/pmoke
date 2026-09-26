@@ -51,6 +51,7 @@ fn request_text(
     csv: &str,
     output: &str,
     total: u64,
+    block_len: u64,
     bank_section: &str,
     covariance: &str,
     extra_calibration: &str,
@@ -64,7 +65,7 @@ operation = "compare"
 reference_frequency_hz = 1000.0
 reference_phase_rad = 0.0
 sample_interval_s = 0.00001
-block_len = 12800
+block_len = {block_len}
 output = "{output}"
 
 [source]
@@ -118,6 +119,14 @@ covariance_output = "{covariance}"
 }
 
 const SMALL_CALIBRATION: &str = "phase_bins = 8\nmin_samples_per_bin = 8\nmin_cycles_per_bin = 1\nmin_contributing_blocks = 2\nmin_training_blocks = 2\nmin_training_intervals = 1\n";
+
+/// Reduced geometry: 102,400 samples at the same block_len 12800 (8 blocks
+/// instead of 15.625/18.75) keeps every calibration minimum, role fraction,
+/// and per-block cost model intact at roughly half the compute. Error-path
+/// tests keep the full-size geometry. (block_len cannot shrink: blocks below
+/// 12800 samples fall under the 128-reference-cycles-per-block floor.)
+const SMALL_TOTAL: u64 = 102_400;
+const FULL_BLOCK: u64 = 12_800;
 
 fn run_request(dir: &Path, text: &str, name: &str) -> anyhow::Result<PathBuf> {
     let request_path = dir.join(format!("request_{name}.toml"));
@@ -243,6 +252,7 @@ fn bank_reserved_schema_version_fails_in_the_current_reader() {
             "wave.csv",
             "comparison",
             total,
+            FULL_BLOCK,
             &bank,
             "diagonal",
             SMALL_CALIBRATION,
@@ -261,7 +271,7 @@ fn bank_reserved_schema_version_fails_in_the_current_reader() {
 #[test]
 fn bank_identical_models_reduce_and_reproduce_global_path() {
     let dir = unique_test_dir("identical");
-    let total = 200_000u64;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total as usize, 0x1234_5678_9abc_def1);
     let global = run_request(
         &dir,
@@ -269,6 +279,7 @@ fn bank_identical_models_reduce_and_reproduce_global_path() {
             "wave.csv",
             "comparison_global",
             total,
+            FULL_BLOCK,
             "",
             "full",
             SMALL_CALIBRATION,
@@ -282,6 +293,7 @@ fn bank_identical_models_reduce_and_reproduce_global_path() {
             "wave.csv",
             "comparison_bank",
             total,
+            FULL_BLOCK,
             &identical_bank(total),
             "full",
             SMALL_CALIBRATION,
@@ -347,7 +359,10 @@ fn bank_identical_models_reduce_and_reproduce_global_path() {
 #[test]
 fn bank_distinct_models_map_every_center_once() {
     let dir = unique_test_dir("distinct");
-    let total = 240_000u64;
+    // 10 blocks (128,000 samples): the leakage guard drops the first
+    // evaluation block, so two eligible evaluation blocks must straddle the
+    // bank split for both regimes to keep rows (see the SMALL_TOTAL note).
+    let total = 128_000u64;
     synthetic_csv(&dir.join("wave.csv"), total as usize, 0xfeed_face_dead_beef);
     let bank = run_request(
         &dir,
@@ -355,6 +370,7 @@ fn bank_distinct_models_map_every_center_once() {
             "wave.csv",
             "comparison_bank",
             total,
+            FULL_BLOCK,
             &distinct_bank(total, 1, 64),
             "diagonal",
             SMALL_CALIBRATION,
@@ -414,7 +430,7 @@ fn bank_distinct_models_map_every_center_once() {
 #[test]
 fn bank_workers_and_chunks_preserve_rows_and_values() {
     let dir = unique_test_dir("workers");
-    let total = 240_000u64;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total as usize, 0x0bad_c0de_1234_5678);
     let single = run_request(
         &dir,
@@ -422,6 +438,7 @@ fn bank_workers_and_chunks_preserve_rows_and_values() {
             "wave.csv",
             "comparison_single",
             total,
+            FULL_BLOCK,
             &distinct_bank(total, 1, 3),
             "full",
             SMALL_CALIBRATION,
@@ -435,6 +452,7 @@ fn bank_workers_and_chunks_preserve_rows_and_values() {
             "wave.csv",
             "comparison_parallel",
             total,
+            FULL_BLOCK,
             &distinct_bank(total, 4, 7),
             "full",
             SMALL_CALIBRATION,
@@ -509,7 +527,7 @@ fn bank_workers_and_chunks_preserve_rows_and_values() {
 #[test]
 fn bank_replay_after_move_verifies_digests_and_replays() {
     let dir = unique_test_dir("replay");
-    let total = 200_000u64;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total as usize, 0x5eed_5eed_5eed_5eed);
     let destination = run_request(
         &dir,
@@ -517,6 +535,7 @@ fn bank_replay_after_move_verifies_digests_and_replays() {
             "wave.csv",
             "comparison_bank",
             total,
+            FULL_BLOCK,
             &identical_bank(total),
             "full",
             SMALL_CALIBRATION,
@@ -615,7 +634,7 @@ fn bank_replay_after_move_verifies_digests_and_replays() {
 #[test]
 fn bank_replay_none_policy_reports_unavailable_variance() {
     let dir = unique_test_dir("none_policy");
-    let total = 200_000u64;
+    let total = SMALL_TOTAL;
     synthetic_csv(&dir.join("wave.csv"), total as usize, 0x1111_2222_3333_4444);
     let destination = run_request(
         &dir,
@@ -623,6 +642,7 @@ fn bank_replay_none_policy_reports_unavailable_variance() {
             "wave.csv",
             "comparison_bank",
             total,
+            FULL_BLOCK,
             &identical_bank(total),
             "none",
             SMALL_CALIBRATION,
@@ -770,6 +790,7 @@ end = 200000
             "wave.csv",
             &format!("comparison_{name}"),
             total,
+            FULL_BLOCK,
             &section,
             "diagonal",
             SMALL_CALIBRATION,
@@ -800,6 +821,7 @@ fn bank_refuses_unreferenced_staging_files() {
         "wave.csv",
         "comparison_bank",
         total,
+        FULL_BLOCK,
         &identical_bank(total),
         "full",
         SMALL_CALIBRATION,

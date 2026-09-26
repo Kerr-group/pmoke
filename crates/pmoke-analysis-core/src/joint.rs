@@ -7,12 +7,14 @@
 //! stationary-correlated (`v0 * C_N`), and phase-correlated (`S_N C_N S_N`).
 //! Coordinate conventions follow NUMERICS sections 1-2: original-sample
 //! support, `phi = 2 pi f t - phase`, column order `[DC, cos, sin, ...]`,
-//! and the legacy half-amplitude map `Xk = b/2`, `Yk = a/2`.
+//! and the peak-amplitude map `Xk = b`, `Yk = a`.
 //!
 //! Backend: nalgebra 0.35.0, no-default plus `std` (A-010 spike). The
 //! rectangular solve uses only public APIs: thin `Q`, `Q^T y`, and manual
 //! back-substitution on the upper-trapezoidal `R`. Rank and conditioning
-//! come from an SVD diagnostic on the same whitened design; the independent
+//! come from an SVD diagnostic on the thin `R` factor of the same whitened
+//! design (P3: reuses the QR factorization instead of cloning the `N x P`
+//! design a second time); the independent
 //! cross-check is the SciPy oracle, not a second nalgebra path.
 //!
 //! Scaling policy: the solver factors the supplied whitened design as-is,
@@ -212,7 +214,17 @@ pub struct JointEstimate {
     pub rank: usize,
     /// Scaled-design condition number estimate.
     pub condition: f64,
-    /// Residual RMS in whitened units.
+    /// Standardized residual RMS per unit noise: the whitened RMS divided by
+    /// the square root of the variance scale, so identity and diagonal modes
+    /// report identical values for identical covariances. Dimensionless, not
+    /// volts: it is numerically equal to the raw volts RMS for Identity
+    /// noise when the reference variance is exactly 1 V^2 (more generally
+    /// whenever the effective covariance is the unit identity), and stays
+    /// dimensionless in that coincidence. Other modes normalize by their
+    /// own realized bins and/or correlation factor, so the reference
+    /// variance alone never sets the reading. Never the diagnostics-path
+    /// volts RMS of a raw nuisance residual (different estimator,
+    /// different normalization).
     pub residual_rms: f64,
     /// Bounded jitter actually applied to the normalized Toeplitz diagonal
     /// in V^2-normalized units (FR-017). Zero unless the factor needed it;
@@ -401,6 +413,15 @@ pub fn toeplitz_from_lags(lags: &[f64], samples: usize) -> DMatrix<f64> {
 /// hence the `covariance_not_spd` code on zero diagonals: a zero diagonal
 /// means the purported factor was not positive definite. Zero diagonals
 /// fail instead of dividing.
+///
+/// Cost note (P1): the kernel below blocks across the right-hand sides
+/// through a row-major work buffer (transpose once, solve with contiguous
+/// row accesses, transpose back). Each `(row, column)` still accumulates
+/// `inner = 0..row` subtractions in increasing order, exactly like the
+/// naive column-outer triple loop, so results are bit-identical; only the
+/// reuse changes. Each `L[row, inner]` is loaded once and fanned out
+/// across every right-hand side instead of once per column. No threading
+/// inside the window: the outer rayon pool owns parallelism.
 pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DMatrix<f64>> {
     let dimension = lower.nrows();
     if lower.ncols() != dimension || rhs.nrows() != dimension {
@@ -425,23 +446,13 @@ pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DM
             ));
         }
     }
-    let mut solution = DMatrix::zeros(dimension, rhs.ncols());
-    for column in 0..rhs.ncols() {
-        for row in 0..dimension {
-            let mut accumulator = rhs[(row, column)];
-            for inner in 0..row {
-                accumulator -= lower[(row, inner)] * solution[(inner, column)];
-            }
-            let diagonal = lower[(row, row)];
-            if diagonal == 0.0 {
-                return Err(AnalysisError::new(
-                    "covariance_not_spd",
-                    format!("zero triangular diagonal at row {row}"),
-                ));
-            }
-            solution[(row, column)] = accumulator / diagonal;
-        }
-    }
+    let mut solution = rhs.clone();
+    blocked_forward_kernel(
+        lower.as_slice(),
+        solution.as_mut_slice(),
+        dimension,
+        rhs.ncols(),
+    )?;
     for value in solution.iter() {
         if !value.is_finite() {
             return Err(AnalysisError::new(
@@ -451,6 +462,114 @@ pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DM
         }
     }
     Ok(solution)
+}
+
+/// In-place blocked forward substitution `L X = B` over the caller's
+/// buffer: the correlated whitener packs `[design | response]` once and
+/// solves without the extra per-window right-hand-side copy. Validation,
+/// diagonal-failure row, and output checks match [`forward_substitute`]
+/// exactly; only the redundant allocation is hoisted.
+fn forward_substitute_in_place(lower: &DMatrix<f64>, solution: &mut DMatrix<f64>) -> Result<()> {
+    let dimension = lower.nrows();
+    if lower.ncols() != dimension || solution.nrows() != dimension {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            "triangular solve needs a square factor matching every RHS row",
+        ));
+    }
+    for value in lower.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "triangular factor must be finite",
+            ));
+        }
+    }
+    for value in solution.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "triangular right-hand side must be finite",
+            ));
+        }
+    }
+    let ncols = solution.ncols();
+    blocked_forward_kernel(lower.as_slice(), solution.as_mut_slice(), dimension, ncols)?;
+    for value in solution.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "non_finite_output",
+                "triangular solve produced a non-finite value",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Blocked forward-substitution kernel over column-major slices: `lower`
+/// holds the `dimension x dimension` factor and `solution` the
+/// `dimension x ncols` right-hand sides, both column-major as stored by
+/// [`DMatrix`].
+///
+/// Layout blocking (P1): the right-hand sides are transposed once into a
+/// row-major work buffer, solved with contiguous row accesses, and
+/// transposed back. The naive column-outer loop streams the 32MB factor
+/// once per right-hand side (~26x at N=2003/P=25) and is host-memory
+/// bound; the row-major solve loads each `L[row, inner]` once and fans it
+/// out across every right-hand side while every work-buffer access stays
+/// contiguous and vectorizable.
+///
+/// Bit-identity: per `(row, column)` the subtractions still run in
+/// `inner = 0..row` order with the division landing last, exactly the
+/// naive order -- only the storage layout changes, never the operation
+/// sequence. The zero-diagonal failure reports the first such row,
+/// matching the column-outer loop's discovery order. Empty right-hand
+/// sides solve trivially with no diagonal checks, also matching.
+fn blocked_forward_kernel(
+    lower: &[f64],
+    solution: &mut [f64],
+    dimension: usize,
+    ncols: usize,
+) -> Result<()> {
+    if ncols == 0 {
+        return Ok(());
+    }
+    // Transpose to row-major work: work[row * ncols + column].
+    let mut work = vec![0.0_f64; dimension * ncols];
+    for column in 0..ncols {
+        let source = &solution[column * dimension..(column + 1) * dimension];
+        for row in 0..dimension {
+            work[row * ncols + column] = source[row];
+        }
+    }
+    for row in 0..dimension {
+        let base = row * ncols;
+        for inner in 0..row {
+            let factor = lower[inner * dimension + row];
+            let inner_base = inner * ncols;
+            for column in 0..ncols {
+                work[base + column] -= factor * work[inner_base + column];
+            }
+        }
+        let diagonal = lower[row * dimension + row];
+        if diagonal == 0.0 {
+            return Err(AnalysisError::new(
+                "covariance_not_spd",
+                format!("zero triangular diagonal at row {row}"),
+            ));
+        }
+        for column in 0..ncols {
+            work[base + column] /= diagonal;
+        }
+    }
+    // Transpose back to the column-major output.
+    for column in 0..ncols {
+        let target = &mut solution[column * dimension..(column + 1) * dimension];
+        for row in 0..dimension {
+            target[row] = work[row * ncols + column];
+        }
+    }
+    Ok(())
 }
 
 /// Cholesky factor of the normalized Toeplitz matrix with the bounded
@@ -599,9 +718,80 @@ pub fn design_matrix(
         ));
     }
     let nyquist = 0.5 / interval;
-    let mut columns: Vec<Vec<f64>> = Vec::with_capacity(1 + 2 * model.fit_harmonics.len());
-    columns.push(vec![1.0; times.len()]);
-    for harmonic in &model.fit_harmonics {
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    let mut design = DMatrix::zeros(times.len(), parameters);
+    fill_design_columns(
+        &mut design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        nyquist,
+    )?;
+    Ok(design)
+}
+
+/// Fill a preallocated design matrix in `[DC, cos(k phi), sin(k phi), ...]`
+/// order with `phi = 2 pi f t - phase` (NUMERICS section 2), reusing the
+/// caller's buffer across windows instead of allocating per-window column
+/// vectors. Each entry is an independent closed-form evaluation, so the
+/// filled values are bit-identical to [`design_matrix`]; only allocation
+/// cost is hoisted, never arithmetic. The timebase checks run in the same
+/// order with the same errors as [`design_matrix`].
+pub fn design_matrix_into(
+    design: &mut DMatrix<f64>,
+    times: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    model: &HarmonicSignalModel,
+    sample_rate_hz: f64,
+) -> Result<()> {
+    let interval = validate_timebase(times, sample_rate_hz)?;
+    require_finite("reference_frequency_hz", reference_frequency_hz)?;
+    require_finite("reference_phase_rad", reference_phase_rad)?;
+    if reference_frequency_hz <= 0.0 {
+        return Err(AnalysisError::new(
+            "non_finite_input",
+            "reference_frequency_hz must be positive",
+        ));
+    }
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    if design.nrows() != times.len() || design.ncols() != parameters {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            format!(
+                "design scratch holds {}x{} but the window needs {}x{}",
+                design.nrows(),
+                design.ncols(),
+                times.len(),
+                parameters
+            ),
+        ));
+    }
+    let nyquist = 0.5 / interval;
+    fill_design_columns(
+        design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        nyquist,
+    )
+}
+
+/// Shared design evaluation: per-harmonic Nyquist gate in fit order, then
+/// the closed-form column fill. Both [`design_matrix`] and
+/// [`design_matrix_into`] run this exact sequence, so acceptance and values
+/// match between the allocating and the buffer-reusing paths.
+fn fill_design_columns(
+    design: &mut DMatrix<f64>,
+    times: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    model: &HarmonicSignalModel,
+    nyquist: f64,
+) -> Result<()> {
+    for (position, harmonic) in model.fit_harmonics.iter().enumerate() {
         let frequency = *harmonic as f64 * reference_frequency_hz;
         if !frequency.is_finite() || frequency >= nyquist {
             return Err(AnalysisError::new(
@@ -609,23 +799,19 @@ pub fn design_matrix(
                 format!("harmonic {harmonic} reaches Nyquist at {nyquist:.6e} Hz"),
             ));
         }
-        let mut cos_column = Vec::with_capacity(times.len());
-        let mut sin_column = Vec::with_capacity(times.len());
-        for time in times {
+        let cos_column = 1 + 2 * position;
+        let sin_column = 2 + 2 * position;
+        for (row, time) in times.iter().enumerate() {
             let phi = TAU * reference_frequency_hz * time - reference_phase_rad;
             let (sin_phi, cos_phi) = (*harmonic as f64 * phi).sin_cos();
-            cos_column.push(cos_phi);
-            sin_column.push(sin_phi);
+            design[(row, cos_column)] = cos_phi;
+            design[(row, sin_column)] = sin_phi;
         }
-        columns.push(cos_column);
-        columns.push(sin_column);
     }
-    Ok(DMatrix::from_columns(
-        &columns
-            .iter()
-            .map(|column| DVector::from_vec(column.clone()))
-            .collect::<Vec<_>>(),
-    ))
+    for row in 0..times.len() {
+        design[(row, 0)] = 1.0;
+    }
+    Ok(())
 }
 
 /// Periodic piecewise-linear interpolation at uniform bin centers
@@ -747,12 +933,67 @@ pub struct PreparedNoisePlan {
 }
 
 /// Factorized normalized Toeplitz factor for one window length, built once
-/// and reused by every window that shares the geometry.
+/// and reused by every window that shares the geometry. The executed
+/// factor condition `cond(C)` with `C = T + jI` is measured once here with
+/// the same symmetric eigendecomposition the per-window TOL-07 gate uses,
+/// so every window can certify acceptance with an O(N) scale-ratio bound
+/// instead of its own O(N^3) eigendecomposition (LI 10s target).
 #[derive(Debug, Clone)]
 struct PreparedCorrelation {
     lower: DMatrix<f64>,
     toeplitz: DMatrix<f64>,
     jitter_applied_v2: f64,
+    /// 2-norm condition of the executed factor `C = T + jI`.
+    correlation_condition: f64,
+    /// Maximum `|C|` entry, for the O(N) realized-finiteness guard that
+    /// keeps the bound path fail-closed where the exact gate would refuse
+    /// an overflowing `R = S C S` realization.
+    max_abs_factor: f64,
+}
+
+impl PreparedCorrelation {
+    /// Conservative TOL-07 bound `cond(S C S) <= cond(S)^2 * cond(C)`.
+    /// Returns `None` when the bound cannot be formed (non-finite or
+    /// non-positive scales, non-finite arithmetic, or an `R` realization
+    /// the exact gate would refuse as overflowing): callers fall back to
+    /// the exact per-window gate, preserving its failure surface exactly.
+    fn condition_bound(&self, sqrt_variance: &[f64]) -> Option<f64> {
+        if sqrt_variance.is_empty() {
+            return None;
+        }
+        let mut smallest = f64::INFINITY;
+        let mut largest = 0.0_f64;
+        for scale in sqrt_variance.iter() {
+            if !scale.is_finite() || *scale <= 0.0 {
+                return None;
+            }
+            smallest = smallest.min(*scale);
+            largest = largest.max(*scale);
+        }
+        if !(smallest > 0.0 && largest > 0.0) {
+            return None;
+        }
+        let scale_condition = largest / smallest;
+        if !scale_condition.is_finite() {
+            return None;
+        }
+        let scale_condition_squared = scale_condition * scale_condition;
+        if !scale_condition_squared.is_finite() {
+            return None;
+        }
+        // Every `|R_ij| <= max_s^2 * max|C|`: a non-finite product means
+        // the exact gate would refuse the overflowing realization, so the
+        // bound must not certify acceptance here.
+        let realized_magnitude = largest * largest * self.max_abs_factor;
+        if !realized_magnitude.is_finite() {
+            return None;
+        }
+        let bound = scale_condition_squared * self.correlation_condition;
+        if !bound.is_finite() {
+            return None;
+        }
+        Some(bound)
+    }
 }
 
 impl PreparedNoisePlan {
@@ -859,10 +1100,22 @@ impl PreparedNoisePlan {
             .unwrap_or(0.0)
     }
 
+    /// Hoisted 2-norm condition of the executed correlation factor
+    /// `C = T + jI` (`None` for the uncorrelated modes). Measured once per
+    /// plan with the same symmetric eigendecomposition the exact TOL-07
+    /// gate uses; the per-window bound is `cond(S)^2` times this value.
+    pub fn correlation_condition(&self) -> Option<f64> {
+        self.correlation
+            .as_ref()
+            .map(|prepared| prepared.correlation_condition)
+    }
+
     /// Whitens design and response with the prepared plan (the accelerated
     /// path). Every per-window validation, variance interpolation,
-    /// realized-covariance gate and triangular solve matches the direct
-    /// path exactly; only the correlated factor construction is reused.
+    /// realized-covariance verdict and triangular solve matches the direct
+    /// path exactly; only the correlated factor construction and its
+    /// TOL-07 condition measurement are reused (an O(N) conservative bound
+    /// certifies acceptance, with exact-gate fallback otherwise).
     pub fn whiten(
         &self,
         design: &DMatrix<f64>,
@@ -901,14 +1154,20 @@ enum FactorSource<'a> {
 }
 
 impl FactorSource<'_> {
-    fn parts(&self) -> (&DMatrix<f64>, &DMatrix<f64>, f64) {
+    fn parts(&self) -> (&DMatrix<f64>, &DMatrix<f64>, f64, &PreparedCorrelation) {
         match self {
             FactorSource::Prepared(prepared) => (
                 &prepared.lower,
                 &prepared.toeplitz,
                 prepared.jitter_applied_v2,
+                prepared,
             ),
-            FactorSource::Fresh(fresh) => (&fresh.lower, &fresh.toeplitz, fresh.jitter_applied_v2),
+            FactorSource::Fresh(fresh) => (
+                &fresh.lower,
+                &fresh.toeplitz,
+                fresh.jitter_applied_v2,
+                fresh,
+            ),
         }
     }
 }
@@ -938,10 +1197,55 @@ fn prepare_correlation_factor(
     }
     let toeplitz = toeplitz_from_lags(&kernel.lags, rows);
     let (lower, jitter_applied_v2) = cholesky_factor(&toeplitz, max_jitter_v2)?;
+    // Hoisted TOL-07 factor condition: measure cond(C) once with the same
+    // symmetric eigendecomposition the per-window gate uses. Cholesky
+    // success already proves positive definiteness; a non-finite or
+    // non-positive spectrum here fails closed exactly like the gate would.
+    let mut executed = toeplitz.clone();
+    if jitter_applied_v2 != 0.0 {
+        for diagonal in 0..executed.nrows() {
+            executed[(diagonal, diagonal)] += jitter_applied_v2;
+        }
+    }
+    let eigenvalues = executed.clone().symmetric_eigen().eigenvalues;
+    let mut smallest = f64::INFINITY;
+    let mut largest = f64::NEG_INFINITY;
+    for value in eigenvalues.iter() {
+        smallest = smallest.min(*value);
+        largest = largest.max(*value);
+    }
+    if !(smallest.is_finite() && largest.is_finite()) || smallest <= 0.0 {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            "hoisted correlation factor is not numerically positive definite; \
+             refusing the condition verdict",
+        ));
+    }
+    let correlation_condition = largest / smallest;
+    if !correlation_condition.is_finite() {
+        return Err(AnalysisError::new(
+            "ill_conditioned_noise_model",
+            "hoisted correlation factor condition is non-finite; \
+             refusing the condition verdict",
+        ));
+    }
+    let mut max_abs_factor = 0.0_f64;
+    for value in executed.iter() {
+        if !value.is_finite() {
+            return Err(AnalysisError::new(
+                "ill_conditioned_noise_model",
+                "hoisted correlation factor is non-finite; \
+                 refusing the condition verdict",
+            ));
+        }
+        max_abs_factor = max_abs_factor.max(value.abs());
+    }
     Ok(PreparedCorrelation {
         lower,
         toeplitz,
         jitter_applied_v2,
+        correlation_condition,
+        max_abs_factor,
     })
 }
 
@@ -1197,24 +1501,40 @@ fn whiten_correlated(
             tolerances.max_jitter_v2,
         )?),
     };
-    let (lower, toeplitz, jitter) = factor_source.parts();
-    // TOL-07 on the executed covariance, not just its factors: Cholesky
-    // success and whitened-design conditioning do not bound cond(R).
-    gate_realized_noise_condition(
-        toeplitz,
-        jitter,
-        sqrt_variance,
-        tolerances.max_noise_condition,
-    )?;
-    let mut rhs = DMatrix::zeros(rows, scaled_design.ncols() + 1);
-    for row in 0..rows {
-        for column in 0..scaled_design.ncols() {
-            rhs[(row, column)] = scaled_design[(row, column)];
-        }
-        rhs[(row, scaled_design.ncols())] = scaled_response[row];
+    let (lower, toeplitz, jitter, prepared_factor) = factor_source.parts();
+    // Hoisted TOL-07 bound (P0): cond(S C S) <= cond(S)^2 * cond(C) with
+    // cond(C) measured once per plan. A bound at or under the cap implies
+    // the exact gate passes, so acceptance skips the per-window O(N^3)
+    // eigendecomposition with bit-identical outputs. Any unformable or
+    // over-cap bound falls back to the exact gate, preserving its failure
+    // surface exactly (no new rejections, no new acceptances).
+    let bound_accepts = prepared_factor
+        .condition_bound(sqrt_variance)
+        .is_some_and(|bound| bound <= tolerances.max_noise_condition);
+    if !bound_accepts {
+        // TOL-07 on the executed covariance, not just its factors: Cholesky
+        // success and whitened-design conditioning do not bound cond(R).
+        gate_realized_noise_condition(
+            toeplitz,
+            jitter,
+            sqrt_variance,
+            tolerances.max_noise_condition,
+        )?;
     }
-    let solved = forward_substitute(lower, &rhs)?;
+    // One packed buffer holds `[design | response]` and is solved in place:
+    // the old path built a separate right-hand-side copy plus the solver's
+    // own output (two ~417KB allocs at N=2003/P=25). Packing once and
+    // solving in place keeps every arithmetic step in the same per-element
+    // order, so whitened values are bit-identical with one allocation.
     let columns = scaled_design.ncols();
+    let mut solved = DMatrix::zeros(rows, columns + 1);
+    for row in 0..rows {
+        for column in 0..columns {
+            solved[(row, column)] = scaled_design[(row, column)];
+        }
+        solved[(row, columns)] = scaled_response[row];
+    }
+    forward_substitute_in_place(lower, &mut solved)?;
     let design = solved.columns(0, columns).into_owned();
     let response = DVector::from_iterator(rows, (0..rows).map(|row| solved[(row, columns)]));
     for value in design.iter().chain(response.iter()) {
@@ -1234,13 +1554,54 @@ fn whiten_correlated(
 }
 
 /// Thin-QR least squares with explicit rank/condition gates (NUMERICS 5.1).
-/// Returns `(beta, residual_rms, rank, condition)` with strictly finite
-/// outputs; arithmetic overflow reports `non_finite_output`.
+/// Returns `(beta, whitened residual RMS, rank, condition)` with strictly
+/// finite outputs; arithmetic overflow reports `non_finite_output`. The
+/// returned RMS is pre-standardization: [`estimate_joint`] divides it by the
+/// square root of the variance scale before publishing `residual_rms`.
 pub fn solve_direct(
     whitened_design: &DMatrix<f64>,
     whitened_signal: &DVector<f64>,
     tolerances: JointSolverTolerances,
 ) -> Result<(DVector<f64>, f64, usize, f64)> {
+    let (beta, residual_rms, rank, condition, _) =
+        solve_direct_with_factor(whitened_design, whitened_signal, tolerances)?;
+    Ok((beta, residual_rms, rank, condition))
+}
+
+/// Thin-QR least-squares solution with its design-model covariance, sharing
+/// one R factor: `(beta, residual_rms, rank, condition, covariance_beta)`.
+/// See [`solve_direct_and_covariance`].
+pub type QrSolveWithCovariance = (DVector<f64>, f64, usize, f64, DMatrix<f64>);
+
+/// Thin-QR least squares that also returns the thin R factor, so the
+/// design-model covariance can reuse the exact same factorization instead
+/// of running a second QR over the same matrix (see
+/// [`solve_direct_and_covariance`]). The SVD rank/condition diagnostic
+/// likewise reuses this factor (P3) instead of cloning the `N x P` design
+/// a second time: for thin QR (`A = Q1 R1` with orthonormal `Q1`) the
+/// singular values of `R1` coincide with the design's in exact arithmetic
+/// (measured agreement ~1e-15 relative). Beta, residual, and covariance
+/// are bit-identical to the sequential pair; rank is unchanged and the
+/// reported condition agrees to ~1e-15 relative (see the P3 test). Gate
+/// thresholds, error precedence, and every other value are unchanged
+/// while the duplicate `N x P` traffic is gone; three compatibility guards
+/// keep the observable admission identical to the design-SVD path without
+/// touching thresholds: QR overflow to nonfinite `R` defers to the base
+/// design diagnostic (typed `non_finite_output` downstream, never an SVD
+/// panic), acceptances whose gate distance lies within the
+/// diagnostic-uncertainty bound below defer to the base diagnostic so
+/// configured boundaries admit exactly as before, and factors whose
+/// Householder arithmetic left the relative-accuracy domain (squared
+/// column norms near/below the normal range, where the uncertainty bound
+/// does not apply) likewise defer to the base diagnostic.
+/// Arithmetic, gates, and error
+/// precedence match [`solve_direct`] step for step; only the duplicate
+/// factorization cost is hoisted, never any value.
+fn solve_direct_with_factor(
+    whitened_design: &DMatrix<f64>,
+    whitened_signal: &DVector<f64>,
+    tolerances: JointSolverTolerances,
+) -> Result<QrSolveWithCovariance> {
     let (rows, columns) = (whitened_design.nrows(), whitened_design.ncols());
     if whitened_signal.len() != rows {
         return Err(AnalysisError::new(
@@ -1274,40 +1635,220 @@ pub fn solve_direct(
             "max_condition must be positive finite",
         ));
     }
-    // Rank and conditioning from the SVD diagnostic on the same matrix.
-    let svd = whitened_design.clone().svd(true, false);
-    let singular = svd.singular_values;
-    let sigma_max = singular[0];
-    if !(sigma_max.is_finite() && sigma_max > 0.0) {
-        return Err(AnalysisError::new(
-            "rank_deficient_design",
-            "whitened design has no finite nonzero singular value",
-        ));
-    }
-    let mut rank = 0;
-    for value in singular.iter() {
-        if *value > tolerances.rank_tol * sigma_max {
-            rank += 1;
-        }
-    }
-    if rank < columns {
-        return Err(AnalysisError::new(
-            "rank_deficient_design",
-            format!("whitened design rank {rank} below {columns} columns"),
-        ));
-    }
-    let sigma_min = singular[columns - 1];
-    let condition = sigma_max / sigma_min;
-    if !(condition.is_finite()) || condition > tolerances.max_condition {
-        return Err(AnalysisError::new(
-            "ill_conditioned_design",
-            format!("scaled-design condition {condition:.6e} exceeds limit"),
-        ));
-    }
     // Solution through thin QR: c = Q^T y, then back-substitute R1 x = c.
+    // The factorization below runs on the single N x P clone. The SVD
+    // diagnostic reuses its thin R factor (P3) instead of cloning the
+    // design a second time; the gate checks keep their original order, so
+    // error precedence is unchanged.
+    //
+    // Compatibility guards (thresholds untouched):
+    // - F1: QR arithmetic can overflow finite input to a nonfinite R, and
+    //   nalgebra's SVD panics on nonfinite input. The finiteness gate above
+    //   proves the design finite, not the factor, so check `upper` before
+    //   any SVD and defer overflow cases to the base design diagnostic.
+    //   The subsequent back-substitution/residual gates then report the
+    //   same typed `non_finite_output` the base path reports.
+    // - F2: thin-R singulars drift versus the design SVD, which can flip a
+    //   configured `max_condition`/`rank_tol` boundary. Any rejection is
+    //   re-decided with the exact base diagnostic (`svd(false, false)` on
+    //   the whitened design). An acceptance is re-decided too whenever the
+    //   gate distance lies within the diagnostic-uncertainty bound derived
+    //   below, where the base verdict could differ. Clear acceptances keep
+    //   the P3 saving; only rare borderline/error paths pay the extra N x P
+    //   clone.
+    // - F3: finite `R` is not sufficient for the F2 bound. The Householder
+    //   norms behind it are formed unscaled (`norm_squared`, a raw sum of
+    //   squares), so on tiny-magnitude finite inputs the squared norms can
+    //   enter the subnormal range and lose mantissa bits while `R` stays
+    //   finite. The relative backward-error model then does not apply and
+    //   the `sigma_abs_tol` band below can miss real gate drift. The
+    //   diagonal magnitudes `|R_kk|` are exactly the column norms formed
+    //   at each Householder step, so a diagonal floor derived from
+    //   `sqrt(f64::MIN_POSITIVE)` tests the whole chain: below it the
+    //   gates are re-decided with the base diagnostic (which pre-scales
+    //   before bidiagonalization). No solve arithmetic is rescaled; only
+    //   the diagnostic source changes, exactly as in F1/F2.
     let qr = whitened_design.clone().qr();
     let projected = qr.q().tr_mul(whitened_signal);
     let upper = qr.r();
+    // Base design-SVD gates, bit-for-bit the pre-reuse diagnostic. Used for
+    // F1 overflow and for F2 borderline/rejection verification.
+    let base_gates = |singular: &nalgebra::DVector<f64>| -> Result<(usize, f64)> {
+        let sigma_max = singular[0];
+        if !(sigma_max.is_finite() && sigma_max > 0.0) {
+            return Err(AnalysisError::new(
+                "rank_deficient_design",
+                "whitened design has no finite nonzero singular value",
+            ));
+        }
+        let mut rank = 0;
+        for value in singular.iter() {
+            if *value > tolerances.rank_tol * sigma_max {
+                rank += 1;
+            }
+        }
+        if rank < columns {
+            return Err(AnalysisError::new(
+                "rank_deficient_design",
+                format!("whitened design rank {rank} below {columns} columns"),
+            ));
+        }
+        let sigma_min = singular[columns - 1];
+        let condition = sigma_max / sigma_min;
+        if !(condition.is_finite()) || condition > tolerances.max_condition {
+            return Err(AnalysisError::new(
+                "ill_conditioned_design",
+                format!("scaled-design condition {condition:.6e} exceeds limit"),
+            ));
+        }
+        Ok((rank, condition))
+    };
+    // Diagnostic-uncertainty bound (F2). Householder QR followed by the
+    // bidiagonal-QR SVD each carry backward error `||dA|| <= c(m,n) eps
+    // ||A||` with a small polynomial `c`, so by Weyl each computed
+    // singular value lies within `c eps sigma_max` of truth -- for both
+    // the thin-R chain and the design-SVD reference. The absolute
+    // tolerance below, `64 eps max(m,n) sigma_max`, exceeds textbook
+    // constants (order a few x m n on these shapes) by more than an order
+    // of magnitude and additionally covers the computed-U versus
+    // values-only few-ULP implementation drift (see NOTE #297 above).
+    // Gate distances are measured against it, never against a fixed
+    // relative band: the condition uncertainty scales with the condition
+    // itself (the review's `~8.5e4` fixture needs `~2.4e-8` while its real
+    // drift is `4.5e-12`), whereas a fixed band either misses such gates
+    // or needlessly punts well-conditioned solves to the base path.
+    //
+    // Diagnostic-domain floor (F3). The backward-error model above is a
+    // relative statement: it holds only while the Householder squared
+    // norms are evaluated with full 53-bit mantissas, i.e. while they
+    // stay in the normal range. Pinned nalgebra 0.35.0 forms each norm
+    // unscaled (`reflection_axis_mut` over `column.norm_squared()`), so
+    // tiny-magnitude finite inputs push those sums into the subnormal
+    // range -- fewer effective bits, relative drift far beyond
+    // `sigma_abs_tol` -- while `R` itself stays finite (the design SVD
+    // instead divides by the maximum magnitude before bidiagonalizing,
+    // so it is unaffected). Each step's norm survives as the diagonal
+    // magnitude `|R_kk|`, hence the whole chain is in-domain exactly when
+    // every `|R_kk|^2` is safely normal. The floor below,
+    // `8 * sqrt(f64::MIN_POSITIVE)` (exact: `8 * 2^-511`; squared it sits
+    // 64x above `MIN_POSITIVE`), leaves summation rounding (`~m eps`
+    // relative, far below a 64x gap) no room to blur the boundary: above
+    // it the relative model genuinely applies, below it the gates defer
+    // to the base diagnostic. The narrow over-deferral band (true norms
+    // within 8x of `2^-511`, i.e. designs near `1e-154`) only ever costs
+    // one extra diagnostic, never a verdict.
+    let gate_dim = rows.max(columns) as f64;
+    let qr_domain_floor = 8.0 * f64::MIN_POSITIVE.sqrt();
+    let (rank, condition) = if !upper.iter().all(|v| v.is_finite()) {
+        // F1: overflowed factor; run base gates, then fall through to the
+        // shared back-substitution/residual path which yields the base
+        // typed `non_finite_output`.
+        let svd_base = whitened_design.clone().svd(false, false);
+        base_gates(&svd_base.singular_values)?
+    } else {
+        // Rank and conditioning from the SVD diagnostic on the thin R factor.
+        // In exact arithmetic these singular values are the design's
+        // (A = Q1 R1 with orthonormal Q1); in floating point they agree to
+        // ~1e-15 relative. `upper` is still borrowed below by
+        // the back-substitution, hence the P x P clone (negligible traffic).
+        // NOTE (#297 convergence): the U factor stays computed (`svd(true,
+        // false)`): pinned nalgebra 0.35.0 skips the 2x2 normalization for
+        // values-only SVD, shifting singulars a few ULP and gate decisions, so
+        // `svd(false, false)` is not adopted here. P3 already subsumes P2's
+        // N x P U saving on this path (the diagnostic runs on P x P `upper`).
+        // F3: a finite `R` whose Householder chain left the
+        // relative-accuracy domain (some `|R_kk|` below the floor above)
+        // carries drift the F2 band cannot bound, so the gates below are
+        // re-decided with the base diagnostic whether or not they look
+        // borderline. This check is O(p) on already-computed entries.
+        let mut qr_in_domain = true;
+        for diagonal in 0..columns {
+            if upper[(diagonal, diagonal)].abs() < qr_domain_floor {
+                qr_in_domain = false;
+                break;
+            }
+        }
+        let svd = upper.clone().svd(true, false);
+        let singular = svd.singular_values;
+        let sigma_max = singular[0];
+        // Absolute singular tolerance from the uncertainty bound above.
+        let sigma_abs_tol = 64.0 * f64::EPSILON * gate_dim * sigma_max;
+        // Fast-path gate values; rejections and borderline acceptances are
+        // verified against the base diagnostic below.
+        let mut rank_r = 0;
+        let sigma_max_ok = sigma_max.is_finite() && sigma_max > 0.0;
+        if sigma_max_ok {
+            for value in singular.iter() {
+                if *value > tolerances.rank_tol * sigma_max {
+                    rank_r += 1;
+                }
+            }
+        }
+        let sigma_min_r = singular[columns - 1];
+        let condition_r = sigma_max / sigma_min_r;
+        let rejects_r = !sigma_max_ok
+            || rank_r < columns
+            || !(condition_r.is_finite())
+            || condition_r > tolerances.max_condition;
+        // Borderline acceptance: within diagnostic uncertainty of either
+        // gate, where the base verdict could differ. Rejections are exact
+        // by construction (always re-decided); here `condition_r` is finite
+        // with `condition_r <= limit` and every singular exceeds its
+        // threshold, so the one-sided gaps below are non-negative.
+        let mut borderline = false;
+        if !rejects_r {
+            // Condition: `(limit - cond_R) / limit` against the linearized
+            // quotient uncertainty `4 sigma_abs_tol / sigma_min_R`
+            // (sigma_min error dominates, plus sigma_max-proxy slack).
+            let cond_gap = (tolerances.max_condition - condition_r) / tolerances.max_condition;
+            if cond_gap <= 4.0 * sigma_abs_tol / sigma_min_r {
+                borderline = true;
+            } else {
+                // Rank: any singular within `2 sigma_abs_tol` above the
+                // `rank_tol sigma_max` threshold (factor 2 for the
+                // threshold's own sigma_max-proxy error).
+                let threshold_r = tolerances.rank_tol * sigma_max;
+                for value in singular.iter() {
+                    if *value - threshold_r <= 2.0 * sigma_abs_tol {
+                        borderline = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if rejects_r || borderline || !qr_in_domain {
+            // F2/F3: re-decide with the exact base diagnostic so configured
+            // boundaries admit exactly as before. Thresholds unchanged.
+            let svd_base = whitened_design.clone().svd(false, false);
+            base_gates(&svd_base.singular_values)?
+        } else {
+            // Clear acceptance far from any boundary: keep the reused
+            // diagnostic values (agree with base to ~1e-15, well inside the
+            // 1e-12 golden band).
+            if !sigma_max_ok {
+                return Err(AnalysisError::new(
+                    "rank_deficient_design",
+                    "whitened design has no finite nonzero singular value",
+                ));
+            }
+            if rank_r < columns {
+                return Err(AnalysisError::new(
+                    "rank_deficient_design",
+                    format!("whitened design rank {rank_r} below {columns} columns"),
+                ));
+            }
+            if !(condition_r.is_finite()) || condition_r > tolerances.max_condition {
+                return Err(AnalysisError::new(
+                    "ill_conditioned_design",
+                    format!("scaled-design condition {condition_r:.6e} exceeds limit"),
+                ));
+            }
+            (rank_r, condition_r)
+        }
+    };
+    // Back-substitution R1 x = c on the same factor the diagnostic above
+    // already reused; `projected` and `upper` were computed before the
+    // gates but only read here, after them.
     let mut beta = DVector::zeros(columns);
     for column in (0..columns).rev() {
         let mut accumulator = projected[column];
@@ -1362,7 +1903,7 @@ pub fn solve_direct(
             "residual RMS is non-finite",
         ));
     }
-    Ok((beta, residual_rms, rank, condition))
+    Ok((beta, residual_rms, rank, condition, upper))
 }
 
 /// Design-model covariance `(Dw^T Dw)^-1` from the whitened thin R factor.
@@ -1395,6 +1936,20 @@ pub fn covariance_from_qr(
         ));
     }
     let upper = whitened_design.clone().qr().r();
+    covariance_from_factor(&upper, columns, variance_scale)
+}
+
+/// Design-model covariance from an already-computed thin R factor: solves
+/// `R1^T Z = I` for `Z`, then `C = Z^T Z`, scaled. The substitution
+/// sequence matches [`covariance_from_qr`] exactly; callers must have run
+/// the same dimension/finiteness/scale gates first (they do: both
+/// [`covariance_from_qr`] above and [`solve_direct_and_covariance`] below
+/// validate before substituting).
+fn covariance_from_factor(
+    upper: &DMatrix<f64>,
+    columns: usize,
+    variance_scale: f64,
+) -> Result<DMatrix<f64>> {
     // Solve R1^T Z = I for Z, then C = Z^T Z, scaled.
     let mut inverse_transpose = DMatrix::zeros(columns, columns);
     for column in 0..columns {
@@ -1425,7 +1980,38 @@ pub fn covariance_from_qr(
     }
 }
 
-/// Legacy half-amplitude map `Xk = b/2`, `Yk = a/2` in `[X1,Y1,...]` order.
+/// Combined thin-QR solve and design-model covariance sharing one R factor
+/// (NUMERICS 5.1, per-window duplicate-factorization removal). Runs the
+/// [`solve_direct`] gates and back-substitution, then the
+/// [`covariance_from_qr`] scale gate and forward substitution on the exact
+/// same factor object — so every output is bit-identical to running the two
+/// entry points in sequence, while the second `O(N p^2)` QR factorization
+/// and its matrix clone are gone (and the SVD diagnostic now also reuses
+/// that factor instead of cloning the design again — see
+/// [`solve_direct`]). Returns
+/// `(beta, residual_rms, rank, condition, covariance_beta)`.
+pub fn solve_direct_and_covariance(
+    whitened_design: &DMatrix<f64>,
+    whitened_signal: &DVector<f64>,
+    tolerances: JointSolverTolerances,
+    variance_scale: f64,
+) -> Result<QrSolveWithCovariance> {
+    let (beta, residual_rms, rank, condition, upper) =
+        solve_direct_with_factor(whitened_design, whitened_signal, tolerances)?;
+    // Same gate covariance_from_qr runs after its own factorization; the
+    // solve above already ran the shared dimension/finiteness gates first,
+    // preserving the sequential error precedence exactly.
+    if !variance_scale.is_finite() || variance_scale <= 0.0 {
+        return Err(AnalysisError::new(
+            "invalid_noise_model",
+            "covariance variance scale must be positive finite",
+        ));
+    }
+    let covariance_beta = covariance_from_factor(&upper, whitened_design.ncols(), variance_scale)?;
+    Ok((beta, residual_rms, rank, condition, covariance_beta))
+}
+
+/// Peak-amplitude map `Xk = b`, `Yk = a` in `[X1,Y1,...]` order.
 pub fn map_to_xy(beta: &[f64], model: &HarmonicSignalModel) -> Result<Vec<f64>> {
     if beta.len() != 1 + 2 * model.fit_harmonics.len() {
         return Err(AnalysisError::new(
@@ -1453,13 +2039,14 @@ pub fn map_to_xy(beta: &[f64], model: &HarmonicSignalModel) -> Result<Vec<f64>> 
                     format!("output harmonic {output} is not in the fitting list"),
                 )
             })?;
-        xy.push(beta[2 + 2 * position] / 2.0);
-        xy.push(beta[1 + 2 * position] / 2.0);
+        xy.push(beta[2 + 2 * position]);
+        xy.push(beta[1 + 2 * position]);
     }
     Ok(xy)
 }
 
-/// Map beta-space covariance to XY space with 1/4 scaling (AT-022).
+/// Map beta-space covariance to XY space without rescaling (AT-022):
+/// XY now carries peak amplitudes, so the mapper only reorders entries.
 pub fn map_covariance_to_xy(
     covariance_beta: &DMatrix<f64>,
     model: &HarmonicSignalModel,
@@ -1491,7 +2078,7 @@ pub fn map_covariance_to_xy(
                     format!("output harmonic {output} is not in the fitting list"),
                 )
             })?;
-        // XY order is [Xk, Yk] = [b/2, a/2]: select sin then cos rows/cols.
+        // XY order is [Xk, Yk] = [b, a]: select sin then cos rows/cols.
         rows.push(2 + 2 * position);
         rows.push(1 + 2 * position);
     }
@@ -1499,7 +2086,7 @@ pub fn map_covariance_to_xy(
     let mut xy = DMatrix::zeros(dimension, dimension);
     for (i, row) in rows.iter().enumerate() {
         for (j, column) in rows.iter().enumerate() {
-            xy[(i, j)] = covariance_beta[(*row, *column)] / 4.0;
+            xy[(i, j)] = covariance_beta[(*row, *column)];
         }
     }
     Ok(xy)
@@ -1667,8 +2254,16 @@ pub fn estimate_joint_with_plan(
     let whitened_design = system.design;
     let whitened_signal = system.response;
     let variance_scale = system.variance_scale;
-    let (beta, whitened_rms, rank, condition) =
-        solve_direct(&whitened_design, &whitened_signal, tolerances)?;
+    // Shared-R solve+covariance: bit-identical to the sequential pair, one
+    // factorization fewer. The variance-scale guard below is unreachable
+    // through whitening (every arm emits a validated positive scale) and is
+    // kept as defense-in-depth in its original position.
+    let (beta, whitened_rms, rank, condition, covariance_beta) = solve_direct_and_covariance(
+        &whitened_design,
+        &whitened_signal,
+        tolerances,
+        variance_scale,
+    )?;
     if variance_scale <= 0.0 {
         return Err(AnalysisError::new(
             "non_finite_output",
@@ -1677,7 +2272,130 @@ pub fn estimate_joint_with_plan(
     }
     let residual_rms = whitened_rms / variance_scale.sqrt();
     let beta_vec = beta.as_slice().to_vec();
-    let covariance_beta = covariance_from_qr(&whitened_design, variance_scale)?;
+    let covariance_xy = map_covariance_to_xy(&covariance_beta, model)?;
+    let xy = map_to_xy(&beta_vec, model)?;
+    if !residual_rms.is_finite() {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "standardized residual RMS is non-finite",
+        ));
+    }
+    Ok(JointEstimate {
+        beta: beta_vec,
+        xy,
+        covariance_beta: covariance_beta
+            .row_iter()
+            .map(|row| row.iter().copied().collect())
+            .collect(),
+        covariance_xy: covariance_xy
+            .row_iter()
+            .map(|row| row.iter().copied().collect())
+            .collect(),
+        rank,
+        condition,
+        residual_rms,
+        jitter_applied_v2: system.jitter_applied_v2,
+    })
+}
+
+/// Reusable per-window workspace for the buffer-reusing estimate path.
+/// Holds the design-matrix buffer across windows so the hot loop allocates
+/// it once per thread instead of once per window. A scratch must never be
+/// shared across threads: give each worker its own (the native pipeline
+/// keeps one per rayon thread via a thread-local).
+#[derive(Debug, Clone)]
+pub struct JointScratch {
+    design: DMatrix<f64>,
+}
+
+impl JointScratch {
+    /// Empty workspace; the buffer grows to the first window it serves.
+    pub fn new() -> Self {
+        Self {
+            design: DMatrix::zeros(0, 0),
+        }
+    }
+
+    fn design_for(&mut self, rows: usize, parameters: usize) -> &mut DMatrix<f64> {
+        if self.design.nrows() != rows || self.design.ncols() != parameters {
+            self.design = DMatrix::zeros(rows, parameters);
+        }
+        &mut self.design
+    }
+}
+
+impl Default for JointScratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Buffer-reusing estimate on an immutable prepared noise plan: the design
+/// matrix fills the caller's [`JointScratch`] instead of allocating
+/// per-window column vectors, and the solve shares one QR factor with the
+/// covariance. Every validation, gate, and arithmetic step matches
+/// [`estimate_joint_with_plan`] exactly, so outputs are bit-identical;
+/// only allocation and duplicate-factorization cost is hoisted.
+#[allow(clippy::too_many_arguments)]
+pub fn estimate_joint_with_scratch(
+    times: &[f64],
+    signal: &[f64],
+    reference_frequency_hz: f64,
+    reference_phase_rad: f64,
+    sample_rate_hz: f64,
+    model: &HarmonicSignalModel,
+    tolerances: JointSolverTolerances,
+    plan: &PreparedNoisePlan,
+    scratch: &mut JointScratch,
+) -> Result<JointEstimate> {
+    let noise = plan.noise_model();
+    validate_signal_model(model, sample_rate_hz)?;
+    validate_noise_model(noise)?;
+    if plan.rows() != times.len() {
+        return Err(AnalysisError::new(
+            "dimension_mismatch",
+            format!(
+                "prepared noise plan covers {} samples but the window holds {}",
+                plan.rows(),
+                times.len()
+            ),
+        ));
+    }
+    let parameters = 1 + 2 * model.fit_harmonics.len();
+    let design = scratch.design_for(times.len(), parameters);
+    design_matrix_into(
+        design,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+        model,
+        sample_rate_hz,
+    )?;
+    let system = plan.whiten(
+        design,
+        signal,
+        times,
+        reference_frequency_hz,
+        reference_phase_rad,
+    )?;
+    let whitened_design = system.design;
+    let whitened_signal = system.response;
+    let variance_scale = system.variance_scale;
+    // Shared-R solve+covariance (same notes as estimate_joint_with_plan).
+    let (beta, whitened_rms, rank, condition, covariance_beta) = solve_direct_and_covariance(
+        &whitened_design,
+        &whitened_signal,
+        tolerances,
+        variance_scale,
+    )?;
+    if variance_scale <= 0.0 {
+        return Err(AnalysisError::new(
+            "non_finite_output",
+            "variance scale is non-positive",
+        ));
+    }
+    let residual_rms = whitened_rms / variance_scale.sqrt();
+    let beta_vec = beta.as_slice().to_vec();
     let covariance_xy = map_covariance_to_xy(&covariance_beta, model)?;
     let xy = map_to_xy(&beta_vec, model)?;
     if !residual_rms.is_finite() {

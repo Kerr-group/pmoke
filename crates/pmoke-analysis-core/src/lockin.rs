@@ -99,7 +99,7 @@ pub fn analyze_boxcar_legacy_pair_finite(
     let mut y = Vec::with_capacity(output_samples);
     let edge_dt =
         geometry.half_window_s - (geometry.half_window_samples as f64) * settings.sample_interval_s;
-    let scale = 1.0 / (2.0 * geometry.half_window_s);
+    let scale = 1.0 / geometry.half_window_s;
 
     let window_len = 2 * geometry.half_window_samples + 3;
     let first_center = geometry.i_start * settings.stride_samples;
@@ -670,8 +670,8 @@ mod tests {
             .collect::<Vec<_>>();
         let result = analyze_boxcar_legacy(&signal, settings).unwrap();
         let expected_phase = signal_phase + settings.reference_phase_rad;
-        let expected_x = 0.5 * amplitude * expected_phase.cos();
-        let expected_y = 0.5 * amplitude * expected_phase.sin();
+        let expected_x = amplitude * expected_phase.cos();
+        let expected_y = amplitude * expected_phase.sin();
         assert!(
             result
                 .x

@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "pmoke_version": "0.4.1",
+  "pmoke_version": "0.5.0",
   "feature_set": "hw-core",
   "command": {
     "name": "pmoke",
@@ -1591,7 +1591,7 @@
           {
             "name": "build",
             "path": "pmoke calibrate build",
-            "summary": "Build an immutable calibration artifact from a recorded waveform CSV",
+            "summary": "Build an immutable calibration artifact from recorded waveforms (CSV request or direct RAW run)",
             "required_feature": null,
             "arguments": [
               {
@@ -1603,12 +1603,21 @@
                   "FILE"
                 ],
                 "help": "Path to the calibration build request file",
-                "required": true,
+                "required": false,
                 "global": false,
                 "repeatable": false,
                 "default_values": [],
                 "possible_values": [],
-                "conflicts_with": []
+                "conflicts_with": [
+                  "block_len",
+                  "channel",
+                  "model_id",
+                  "reference_channel",
+                  "reference_frequency_hz",
+                  "reference_phase_rad",
+                  "run",
+                  "seed"
+                ]
               },
               {
                 "id": "output",
@@ -1625,6 +1634,168 @@
                 "default_values": [],
                 "possible_values": [],
                 "conflicts_with": []
+              },
+              {
+                "id": "run",
+                "kind": "option",
+                "short": null,
+                "long": "run",
+                "value_names": [
+                  "DIR"
+                ],
+                "help": "Recorded run directory for a direct build (defaults to the current directory)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "channel",
+                "kind": "option",
+                "short": null,
+                "long": "channel",
+                "value_names": [
+                  "N"
+                ],
+                "help": "Target channel for a direct build; repeat for several (defaults to the run signal channels)",
+                "required": false,
+                "global": false,
+                "repeatable": true,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "model_id",
+                "kind": "option",
+                "short": null,
+                "long": "model-id",
+                "value_names": [
+                  "ID"
+                ],
+                "help": "Model identifier for a single-channel direct build",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "reference_channel",
+                "kind": "option",
+                "short": null,
+                "long": "reference-channel",
+                "value_names": [
+                  "N"
+                ],
+                "help": "Reference channel for the same-run reference fit of a direct build",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "reference_frequency_hz",
+                "kind": "option",
+                "short": null,
+                "long": "reference-frequency-hz",
+                "value_names": [
+                  "HZ"
+                ],
+                "help": "Reference frequency in Hz for a direct build (defaults to the same-run fit)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "reference_phase_rad",
+                "kind": "option",
+                "short": null,
+                "long": "reference-phase-rad",
+                "value_names": [
+                  "RAD"
+                ],
+                "help": "Reference phase in radians for a direct build (defaults to the same-run fit)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "block_len",
+                "kind": "option",
+                "short": null,
+                "long": "block-len",
+                "value_names": [
+                  "N"
+                ],
+                "help": "Block length in samples for a direct build (defaults to samples divided by 40)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "seed",
+                "kind": "option",
+                "short": null,
+                "long": "seed",
+                "value_names": [
+                  "N"
+                ],
+                "help": "Random seed for a direct build (defaults to 0)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
+              },
+              {
+                "id": "frequency_rel_tol",
+                "kind": "option",
+                "short": null,
+                "long": "frequency-rel-tol",
+                "value_names": [
+                  "TOL"
+                ],
+                "help": "Reference-frequency applicability tolerance override (relative) for a direct build (defaults to the uncertainty combination; the value is recorded and marked overridden)",
+                "required": false,
+                "global": false,
+                "repeatable": false,
+                "default_values": [],
+                "possible_values": [],
+                "conflicts_with": [
+                  "request"
+                ]
               },
               {
                 "id": "help",

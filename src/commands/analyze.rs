@@ -634,17 +634,17 @@ mod tests {
         assert_close(
             "lock-in LIx_h1 first row",
             lockin[3][0],
-            0.015729072169505868,
+            0.031458144339011736,
         );
         assert_close(
             "lock-in LIx_h5 last row",
             lockin[11][GOLDEN_ROWS - 1],
-            -0.007978878470630094,
+            -0.015957756941260188,
         );
         assert_close(
             "lock-in LIy_h6 last row",
             lockin[14][GOLDEN_ROWS - 1],
-            -0.005849746555627881,
+            -0.011699493111255762,
         );
         assert_close("moke angle first row", moke[3][0], 0.03810480895653044);
         assert_close(
@@ -655,7 +655,7 @@ mod tests {
         assert_close(
             "moke Vm last row",
             moke[4][GOLDEN_ROWS - 1],
-            0.5290523546460741,
+            1.0581047092921483,
         );
         assert_close(
             "sensor integral last row",
@@ -1494,6 +1494,7 @@ csv = "kerr/kerr.csv"
             f_ref: 1000.0,
             a_ref: 1.0,
             omega_tref: 0.0,
+            f_ref_rel_uncertainty: None,
         };
         let time = (0..2000).map(|i| i as f64 * 1e-5).collect::<Vec<_>>();
         let signal = vec![0.0; 2000];
