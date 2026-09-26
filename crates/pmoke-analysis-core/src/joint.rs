@@ -2310,13 +2310,30 @@ pub fn estimate_joint_with_plan(
 }
 
 /// Reusable per-window workspace for the buffer-reusing estimate path.
+///
 /// Holds the design-matrix buffer across windows so the hot loop allocates
 /// it once per thread instead of once per window. A scratch must never be
 /// shared across threads: give each worker its own (the native pipeline
 /// keeps one per rayon thread via a thread-local).
+///
+/// Row-reuse (P-B/Q1): consecutive strided windows revisit identical global
+/// samples, so the surviving `(N - k)` rows are shifted down by `k` and only
+/// the `k` tail rows are recomputed with the exact closed-form fill. Reuse
+/// is keyed on absolute sample coordinates (the time values themselves) plus
+/// model/frequency/phase/sample-rate fingerprints, with per-window
+/// validation preserved and bit-exact overlap verification (`to_bits`).
+/// Any key mismatch, gap, or failed verification falls back to a full fill,
+/// so outputs stay bit-identical to [`design_matrix`]; only `sin_cos` cost
+/// is hoisted, never arithmetic.
 #[derive(Debug, Clone)]
 pub struct JointScratch {
     design: DMatrix<f64>,
+    prev_times: Vec<f64>,
+    prev_fit: Vec<usize>,
+    prev_f_ref_bits: u64,
+    prev_phase_bits: u64,
+    prev_sample_rate_bits: u64,
+    has_cache: bool,
 }
 
 impl JointScratch {
@@ -2324,14 +2341,155 @@ impl JointScratch {
     pub fn new() -> Self {
         Self {
             design: DMatrix::zeros(0, 0),
+            prev_times: Vec::new(),
+            prev_fit: Vec::new(),
+            prev_f_ref_bits: 0,
+            prev_phase_bits: 0,
+            prev_sample_rate_bits: 0,
+            has_cache: false,
         }
     }
 
     fn design_for(&mut self, rows: usize, parameters: usize) -> &mut DMatrix<f64> {
         if self.design.nrows() != rows || self.design.ncols() != parameters {
             self.design = DMatrix::zeros(rows, parameters);
+            // Shape change invalidates the row-reuse cache: the next window
+            // takes the full-fill path and re-arms the key.
+            self.has_cache = false;
+            self.prev_times.clear();
         }
         &mut self.design
+    }
+
+    /// Fill the scratch design buffer for `times`, reusing surviving rows
+    /// from the previous window when the overlap key verifies.
+    ///
+    /// Validation, Nyquist gates, and per-entry arithmetic match
+    /// [`design_matrix_into`] exactly (same order, same errors); only the
+    /// redundant `sin_cos` evaluations are skipped on a verified shift.
+    fn fill_design_reusing(
+        &mut self,
+        times: &[f64],
+        reference_frequency_hz: f64,
+        reference_phase_rad: f64,
+        model: &HarmonicSignalModel,
+        sample_rate_hz: f64,
+    ) -> Result<()> {
+        // Same validation prefix as `design_matrix_into`, in the same order.
+        let interval = validate_timebase(times, sample_rate_hz)?;
+        require_finite("reference_frequency_hz", reference_frequency_hz)?;
+        require_finite("reference_phase_rad", reference_phase_rad)?;
+        if reference_frequency_hz <= 0.0 {
+            return Err(AnalysisError::new(
+                "non_finite_input",
+                "reference_frequency_hz must be positive",
+            ));
+        }
+        let parameters = 1 + 2 * model.fit_harmonics.len();
+        let rows = times.len();
+        // The caller sizes via `design_for` before this call; keep the shape
+        // check to preserve the exact failure surface.
+        if self.design.nrows() != rows || self.design.ncols() != parameters {
+            return Err(AnalysisError::new(
+                "dimension_mismatch",
+                format!(
+                    "design scratch holds {}x{} but the window needs {}x{}",
+                    self.design.nrows(),
+                    self.design.ncols(),
+                    rows,
+                    parameters
+                ),
+            ));
+        }
+        let nyquist = 0.5 / interval;
+
+        // Attempt shift+refill-tail on a fully verified overlap key.
+        if self.has_cache
+            && self.prev_times.len() == rows
+            && rows >= 2
+            && self.prev_fit == model.fit_harmonics
+            && self.prev_f_ref_bits == reference_frequency_hz.to_bits()
+            && self.prev_phase_bits == reference_phase_rad.to_bits()
+            && self.prev_sample_rate_bits == sample_rate_hz.to_bits()
+        {
+            let shift = ((times[0] - self.prev_times[0]) / interval).round();
+            if shift.is_finite() && shift > 0.0 && shift < rows as f64 {
+                let k = shift as usize;
+                if k > 0 && k < rows {
+                    let mut overlap_ok = true;
+                    for (new_t, old_t) in times[..rows - k].iter().zip(self.prev_times[k..].iter())
+                    {
+                        if new_t.to_bits() != old_t.to_bits() {
+                            overlap_ok = false;
+                            break;
+                        }
+                    }
+                    if overlap_ok {
+                        // Same Nyquist gate as `fill_design_columns`, in fit
+                        // order, before touching the buffer: a rejection here
+                        // matches the full-fill path exactly.
+                        for harmonic in model.fit_harmonics.iter() {
+                            let frequency = *harmonic as f64 * reference_frequency_hz;
+                            if !frequency.is_finite() || frequency >= nyquist {
+                                return Err(AnalysisError::new(
+                                    "aliased_harmonic",
+                                    format!(
+                                        "harmonic {harmonic} reaches Nyquist at {nyquist:.6e} Hz"
+                                    ),
+                                ));
+                            }
+                        }
+                        // Shift surviving rows down by `k` per column
+                        // (column-major memmove; overlapping ranges safe).
+                        let nrows = self.design.nrows();
+                        let ncols = self.design.ncols();
+                        let buf = self.design.as_mut_slice();
+                        for col in 0..ncols {
+                            let base = col * nrows;
+                            buf.copy_within(base + k..base + nrows, base);
+                        }
+                        // Refill only the `k` tail rows with the exact
+                        // closed-form evaluation on the new times.
+                        for (position, harmonic) in model.fit_harmonics.iter().enumerate() {
+                            let cos_column = 1 + 2 * position;
+                            let sin_column = 2 + 2 * position;
+                            for (offset, t) in times[rows - k..].iter().enumerate() {
+                                let row = rows - k + offset;
+                                let phi = TAU * reference_frequency_hz * t - reference_phase_rad;
+                                let (sin_phi, cos_phi) = (*harmonic as f64 * phi).sin_cos();
+                                self.design[(row, cos_column)] = cos_phi;
+                                self.design[(row, sin_column)] = sin_phi;
+                            }
+                        }
+                        for row in (rows - k)..rows {
+                            self.design[(row, 0)] = 1.0;
+                        }
+                        self.prev_times.copy_from_slice(times);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // Full-fill fallback (gap, first window, key change, or failed
+        // verification): identical to `fill_design_columns`.
+        fill_design_columns(
+            &mut self.design,
+            times,
+            reference_frequency_hz,
+            reference_phase_rad,
+            model,
+            nyquist,
+        )?;
+        self.prev_times.resize(rows, 0.0);
+        self.prev_times.copy_from_slice(times);
+        self.prev_fit.clear();
+        self.prev_fit.extend_from_slice(&model.fit_harmonics);
+        self.prev_f_ref_bits = reference_frequency_hz.to_bits();
+        self.prev_phase_bits = reference_phase_rad.to_bits();
+        self.prev_sample_rate_bits = sample_rate_hz.to_bits();
+        self.has_cache = true;
+        Ok(())
     }
 }
 
@@ -2373,15 +2531,18 @@ pub fn estimate_joint_with_scratch(
         ));
     }
     let parameters = 1 + 2 * model.fit_harmonics.len();
-    let design = scratch.design_for(times.len(), parameters);
-    design_matrix_into(
-        design,
+    scratch.design_for(times.len(), parameters);
+    // Row-reuse fill (P-B/Q1): shift+refill-tail on a verified overlap key,
+    // else a full fill identical to `design_matrix_into`. Validation, gates,
+    // and arithmetic match the direct path exactly (bit-identical outputs).
+    scratch.fill_design_reusing(
         times,
         reference_frequency_hz,
         reference_phase_rad,
         model,
         sample_rate_hz,
     )?;
+    let design = scratch.design_for(times.len(), parameters);
     let system = plan.whiten(
         design,
         signal,
