@@ -34,10 +34,10 @@ description: Generated command and option reference for the complete pmoke featu
 | [`pmoke phase`](#pmoke-phase) | Rotate the reference phase for lock-in analysis | core |
 | [`pmoke moke`](#pmoke-moke) | Calculate the Kerr angle | core |
 | [`pmoke analyze`](#pmoke-analyze) | Run all analysis steps: sensor, reference, signal, lock-in, phase, moke | core |
-| [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data and grid into a new directory | core |
-| [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | Run the frozen paired-block M6 evaluation protocol and write a JSON report | core |
+| [`pmoke compare-lockin`](#pmoke-compare-lockin) | Compare lock-in estimators on shared data over a fixed window grid and write results into a new directory | core |
+| [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | Evaluate paired lock-in baseline and candidate values under a frozen protocol and write a JSON report | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | Build, inspect, or validate a recorded-only calibration artifact | core |
-| [`pmoke noise`](#pmoke-noise) | Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246) | core |
+| [`pmoke noise`](#pmoke-noise) | Recorded-only pulse-noise diagnosis, comparison and replay | core |
 | [`pmoke process`](#pmoke-process) | Automated analysis after manually triggering the pulse (fetch, lock-in, phase, moke) | hw-core |
 | [`pmoke auto`](#pmoke-auto) | Run the full automatic measurement and analysis | hw-core |
 | [`pmoke completions`](#pmoke-completions) | Generate shell completion script | core |
@@ -345,7 +345,7 @@ pmoke doctor [--json] [--probe-fetch] [-h, --help]
 | Option | Required | Default / values | Description | Conflicts |
 | --- | :---: | --- | --- | --- |
 | `--json` | - | - | Emit a machine-readable JSON report | - |
-| `--probe-fetch` | - | - | Allow active checks such as stopping the oscilloscope | - |
+| `--probe-fetch` | - | - | Allow active checks that stop the oscilloscope (left in stopped state) | - |
 | `-h, --help` | - | - | Print help | - |
 
 
@@ -533,7 +533,7 @@ pmoke analyze [-h, --help]
 
 ## `pmoke compare-lockin`
 
-Compare lock-in estimators on shared data and grid into a new directory
+Compare lock-in estimators on shared data over a fixed window grid and write results into a new directory
 
 ```text
 pmoke compare-lockin --request <FILE> [--output <DIR>] [-h, --help]
@@ -548,7 +548,7 @@ pmoke compare-lockin --request <FILE> [--output <DIR>] [-h, --help]
 
 ## `pmoke evaluate-lockin`
 
-Run the frozen paired-block M6 evaluation protocol and write a JSON report
+Evaluate paired lock-in baseline and candidate values under a frozen protocol and write a JSON report
 
 ```text
 pmoke evaluate-lockin --request <FILE> [--output <FILE>] [-h, --help]
@@ -629,7 +629,7 @@ pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
 
 ## `pmoke noise`
 
-Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)
+Recorded-only pulse-noise diagnosis, comparison and replay
 
 ```text
 pmoke noise [-h, --help] <COMMAND>

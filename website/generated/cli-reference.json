@@ -1112,7 +1112,7 @@
             "short": null,
             "long": "probe-fetch",
             "value_names": [],
-            "help": "Allow active checks such as stopping the oscilloscope",
+            "help": "Allow active checks that stop the oscilloscope (left in stopped state)",
             "required": false,
             "global": false,
             "repeatable": false,
@@ -1459,7 +1459,7 @@
       {
         "name": "compare-lockin",
         "path": "pmoke compare-lockin",
-        "summary": "Compare lock-in estimators on shared data and grid into a new directory",
+        "summary": "Compare lock-in estimators on shared data over a fixed window grid and write results into a new directory",
         "required_feature": null,
         "arguments": [
           {
@@ -1514,7 +1514,7 @@
       {
         "name": "evaluate-lockin",
         "path": "pmoke evaluate-lockin",
-        "summary": "Run the frozen paired-block M6 evaluation protocol and write a JSON report",
+        "summary": "Evaluate paired lock-in baseline and candidate values under a frozen protocol and write a JSON report",
         "required_feature": null,
         "arguments": [
           {
@@ -1913,7 +1913,7 @@
       {
         "name": "noise",
         "path": "pmoke noise",
-        "summary": "Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)",
+        "summary": "Recorded-only pulse-noise diagnosis, comparison and replay",
         "required_feature": null,
         "arguments": [
           {

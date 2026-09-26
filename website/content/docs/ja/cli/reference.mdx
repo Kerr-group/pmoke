@@ -34,10 +34,10 @@ description: pmokeの全featureを対象とする、commandとoptionの自動生
 | [`pmoke phase`](#pmoke-phase) | lock-in解析の参照位相回転 | core |
 | [`pmoke moke`](#pmoke-moke) | Kerr角度を計算 | core |
 | [`pmoke analyze`](#pmoke-analyze) | sensor・reference・signal・lock-in・phase・mokeの全解析 | core |
-| [`pmoke compare-lockin`](#pmoke-compare-lockin) | 共有データ・gridでのlock-in推定器比較（新規directoryへ） | core |
-| [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | 固定済みpaired block M6評価protocolの実行とJSON report出力 | core |
+| [`pmoke compare-lockin`](#pmoke-compare-lockin) | 共有データ・固定window gridでのlock-in推定器比較（結果を新規directoryへ） | core |
+| [`pmoke evaluate-lockin`](#pmoke-evaluate-lockin) | 凍結protocolによるpaired lock-in baseline・candidate値の評価とJSON report出力 | core |
 | [`pmoke calibrate`](#pmoke-calibrate) | 記録済みデータからの較正artifactのbuild・inspect・validate | core |
-| [`pmoke noise`](#pmoke-noise) | 記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246） | core |
+| [`pmoke noise`](#pmoke-noise) | 記録済みデータのパルスノイズ診断・比較・再実行 | core |
 | [`pmoke process`](#pmoke-process) | 手動pulse trigger後のfetch・lock-in・phase・moke自動解析 | hw-core |
 | [`pmoke auto`](#pmoke-auto) | 完全自動測定・解析 | hw-core |
 | [`pmoke completions`](#pmoke-completions) | shell completion scriptの生成 | core |
@@ -345,7 +345,7 @@ pmoke doctor [--json] [--probe-fetch] [-h, --help]
 | option | 必須 | 既定値 / 候補 | 説明 | 競合 |
 | --- | :---: | --- | --- | --- |
 | `--json` | - | - | machine-readable JSON report出力 | - |
-| `--probe-fetch` | - | - | オシロスコープ停止などのactive check許可 | - |
+| `--probe-fetch` | - | - | オシロスコープを停止するactive checkの許可（停止状態のまま残る） | - |
 | `-h, --help` | - | - | help表示 | - |
 
 
@@ -533,7 +533,7 @@ pmoke analyze [-h, --help]
 
 ## `pmoke compare-lockin`
 
-共有データ・gridでのlock-in推定器比較（新規directoryへ）
+共有データ・固定window gridでのlock-in推定器比較（結果を新規directoryへ）
 
 ```text
 pmoke compare-lockin --request <FILE> [--output <DIR>] [-h, --help]
@@ -548,7 +548,7 @@ pmoke compare-lockin --request <FILE> [--output <DIR>] [-h, --help]
 
 ## `pmoke evaluate-lockin`
 
-固定済みpaired block M6評価protocolの実行とJSON report出力
+凍結protocolによるpaired lock-in baseline・candidate値の評価とJSON report出力
 
 ```text
 pmoke evaluate-lockin --request <FILE> [--output <FILE>] [-h, --help]
@@ -629,7 +629,7 @@ pmoke calibrate validate --artifact <FILE> --context <FILE> [-h, --help]
 
 ## `pmoke noise`
 
-記録済みデータのパルスノイズ診断・比較・再実行（PN-M1..M4、Issue #246）
+記録済みデータのパルスノイズ診断・比較・再実行
 
 ```text
 pmoke noise [-h, --help] <COMMAND>

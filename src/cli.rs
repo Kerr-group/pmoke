@@ -67,7 +67,7 @@ pub enum Command {
         /// Emit a machine-readable JSON report
         #[arg(long)]
         json: bool,
-        /// Allow active checks such as stopping the oscilloscope
+        /// Allow active checks that stop the oscilloscope (left in stopped state)
         #[arg(long)]
         probe_fetch: bool,
     },
@@ -110,7 +110,7 @@ pub enum Command {
     Kerr,
     /// Run all analysis steps: sensor, reference, signal, lock-in, phase, moke
     Analyze,
-    /// Compare lock-in estimators on shared data and grid into a new directory
+    /// Compare lock-in estimators on shared data over a fixed window grid and write results into a new directory
     CompareLockin {
         /// Path to the comparison request file
         #[arg(long, value_name = "FILE")]
@@ -119,7 +119,7 @@ pub enum Command {
         #[arg(long, value_name = "DIR")]
         output: Option<std::path::PathBuf>,
     },
-    /// Run the frozen paired-block M6 evaluation protocol and write a JSON report
+    /// Evaluate paired lock-in baseline and candidate values under a frozen protocol and write a JSON report
     EvaluateLockin {
         /// Path to the evaluation request file
         #[arg(long, value_name = "FILE")]
@@ -133,7 +133,7 @@ pub enum Command {
         #[command(subcommand)]
         command: CalibrateCommand,
     },
-    /// Recorded-only pulse-noise diagnosis, comparison and replay (PN-M1..M4, Issue #246)
+    /// Recorded-only pulse-noise diagnosis, comparison and replay
     Noise {
         #[command(subcommand)]
         command: NoiseCommand,
