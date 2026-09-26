@@ -124,6 +124,42 @@ fn beta_max_abs(a: &[f64], b: &[f64]) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
+/// Bitwise fingerprint of every floating result field (`to_bits`, so even
+/// `-0.0` vs `0.0` or NaN-payload differences count) for exact
+/// valid->rejected->valid recovery comparisons.
+fn estimate_bits(e: &pmoke_analysis_core::JointEstimate) -> Vec<u64> {
+    e.beta
+        .iter()
+        .chain(e.xy.iter())
+        .chain(e.covariance_beta.iter().flatten())
+        .chain(e.covariance_xy.iter().flatten())
+        .chain([&e.condition, &e.residual_rms, &e.jitter_applied_v2])
+        .map(|x| x.to_bits())
+        .collect()
+}
+
+fn assert_recovered_bit_identical(
+    direct: &pmoke_analysis_core::JointEstimate,
+    reused: &pmoke_analysis_core::JointEstimate,
+    context: &str,
+) {
+    assert_eq!(direct.rank, reused.rank, "{context}: rank differs");
+    assert_eq!(
+        estimate_bits(direct),
+        estimate_bits(reused),
+        "{context}: post-rejection estimate diverged bitwise"
+    );
+    let drift = beta_max_abs(&direct.beta, &reused.beta);
+    assert!(
+        drift <= 1e-12,
+        "{context}: beta drift {drift:e} exceeds 1e-12 band"
+    );
+    assert!(
+        drift == 0.0,
+        "{context}: expected bit-identical drift 0, got {drift:e}"
+    );
+}
+
 /// Overlapping strided windows (stride 100 vs N 512 = 80.5% rows shared)
 /// reproduce the direct path bit-for-bit in every noise mode, with beta
 /// drift exactly zero (inside the 1e-12 band).
@@ -372,4 +408,201 @@ fn row_reuse_invalid_input_preserves_cache_bit_identical() {
     )
     .unwrap();
     assert_estimates_bit_identical(&direct_next, &reused_next, "post-error window");
+}
+
+/// A same-shape frequency change that fails Nyquist mid-fill must not
+/// poison the cache: `fill_design_columns` writes accepted harmonic
+/// columns before gating later ones (Nyquist = 0.5/DT ~ 28.09 MHz, so at
+/// 3 MHz harmonics 1..=9 fill before harmonic 10 rejects). The next valid
+/// overlapping window with the restored frequency must equal a fresh
+/// direct estimate bitwise.
+#[test]
+fn row_reuse_partial_nyquist_rejection_frequency_recovers_bit_identical() {
+    let sample_rate = 1.0 / DT;
+    let tolerances = JointSolverTolerances::default();
+    let model = model();
+    let noise = identity_noise();
+    let settings = JointHarmonicSettings {
+        model: model.clone(),
+        noise: noise.clone(),
+        tolerances,
+    };
+    let plan = PreparedNoisePlan::prepare(&noise, N, tolerances).unwrap();
+    let mut scratch = JointScratch::new();
+
+    // Warm the cache with a valid window at start 0.
+    let (times0, signal0) = window_fixture(0);
+    let direct0 = estimate_joint(&times0, &signal0, F_REF, PHASE, sample_rate, &settings).unwrap();
+    let reused0 = estimate_joint_with_scratch(
+        &times0,
+        &signal0,
+        F_REF,
+        PHASE,
+        sample_rate,
+        &model,
+        tolerances,
+        &plan,
+        &mut scratch,
+    )
+    .unwrap();
+    assert_estimates_bit_identical(&direct0, &reused0, "warm baseline");
+
+    // Same-shape frequency key change on the overlapping window: both
+    // paths reject with the exact `aliased_harmonic` admission code.
+    let bad_frequency = 3.0e6;
+    let (times1, signal1) = window_fixture(STRIDE);
+    let direct_err = estimate_joint(
+        &times1,
+        &signal1,
+        bad_frequency,
+        PHASE,
+        sample_rate,
+        &settings,
+    )
+    .expect_err("direct must reject the aliased frequency");
+    let reused_err = estimate_joint_with_scratch(
+        &times1,
+        &signal1,
+        bad_frequency,
+        PHASE,
+        sample_rate,
+        &model,
+        tolerances,
+        &plan,
+        &mut scratch,
+    )
+    .expect_err("row-reuse must reject the aliased frequency");
+    assert_eq!(
+        direct_err.code(),
+        reused_err.code(),
+        "admission code differs on partial Nyquist rejection"
+    );
+    assert_eq!(
+        reused_err.code(),
+        "aliased_harmonic",
+        "expected aliased_harmonic rejection"
+    );
+
+    // Restore the original frequency on the same overlapping window: the
+    // result must equal a fresh direct estimate bitwise (exact rank plus
+    // `to_bits` over every floating field).
+    let direct_restored =
+        estimate_joint(&times1, &signal1, F_REF, PHASE, sample_rate, &settings).unwrap();
+    let reused_restored = estimate_joint_with_scratch(
+        &times1,
+        &signal1,
+        F_REF,
+        PHASE,
+        sample_rate,
+        &model,
+        tolerances,
+        &plan,
+        &mut scratch,
+    )
+    .unwrap();
+    assert_recovered_bit_identical(
+        &direct_restored,
+        &reused_restored,
+        "frequency restored after partial rejection",
+    );
+}
+
+/// A same-size model/phase change that fails Nyquist on the last harmonic
+/// must not poison the cache either: replacing fit harmonic 12 with 30
+/// keeps the parameter count (same buffer shape) while 30 * F_REF ~
+/// 35.1 MHz rejects after 11 harmonic pairs were written in place.
+#[test]
+fn row_reuse_partial_nyquist_rejection_model_phase_recovers_bit_identical() {
+    let sample_rate = 1.0 / DT;
+    let tolerances = JointSolverTolerances::default();
+    let model = model();
+    let noise = identity_noise();
+    let settings = JointHarmonicSettings {
+        model: model.clone(),
+        noise: noise.clone(),
+        tolerances,
+    };
+    let plan = PreparedNoisePlan::prepare(&noise, N, tolerances).unwrap();
+    let mut scratch = JointScratch::new();
+
+    // Warm the cache with a valid window at start 0.
+    let (times0, signal0) = window_fixture(0);
+    let direct0 = estimate_joint(&times0, &signal0, F_REF, PHASE, sample_rate, &settings).unwrap();
+    let reused0 = estimate_joint_with_scratch(
+        &times0,
+        &signal0,
+        F_REF,
+        PHASE,
+        sample_rate,
+        &model,
+        tolerances,
+        &plan,
+        &mut scratch,
+    )
+    .unwrap();
+    assert_estimates_bit_identical(&direct0, &reused0, "warm baseline");
+
+    // Same-size model/phase key change on the overlapping window: both
+    // paths reject with the exact `aliased_harmonic` admission code.
+    let mut bad_model = model.clone();
+    bad_model.fit_harmonics[11] = 30;
+    let bad_phase = PHASE + 0.11;
+    let bad_settings = JointHarmonicSettings {
+        model: bad_model.clone(),
+        noise: noise.clone(),
+        tolerances,
+    };
+    let (times1, signal1) = window_fixture(STRIDE);
+    let direct_err = estimate_joint(
+        &times1,
+        &signal1,
+        F_REF,
+        bad_phase,
+        sample_rate,
+        &bad_settings,
+    )
+    .expect_err("direct must reject the aliased model");
+    let reused_err = estimate_joint_with_scratch(
+        &times1,
+        &signal1,
+        F_REF,
+        bad_phase,
+        sample_rate,
+        &bad_model,
+        tolerances,
+        &plan,
+        &mut scratch,
+    )
+    .expect_err("row-reuse must reject the aliased model");
+    assert_eq!(
+        direct_err.code(),
+        reused_err.code(),
+        "admission code differs on partial Nyquist rejection"
+    );
+    assert_eq!(
+        reused_err.code(),
+        "aliased_harmonic",
+        "expected aliased_harmonic rejection"
+    );
+
+    // Restore the original model/phase on the same overlapping window.
+    let direct_restored =
+        estimate_joint(&times1, &signal1, F_REF, PHASE, sample_rate, &settings).unwrap();
+    let reused_restored = estimate_joint_with_scratch(
+        &times1,
+        &signal1,
+        F_REF,
+        PHASE,
+        sample_rate,
+        &model,
+        tolerances,
+        &plan,
+        &mut scratch,
+    )
+    .unwrap();
+    assert_recovered_bit_identical(
+        &direct_restored,
+        &reused_restored,
+        "model/phase restored after partial rejection",
+    );
 }

@@ -2324,7 +2324,10 @@ pub fn estimate_joint_with_plan(
 /// validation preserved and bit-exact overlap verification (`to_bits`).
 /// Any key mismatch, gap, or failed verification falls back to a full fill,
 /// so outputs stay bit-identical to [`design_matrix`]; only `sin_cos` cost
-/// is hoisted, never arithmetic.
+/// is hoisted, never arithmetic. The full-fill path disarms the cache key
+/// before its fallible fill and re-arms it only after a complete fill, so
+/// a mid-fill Nyquist rejection can never leave partial rows behind a
+/// live key.
 #[derive(Debug, Clone)]
 pub struct JointScratch {
     design: DMatrix<f64>,
@@ -2473,6 +2476,17 @@ impl JointScratch {
 
         // Full-fill fallback (gap, first window, key change, or failed
         // verification): identical to `fill_design_columns`.
+        //
+        // Disarm the row-reuse key BEFORE the fallible fill: the helper
+        // writes accepted harmonic columns before gating later harmonics,
+        // so a mid-fill `aliased_harmonic` rejection would otherwise leave
+        // a partially overwritten buffer still labeled with the previous
+        // successful key, and the next overlapping valid window would
+        // shift/reuse those corrupted rows. The re-arm below runs only
+        // after a complete fill, so a failure leaves the cache disarmed
+        // and the next window takes a full fill. Error code/order and
+        // successful-window arithmetic are unchanged.
+        self.has_cache = false;
         fill_design_columns(
             &mut self.design,
             times,
