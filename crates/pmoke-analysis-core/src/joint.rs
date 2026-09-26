@@ -1669,7 +1669,18 @@ fn solve_direct_with_factor(
     //   before bidiagonalization). No solve arithmetic is rescaled; only
     //   the diagnostic source changes, exactly as in F1/F2.
     let qr = whitened_design.clone().qr();
-    let projected = qr.q().tr_mul(whitened_signal);
+    // P4: project Q^T y by applying the Householder reflectors in place
+    // instead of materializing the thin N x P Q factor. Forming Q costs
+    // ~45% of the real-geometry solve (758us of ~1.7ms at N=3421/P=25);
+    // the in-place projection is ~60us with no N x P allocation. The thin
+    // projection is the first `columns` entries of the full Q^T y.
+    // Arithmetic order differs from the explicit-Q GEMM at the ~1e-16
+    // absolute level (inside the 1e-12 golden band); rank/condition come
+    // from the SVD of `upper` below and are untouched. `whitened_signal`
+    // is still borrowed by the residual, hence the one N-vector clone.
+    let mut full_projection = whitened_signal.clone();
+    qr.q_tr_mul(&mut full_projection);
+    let projected = full_projection.rows(0, columns).into_owned();
     let upper = qr.r();
     // Base design-SVD gates, bit-for-bit the pre-reuse diagnostic. Used for
     // F1 overflow and for F2 borderline/rejection verification.
