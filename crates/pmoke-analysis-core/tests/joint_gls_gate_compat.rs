@@ -130,7 +130,10 @@ fn configured_condition_boundary_matches_base() {
 /// for flop (literal base control from the PR #300 review, namespace
 /// adapted). The design SVD is values-only on the whitened design; the
 /// solution runs thin QR with the same back-substitution and scale-safe
-/// residual as the solver under test.
+/// residual as the solver under test. The Q^T y projection applies the
+/// Householder reflectors in place (P4), mirroring the solver flop for
+/// flop; the pre-P4 explicit-Q GEMM differs from it at the ~1e-16 absolute
+/// level.
 #[allow(clippy::type_complexity)]
 fn solve_old_path(
     whitened_design: &DMatrix<f64>,
@@ -200,7 +203,9 @@ fn solve_old_path(
         ));
     }
     let qr = whitened_design.clone().qr();
-    let projected = qr.q().tr_mul(whitened_signal);
+    let mut full_projection = whitened_signal.clone();
+    qr.q_tr_mul(&mut full_projection);
+    let projected = full_projection.rows(0, columns).into_owned();
     let upper = qr.r();
     let mut beta = DVector::zeros(columns);
     for column in (0..columns).rev() {
