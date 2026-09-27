@@ -794,15 +794,37 @@ fn run_joint_channel(
         })?;
     for chunk_start in (0..outputs).step_by(plan.chunk_size) {
         let chunk_end = (chunk_start + plan.chunk_size).min(outputs);
-        let estimates: Vec<(usize, Result<JointEstimate>)> = pool.install(|| {
-            (chunk_start..chunk_end)
+        // Contiguous sub-chunk ownership for row-reuse (P-B/Q1): each
+        // parallel piece is a contiguous output run processed sequentially
+        // in order on one thread, so the thread-local design scratch sees
+        // consecutive strided windows and shifts surviving rows instead of
+        // refilling them. Any gap (sub-chunk start, channel reset, shape or
+        // key change) falls back to a full fill with identical values.
+        // Error attribution is unchanged: every window is attempted, results
+        // are sorted by output index, and the earliest failure propagates.
+        let chunk_len = chunk_end - chunk_start;
+        let partitions = plan.workers.min(chunk_len).max(1);
+        let base = chunk_len / partitions;
+        let remainder = chunk_len % partitions;
+        let mut sub_ranges = Vec::with_capacity(partitions);
+        let mut cursor = chunk_start;
+        for part in 0..partitions {
+            let extra = usize::from(part < remainder);
+            let sub_end = cursor + base + extra;
+            sub_ranges.push((cursor, sub_end));
+            cursor = sub_end;
+        }
+        let nested: Vec<Vec<(usize, Result<JointEstimate>)>> = pool.install(|| {
+            sub_ranges
                 .into_par_iter()
-                .map(|output_index| {
-                    let center_k = params.i_start + output_index;
-                    let center = center_k.checked_mul(params.stride).ok_or_else(|| {
-                        anyhow::anyhow!("joint lock-in center index overflow for output {output_index}")
-                    });
-                    let result = center.and_then(|center| {
+                .map(|(sub_start, sub_end)| {
+                    let mut local = Vec::with_capacity(sub_end - sub_start);
+                    for output_index in sub_start..sub_end {
+                        let center_k = params.i_start + output_index;
+                        let center = center_k.checked_mul(params.stride).ok_or_else(|| {
+                            anyhow::anyhow!("joint lock-in center index overflow for output {output_index}")
+                        });
+                        let result = center.and_then(|center| {
                         let lo = center.checked_sub(half_taps).ok_or_else(|| {
                             anyhow::anyhow!(
                                 "joint lock-in window underflows for output {output_index}"
@@ -828,10 +850,12 @@ fn run_joint_channel(
                             )
                         })?;
                         // Buffer-reusing estimate: the thread-local design
-                        // scratch skips the per-window column allocations and
-                        // the solve shares one QR factor with the covariance.
-                        // Arithmetic, gates, and error attribution match the
-                        // direct path window for window (byte-identical).
+                        // scratch skips the per-window column allocations,
+                        // shifts surviving overlap rows on consecutive
+                        // windows, and the solve shares one QR factor with
+                        // the covariance. Arithmetic, gates, and error
+                        // attribution match the direct path window for
+                        // window (byte-identical).
                         JOINT_DESIGN_SCRATCH.with(|cell| {
                             let mut scratch = cell.borrow_mut();
                             estimate_joint_with_scratch(
@@ -859,14 +883,17 @@ fn run_joint_channel(
                             )
                         })
                     });
-                    (output_index, result)
+                        local.push((output_index, result));
+                    }
+                    local
                 })
                 .collect()
         });
-
-        // Rayon returns the chunk in index order, but sort explicitly so the
-        // output contract stays deterministic if the execution backend changes.
-        let mut estimates = estimates;
+        let mut estimates: Vec<(usize, Result<JointEstimate>)> =
+            nested.into_iter().flatten().collect();
+        // Sub-chunks complete in any thread order: sort explicitly so the
+        // output contract stays deterministic and the earliest failure
+        // propagates, as before.
         estimates.sort_by_key(|(output_index, _)| *output_index);
         for (output_index, estimate) in estimates {
             let estimate = estimate?;
