@@ -18,6 +18,61 @@
   over the real key dispatch guard against regressions while the
   semantic-search recall gate stays green.
 
+- The phase stage bounds its `omega_t0` fit and stays live on
+  recorded-scale grids (PR #285). The embedded least-squares fit runs
+  under an iteration cap and fails closed on non-convergence (reporting
+  `nfev`), start/completed heartbeat lines carry sample count, slope,
+  `nfev`, and elapsed time, and per-sub-step progress (fit/reconstruct/
+  save) plus a timed covariance-reconstruction line replace the silent
+  0% stall.
+
+- CLI stage timings are truthful and the joint-GLS path is no longer
+  silent (PR #286). Signal completion attributes compute vs save
+  separately, phase/MOKE completions and joint-GLS diagnostics saves
+  report elapsed time, the joint-GLS lock-in path emits coarse
+  per-channel progress and a completion line under the boxcar timeline
+  marker, sensor settings output suspends under its progress bar, and
+  the boxcar rayon branch drops racy per-harmonic bar messages (counts
+  preserved).
+
+- `pmoke noise compare` retries reclaim orphan staging-manifest tmp
+  siblings instead of wedging (PR #295). A kill between the atomic
+  sibling create and its rename used to leave
+  `staging-manifest.tmp-<pid>` beside a valid manifest, which the
+  retry's unreferenced-file audit hard-errored on; retry startup now
+  sweeps the sibling with a warning (like the torn-manifest reclaim)
+  and commits cleanly.
+
+- The S1 `residual_rms` units are documented honestly with no numeric
+  changes (PR #299). `QualityRow`/`BankLegRow` `residual_rms_v` carries
+  the dimensionless per-unit-noise estimate (volts only at `v0 == 1
+  V^2`) while diagnostics `residual_rms` is a true volts RMS of a raw
+  nuisance residual; the `_v` suffix stays frozen naming, and the volts
+  coincidence is scoped to Identity noise (unit-identity effective
+  covariance).
+
+- Lock-in solver/SCS/prepulse tolerances move into configuration with
+  frozen defaults (PR #301). Schema v7 gains optional
+  `[lockin.estimator.solver_tolerances]` and
+  `[lockin.estimator.scs_adequacy]` tables plumbed through the joint
+  pipeline, pre-pulse derivation, and compare legs (derivation digest
+  becomes v2), and impossible SCS lag counts fail closed with the typed
+  `insufficient_calibration` error before allocation instead of
+  panicking.
+
+- CLI help text drops internal tracker references (PR #303). Noise help
+  drops the PN-M1..M4/issue pointers, `evaluate-lockin` drops the
+  undefined M6 codename and names the evaluated values, and
+  `doctor --probe-fetch` plus the `compare-lockin` destination wording
+  are clarified (regenerated EN+JA references included).
+
+- Lock-in timings carry attribution warnings so a slow run is never
+  mistaken for a release timing (PRs #306/#307). Every lock-in
+  composition — including the standalone signal path — emits a
+  warning-level event under debug builds, and single-window joint-GLS
+  geometry warns for 0/1 attribution; both are warn-only with no
+  behavior change and zero cost in release builds.
+
 ## v0.5.0 — 2026-09-20
 
 ### Breaking changes
