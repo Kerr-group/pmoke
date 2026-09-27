@@ -351,6 +351,7 @@ pub fn run_li<'a>(
     t: impl Into<TimeAxisRef<'a>>,
     data: &[Vec<f64>],
 ) -> Result<LockinRunOutput> {
+    ui::warn_if_debug_build();
     let t = t.into();
     let sensor = run_sensor_stage(cfg, t, data)?;
     let preparation = prepare_lockin_grid(cfg, t, data, &sensor)?;

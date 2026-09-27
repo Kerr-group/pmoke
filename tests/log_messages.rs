@@ -740,4 +740,22 @@ fn log_message_contract_for_joint_gls_analyze() {
         completion.sequence > joint_progress.last().expect("stream is empty").sequence,
         "joint completion is not sequenced after the final progress event"
     );
+
+    // Build-profile guard (Windows native / WSL attribution): a debug
+    // run must carry the timing warning so a debug timing is never
+    // mistaken for a release timing across hosts, while a release run
+    // emits nothing. The warning is warning-level, so the
+    // no-error-level assertion above keeps passing in either profile.
+    let guard = run
+        .events
+        .iter()
+        .find(|event| event.message.contains("debug build"));
+    assert_eq!(
+        guard.is_some(),
+        cfg!(debug_assertions),
+        "build-profile guard presence does not match the build profile"
+    );
+    if let Some(guard) = guard {
+        assert_eq!(guard.level, "warning", "guard is not warning-level");
+    }
 }
