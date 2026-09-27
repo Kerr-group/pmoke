@@ -377,13 +377,13 @@ impl AnalyzeRun {
     }
 }
 
-fn run_analyze(run_dir: &Path, config: &Path) -> AnalyzeRun {
+fn run_cli(run_dir: &Path, config: &Path, subcommand: &str) -> AnalyzeRun {
     let output = Command::new(env!("CARGO_BIN_EXE_pmoke"))
         .arg("--config")
         .arg(config)
         .arg("--run-dir")
         .arg(run_dir)
-        .arg("analyze")
+        .arg(subcommand)
         .env("PMOKE_OUTPUT", "jsonl")
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("MPLBACKEND", "Agg")
@@ -402,11 +402,72 @@ fn run_analyze(run_dir: &Path, config: &Path) -> AnalyzeRun {
     }
 }
 
+fn run_analyze(run_dir: &Path, config: &Path) -> AnalyzeRun {
+    run_cli(run_dir, config, "analyze")
+}
+
 fn messages(run: &AnalyzeRun) -> Vec<&str> {
     run.events
         .iter()
         .map(|event| event.message.as_str())
         .collect()
+}
+
+/// Machine protocol shared by the joint-GLS CLI legs: strictly increasing
+/// sequence numbers and no error-level events on a passing run.
+fn assert_strict_sequences_no_errors(run: &AnalyzeRun) {
+    let mut previous: Option<u64> = None;
+    for event in &run.events {
+        if let Some(previous) = previous {
+            assert!(
+                event.sequence > previous,
+                "event sequences are not strictly increasing: {} !> {previous} in {:?}",
+                event.sequence,
+                event.message
+            );
+        }
+        previous = Some(event.sequence);
+        assert_ne!(
+            event.level, "error",
+            "unexpected error-level event: {}",
+            event.message
+        );
+    }
+}
+
+/// Build-profile guard shared by the joint-GLS CLI legs: exactly one
+/// debug-build timing warning in debug builds, zero in release. The warning
+/// is warning-level/status-kind so the no-error-level assertion keeps
+/// passing in either profile.
+fn assert_debug_guard_profile_aware(run: &AnalyzeRun, subcommand: &str) {
+    let guards = run
+        .events
+        .iter()
+        .filter(|event| event.message.contains("debug build"))
+        .collect::<Vec<_>>();
+    if cfg!(debug_assertions) {
+        assert_eq!(
+            guards.len(),
+            1,
+            "expected exactly one debug-build timing warning for {subcommand}, got {} in {:?}",
+            guards.len(),
+            run.events
+                .iter()
+                .map(|event| &event.message)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(guards[0].level, "warning", "guard is not warning-level");
+        assert_eq!(guards[0].kind, "status", "guard is not status-kind");
+    } else {
+        assert!(
+            guards.is_empty(),
+            "release {subcommand} emitted debug-build timing warnings: {:?}",
+            guards
+                .iter()
+                .map(|event| &event.message)
+                .collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]
@@ -741,21 +802,198 @@ fn log_message_contract_for_joint_gls_analyze() {
         "joint completion is not sequenced after the final progress event"
     );
 
-    // Build-profile guard (Windows native / WSL attribution): a debug
-    // run must carry the timing warning so a debug timing is never
-    // mistaken for a release timing across hosts, while a release run
-    // emits nothing. The warning is warning-level, so the
-    // no-error-level assertion above keeps passing in either profile.
-    let guard = run
+    // Build-profile guard: exactly one debug-build timing warning in debug
+    // so a debug timing is never mistaken for a release timing across
+    // hosts, zero in release. The warning is warning-level/status-kind, so
+    // the no-error-level assertion above keeps passing in either profile.
+    assert_debug_guard_profile_aware(&run, "analyze");
+}
+
+/// Joint-GLS standalone `li` contract.
+///
+/// Drives the real CLI with the same deterministic joint fixture as the
+/// analyze leg and pins the same machine protocol on the standalone lock-in
+/// path (`li` -> `run_li`): a real joint-GLS completion, a consistent
+/// progress stream, strictly increasing sequences, no error events, and the
+/// profile-aware debug-build guard (exactly one warning in debug, zero in
+/// release).
+#[test]
+fn log_message_contract_for_joint_gls_li() {
+    let temp = TempDir::new();
+    let run_dir = temp.0.join("run");
+    let config = temp.0.join("config.toml");
+    fs::create_dir_all(&run_dir).unwrap();
+    write_waveform_csv_with(&run_dir, JOINT_ORIGIN_S, JOINT_SAMPLES);
+    fs::write(&config, joint_config_text()).unwrap();
+
+    let run = run_cli(&run_dir, &config, "li");
+    assert!(run.success, "li failed:\n{}", run.stderr);
+    assert!(
+        !run.events.is_empty(),
+        "expected JSONL events on stdout, stderr was:\n{}",
+        run.stderr
+    );
+    assert_strict_sequences_no_errors(&run);
+
+    for event in &run.events {
+        if event.message.contains("lock-in processing completed") {
+            assert!(
+                event.message.contains("(joint GLS,"),
+                "lock-in completion lost its joint marker: {}",
+                event.message
+            );
+        }
+    }
+    let completion = run.single_event_index("lock-in processing completed (joint GLS,");
+    let completion = &run.events[completion];
+    assert_eq!(completion.level, "success");
+    assert_eq!(completion.kind, "status");
+    assert!(
+        completion.message.contains(" workers, "),
+        "joint completion lost its worker-count attribution: {}",
+        completion.message
+    );
+    assert!(
+        completion.has_duration_ms,
+        "joint completion carries no duration_ms: {}",
+        completion.message
+    );
+
+    let joint_progress = run
         .events
         .iter()
-        .find(|event| event.message.contains("debug build"));
-    assert_eq!(
-        guard.is_some(),
-        cfg!(debug_assertions),
-        "build-profile guard presence does not match the build profile"
+        .filter(|event| event.kind == "progress" && event.message.contains("joint GLS lock-in"))
+        .collect::<Vec<_>>();
+    assert!(
+        joint_progress.len() >= 3,
+        "expected initial, per-chunk, and final joint progress events, got {}: {:?}",
+        joint_progress.len(),
+        joint_progress
+            .iter()
+            .map(|event| &event.message)
+            .collect::<Vec<_>>()
     );
-    if let Some(guard) = guard {
-        assert_eq!(guard.level, "warning", "guard is not warning-level");
+    let stream_id = &joint_progress[0].progress_id;
+    assert!(
+        !stream_id.is_empty(),
+        "joint progress stream has no progress_id"
+    );
+    let mut total: Option<u64> = None;
+    let mut previous_current: Option<u64> = None;
+    for event in &joint_progress {
+        assert_eq!(
+            event.progress_id, *stream_id,
+            "joint progress stream changed progress_id mid-run: {}",
+            event.message
+        );
+        let event_total = event
+            .progress_total
+            .unwrap_or_else(|| panic!("joint progress event carries no total: {}", event.message));
+        assert!(event_total > 0, "joint progress total is zero");
+        if let Some(total) = total {
+            assert_eq!(
+                event_total, total,
+                "joint progress total drifted mid-run: {event_total} != {total}"
+            );
+        } else {
+            total = Some(event_total);
+        }
+        let current = event.progress_current.unwrap_or_else(|| {
+            panic!(
+                "joint progress event carries no current count: {}",
+                event.message
+            )
+        });
+        assert!(
+            current <= event_total,
+            "joint progress current {current} exceeds total {event_total}"
+        );
+        if let Some(previous_current) = previous_current {
+            assert!(
+                current >= previous_current,
+                "joint progress current regressed: {current} < {previous_current}"
+            );
+        } else {
+            assert_eq!(
+                current, 0,
+                "joint progress stream does not start at zero: {current}"
+            );
+        }
+        previous_current = Some(current);
     }
+    let total = total.expect("joint progress stream is empty");
+    assert_eq!(
+        previous_current,
+        Some(total),
+        "final joint progress chunk does not reach the total: {:?} != {total}",
+        previous_current
+    );
+    assert!(
+        completion.sequence > joint_progress.last().expect("stream is empty").sequence,
+        "joint completion is not sequenced after the final progress event"
+    );
+
+    assert_debug_guard_profile_aware(&run, "li");
+}
+
+/// Joint-GLS standalone `signal` contract.
+///
+/// Drives the real CLI with the same deterministic joint fixture and pins
+/// the standalone signal composition (sensor -> grid -> signal readout ->
+/// lock-in): both the signal-readout completion and the real joint-GLS
+/// lock-in completion in execution order, strictly increasing sequences, no
+/// error events, and the profile-aware debug-build guard (exactly one
+/// warning in debug, zero in release).
+#[test]
+fn log_message_contract_for_joint_gls_signal() {
+    let temp = TempDir::new();
+    let run_dir = temp.0.join("run");
+    let config = temp.0.join("config.toml");
+    fs::create_dir_all(&run_dir).unwrap();
+    write_waveform_csv_with(&run_dir, JOINT_ORIGIN_S, JOINT_SAMPLES);
+    fs::write(&config, joint_config_text()).unwrap();
+
+    let run = run_cli(&run_dir, &config, "signal");
+    assert!(run.success, "signal failed:\n{}", run.stderr);
+    assert!(
+        !run.events.is_empty(),
+        "expected JSONL events on stdout, stderr was:\n{}",
+        run.stderr
+    );
+    assert_strict_sequences_no_errors(&run);
+
+    let signal_index = run.single_event_index("signal means for channels");
+    let signal = &run.events[signal_index];
+    assert_eq!(signal.level, "success");
+    assert_eq!(signal.kind, "save");
+
+    for event in &run.events {
+        if event.message.contains("lock-in processing completed") {
+            assert!(
+                event.message.contains("(joint GLS,"),
+                "lock-in completion lost its joint marker: {}",
+                event.message
+            );
+        }
+    }
+    let completion_index = run.single_event_index("lock-in processing completed (joint GLS,");
+    let completion = &run.events[completion_index];
+    assert_eq!(completion.level, "success");
+    assert_eq!(completion.kind, "status");
+    assert!(
+        completion.message.contains(" workers, "),
+        "joint completion lost its worker-count attribution: {}",
+        completion.message
+    );
+    assert!(
+        completion.has_duration_ms,
+        "joint completion carries no duration_ms: {}",
+        completion.message
+    );
+    assert!(
+        signal_index < completion_index,
+        "signal readout does not precede lock-in completion: {signal_index} !< {completion_index}"
+    );
+
+    assert_debug_guard_profile_aware(&run, "signal");
 }

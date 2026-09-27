@@ -345,7 +345,7 @@ pub fn execute_lockin<'a>(
 }
 
 /// Sensor -> reference preparation -> lock-in composition, unchanged in
-/// shape and numerical behavior for the standalone `li`/`signal` commands.
+/// shape and numerical behavior for the standalone `li` command.
 pub fn run_li<'a>(
     cfg: &Config,
     t: impl Into<TimeAxisRef<'a>>,

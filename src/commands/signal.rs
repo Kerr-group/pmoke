@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::signal::run_signal_analysis;
+use crate::ui;
 use crate::utils::waveform::read_all_fetched_waveforms;
 use anyhow::{Result, bail};
 
@@ -22,6 +23,7 @@ pub fn signal(cfg: &Config) -> Result<()> {
 }
 
 fn signal_inner(cfg: &Config) -> Result<()> {
+    ui::warn_if_debug_build();
     if cfg.signals.is_empty() {
         bail!("no [[signals]] entries are configured");
     }
