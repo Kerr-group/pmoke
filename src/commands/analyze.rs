@@ -86,6 +86,7 @@ pub(crate) fn run_analyze_inner_observed(
     data: &WaveformData,
     observer: &mut dyn FnMut(AnalyzeStep),
 ) -> Result<()> {
+    ui::warn_if_debug_build();
     let mut cfg_staging = cfg.clone();
     cfg_staging.staging_active = true;
 

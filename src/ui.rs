@@ -379,6 +379,22 @@ pub fn warn(message: impl Display) {
     });
 }
 
+/// Build-profile guard for timing comparability (Windows native / WSL
+/// attribution). A debug solver build is orders of magnitude slower than
+/// release (joint GLS measured ~70x), so a debug timing must never be
+/// compared against release timings across hosts. Emitted as a
+/// warning-level event so `PMOKE_OUTPUT=jsonl` stays parseable and the
+/// existing no-error-level assertions keep passing. Release builds pay
+/// nothing: the branch folds away at compile time.
+pub fn warn_if_debug_build() {
+    if cfg!(debug_assertions) {
+        warn(
+            "debug build: analysis timing is not representative of release performance; \
+             rebuild with --release before comparing timings across hosts",
+        );
+    }
+}
+
 pub fn error(message: impl Display) {
     let event = UiEvent::new(EventLevel::Error, EventKind::Status, &message, Vec::new());
     emit_event(&event, || {
