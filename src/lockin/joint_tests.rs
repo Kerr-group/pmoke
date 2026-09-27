@@ -69,6 +69,41 @@ fn test_inputs<'a>(
 }
 
 #[test]
+fn single_window_diagnostic_stays_silent_for_full_runs() {
+    let (time, _) = tone_waveform();
+    let lockin = joint_lockin();
+    let params = crate::lockin::lockin_params::LockinParams::from_geometry(
+        time.len(),
+        1.0e-5,
+        1_000.0,
+        &lockin,
+    )
+    .unwrap();
+    assert!(params.i_end - params.i_start + 1 > 1);
+    assert_eq!(single_window_diagnostic(params, time.len(), 1), None);
+}
+
+#[test]
+fn single_window_diagnostic_names_degenerate_geometry() {
+    // Trace barely exceeds the edge trim: stride=10 and n_half=100 give
+    // i_start=12, and length=235 gives n_int=24, so i_start == i_end and
+    // the joint bar total collapses to 1 on a single channel.
+    let lockin = joint_lockin();
+    let params =
+        crate::lockin::lockin_params::LockinParams::from_geometry(235, 1.0e-5, 1_000.0, &lockin)
+            .unwrap();
+    assert_eq!((params.i_start, params.i_end), (12, 12));
+    let warning = single_window_diagnostic(params, 235, 1).expect("degenerate case must warn");
+    assert!(warning.contains("single output window"), "{warning}");
+    assert!(warning.contains("index_range=(12, 12)"), "{warning}");
+    assert!(warning.contains("trace_len=235"), "{warning}");
+    assert!(
+        warning.contains("progress total is 1 across 1 channel(s)"),
+        "{warning}"
+    );
+}
+
+#[test]
 fn identity_recovers_tone_matching_boxcar() {
     let (time, signal) = tone_waveform();
     let lockin = joint_lockin();

@@ -616,6 +616,32 @@ impl PreparedJointPlan {
     }
 }
 
+/// Degenerate-geometry diagnostic: the joint bar total is
+/// `(i_end - i_start + 1) * n_channels`, so a single output window on a
+/// single channel renders as `0/1`. That geometry is valid for a tiny
+/// trace but never matches a full recorded run, where the same label
+/// carries the full window count instead. Returns the warning text only
+/// for the single-window case so a bare `0/1` bar is never left without
+/// its exact facts (behavior is unchanged: warn-only, no bail).
+fn single_window_diagnostic(
+    params: LockinParams,
+    trace_len: usize,
+    channels: usize,
+) -> Option<String> {
+    let outputs = params.i_end.checked_sub(params.i_start)?.checked_add(1)?;
+    if outputs != 1 {
+        return None;
+    }
+    Some(format!(
+        "joint GLS lock-in holds a single output window (index_range=({}, {}), trace_len={trace_len}, stride={}, n_half={}); progress total is {} across {channels} channel(s); reduce lockin.window.half_window_cycles, check lockin.stride_samples, or use a longer trace",
+        params.i_start,
+        params.i_end,
+        params.stride,
+        params.n_half,
+        outputs as u64 * channels as u64,
+    ))
+}
+
 pub fn run_joint_li(
     inputs: &JointRunInputs<'_>,
     signal_ch: &[u8],
@@ -644,6 +670,9 @@ pub fn run_joint_li(
     let params = LockinParams::from_geometry(t.len(), sample_rate_hz.recip(), f_ref, lockin)
         .context("joint lock-in geometry failed")?;
     let plan = PreparedJointPlan::prepare(params, lockin)?;
+    if let Some(warning) = single_window_diagnostic(plan.params, t.len(), signal_ch.len()) {
+        ui::warn(warning);
+    }
     let model = HarmonicSignalModel {
         fit_harmonics: gls.fit_harmonics.clone(),
         output_harmonics: gls.output_harmonics.clone(),
