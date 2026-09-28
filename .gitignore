@@ -6,3 +6,23 @@
 __pycache__/
 *.py[cod]
 target/
+# Kanban/CLI scratch (t_42d446b1): worktree checkouts, task caches, tool state — never track
+.worktrees/
+cache/
+tmp/
+.playwright-mcp/
+# Root-level transient CLI dumps (regenerable via gh/kanban CLI; never commit)
+/kb_*.json
+/kb_*.err
+/st-*.json
+/st-*.err
+/show*.json
+/show*.err
+/verify-*.json
+/pr_*.json
+/pr-*.json
+/pr_*.txt
+/issues-*.json
+/rev_*.json
+/rev_*.txt
+/triage-*.txt
