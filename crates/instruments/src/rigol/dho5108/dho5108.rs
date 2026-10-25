@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 enum DhoTransport {
     Tcp(BufReader<TcpStream>),
@@ -50,6 +50,18 @@ pub enum DhoTriggerStatus {
     Run,
     Auto,
     Stop,
+}
+
+// OPC can complete before a source readback reflects the requested channel.
+// Bound the additional settling wait, without replaying writes or swallowing
+// transport failures or a change in acquisition state. In-flight queries retain
+// the transport's I/O timeout; this budget limits additional polling.
+const RAW_SOURCE_SETTLE_TIMEOUT: Duration = Duration::from_secs(1);
+const RAW_SOURCE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+enum RawWordSetupStatus {
+    Ready,
+    SourcePending(String),
 }
 
 #[allow(dead_code)]
@@ -165,8 +177,14 @@ impl DHO5108 {
                 for _ in 0..4 {
                     s.clear();
                     let read = reader.read_line(&mut s)?;
+                    if read == 0 || !s.ends_with('\n') {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "SCPI text response ended before its newline terminator",
+                        ));
+                    }
                     let trimmed = s.trim();
-                    if read == 0 || !trimmed.is_empty() {
+                    if !trimmed.is_empty() {
                         return Ok(trimmed.to_string());
                     }
                 }
@@ -286,20 +304,66 @@ impl DHO5108 {
     }
 
     fn setup_raw_word_fetch(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {
-        // Send sequential setup commands in one write and synchronize once at the end.
+        // Send setup once. Only complete, valid stale source readbacks may be polled.
         self.write_lines(&raw_word_setup_commands(ch, memory_depth))?;
         validate_opc_response(&self.read_line()?)?;
-        self.verify_raw_word_setup(ch, memory_depth)?;
-        Ok(())
+        self.wait_for_raw_word_setup(
+            ch,
+            memory_depth,
+            RAW_SOURCE_SETTLE_TIMEOUT,
+            RAW_SOURCE_POLL_INTERVAL,
+        )
     }
 
-    fn verify_raw_word_setup(&mut self, ch: u8, memory_depth: usize) -> io::Result<()> {
+    fn wait_for_raw_word_setup(
+        &mut self,
+        ch: u8,
+        memory_depth: usize,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> io::Result<()> {
+        let started = Instant::now();
+        loop {
+            let actual = match self.verify_raw_word_setup(ch, memory_depth)? {
+                RawWordSetupStatus::Ready => return Ok(()),
+                RawWordSetupStatus::SourcePending(actual) => actual,
+            };
+            let not_settled = || {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "unexpected waveform source: {actual:?}, expected \"CHAN{ch}\" \
+                         (did not settle within {timeout:?})"
+                    ),
+                )
+            };
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(not_settled());
+            }
+            std::thread::sleep(poll_interval.min(remaining));
+            if started.elapsed() >= timeout {
+                return Err(not_settled());
+            }
+        }
+    }
+
+    fn verify_raw_word_setup(
+        &mut self,
+        ch: u8,
+        memory_depth: usize,
+    ) -> io::Result<RawWordSetupStatus> {
+        // Non-STOP is an acquisition-integrity failure, never a settling state.
         ensure_response("trigger status", &self.query(":TRIGger:STATus?")?, "STOP")?;
-        ensure_response(
-            "waveform source",
-            &self.query(":WAVeform:SOURce?")?,
-            &format!("CHAN{ch}"),
-        )?;
+        let source = self.query(":WAVeform:SOURce?")?;
+        if !source.eq_ignore_ascii_case(&format!("CHAN{ch}")) {
+            // Restrict settling to well-formed analog channel readbacks. An
+            // empty, malformed, or otherwise unexpected response fails closed.
+            if (1..=8).any(|channel| source.eq_ignore_ascii_case(&format!("CHAN{channel}"))) {
+                return Ok(RawWordSetupStatus::SourcePending(source));
+            }
+            ensure_response("waveform source", &source, &format!("CHAN{ch}"))?;
+        }
         ensure_response("waveform mode", &self.query(":WAVeform:MODE?")?, "RAW")?;
         ensure_response("waveform format", &self.query(":WAVeform:FORMat?")?, "WORD")?;
         let points = parse_memory_depth(&self.query(":WAVeform:POINts?")?)?;
@@ -309,7 +373,7 @@ impl DHO5108 {
                 format!("waveform points are {points}, expected {memory_depth}"),
             ));
         }
-        Ok(())
+        Ok(RawWordSetupStatus::Ready)
     }
 
     fn query_waveform_preamble(&mut self, ch: u8) -> io::Result<DhoWaveformPreamble> {
