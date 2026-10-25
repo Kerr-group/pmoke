@@ -4,6 +4,13 @@
 
 ### Changes
 
+- DHO5108 waveform fetch waits for a stale channel-source readback to
+  settle after setup, including screenshot-first fetches, without
+  resending the setup commands. The additional settling wait is bounded;
+  transport/protocol failures and non-STOP acquisition state still abort
+  immediately instead of being hidden by a retry. Incomplete TCP text
+  responses fail closed at EOF; VISA message termination is unchanged.
+
 - The monitor TUI gains a read-only REPORTS inspector plus paired
   documentation and regression hardening (Issues #277/#278). The REPORTS
   tab over the selected run shows STAGES rows from the run-manifest
