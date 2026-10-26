@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import test from 'node:test';
@@ -13,6 +14,11 @@ const proxyRequire = createRequire(cliRequire.resolve('proxy-agent'));
 const pacRequire = createRequire(proxyRequire.resolve('pac-proxy-agent'));
 const getUriPath = pacRequire.resolve('get-uri');
 const getUriRequire = createRequire(getUriPath);
+
+test('PostCSS resolves to the exact version declared by the website', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(require('postcss/package.json').version, manifest.devDependencies.postcss);
+});
 
 // These pins are scoped to the existing dev-tool parents in pnpm-workspace.yaml.
 // Review this integration again when changing either override or parent version.

@@ -283,7 +283,7 @@ test('signal hero exposes localized process semantics and stage replay controls'
     expect(railState.buttons).toBe(4);
     expect(railState.liveRegions).toBe(0);
     await rail.getByRole('button', {
-      name: (locale === 'en' ? 'Replay stage' : 'この工程を再生') + ': ' + (locale === 'en' ? 'NUMERICAL LI ANALYSIS' : '数値LI検波'),
+      name: (locale === 'en' ? 'Replay stage' : 'この工程を再生') + ': 02' + (locale === 'en' ? 'NUMERICAL LI ANALYSIS' : '数値LI検波'),
     }).click();
     await expect(stage.locator('.signal-stage-copy-panel[data-active="true"] .signal-stage-heading h2')).toHaveText(
       locale === 'en' ? 'NUMERICAL LOCK-IN ANALYSIS' : '数値Lock-in検波',
@@ -293,7 +293,7 @@ test('signal hero exposes localized process semantics and stage replay controls'
     expect(lockInRailState.pipelineProgress).toBeCloseTo(100 / 3, 3);
 
     await rail.getByRole('button', {
-      name: (locale === 'en' ? 'Replay stage' : 'この工程を再生') + ': ' + (locale === 'en' ? 'PHASE ALIGNMENT' : '位相整合'),
+      name: (locale === 'en' ? 'Replay stage' : 'この工程を再生') + ': 03' + (locale === 'en' ? 'PHASE ALIGNMENT' : '位相整合'),
     }).click();
     await expect(stage).toHaveAttribute('data-playback-mode', 'stage');
     await expect(stage).toHaveAttribute('data-sequence-stage', 'phase-correction');
