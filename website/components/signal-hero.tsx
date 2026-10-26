@@ -332,7 +332,7 @@ export function SignalHero({ labels }: { labels: SignalHeroLabels }) {
                       type="button"
                       onClick={() => controlsRef.current.replayStage(index)}
                       aria-current={step === stage ? 'step' : undefined}
-                      aria-label={`${labels.replayStage}: ${stageCopy[step].title}`}
+                      aria-label={`${labels.replayStage}: ${String(index + 1).padStart(2, '0')}${stageCopy[step].title}`}
                     >
                       <span className="signal-step-index">{String(index + 1).padStart(2, '0')}</span>
                       <span className="signal-step-name">{stageCopy[step].title}</span>

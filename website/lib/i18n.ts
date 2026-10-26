@@ -20,7 +20,7 @@ const japaneseUI = {
   'Choose a language(language switcher)': '言語を選択',
   'Choose a language(language switcher)(aria-label)': '言語を選択、日本語',
   'Close Banner(banner)(aria-label)': 'バナーを閉じる',
-  'Close Search(search dialog)(aria-label)': '検索を閉じる',
+  'Close Search(search dialog)(aria-label)': '検索を閉じる (ESC)',
   'Close Sidebar(aria-label)': 'サイドバーを閉じる',
   'Close Sidebar(sidebar)(aria-label)': 'サイドバーを閉じる',
   'Collapse Sidebar(sidebar)(aria-label)': 'サイドバーを折りたたむ',
@@ -75,6 +75,9 @@ export const i18nUI = defineI18nUI(i18n, {
     // Keep the visible locale name inside the accessible name (WCAG 2.5.3
     // Label in Name); axe reports label-content-name-mismatch otherwise.
     'Choose a language(language switcher)(aria-label)': 'Choose a language, English',
+    // Keep the visible "ESC" hint inside the accessible name (WCAG 2.5.3
+    // Label in Name); axe reports label-content-name-mismatch otherwise.
+    'Close Search(search dialog)(aria-label)': 'Close Search (ESC)',
   },
   ja: japaneseUI,
 });
