@@ -12,7 +12,10 @@ for (const item of [
     locale: 'ja',
     query: 'ネットワーク経由のオシロ接続',
     mode: 'ローカル・ハイブリッド',
-    expectedFirst: 'Hardware Transport',
+    // Fumadocs >= 16.17 table rows carry header context, so the feature-flags
+    // page (hw-core direct TCP for oscilloscopes) now outranks transports;
+    // transports stays second and semantic Recall@5 is unchanged (see #327).
+    expectedFirst: 'Feature Flags',
   },
 ] as const) {
   test(`${item.locale} local hybrid search stays private and readable`, async ({ page }, testInfo) => {
