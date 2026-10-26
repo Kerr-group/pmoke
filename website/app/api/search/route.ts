@@ -11,6 +11,9 @@ const deterministicSource = new Proxy(source, {
 });
 
 export const { staticGET: GET } = createFromSource(deterministicSource, {
+  // No consumer sorts by document properties (BM25 relevance order is used),
+  // so skip serializing the unused sorter payload (~280 KiB, see #327).
+  sort: { enabled: false },
   buildIndex: async (page) => {
     const structuredData = page.data.structuredData;
     if (!structuredData) throw new Error(`missing search data for ${page.url}`);
