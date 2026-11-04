@@ -146,8 +146,27 @@ fn collect_tree_digest_entries(
     if !relative.is_empty() {
         entries.push((relative, "directory", Vec::new()));
     }
-    for entry in fs::read_dir(path)? {
-        collect_tree_digest_entries(root, &entry?.path(), entries)?;
+    for entry in fs::read_dir(path)
+        .with_context(|| format!("failed to list publication directory: {}", path.display()))?
+    {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to read publication directory entry: {}",
+                path.display()
+            )
+        })?;
+        // macOS SMB mounts materialize AppleDouble (`._*`) sidecars and
+        // `.DS_Store` files asynchronously; they are filesystem metadata,
+        // not published artifacts, and churning sidecars must not perturb
+        // the digest. Mirrors the dotfile skips in the artifact collectors.
+        let is_hidden = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with('.'));
+        if is_hidden {
+            continue;
+        }
+        collect_tree_digest_entries(root, &entry.path(), entries)?;
     }
     Ok(())
 }
@@ -416,10 +435,17 @@ fn write_atomic_sibling(path: &Path, contents: &[u8]) -> Result<()> {
     name.push(format!(".{}.tmp", std::process::id()));
     let temporary = path.with_file_name(name);
     let result: Result<()> = (|| {
-        fs::write(&temporary, contents)?;
+        fs::write(&temporary, contents)
+            .with_context(|| format!("failed to write publish journal: {}", temporary.display()))?;
         #[cfg(not(windows))]
         {
-            fs::rename(&temporary, path)?;
+            fs::rename(&temporary, path).with_context(|| {
+                format!(
+                    "failed to publish {} from {}",
+                    path.display(),
+                    temporary.display()
+                )
+            })?;
         }
         #[cfg(windows)]
         {
