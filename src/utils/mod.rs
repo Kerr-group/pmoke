@@ -4,5 +4,6 @@ pub mod csv;
 pub mod raw_csv;
 pub mod raw_data;
 pub mod recorded_source;
+pub(crate) mod sync;
 pub mod time_axis;
 pub mod waveform;

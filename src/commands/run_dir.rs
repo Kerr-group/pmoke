@@ -187,6 +187,11 @@ fn analysis_contains_published_artifacts(directory: &Path) -> Result<bool> {
     for entry in entries {
         let entry = entry.context("failed to inspect existing analysis result")?;
         let name = entry.file_name();
+        // Ignore macOS SMB sidecars (`._*`) and `.DS_Store`: filesystem
+        // metadata, not published artifacts.
+        if name.to_str().is_some_and(|name| name.starts_with('.')) {
+            continue;
+        }
         if name != "config.source.toml" && name != "config.resolved.toml" {
             return Ok(true);
         }
@@ -574,7 +579,7 @@ fn write_atomic_file(path: &Path, contents: &[u8]) -> Result<()> {
     let result = (|| {
         file.write_all(contents)?;
         file.flush()?;
-        file.sync_all()?;
+        crate::utils::sync::tolerate_unsupported_sync(file.sync_all())?;
         drop(file);
         atomic_replace(&temporary, path)?;
         sync_parent(path)
@@ -1017,13 +1022,77 @@ pub(crate) fn publish_analysis_staging(cfg: &Config, staging_cfg: &Config) -> Re
 }
 
 pub struct RunMutationLock {
-    file: fs::File,
+    /// `None` when the filesystem rejects file locking (NAS/SMB fallback):
+    /// the guard then provides no mutual exclusion, only the one-time
+    /// warning emitted at acquisition.
+    file: Option<fs::File>,
+}
+
+/// Opt-out of the lock-unsupported fallback: when set to `1`/`true`/`yes`,
+/// an unsupported lock is fatal again instead of degrading to a warning.
+#[cfg(not(target_arch = "wasm32"))]
+const STRICT_LOCK_ENV: &str = "PMOKE_REQUIRE_LOCK";
+
+/// Reports whether an exclusive-lock failure means the filesystem does not
+/// implement file locking at all (NAS/SMB mounts), as opposed to a lock
+/// held by another process or a genuine I/O error. Shares the errno matcher
+/// with the durability-sync fallback in [`crate::utils::sync`].
+#[cfg(not(target_arch = "wasm32"))]
+fn is_lock_unsupported(error: &io::Error) -> bool {
+    crate::utils::sync::filesystem_unsupported(error)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_strict_lock_required() -> bool {
+    std::env::var(STRICT_LOCK_ENV)
+        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn lock_or_warn_unsupported(file: fs::File, path: &Path) -> Result<Option<fs::File>> {
+    use fs2::FileExt;
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(file)),
+        Err(error) => {
+            if !is_strict_lock_required() && is_lock_unsupported(&error) {
+                crate::ui::warn(format!(
+                    "file locking is not supported for run directory {} ({error}); continuing without mutual exclusion. Do not run concurrent pmoke commands against this directory; prefer a local filesystem, or set {STRICT_LOCK_ENV}=1 to turn this into an error.",
+                    path.display()
+                ));
+                return Ok(None);
+            }
+            let is_lock_collision = error.kind() == io::ErrorKind::WouldBlock || {
+                #[cfg(windows)]
+                {
+                    error.raw_os_error() == Some(32) || error.raw_os_error() == Some(33)
+                }
+                #[cfg(not(windows))]
+                {
+                    false
+                }
+            };
+
+            if is_lock_collision {
+                let content = fs::read_to_string(path).unwrap_or_default();
+                bail!(
+                    "another run-mutating operation is already running in this directory (lock file: {}).\nLock info:\n{}",
+                    path.display(),
+                    content
+                );
+            } else {
+                Err(error).with_context(|| {
+                    format!("failed to acquire run mutation lock: {}", path.display())
+                })
+            }
+        }
+    }
 }
 
 impl RunMutationLock {
     pub fn acquire(run_dir: &Path, stage: &str) -> Result<Self> {
         let path = run_dir.join(".run.lock");
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
@@ -1032,37 +1101,11 @@ impl RunMutationLock {
             .with_context(|| format!("failed to open lock file: {}", path.display()))?;
 
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            use fs2::FileExt;
-            match file.try_lock_exclusive() {
-                Ok(()) => {}
-                Err(error) => {
-                    let is_lock_collision = error.kind() == io::ErrorKind::WouldBlock || {
-                        #[cfg(windows)]
-                        {
-                            error.raw_os_error() == Some(32) || error.raw_os_error() == Some(33)
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            false
-                        }
-                    };
-
-                    if is_lock_collision {
-                        let content = fs::read_to_string(&path).unwrap_or_default();
-                        bail!(
-                            "another run-mutating operation is already running in this directory (lock file: {}).\nLock info:\n{}",
-                            path.display(),
-                            content
-                        );
-                    } else {
-                        return Err(error).with_context(|| {
-                            format!("failed to acquire run mutation lock: {}", path.display())
-                        });
-                    }
-                }
-            }
-        }
+        let Some(mut file) = lock_or_warn_unsupported(file, &path)? else {
+            return Ok(Self { file: None });
+        };
+        #[cfg(target_arch = "wasm32")]
+        let mut file = file;
 
         file.set_len(0)?;
         file.seek(std::io::SeekFrom::Start(0))?;
@@ -1071,16 +1114,18 @@ impl RunMutationLock {
         writeln!(file, "pid = {}", std::process::id())?;
         writeln!(file, "stage = \"{stage}\"")?;
         writeln!(file, "started_at = \"{now}\"")?;
-        file.sync_all()?;
+        crate::utils::sync::tolerate_unsupported_sync(file.sync_all())?;
 
-        Ok(Self { file })
+        Ok(Self { file: Some(file) })
     }
 }
 
 impl Drop for RunMutationLock {
     fn drop(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
-        let _ = fs2::FileExt::unlock(&self.file);
+        if let Some(file) = self.file.as_ref() {
+            let _ = fs2::FileExt::unlock(file);
+        }
     }
 }
 
@@ -1230,9 +1275,10 @@ fn write_once_or_verify(path: &Path, contents: &[u8]) -> Result<()> {
 
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<()> {
-    fs::File::open(path)
+    let synced = fs::File::open(path)
         .with_context(|| format!("failed to open run directory for sync: {}", path.display()))?
-        .sync_all()
+        .sync_all();
+    crate::utils::sync::tolerate_unsupported_sync(synced)
         .with_context(|| format!("failed to sync run directory: {}", path.display()))
 }
 
@@ -1592,6 +1638,83 @@ mod tests {
         assert!(lock_final.is_ok());
 
         fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    static STRICT_LOCK_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_lock_unsupported_classifies_filesystem_errnos() {
+        // Genuine contention and ordinary I/O errors must stay on fatal paths.
+        assert!(!is_lock_unsupported(&io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "locked elsewhere"
+        )));
+        assert!(!is_lock_unsupported(&io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "denied"
+        )));
+        assert!(!is_lock_unsupported(&io::Error::from_raw_os_error(2)));
+
+        #[cfg(target_os = "macos")]
+        {
+            // ENOTSUP (macOS SMB mounts report this for fcntl locks).
+            assert!(is_lock_unsupported(&io::Error::from_raw_os_error(45)));
+            // EOPNOTSUPP.
+            assert!(is_lock_unsupported(&io::Error::from_raw_os_error(102)));
+            assert!(!is_lock_unsupported(&io::Error::from_raw_os_error(95)));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // ENOTSUP and EOPNOTSUPP share this value on Linux.
+            assert!(is_lock_unsupported(&io::Error::from_raw_os_error(95)));
+            assert!(!is_lock_unsupported(&io::Error::from_raw_os_error(45)));
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_strict_lock_env_parsing() {
+        let _guard = STRICT_LOCK_ENV_GUARD.lock().unwrap();
+        unsafe {
+            std::env::remove_var(STRICT_LOCK_ENV);
+        }
+        assert!(!is_strict_lock_required());
+        for value in ["1", "true", "TRUE", "yes", "Yes"] {
+            unsafe {
+                std::env::set_var(STRICT_LOCK_ENV, value);
+            }
+            assert!(is_strict_lock_required(), "value: {value}");
+        }
+        for value in ["0", "false", "", "required"] {
+            unsafe {
+                std::env::set_var(STRICT_LOCK_ENV, value);
+            }
+            assert!(!is_strict_lock_required(), "value: {value}");
+        }
+        unsafe {
+            std::env::remove_var(STRICT_LOCK_ENV);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_acquire_returns_locked_guard_on_supported_fs() {
+        let directory = temporary_directory();
+        fs::create_dir_all(&directory).unwrap();
+        let guard = RunMutationLock::acquire(&directory, "test").unwrap();
+        assert!(guard.file.is_some());
+        std::mem::drop(guard);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_unlocked_guard_drops_without_panic() {
+        // The NAS/SMB fallback guard holds no file; dropping it must be safe.
+        let guard = RunMutationLock { file: None };
+        std::mem::drop(guard);
     }
 
     #[test]
