@@ -401,11 +401,12 @@ pub fn export_raw_waveform_csv(base_dir: &Path, output: &Path) -> Result<RawCsvE
         if after_export != verification || manifest_after != manifest_before {
             bail!("RAW source manifest changed during CSV conversion");
         }
-        OpenOptions::new()
+        let synced = OpenOptions::new()
             .write(true)
             .open(&temporary)
             .with_context(|| format!("failed to reopen CSV export: {}", temporary.display()))?
-            .sync_all()
+            .sync_all();
+        crate::utils::sync::tolerate_unsupported_sync(synced)
             .with_context(|| format!("failed to sync CSV export: {}", temporary.display()))?;
         fs::rename(&temporary, output).with_context(|| {
             format!(
@@ -446,9 +447,10 @@ fn sync_export_parent(path: &Path) -> Result<()> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    File::open(parent)
+    let synced = File::open(parent)
         .with_context(|| format!("failed to open CSV output parent: {}", parent.display()))?
-        .sync_all()
+        .sync_all();
+    crate::utils::sync::tolerate_unsupported_sync(synced)
         .with_context(|| format!("failed to sync CSV output parent: {}", parent.display()))
 }
 

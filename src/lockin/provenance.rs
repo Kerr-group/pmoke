@@ -278,8 +278,15 @@ fn scan_outputs(dir: &Path) -> Result<Vec<OutputFileInfo>> {
         current_dir: &Path,
         outputs: &mut Vec<OutputFileInfo>,
     ) -> Result<()> {
-        for entry in std::fs::read_dir(current_dir)? {
-            let entry = entry?;
+        for entry in std::fs::read_dir(current_dir).with_context(|| {
+            format!("failed to list analysis outputs: {}", current_dir.display())
+        })? {
+            let entry = entry.with_context(|| {
+                format!(
+                    "failed to read analysis output entry: {}",
+                    current_dir.display()
+                )
+            })?;
             let path = entry.path();
             if path.is_dir() {
                 traverse(base_dir, &path, outputs)?;
@@ -428,8 +435,27 @@ fn describe_analysis_artifacts(
         if !entry.exists() {
             continue;
         }
-        for file in fs::read_dir(&entry)? {
-            let path = file?.path();
+        for file in fs::read_dir(&entry)
+            .with_context(|| format!("failed to list analysis artifacts: {}", entry.display()))?
+        {
+            let path = file
+                .with_context(|| {
+                    format!(
+                        "failed to read analysis artifact entry: {}",
+                        entry.display()
+                    )
+                })?
+                .path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+            {
+                // macOS SMB mounts materialize AppleDouble (`._*`) sidecars
+                // and `.DS_Store` files inside artifact directories; they are
+                // filesystem metadata, not analysis outputs.
+                continue;
+            }
             if path.extension().and_then(|value| value.to_str()) != Some("csv") {
                 continue;
             }
@@ -745,12 +771,13 @@ fn matching_analysis_csvs(dir: &Path, suffix: &str) -> Result<Vec<String>> {
     if !lockin.exists() {
         return Ok(Vec::new());
     }
-    let mut matches = fs::read_dir(lockin)?
+    let mut matches = fs::read_dir(&lockin)
+        .with_context(|| format!("failed to list analysis artifacts: {}", lockin.display()))?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| {
             path.file_name()
                 .and_then(|value| value.to_str())
-                .is_some_and(|name| name.ends_with(suffix))
+                .is_some_and(|name| !name.starts_with('.') && name.ends_with(suffix))
         })
         .map(|path| {
             path.strip_prefix(dir)
@@ -763,8 +790,15 @@ fn matching_analysis_csvs(dir: &Path, suffix: &str) -> Result<Vec<String>> {
 }
 
 fn collect_plot_files(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
+    for entry in fs::read_dir(directory)
+        .with_context(|| format!("failed to list plot artifacts: {}", directory.display()))?
+    {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to read plot artifact entry: {}",
+                directory.display()
+            )
+        })?;
         let path = entry.path();
         if path
             .file_name()
@@ -1461,9 +1495,8 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         writer
             .flush()
             .with_context(|| format!("failed to flush {}", temporary.display()))?;
-        writer
-            .get_ref()
-            .sync_all()
+        let synced = writer.get_ref().sync_all();
+        crate::utils::sync::tolerate_unsupported_sync(synced)
             .with_context(|| format!("failed to sync {}", temporary.display()))?;
         drop(writer);
         crate::commands::run_dir::replace_file_atomically(&temporary, path)
@@ -1747,6 +1780,33 @@ mod tests {
             100 * 3 * 8 - 1,
         );
         assert!(validate_npy_file(&truncated_path, 100, 3).is_err());
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn macos_sidecars_are_not_analysis_artifacts() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "pmoke-sidecar-artifacts-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(directory.join("lockin")).unwrap();
+        fs::write(directory.join("lockin/ch4_xy.csv"), b"t,x\n0.0,1.0\n").unwrap();
+        // AppleDouble sidecars and Finder metadata that macOS SMB mounts
+        // materialize asynchronously inside artifact directories.
+        fs::write(directory.join("lockin/._ch4_xy.csv"), b"junk").unwrap();
+        fs::write(directory.join("lockin/.DS_Store"), b"junk").unwrap();
+
+        let (_column_sets, artifacts) = describe_analysis_artifacts(&directory).unwrap();
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].csv.as_deref(), Some("lockin/ch4_xy.csv"));
+
+        let depends = matching_analysis_csvs(&directory, "_xy.csv").unwrap();
+        assert_eq!(depends, vec!["lockin/ch4_xy.csv".to_string()]);
 
         fs::remove_dir_all(directory).unwrap();
     }
