@@ -169,7 +169,7 @@ where
         }
     }
     writer.flush()?;
-    writer.get_ref().sync_all()?;
+    crate::utils::sync::tolerate_unsupported_sync(writer.get_ref().sync_all())?;
     Ok(())
 }
 

@@ -4,6 +4,23 @@
 
 ### Changes
 
+- Run-mutating commands no longer abort when the run directory lives on a
+  filesystem without file locking or durable fsync (e.g. macOS SMB/NAS
+  mounts, where fcntl locks and `F_FULLFSYNC` fail with ENOTSUP/EOPNOTSUPP).
+  Lock acquisition degrades to a one-time `[ WARN ]` and continues without
+  mutual exclusion; lock contention and all other lock errors stay fatal,
+  and Windows behavior is unchanged. Set `PMOKE_REQUIRE_LOCK=1` to keep an
+  unsupported lock fatal again. Durability syncs (`sync_all` on run files,
+  manifests, CSV/NPY artifacts, and their parent directories) likewise
+  degrade to a one-time `[ WARN ]` without fsync-backed crash durability;
+  written bytes are unaffected, so this fallback has no strict-mode gate.
+  Do not run concurrent pmoke commands against the same network run
+  directory while a fallback is active. macOS SMB AppleDouble (`._*`)
+  sidecars and `.DS_Store` files are ignored (never validated, manifested,
+  or hashed) by the analysis artifact collectors and the publication
+  digest; publication directory scans now report which path failed
+  instead of a bare I/O error.
+
 - DHO5108 waveform fetch waits for a stale channel-source readback to
   settle after setup, including screenshot-first fetches, without
   resending the setup commands. The additional settling wait is bounded;
