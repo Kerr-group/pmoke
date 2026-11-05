@@ -85,7 +85,7 @@ jobs:
           version: "v0.14.0"
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2.9.1
         with:
           shared-key: workspace-all-features
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -154,7 +154,7 @@ jobs:
           version: "v0.14.0"
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2.9.1
         with:
           shared-key: performance-smoke
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -229,7 +229,7 @@ jobs:
           version: "v0.14.0"
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2.9.1
         with:
           shared-key: linux-full-hardware
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -314,7 +314,7 @@ jobs:
           version: "v0.14.0"
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2.9.1
         with:
           shared-key: windows-full
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -439,7 +439,7 @@ jobs:
           version: "v0.14.0"
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2.9.1
         with:
           shared-key: feature-suite-${{ matrix.os }}-${{ matrix.cache-key }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -531,7 +531,7 @@ jobs:
           version: "v0.14.0"
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2.9.1
         with:
           shared-key: analysis-${{ matrix.os }}-${{ matrix.python }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
