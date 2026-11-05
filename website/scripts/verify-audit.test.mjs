@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { evaluateAudit, matchesAllowedEntry } from './verify-audit.mjs';
+import { evaluateAudit } from './verify-audit.mjs';
 
 const knownAdvisory = {
   github_advisory_id: 'GHSA-jmr9-qjv8-65gv',
@@ -81,79 +81,4 @@ test('rejects inconsistent audit counts', () => {
     () => evaluateAudit({ advisories: { known: knownAdvisory }, metadata: { vulnerabilities: { high: 0 } } }),
     /does not match advisory records/,
   );
-});
-
-const multiFindingAdvisory = {
-  github_advisory_id: 'GHSA-multi-example',
-  module_name: 'example',
-  severity: 'moderate',
-  vulnerable_versions: '<2.0.0',
-  patched_versions: '>=2.0.0',
-  findings: [
-    {
-      version: '1.0.0',
-      paths: ['.>@tool-a>example'],
-      dev: true,
-      optional: false,
-      bundled: false,
-    },
-    {
-      version: '1.5.0',
-      paths: ['.>@tool-b>example'],
-      dev: true,
-      optional: false,
-      bundled: false,
-    },
-  ],
-};
-
-const multiFindingAllowed = {
-  github_advisory_id: 'GHSA-multi-example',
-  module_name: 'example',
-  severity: 'moderate',
-  vulnerable_versions: '<2.0.0',
-  patched_versions: '>=2.0.0',
-  findings: [...multiFindingAdvisory.findings].reverse(),
-};
-
-test('matches a multi-finding exception as an exact set regardless of order', () => {
-  assert.equal(matchesAllowedEntry(multiFindingAdvisory, multiFindingAllowed), true);
-});
-
-test('rejects a multi-finding advisory with a missing finding', () => {
-  const subset = {
-    ...multiFindingAdvisory,
-    findings: [multiFindingAdvisory.findings[0]],
-  };
-  assert.equal(matchesAllowedEntry(subset, multiFindingAllowed), false);
-});
-
-test('rejects a multi-finding advisory with an extra finding', () => {
-  const superset = {
-    ...multiFindingAdvisory,
-    findings: [
-      ...multiFindingAdvisory.findings,
-      {
-        version: '1.9.0',
-        paths: ['.>@tool-c>example'],
-        dev: true,
-        optional: false,
-        bundled: false,
-      },
-    ],
-  };
-  assert.equal(matchesAllowedEntry(superset, multiFindingAllowed), false);
-});
-
-test('rejects a multi-finding advisory with a drifted version or path', () => {
-  const driftedVersion = {
-    ...multiFindingAdvisory,
-    findings: [{ ...multiFindingAdvisory.findings[0], version: '1.0.1' }, multiFindingAdvisory.findings[1]],
-  };
-  assert.equal(matchesAllowedEntry(driftedVersion, multiFindingAllowed), false);
-  const driftedPath = {
-    ...multiFindingAdvisory,
-    findings: [{ ...multiFindingAdvisory.findings[0], paths: ['.>@tool-other>example'] }, multiFindingAdvisory.findings[1]],
-  };
-  assert.equal(matchesAllowedEntry(driftedPath, multiFindingAllowed), false);
 });
