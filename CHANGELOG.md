@@ -4,6 +4,10 @@
 
 ### Changes
 
+- Correlated joint harmonic GLS skips exact zeros outside the prepared
+  Cholesky factor's band when whitening each window. Dense factors still
+  use the full solve; the estimator and its numerical outputs are unchanged.
+
 - Run-mutating commands no longer abort when the run directory lives on a
   filesystem without file locking or durable fsync (e.g. macOS SMB/NAS
   mounts, where fcntl locks and `F_FULLFSYNC` fail with ENOTSUP/EOPNOTSUPP).
