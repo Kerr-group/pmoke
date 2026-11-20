@@ -71,17 +71,11 @@ pub fn csv_with_canonical_lock(
 
 /// Returns `true` if the path looks like it ends with `acquisition/waveforms`.
 fn looks_like_canonical_waveforms_dir(path: &std::path::Path) -> bool {
-    let check = || -> Option<bool> {
-        if path.file_name()? != "waveforms" {
-            return Some(false);
-        }
-        let acquisition = path.parent()?;
-        if acquisition.file_name()? != "acquisition" {
-            return Some(false);
-        }
-        Some(true)
-    };
-    check().unwrap_or(false)
+    path.file_name().is_some_and(|name| name == "waveforms")
+        && path
+            .parent()
+            .and_then(std::path::Path::file_name)
+            .is_some_and(|name| name == "acquisition")
 }
 
 /// Check path existence with proper I/O error propagation.

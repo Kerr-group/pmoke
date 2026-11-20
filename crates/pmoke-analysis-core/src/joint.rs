@@ -452,6 +452,7 @@ pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DM
         solution.as_mut_slice(),
         dimension,
         rhs.ncols(),
+        None,
     )?;
     for value in solution.iter() {
         if !value.is_finite() {
@@ -466,10 +467,13 @@ pub fn forward_substitute(lower: &DMatrix<f64>, rhs: &DMatrix<f64>) -> Result<DM
 
 /// In-place blocked forward substitution `L X = B` over the caller's
 /// buffer: the correlated whitener packs `[design | response]` once and
-/// solves without the extra per-window right-hand-side copy. Validation,
-/// diagonal-failure row, and output checks match [`forward_substitute`]
-/// exactly; only the redundant allocation is hoisted.
-fn forward_substitute_in_place(lower: &DMatrix<f64>, solution: &mut DMatrix<f64>) -> Result<()> {
+/// solves without the extra per-window right-hand-side copy. A prepared
+/// factor with a verified band has already passed the factor checks.
+fn forward_substitute_in_place(
+    factor: &PreparedCorrelation,
+    solution: &mut DMatrix<f64>,
+) -> Result<()> {
+    let lower = &factor.lower;
     let dimension = lower.nrows();
     if lower.ncols() != dimension || solution.nrows() != dimension {
         return Err(AnalysisError::new(
@@ -477,13 +481,11 @@ fn forward_substitute_in_place(lower: &DMatrix<f64>, solution: &mut DMatrix<f64>
             "triangular solve needs a square factor matching every RHS row",
         ));
     }
-    for value in lower.iter() {
-        if !value.is_finite() {
-            return Err(AnalysisError::new(
-                "non_finite_input",
-                "triangular factor must be finite",
-            ));
-        }
+    if factor.lower_bandwidth.is_none() && lower.iter().any(|value| !value.is_finite()) {
+        return Err(AnalysisError::new(
+            "non_finite_input",
+            "triangular factor must be finite",
+        ));
     }
     for value in solution.iter() {
         if !value.is_finite() {
@@ -494,7 +496,13 @@ fn forward_substitute_in_place(lower: &DMatrix<f64>, solution: &mut DMatrix<f64>
         }
     }
     let ncols = solution.ncols();
-    blocked_forward_kernel(lower.as_slice(), solution.as_mut_slice(), dimension, ncols)?;
+    blocked_forward_kernel(
+        lower.as_slice(),
+        solution.as_mut_slice(),
+        dimension,
+        ncols,
+        factor.lower_bandwidth,
+    )?;
     for value in solution.iter() {
         if !value.is_finite() {
             return Err(AnalysisError::new(
@@ -519,10 +527,10 @@ fn forward_substitute_in_place(lower: &DMatrix<f64>, solution: &mut DMatrix<f64>
 /// out across every right-hand side while every work-buffer access stays
 /// contiguous and vectorizable.
 ///
-/// Bit-identity: per `(row, column)` the subtractions still run in
-/// `inner = 0..row` order with the division landing last, exactly the
-/// naive order -- only the storage layout changes, never the operation
-/// sequence. The zero-diagonal failure reports the first such row,
+/// Bit-identity: the subtractions run in increasing `inner` order per
+/// `(row, column)`, with the division last. A certified band skips only a
+/// prefix of exact zeros that cannot affect finite results. The
+/// zero-diagonal failure reports the first such row,
 /// matching the column-outer loop's discovery order. Empty right-hand
 /// sides solve trivially with no diagonal checks, also matching.
 fn blocked_forward_kernel(
@@ -530,6 +538,7 @@ fn blocked_forward_kernel(
     solution: &mut [f64],
     dimension: usize,
     ncols: usize,
+    bandwidth: Option<usize>,
 ) -> Result<()> {
     if ncols == 0 {
         return Ok(());
@@ -544,7 +553,22 @@ fn blocked_forward_kernel(
     }
     for row in 0..dimension {
         let base = row * ncols;
-        for inner in 0..row {
+        let first_inner = match bandwidth {
+            // In round-to-nearest, subtracting signed zeros from a finite
+            // value leaves it unchanged unless the accumulator starts at -0.
+            // Keep the dense prefix for that row. If a prior row overflowed,
+            // it remains non-finite in the output and the caller rejects it.
+            Some(bandwidth)
+                if row > bandwidth
+                    && work[base..base + ncols]
+                        .iter()
+                        .all(|value| value.to_bits() != (-0.0_f64).to_bits()) =>
+            {
+                row - bandwidth
+            }
+            _ => 0,
+        };
+        for inner in first_inner..row {
             let factor = lower[inner * dimension + row];
             let inner_base = inner * ncols;
             for column in 0..ncols {
@@ -941,6 +965,9 @@ pub struct PreparedNoisePlan {
 #[derive(Debug, Clone)]
 struct PreparedCorrelation {
     lower: DMatrix<f64>,
+    /// Exact lower bandwidth of the finite Cholesky factor, verified once
+    /// for prepared plans. `None` keeps the dense validation and solve.
+    lower_bandwidth: Option<usize>,
     toeplitz: DMatrix<f64>,
     jitter_applied_v2: f64,
     /// 2-norm condition of the executed factor `C = T + jI`.
@@ -1019,7 +1046,7 @@ impl PreparedNoisePlan {
                 "max_noise_condition must be positive finite",
             ));
         }
-        let correlation = match noise.mode {
+        let mut correlation = match noise.mode {
             NoiseMode::Identity => None,
             NoiseMode::PhaseDiagonal => {
                 let bins = noise.variance_bins.as_ref().ok_or_else(|| {
@@ -1067,6 +1094,9 @@ impl PreparedNoisePlan {
                 )?)
             }
         };
+        if let Some(factor) = &mut correlation {
+            factor.lower_bandwidth = certified_lower_bandwidth(&factor.lower);
+        }
         Ok(Self {
             noise: noise.clone(),
             rows,
@@ -1112,10 +1142,10 @@ impl PreparedNoisePlan {
 
     /// Whitens design and response with the prepared plan (the accelerated
     /// path). Every per-window validation, variance interpolation,
-    /// realized-covariance verdict and triangular solve matches the direct
-    /// path exactly; only the correlated factor construction and its
-    /// TOL-07 condition measurement are reused (an O(N) conservative bound
-    /// certifies acceptance, with exact-gate fallback otherwise).
+    /// realized-covariance verdict and triangular result matches the direct
+    /// path exactly. The plan reuses the correlated factor and its TOL-07
+    /// condition measurement (with exact-gate fallback), and skips verified
+    /// zeros outside the factor's band where that preserves the result.
     pub fn whiten(
         &self,
         design: &DMatrix<f64>,
@@ -1154,22 +1184,35 @@ enum FactorSource<'a> {
 }
 
 impl FactorSource<'_> {
-    fn parts(&self) -> (&DMatrix<f64>, &DMatrix<f64>, f64, &PreparedCorrelation) {
+    fn factor(&self) -> &PreparedCorrelation {
         match self {
-            FactorSource::Prepared(prepared) => (
-                &prepared.lower,
-                &prepared.toeplitz,
-                prepared.jitter_applied_v2,
-                prepared,
-            ),
-            FactorSource::Fresh(fresh) => (
-                &fresh.lower,
-                &fresh.toeplitz,
-                fresh.jitter_applied_v2,
-                fresh,
-            ),
+            FactorSource::Prepared(prepared) => prepared,
+            FactorSource::Fresh(fresh) => fresh,
         }
     }
+}
+
+/// Certify the factor actually returned by Cholesky, not the requested lag
+/// support. Tiny nonzero entries still count; an invalid or full-width
+/// factor retains the dense path. Scan in the matrix's column-major order.
+fn certified_lower_bandwidth(lower: &DMatrix<f64>) -> Option<usize> {
+    let rows = lower.nrows();
+    if rows < 2 || lower.ncols() != rows {
+        return None;
+    }
+    let mut bandwidth = 0;
+    for (column, values) in lower.as_slice().chunks_exact(rows).enumerate() {
+        if values[column] <= 0.0 || values.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
+        if let Some(last_nonzero) = values[column..].iter().rposition(|&value| value != 0.0) {
+            bandwidth = bandwidth.max(last_nonzero);
+        }
+        if bandwidth == rows - 1 {
+            return None;
+        }
+    }
+    Some(bandwidth)
 }
 
 /// Builds and factorizes the normalized Toeplitz factor for one window
@@ -1242,6 +1285,7 @@ fn prepare_correlation_factor(
     }
     Ok(PreparedCorrelation {
         lower,
+        lower_bandwidth: None,
         toeplitz,
         jitter_applied_v2,
         correlation_condition,
@@ -1501,21 +1545,22 @@ fn whiten_correlated(
             tolerances.max_jitter_v2,
         )?),
     };
-    let (lower, toeplitz, jitter, prepared_factor) = factor_source.parts();
+    let factor = factor_source.factor();
+    let jitter = factor.jitter_applied_v2;
     // Hoisted TOL-07 bound (P0): cond(S C S) <= cond(S)^2 * cond(C) with
     // cond(C) measured once per plan. A bound at or under the cap implies
     // the exact gate passes, so acceptance skips the per-window O(N^3)
     // eigendecomposition with bit-identical outputs. Any unformable or
     // over-cap bound falls back to the exact gate, preserving its failure
     // surface exactly (no new rejections, no new acceptances).
-    let bound_accepts = prepared_factor
+    let bound_accepts = factor
         .condition_bound(sqrt_variance)
         .is_some_and(|bound| bound <= tolerances.max_noise_condition);
     if !bound_accepts {
         // TOL-07 on the executed covariance, not just its factors: Cholesky
         // success and whitened-design conditioning do not bound cond(R).
         gate_realized_noise_condition(
-            toeplitz,
+            &factor.toeplitz,
             jitter,
             sqrt_variance,
             tolerances.max_noise_condition,
@@ -1534,7 +1579,7 @@ fn whiten_correlated(
         }
         solved[(row, columns)] = scaled_response[row];
     }
-    forward_substitute_in_place(lower, &mut solved)?;
+    forward_substitute_in_place(factor, &mut solved)?;
     let design = solved.columns(0, columns).into_owned();
     let response = DVector::from_iterator(rows, (0..rows).map(|row| solved[(row, columns)]));
     for value in design.iter().chain(response.iter()) {
@@ -2626,3 +2671,7 @@ pub fn rotate_xy_covariance_dense(
     let rotated = rotate_xy_covariance(&matrix, deltas_rad)?;
     Ok(rotated.iter().copied().collect())
 }
+
+#[cfg(test)]
+#[path = "joint_band_tests.rs"]
+mod band_tests;
