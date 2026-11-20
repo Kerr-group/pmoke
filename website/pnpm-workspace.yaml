@@ -9,7 +9,7 @@ allowBuilds:
 overrides:
   'brace-expansion@5.0.9': 5.0.12
   # get-uri 6 still requests FTP 5; verify its patched client with a loopback transfer.
-  'get-uri@6.0.5>basic-ftp': 6.2.1
+  'get-uri@6.0.5>basic-ftp': 6.2.6
   # Keep Lighthouse 12's engine/thresholds; replace its affected BiDi/Zod chain.
   # Node 22.23 satisfies Puppeteer 25; full Lighthouse CI covers browser integration.
   'lighthouse@12.6.1>puppeteer-core': 25.16.0

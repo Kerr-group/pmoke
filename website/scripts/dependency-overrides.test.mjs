@@ -34,7 +34,7 @@ test('Lighthouse keeps its engine while loading the patched Puppeteer chain', as
 
 test('get-uri can download through the patched FTP client and closes it', { timeout: 10_000 }, async (t) => {
   assert.equal(getUriRequire('get-uri/package.json').version, '6.0.5');
-  assert.equal(getUriRequire('basic-ftp/package.json').version, '6.2.1');
+  assert.equal(getUriRequire('basic-ftp/package.json').version, '6.2.6');
   const { getUri } = getUriRequire(getUriPath);
   const payload = Buffer.from('dependency compatibility fixture\n');
   const sockets = new Set();
