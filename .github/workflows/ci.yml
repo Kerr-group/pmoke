@@ -360,19 +360,19 @@ jobs:
               instruments|prologix-tcp|--no-default-features --features prologix-tcp
               prologix-rs|serial|--no-default-features --features serial
               prologix-rs|tcp|--no-default-features --features tcp
-          - os: macos-14
+          - os: macos-15
             suite: pmoke hw tcp
             cache-key: macos-pmoke-tcp
             profiles: |
               pmoke|hw-prologix-tcp|--no-default-features --features hw-prologix-tcp
               instruments|prologix-tcp|--no-default-features --features prologix-tcp
-          - os: macos-14
+          - os: macos-15
             suite: pmoke hw serial
             cache-key: macos-pmoke-serial
             profiles: |
               pmoke|hw-prologix-serial|--no-default-features --features hw-prologix-serial
               instruments|prologix-serial|--no-default-features --features prologix-serial
-          - os: macos-14
+          - os: macos-15
             suite: pmoke bundle + prologix
             cache-key: macos-bundle-prologix
             profiles: |
@@ -491,7 +491,7 @@ jobs:
             python: "3.10"
           - os: ubuntu-latest
             python: "3.13"
-          - os: macos-14
+          - os: macos-15
             python: "3.12"
           - os: windows-latest
             python: "3.12"
