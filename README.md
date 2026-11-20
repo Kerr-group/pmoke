@@ -211,6 +211,11 @@ version-pinned software citation and selection guidance.
   “Magneto-optical Kerr effect measurements under bipolar pulsed magnetic
   fields,” *JJAP Conference Proceedings* **12**, 011011 (2026).
   [doi:10.56646/jjapcp.12.0_011011](https://doi.org/10.56646/jjapcp.12.0_011011)
+- S. Yamane, S. Nakamura, S. Suzuki, A. Ikeda, M. Kondo, T. Kurumaji,
+  K. Ino, K. Matsuura, F. Kagawa, Y. Tokura, M. Tokunaga, and S. Yonezawa,
+  “Unconventional Magneto-Optical Kerr Effect beyond Magnetization Scaling
+  Driven by Pulse-Field-Induced Metamagnetism in Fe₂Mo₃O₈,”
+  [arXiv:2611.20697](https://arxiv.org/abs/2611.20697) (2026).
 
 ## 📄 License
 
