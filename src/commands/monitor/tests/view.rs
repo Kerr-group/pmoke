@@ -130,7 +130,12 @@ fn activity_title_distinguishes_live_and_paused_states() {
     assert!(activity_title(&app, 0, 80).contains("ACTIVITY · LIVE · READY"));
 
     app.new_output_events = 12;
-    assert!(activity_title(&app, 4, 80).contains("PAUSED · 12 NEW · G follow"));
+    let paused = activity_title(&app, 4, 80);
+    assert!(paused.contains("PAUSED · 12 NEW"));
+    assert!(
+        !paused.contains("G follow"),
+        "G moves the workflow cursor here: {paused}"
+    );
 
     let narrow = activity_title(&app, 4, 24);
     assert!(narrow.contains("ACTIVITY"));

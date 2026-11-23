@@ -6,9 +6,9 @@
 //! processes: scripts must stay inside the safe-key discipline below.
 //!
 //! Safe-key discipline (harness scripts must avoid):
-//! - `Enter` while Commands is focused (`RunSelected` spawns the selected
-//!   workflow command as a child process);
-//! - `y` / `Enter` on Output (`CopySelection` touches the OS clipboard);
+//! - `Enter` on a runnable workflow row (including from Inspector), unless
+//!   `spawn_runner` has been replaced with a test-owned runner;
+//! - `y` / `Enter` on Output unless `write_clipboard` is a test-owned sink;
 //! - `q` on an idle app (`RequestQuit` quits immediately without a running
 //!   command; the armed confirm path with a running command is covered by
 //!   the `quit_confirmation_*` unit tests in `keymap.rs`);

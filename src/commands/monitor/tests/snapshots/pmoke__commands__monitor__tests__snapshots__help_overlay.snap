@@ -8,21 +8,21 @@ expression: rendered
 │no run dirs under scan││READY   Config                                                                                │
 │                      ││Print normalized config and diagnostics.                                                      │
 │                 ┌ Help ────────────────────────────────────────────────────────────────────────────┐                 │
-│                 │pmoke TUI  ? / q close                                                            │ner; nothing is  │
+│                 │pmoke TUI  ? / q close                                                            │                 │
 │                 │                                                                                  │                 │
 └─────────────────│Selected  Config                                                                  │                 │
 ┌ WORKFLOW 02/12 ─│Print normalized config and diagnostics.                                          │                 │
 │  ▾ UTILITIES    │                                                                                  │─────────────────┘
 │▌    ●  show OK  │GLOBAL                                                                            │─────────────────╮
-│     ●  doctor OK│Ctrl+c                interrupt command or cancel activity selection              │                 │
+│     ●  doctor OK│Ctrl+C                interrupt command or cancel activity selection              │                 │
 │     ·  raw verif│?                     toggle this help                                            │                 │
 │  ▾ ANALYSIS     │Esc                   close dialog, clear search/selection, then leave panel      │                 │
 │     ·  reference│q                     close this help                                             │─────────────────│
-│     ·  sensor --│End                   follow live activity                                        │                 │
+│     ·  sensor --│End                   scroll to the bottom of the displayed activity              │                 │
 │     ·  li --    │q                     quit (press again to stop a running command and quit)       │                 │
 │     ·  signal --│r                     refresh config and files                                    │                 │
 │     ·  phase -- │[                     older runs (selection in runs)                              │                 │
-│     ·  moke --  │]                     live activity (selection in runs)                           │                 │
+│     ·  moke --  │]                     newer output, then live (selection in runs)                 │                 │
 │     ·  analyze -│a                     focus workflow panel                                        │                 │
 │                 │o                     focus activity panel and select events                      │                 │
 └─────────────────│i                     cycle inspector tabs                                        │                 │
@@ -31,4 +31,4 @@ expression: rendered
 │config and            ││                                                                                              │
 │diagnostics.          ││                                                                                              │
 └──────────────────────┘╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-Enterrun    j/kmove    /filter    1-4focus    [ ]history    ?help    qquit    [workflow]
+[Esc] Close

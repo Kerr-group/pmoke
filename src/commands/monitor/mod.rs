@@ -519,36 +519,25 @@ enum KeyOutcome {
 /// searching extend the query), then the registry via [`resolve_key`], then
 /// apply. Anything but a second `q` disarms a pending quit confirmation.
 /// Unbound keys are swallowed (while the help overlay is open, everything
-/// but its close keys is swallowed by the modal).
+/// but its close keys and interrupt is swallowed by the modal).
 fn handle_key(app: &mut MonitorApp, key: KeyEvent, area: Rect) -> Result<KeyOutcome> {
-    // Workflow/runs filter text entry precedes the registry: a plain character
-    // while searching extends the query of the focused list (the old flat
-    // match also shadowed every letter binding this way). Control/Alt chords
-    // still resolve to bindings (`Ctrl+C` interrupts even while searching).
-    // S2: the two search modes are mutually exclusive, so typing targets the
-    // focused list.
-    if (app.search_mode || app.run_search_mode)
-        && !app.show_help
-        && matches!(key.code, KeyCode::Char(_))
-        && !key.modifiers.contains(KeyModifiers::CONTROL)
-        && !key.modifiers.contains(KeyModifiers::ALT)
-    {
-        if let KeyCode::Char(ch) = key.code {
+    let action = match resolve_input(app, &key) {
+        KeyInput::Text(ch) => {
             if app.run_search_mode {
                 app.push_run_query(ch);
             } else {
                 app.push_action_query(ch);
             }
-        }
-        app.quit_confirm_pending = false;
-        return Ok(KeyOutcome::Continue);
-    }
-    let searching = app.search_mode || app.run_search_mode;
-    let Some(action) = resolve_key(&key, app.focus, searching, app.show_help) else {
-        if !app.show_help {
             app.quit_confirm_pending = false;
+            return Ok(KeyOutcome::Continue);
         }
-        return Ok(KeyOutcome::Continue);
+        KeyInput::Unbound => {
+            if !app.show_help {
+                app.quit_confirm_pending = false;
+            }
+            return Ok(KeyOutcome::Continue);
+        }
+        KeyInput::Action(action) => action,
     };
     if !matches!(action, TuiAction::RequestQuit) {
         app.quit_confirm_pending = false;
@@ -1166,7 +1155,7 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
     }
 
     let table_width = output_table_width_for_area(area);
-    let handle = spawn_command_runner(action, app.config_path.clone(), table_width)?;
+    let handle = (app.spawn_runner)(action, app.config_path.clone(), table_width)?;
     app.history_view = None;
     app.run_output.clear();
     app.last_stderr_kind = None;

@@ -11,14 +11,13 @@ description: コンフィグ・run参照・解析出力を扱うlive terminal da
 
 - Header: 状態 (コンフィグが読めれば`RUNNABLE`、diagnosticsがあれば`BLOCKED`)、
   実行中runのlabel、分:秒timer。
-- Context bar: 作業directoryとコンフィグpath。狭いterminalではcompact表示。
+- コンテキスト行には作業ディレクトリと設定ファイルのパスを表示する。`REPORTS` にフォーカスがあるときの `VIEW` は、実行するコマンドではなく、閲覧中の記録を示す。
 - `WORKFLOW`: command一覧と選択行の`DETAIL`説明。`/`でfilter、`Enter`で実行。
 - `RUNS`: S2 run browser (後述)。
 - `INSPECTOR`: 選択commandまたはpin留めrun preview用の`SUMMARY`、`CONFIG`、
   `DIAGNOSTICS`、`ARTIFACTS`、`REPORTS` tab。
 - `ACTIVITY`: `LIVE`、`PAUSED`、`HISTORY`状態を持つcommand出力。
-- Footer: focus中paneのkey hint。`?`でhelp overlayを開く。overlayはevent
-  loopと同じkey registryから生成されるため、表示と実装の乖離がない。
+- フッターには、そのペインで今使えるキーと操作を表示する。端末が狭いときは、優先度の低い案内をキーと操作の組ごと省く。
 
 ## Focus
 
@@ -26,32 +25,32 @@ description: コンフィグ・run参照・解析出力を扱うlive terminal da
 
 | Key | 効果 |
 | --- | --- |
-| `1` / `2` / `3` / `4` (`b`もrunsへ) | workflow / inspector / activity / runsへfocus |
+| Inspector 以外で `1` / `2` / `3` / `4` | Workflow / Inspector / Activity / Runs に移る |
+| `b` | Runs に移る。Inspector からも使える |
 | `Tab` / `Shift-Tab` (`l` / `h`、`Right` / `Left`) | 次 / 前paneへfocus |
 | `i` | Inspector tab巡回 (inspectorへfocus) |
 | Inspector focus中の`1`-`5` | Inspector tab直接選択 (`5`は`REPORTS`) |
 
 ## Key
 
-全pane共通:
+通常の操作時（検索入力中とヘルプ表示中を除く）:
 
 | Key | 効果 |
 | --- | --- |
 | `?` | Help overlay切替 (`q`または`Esc`で閉じる) |
 | `q` | 終了。command実行中は確認待ち (`q`再押下で終了、`Esc`で残留) |
-| `/` | Focus中listのfilter (workflowまたはruns) |
-| `Enter` | 選択command実行。runs focus中は選択runのpreview pin留め |
-| `[` / `]` | 過去run / live activityへ戻る |
+| `/` | Runs にフォーカスがあれば記録を、それ以外では Workflow のコマンドを検索する |
+| `Enter` | Workflow と Inspector では Workflow の選択コマンドを実行し、グループ行なら開閉する。Runs では選択した記録をプレビューし、Activity では選択した出力をコピーする |
+| `[` / `]` | Runs では選択行を移動。それ以外ではコマンド出力の履歴を前後する |
 | `r` | コンフィグとfile再読込 |
 | `Ctrl+C` | 実行中commandの中断 |
-| `End` | Live activity追従 |
+| `End` | 表示中の出力の末尾に移る。履歴を開いているときは履歴のまま |
 | `Esc` | Dialogを閉じ、検索・選択解除、pane離脱 (実行中commandは中断しない) |
 
-List key (`j`/`k`移動、`g`/`G`先頭・末尾) はfocus中listに適用: workflow
-選択、run選択、inspector scroll、activity選択。Activityには`v`
-visual-line選択、`y` copy、`K`/`J`選択拡張、`PageUp`/`PageDown`と
-`Ctrl+U`/`Ctrl+D` scrollが加わる。検索入力中は文字がfilterに追加され、
-`Enter`確定、`Backspace`削除、`Esc`解除。
+Workflow、Runs、Activity では `j`/`k` で選択を移し、`g`/`G` で先頭・末尾に移る。
+Inspector では `j`/`k` でタブの内容をスクロールする。`g`/`G` が移すのは Inspector 内の行ではなく、Workflow の先頭・末尾。Inspector と Activity では `PageUp`/`PageDown` と `Ctrl+U`/`Ctrl+D` も使える。Activity では `v` で選択を開始し、`K`/`J` で範囲を広げ、`y` でコピーする。
+
+検索入力中は `?`、`q`、数字も検索文字になる。`Enter` はフィルターを保って入力を終えるだけで、コマンドは起動しない。`Backspace` は1文字削除、`Esc` はフィルター解除。両方のリストにフィルターがあれば Runs から解除する。
 
 ## Run browser
 
@@ -73,13 +72,13 @@ S3 の`REPORTS` tabは、選択中runの内部で何が起きたかを表示す�
 `m6-evaluation-report.json`) と`calibration.json` artifact、
 `analysis/manifest`の公開状態を表示する。probeはすべて上限付き
 read-only file read。欠落・超過・parse不可のfileは描画を失敗させず、
-`not found` / `unreadable`表示に劣化する。run未選択時はscan rootと
-budget、runs browserへのhintを表示する。
+`not found` / `unreadable` を表示する。このタブから Runs に移るキーは `b`。`4` は `ARTIFACTS` を開く。
+たとえば `VIEW run-alpha (read-only)` と `[Enter] Run show` が出ていれば、閲覧しているのは `run-alpha` だが、`Enter` が実行するのは現在の設定での `show`。レポートを開いたりスクロールしたりするだけでは起動しない。
 
 ## 安全と環境
 
-- Command実行中の終了には2度目の`q`が必要。確認待ち中footerに
-  `q again to stop + quit`表示。`Esc`でcommandが止まることはない。
+- コマンド実行中の終了には2度目の `q` が必要。確認時は `[q] Stop + quit` と `[Esc] Stay` を表示する。`Esc` ではコマンドは止まらない。
+- ヘルプの `q`、`?`、`Esc` はヘルプを閉じるだけ。`Ctrl+C` は検索入力中もヘルプ表示中も実行中のコマンドに停止を要求する。ヘルプが開いていれば同時に閉じる。
 - `PMOKE_MOUSE=off` (`0`、`no`、`false`、`disabled`も可) でmouse capture
   無効。既定ではclick、drag、wheel有効。
 - `PMOKE_MOTION=full|reduced|off`で実行中live animationを抑制。
