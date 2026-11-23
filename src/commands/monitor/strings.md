@@ -8,8 +8,8 @@ Phase 2 adds the S3 REPORTS tab below.
 
 - Key bindings, their labels, and their help descriptions live in exactly one
   place: `REGISTRY` in `keymap.rs`. The `?` overlay (`help_sections`) and the
-  per-focus footer (`footer_spans`) render from that table, so help/footer
-  text cannot drift from the implementation.
+  footer (`footer_spans`) use this table. `resolve_input` checks which action
+  a displayed key will actually trigger, including plain text during search.
 - This file therefore does NOT duplicate the binding table. Binding behavior
   is pinned by `tests/keymap.rs` (determinism: modal > search > pane >
   global, first match wins) and by the help-overlay snapshot in
@@ -22,14 +22,14 @@ Phase 2 adds the S3 REPORTS tab below.
 | String | Location | Notes |
 | --- | --- | --- |
 | ` pmoke `, `●`, status (`RUNNABLE`/`BLOCKED`), `│`, run label, `MM:SS` | `header_spans` (`view.rs`) | `elapsed()` ticks whole minutes/seconds only |
-| `◆ cwd …  │  config …` / compact `◆ …` | `context_bar_spans` (`view.rs`) | path budgets use `cell_width`, never char count |
+| `◆ cwd …  │  config …` / compact `◆ …`; `VIEW <run> (read-only)` in focused `REPORTS` | `context_bar_spans` (`view.rs`) | the report source is separate from the workflow launch target |
 | ` WORKFLOW {:02}/{} `, ` WORKFLOW /{query} `, ` WORKFLOW /{query} · NO MATCHES ` | `render_workflow_list` (`view.rs`) | S1 filter; `/` begins, `Enter` commits, `Esc` clears |
 | ` RUNS {:02}/{total} `, ` RUNS /{query} {:02}/{total} `, ` RUNS /{query} · NO MATCHES `, ` RUNS 0/0 `, `no run dirs under scan root`, `no runs match the filter`, optional `TRUNC` | `render_runs_panel`, `runs_panel_title` (`view.rs`) | S2 browser; budgets `RUN_SCAN_MAX_*` in `runs.rs` |
 | `▌ ` selection marker | `render_runs_panel` (`view.rs`) | single-cell block, width 1 |
 | Inspector tab labels `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, `ARTIFACTS`, `REPORTS` | `InspectorView::label` (`mod.rs`) | `i` cycles; inspector-local `1`-`5` select (`5` = S3 REPORTS) |
 | ` Help ` overlay, section titles `GLOBAL WORKFLOW RUNS INSPECTOR ACTIVITY SEARCH` | `help_sections` (`keymap.rs`), `panels.rs` | fully registry-generated rows |
-| Footer verbs per focus (`run move filter focus …`, `filter move preview focus …`, `tabs tab scroll focus …`, `select visual copy follow …`, shared `history help quit [focus]`, quit-confirm ` q again to stop + quit ` / `Esc stays`) | `footer_spans` (`keymap.rs`) | key labels via `primary_label`; verbs curated |
-| `HISTORY {i}/{n}`, `PAUSED · {n} NEW · G follow`, `PAUSED · G follow`, `STOPPING · …` | `activity_title` (`view.rs`) | never wall-clock, only counters/state |
+| `[Enter] Run <command>` / `Toggle group` / `Preview` / `Copy`; search `Apply` / `Clear`, help `Close`, `[Ctrl+C] Stop`, `[q] Stop + quit` / `[Esc] Stay` | `footer_spans` (`keymap.rs`) | packs complete key–verb pairs by cell width; never offers a launch for a blocked row or while a child is active |
+| `HISTORY {i}/{n}`, `PAUSED · {n} NEW`, `PAUSED`, `STOPPING · …` | `activity_title` (`view.rs`) | status only; follow is a contextual footer action |
 | `capture on (click/drag/wheel); PMOKE_MOUSE=off disables`, `capture off (PMOKE_MOUSE=off)` | `panels.rs` | FR-05 mouse opt-out |
 | `PMOKE_MOTION=full\|reduced\|off` tick rates | `mod.rs` (`MotionMode`, `tui_frame_tick`) | snapshots run idle; motion never affects frames |
 

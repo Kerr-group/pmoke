@@ -268,15 +268,9 @@ pub(super) fn run_preview_rows(entry: &RunDirEntry) -> Vec<Vec<String>> {
 /// runner (`spawn_command_runner`); the browser never executes or writes.
 pub(super) fn readout_panel_note(action: MonitorAction) -> Option<&'static str> {
     match action {
-        MonitorAction::Show => Some(
-            "Read-only config panel. Enter re-runs `show` through the re-exec runner; nothing is written.",
-        ),
-        MonitorAction::RawVerify => Some(
-            "Read-only RAW panel. Enter re-runs `raw verify` through the re-exec runner; nothing is written.",
-        ),
-        MonitorAction::Doctor => Some(
-            "Read-only doctor panel. Enter re-runs `doctor` through the re-exec runner; nothing is written.",
-        ),
+        MonitorAction::Show => Some("Read-only configuration view."),
+        MonitorAction::RawVerify => Some("Read-only RAW verification view."),
+        MonitorAction::Doctor => Some("Read-only diagnostic view."),
         _ => None,
     }
 }

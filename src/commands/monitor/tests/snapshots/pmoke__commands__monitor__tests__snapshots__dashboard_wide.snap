@@ -8,8 +8,8 @@ expression: rendered
 │no run dirs under scan││READY   Config                                                                                │
 │                      ││Print normalized config and diagnostics.                                                      │
 │                      ││command  pmoke --config config.toml show                                                      │
-│                      ││panel    Read-only config panel. Enter re-runs `show` through the re-exec runner; nothing is  │
-│                      ││written.                                                                                      │
+│                      ││panel    Read-only configuration view.                                                        │
+│                      ││                                                                                              │
 └──────────────────────┘│                                                                                              │
 ┌ WORKFLOW 02/12 ──────┐│                                                                                              │
 │  ▾ UTILITIES         │└──────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -31,4 +31,4 @@ expression: rendered
 │config and            ││                                                                                              │
 │diagnostics.          ││                                                                                              │
 └──────────────────────┘╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-Enterrun    j/kmove    /filter    1-4focus    [ ]history    ?help    qquit    [workflow]
+[?] Help [Enter] Run show [Tab] Pane [/] Filter [q] Quit

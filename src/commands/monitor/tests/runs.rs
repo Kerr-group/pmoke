@@ -408,13 +408,47 @@ fn history_keys_follow_the_runs_focus() {
 }
 
 #[test]
+fn end_goes_to_the_bottom_of_displayed_history_without_leaving_it() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive, key, render_text};
+    let mut app = test_app();
+    for _ in 0..32 {
+        app.push_output(OutputStream::Stdout, "archived event");
+    }
+    let mut archived = fake_snapshot("first");
+    archived.output = std::mem::take(&mut app.run_output);
+    app.run_history.extend([archived, fake_snapshot("latest")]);
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[ch('o'), ch('['), key(KeyCode::PageUp)],
+    ));
+    assert_eq!(app.history_view, Some(0));
+    assert!(app.run_output_scroll > 0);
+    let frame = render_text(&mut app, WIDE);
+    assert!(frame.lines().last().unwrap().contains("[End] Bottom"));
+    assert_continue(&drive(&mut app, area, &[key(KeyCode::End)]));
+    assert_eq!(app.run_output_scroll, 0);
+    assert_eq!(app.history_view, Some(0));
+}
+
+#[test]
 fn pin_selected_run_returns_to_live_without_spawning() {
     let mut app = runs_app_with_entries();
+    app.spawn_runner = |_, _, _| panic!("preview must not start a command");
     app.run_history.push_back(fake_snapshot("first"));
     app.run_history.push_back(fake_snapshot("second"));
     app.history_view = Some(0);
 
-    app.pin_selected_run();
+    app.focus_runs();
+    let frame = super::harness::render_text(&mut app, super::harness::TINY);
+    assert!(frame.lines().last().unwrap().contains("[Enter] Preview"));
+    let area = super::harness::area_for(super::harness::TINY);
+    super::harness::assert_continue(&super::harness::drive(
+        &mut app,
+        area,
+        &[super::harness::key(KeyCode::Enter)],
+    ));
 
     assert_eq!(app.focus, FocusPane::Runs);
     assert_eq!(app.history_view, None);

@@ -73,7 +73,56 @@ pub(super) fn context_bar_spans(app: &MonitorApp, width: u16) -> Vec<Span<'stati
         return Vec::new();
     }
 
-    let mut spans = if width < CONTEXT_DETAILS_MIN_WIDTH {
+    // Reports can remain focused when its body does not fit. Keep the data
+    // source visible independently of the workflow target named by Enter.
+    let mut spans =
+        if app.focus == FocusPane::Inspector && app.inspector_view == InspectorView::Reports {
+            let view = match app.selected_run_entry() {
+                Some(entry) => {
+                    let prefix = "VIEW ";
+                    let suffix = " (read-only)";
+                    if width > prefix.len() + suffix.len() {
+                        format!(
+                            "{prefix}{}{suffix}",
+                            fit_text(&entry.name, width - prefix.len() - suffix.len())
+                        )
+                    } else {
+                        fit_text(&format!("{prefix}{}", entry.name), width)
+                    }
+                }
+                None => fit_text("VIEW No recorded run selected", width),
+            };
+            let path_width = width.saturating_sub(view.cell_width() as usize);
+            let mut spans = vec![Span::styled(view, Style::default().fg(Color::Cyan))];
+            if path_width >= CONTEXT_DETAILS_MIN_WIDTH {
+                spans.extend(path_context_spans(app, path_width));
+            }
+            spans
+        } else {
+            path_context_spans(app, width)
+        };
+
+    let used = spans
+        .iter()
+        .map(|span| span.content.cell_width() as usize)
+        .sum::<usize>();
+    let remaining = width.saturating_sub(used);
+    if remaining > 0 {
+        let rule = "─";
+        let rule_width = (rule.cell_width() as usize).max(1);
+        let rule_area = remaining.saturating_sub(1);
+        let filler = format!(
+            " {}{}",
+            rule.repeat(rule_area / rule_width),
+            " ".repeat(rule_area % rule_width)
+        );
+        spans.push(Span::styled(filler, Style::default().fg(Color::DarkGray)));
+    }
+    spans
+}
+
+fn path_context_spans(app: &MonitorApp, width: usize) -> Vec<Span<'static>> {
+    if width < CONTEXT_DETAILS_MIN_WIDTH {
         let full_prefix = "◆ cwd ";
         let icon_prefix = "◆ ";
         let prefix = if width >= full_prefix.cell_width() as usize {
@@ -131,25 +180,7 @@ pub(super) fn context_bar_spans(app: &MonitorApp, width: u16) -> Vec<Span<'stati
                 Style::default().fg(Color::Gray),
             ),
         ]
-    };
-
-    let used = spans
-        .iter()
-        .map(|span| span.content.cell_width() as usize)
-        .sum::<usize>();
-    let remaining = width.saturating_sub(used);
-    if remaining > 0 {
-        let rule = "─";
-        let rule_width = (rule.cell_width() as usize).max(1);
-        let rule_area = remaining.saturating_sub(1);
-        let filler = format!(
-            " {}{}",
-            rule.repeat(rule_area / rule_width),
-            " ".repeat(rule_area % rule_width)
-        );
-        spans.push(Span::styled(filler, Style::default().fg(Color::DarkGray)));
     }
-    spans
 }
 
 pub(super) fn fit_context_path(path: &str, width: usize) -> String {
@@ -185,10 +216,7 @@ pub(super) fn render_body(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rec
 }
 
 pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    // FR-02: the footer is generated from the keybinding registry per focus
-    // (key labels via `keymap::primary_label`), so it cannot drift from the
-    // implementation either.
-    let line = Line::from(footer_spans(app));
+    let line = Line::from(footer_spans(app, area.width));
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -560,8 +588,7 @@ fn render_run_preview(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
 /// rendering never writes, spawns, or fails.
 fn render_reports(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     let Some(entry) = app.selected_run_entry() else {
-        let focus_runs = primary_label(TuiAction::FocusRuns).unwrap_or_else(|| "4".to_string());
-        let lines = vec![
+        let mut lines = vec![
             Line::styled(
                 "No recorded run selected.",
                 Style::default().fg(Color::Yellow),
@@ -574,14 +601,18 @@ fn render_reports(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
                 Span::styled("scan  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(run_scan_budgets_label(), Style::default().fg(Color::Gray)),
             ]),
-            Line::from(vec![
+        ];
+        if !app.quit_confirmation_visible()
+            && let Some(focus_runs) = active_key_label(app, TuiAction::FocusRuns)
+        {
+            lines.push(Line::from(vec![
                 Span::styled("hint  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format!("press {focus_runs} to focus the runs browser"),
                     Style::default().fg(Color::Gray),
                 ),
-            ]),
-        ];
+            ]));
+        }
         frame.render_widget(
             Paragraph::new(lines)
                 .block(accent_panel(" REPORTS ").border_style(focus_border_style(
@@ -662,9 +693,9 @@ fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
             ),
             Line::styled(
                 if collapsed {
-                    "Enter to expand this workflow group."
+                    "Workflow group: collapsed."
                 } else {
-                    "Enter to collapse this workflow group."
+                    "Workflow group: expanded."
                 },
                 Style::default().fg(Color::Gray),
             ),
@@ -758,7 +789,7 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
 
     let Some(entry) = app.selected_workflow_entry() else {
         frame.render_widget(
-            Paragraph::new("Type to refine the search; Esc clears it.")
+            Paragraph::new("No workflow actions match this filter.")
                 .style(Style::default().fg(Color::Gray))
                 .block(accent_panel(" DETAIL ")),
             area,
@@ -768,7 +799,7 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
     let action = app.selected_action();
     if let WorkflowEntry::Group(group) = entry {
         frame.render_widget(
-            Paragraph::new("Enter toggles this group.")
+            Paragraph::new("Workflow group.")
                 .style(Style::default().fg(Color::Gray))
                 .block(accent_panel(format!(" DETAIL {} ", group.label()))),
             area,
@@ -869,9 +900,9 @@ pub(super) fn activity_title(app: &MonitorApp, effective_scroll: usize, width: u
         format!("HISTORY {index}/{total}")
     } else if effective_scroll > 0 {
         if app.new_output_events > 0 {
-            format!("PAUSED · {} NEW · G follow", app.new_output_events)
+            format!("PAUSED · {} NEW", app.new_output_events)
         } else {
-            "PAUSED · G follow".to_string()
+            "PAUSED".to_string()
         }
     } else if let Some(run) = &app.active_run {
         if run.cancel_requested {
@@ -1045,7 +1076,6 @@ pub(super) fn render_output_status_bar(
         spans.extend([
             Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
             Span::styled(selection, Style::default().fg(Color::Gray)),
-            Span::styled("  ·  j/k v y g/G", Style::default().fg(Color::DarkGray)),
         ]);
     }
     if let Some(status) = &app.copy_status {

@@ -4,6 +4,11 @@
 
 ### Changes
 
+- The monitor now names what Enter will do in the focused pane. When reading a
+  recorded run's reports, the view names the run separately from the workflow
+  command Enter would start. Search, help, and quit confirmation have their own
+  hints, and narrow terminals show whole shortcuts. Key bindings are unchanged.
+
 - Correlated joint harmonic GLS skips exact zeros outside the prepared
   Cholesky factor's band when whitening each window. Dense factors still
   use the full solve; the estimator and its numerical outputs are unchanged.

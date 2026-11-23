@@ -3,12 +3,12 @@ source: src/commands/monitor/tests/snapshots.rs
 expression: rendered
 ---
  pmoke  ● BLOCKED  │  IDLE  │  00:00                                                                                    
- └─ ◆ cwd /workspace/pmoke  │  config config.toml ──────────────────────────────────────────────────────────────────────
+VIEW No recorded run selected └─ ◆ cwd /workspace/pmoke  │  config config.toml ─────────────────────────────────────────
 ┌ RUNS 0/0 ────────────┐┌ REPORTS ─────────────────────────────────────────────────────────────────────────────────────┐
 │no run dirs under scan││No recorded run selected.                                                                     │
 │                      ││root  /workspace/pmoke                                                                        │
 │                      ││scan  budgets 512 dirs / 3 deep / 200 runs                                                    │
-│                      ││hint  press 4/b to focus the runs browser                                                     │
+│                      ││hint  press b to focus the runs browser                                                       │
 │                      ││                                                                                              │
 └──────────────────────┘│                                                                                              │
 ┌ WORKFLOW 02/12 ──────┐│                                                                                              │
@@ -31,4 +31,4 @@ expression: rendered
 │config and            ││                                                                                              │
 │diagnostics.          ││                                                                                              │
 └──────────────────────┘╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-itabs    1-5tab    j/kscroll    Tab/Right/lfocus    [ ]history    ?help    qquit    [inspector]
+[?] Help [Enter] Run show [b] Runs [Tab] Pane [i] Tabs [q] Quit

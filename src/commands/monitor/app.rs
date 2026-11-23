@@ -33,6 +33,8 @@ pub(super) struct MonitorApp {
     pub(super) run_history: std::collections::VecDeque<RunSnapshot>,
     pub(super) history_view: Option<usize>,
     pub(super) active_run: Option<ActiveRun>,
+    pub(super) spawn_runner: fn(MonitorAction, String, Option<u16>) -> Result<RunHandle>,
+    pub(super) write_clipboard: fn(&str) -> std::result::Result<ClipboardMethod, String>,
     pub(super) run_output: Vec<LogEntry>,
     pub(super) last_stderr_kind: Option<LogKind>,
     pub(super) run_output_scroll: usize,
@@ -87,6 +89,8 @@ impl MonitorApp {
             run_history: std::collections::VecDeque::new(),
             history_view: None,
             active_run: None,
+            spawn_runner: spawn_command_runner,
+            write_clipboard: copy_text_to_clipboard,
             run_output: Vec::new(),
             last_stderr_kind: None,
             run_output_scroll: 0,
@@ -447,6 +451,15 @@ impl MonitorApp {
         }
     }
 
+    /// True when an unmodified `q` would confirm a stop and quit right now.
+    pub(super) fn quit_confirmation_visible(&self) -> bool {
+        self.quit_confirm_pending
+            && self.command_running()
+            && !self.show_help
+            && !self.search_mode
+            && !self.run_search_mode
+    }
+
     /// FR-04 quit contract: idle quits immediately; while a child runs the
     /// first `q` arms a confirmation (any other key disarms it) and the
     /// second `q` stops the child and quits. Returns true when the event loop
@@ -463,7 +476,7 @@ impl MonitorApp {
         self.quit_confirm_pending = true;
         self.push_output(
             OutputStream::System,
-            "A command is running. Press q again to stop it and quit (Esc stays).",
+            "Quit requested while a command was running.",
         );
         false
     }
@@ -775,9 +788,12 @@ impl MonitorApp {
 
     pub(super) fn focus_output(&mut self) {
         self.focus = FocusPane::Output;
-        if self.output_selected.is_none() && !self.visible_output().is_empty() {
-            self.output_selected = last_renderable_output_index(self.visible_output());
-        }
+        self.output_selected = self.focused_output_cursor();
+    }
+
+    fn focused_output_cursor(&self) -> Option<usize> {
+        self.output_selected
+            .or_else(|| last_renderable_output_index(self.visible_output()))
     }
 
     pub(super) fn focus_commands(&mut self) {
@@ -899,7 +915,10 @@ impl MonitorApp {
     }
 
     pub(super) fn output_selection_range(&self) -> Option<(usize, usize)> {
-        let cursor = self.output_selected?;
+        Some(self.output_range_at(self.output_selected?))
+    }
+
+    fn output_range_at(&self, cursor: usize) -> (usize, usize) {
         let anchor = self.output_selection_anchor.unwrap_or(cursor);
         let output = self.visible_output();
         let mut start = anchor.min(cursor);
@@ -914,7 +933,17 @@ impl MonitorApp {
                 end += 1;
             }
         }
-        Some((start, end))
+        (start, end)
+    }
+
+    /// Copy first focuses Activity, selecting the last visible event if necessary.
+    pub(super) fn can_copy_output(&self) -> bool {
+        self.focused_output_cursor().is_some_and(|cursor| {
+            let (start, end) = self.output_range_at(cursor);
+            self.visible_output()
+                .get(start..=end)
+                .is_some_and(|entries| entries.iter().any(is_renderable_output_entry))
+        })
     }
 
     pub(super) fn output_selection_line_count(&self) -> usize {
@@ -939,7 +968,7 @@ impl MonitorApp {
             return;
         };
 
-        match copy_text_to_clipboard(&text) {
+        match (self.write_clipboard)(&text) {
             Ok(method) => self.finish_output_yank(text.chars().count(), method),
             Err(err) => {
                 self.copy_status = Some(format!("copy failed: {err}"));

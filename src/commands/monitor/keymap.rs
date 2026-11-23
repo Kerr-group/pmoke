@@ -18,11 +18,11 @@
 //!
 //! Within one key, pane/modal-specific entries are registered before their
 //! global fallback (e.g. `Enter` commits the search, copies in the activity
-//! pane, and runs the selected action everywhere else).
+//! pane, previews a run in Runs, and uses the workflow row elsewhere).
 //!
 //! Deliberately NOT bindings (documented here so the drift test can pin them):
-//! - workflow filter text entry: any `Char` while searching that matches no
-//!   registry entry is appended to the query (vim insert-mode analogue);
+//! - plain characters go to the active list filter *before* the registry;
+//!   control/alt chords still resolve normally (see [`resolve_input`]);
 //! - `:` is reserved for a future command palette (FR-08). Adopting it
 //!   requires relocating the `[`/`]` run-history keys as a set, so `:` stays
 //!   unbound and a test pins that;
@@ -105,7 +105,12 @@ impl KeySpec {
         if self.modifiers.contains(KeyModifiers::SHIFT) {
             out.push_str("Shift+");
         }
-        out.push_str(&key_code_label(self.code));
+        match self.code {
+            KeyCode::Char(ch) if self.modifiers.contains(KeyModifiers::CONTROL) => {
+                out.push(ch.to_ascii_uppercase())
+            }
+            code => out.push_str(&key_code_label(code)),
+        }
         out
     }
 }
@@ -287,7 +292,7 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
         action: TuiAction::FollowOutput,
         keys: &[KeySpec::plain(KeyCode::End)],
         contexts: &[KeyContext::Global],
-        description: "follow live activity",
+        description: "scroll to the bottom of the displayed activity",
     },
     KeyBinding {
         action: TuiAction::RequestQuit,
@@ -311,7 +316,7 @@ pub(super) const REGISTRY: &[KeyBinding] = &[
         action: TuiAction::HistoryNext,
         keys: &[KeySpec::plain(KeyCode::Char(']'))],
         contexts: &[KeyContext::Global],
-        description: "live activity (selection in runs)",
+        description: "newer output, then live (selection in runs)",
     },
     KeyBinding {
         action: TuiAction::FocusWorkflow,
@@ -631,13 +636,40 @@ pub(super) fn resolve_key(
         .map(|binding| binding.action)
 }
 
-/// Primary (first-listed) key label for an action, used by the footer so key
-/// names cannot drift from the registry.
-pub(super) fn primary_label(action: TuiAction) -> Option<String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyInput {
+    Text(char),
+    Action(TuiAction),
+    Unbound,
+}
+
+/// Classify input for both dispatch and hints, including text shadowing a binding.
+pub(super) fn resolve_input(app: &MonitorApp, key: &KeyEvent) -> KeyInput {
+    let searching = app.search_mode || app.run_search_mode;
+    if searching
+        && !app.show_help
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && let KeyCode::Char(ch) = key.code
+    {
+        return KeyInput::Text(ch);
+    }
+    resolve_key(key, app.focus, searching, app.show_help)
+        .map_or(KeyInput::Unbound, KeyInput::Action)
+}
+
+/// First usable alias, not necessarily the first one listed in the registry.
+pub(super) fn active_key_label(app: &MonitorApp, action: TuiAction) -> Option<String> {
     REGISTRY
         .iter()
-        .find(|binding| binding.action == action)
-        .map(KeyBinding::label)
+        .filter(|binding| binding.action == action)
+        .flat_map(|binding| binding.keys)
+        .find(|spec| {
+            resolve_input(app, &KeyEvent::new(spec.code, spec.modifiers))
+                == KeyInput::Action(action)
+        })
+        .map(|spec| spec.label())
 }
 
 /// Registry rows grouped for the `?` overlay: global, per-pane (in pane
@@ -702,108 +734,118 @@ fn help_section(action: TuiAction) -> &'static str {
     }
 }
 
-/// Footer hint line for the focused pane. Key labels come from
-/// [`primary_label`] (registry-derived); only the short verbs and the
-/// grouping per focus are curated here.
-pub(super) fn footer_spans(app: &MonitorApp) -> Vec<Span<'static>> {
-    fn key(text: String) -> Span<'static> {
-        Span::styled(text, Style::default().fg(Color::Cyan))
-    }
-    fn verb(text: &str) -> Span<'static> {
-        Span::raw(format!("{text}  "))
+/// A hint is indivisible: never render half a binding or a verb without its key.
+struct HintBar<'a> {
+    app: &'a MonitorApp,
+    remaining: usize,
+    spans: Vec<Span<'static>>,
+}
+
+impl HintBar<'_> {
+    fn push(&mut self, key: &str, verb: &str) -> bool {
+        let key = Span::styled(format!("[{key}]"), Style::default().fg(Color::Cyan));
+        let verb = Span::raw(format!(" {verb}"));
+        let gap = usize::from(!self.spans.is_empty());
+        let needed = gap + key.width() + verb.width();
+        if needed > self.remaining {
+            return false;
+        }
+        if gap > 0 {
+            self.spans.push(Span::raw(" "));
+        }
+        self.spans.extend([key, verb]);
+        self.remaining -= needed;
+        true
     }
 
-    let mut spans = Vec::new();
-    if app.quit_confirm_pending {
-        spans.push(Span::styled(
-            " q again to stop + quit ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(verb("Esc stays"));
-        return spans;
-    }
-
-    let run = primary_label(TuiAction::RunSelected).unwrap_or_else(|| "Enter".to_string());
-    let focus_next = primary_label(TuiAction::FocusNext).unwrap_or_else(|| "Tab".to_string());
-    let help = primary_label(TuiAction::ToggleHelp).unwrap_or_else(|| "?".to_string());
-    let quit = primary_label(TuiAction::RequestQuit).unwrap_or_else(|| "q".to_string());
-    let history_prev = primary_label(TuiAction::HistoryPrev).unwrap_or_else(|| "[".to_string());
-    let history_next = primary_label(TuiAction::HistoryNext).unwrap_or_else(|| "]".to_string());
-
-    match app.focus {
-        FocusPane::Commands => {
-            spans.push(key(run));
-            spans.push(verb("run  "));
-            spans.push(key("j/k".to_string()));
-            spans.push(verb("move  "));
-            spans.push(key(
-                primary_label(TuiAction::BeginSearch).unwrap_or_else(|| "/".to_string())
-            ));
-            spans.push(verb("filter  "));
-            spans.push(key("1-4".to_string()));
-            spans.push(verb("focus  "));
-        }
-        FocusPane::Runs => {
-            spans.push(key(
-                primary_label(TuiAction::BeginSearch).unwrap_or_else(|| "/".to_string())
-            ));
-            spans.push(verb("filter  "));
-            spans.push(key("j/k".to_string()));
-            spans.push(verb("move  "));
-            spans.push(key(
-                primary_label(TuiAction::PinRun).unwrap_or_else(|| "Enter".to_string())
-            ));
-            spans.push(verb("preview  "));
-            spans.push(key(focus_next));
-            spans.push(verb("focus  "));
-        }
-        FocusPane::Inspector => {
-            spans.push(key(
-                primary_label(TuiAction::CycleInspectorTabs).unwrap_or_else(|| "i".to_string())
-            ));
-            spans.push(verb("tabs  "));
-            spans.push(key("1-5".to_string()));
-            spans.push(verb("tab  "));
-            spans.push(key("j/k".to_string()));
-            spans.push(verb("scroll  "));
-            spans.push(key(focus_next));
-            spans.push(verb("focus  "));
-        }
-        FocusPane::Output => {
-            spans.push(key("j/k".to_string()));
-            spans.push(verb("select  "));
-            spans.push(key(
-                primary_label(TuiAction::EnterVisualMode).unwrap_or_else(|| "v".to_string())
-            ));
-            spans.push(verb("visual  "));
-            spans.push(key(
-                primary_label(TuiAction::CopySelection).unwrap_or_else(|| "y".to_string())
-            ));
-            spans.push(verb("copy  "));
-            spans.push(key(
-                primary_label(TuiAction::FollowOutput).unwrap_or_else(|| "End".to_string())
-            ));
-            spans.push(verb("follow  "));
+    fn action(&mut self, action: TuiAction, verb: &str) {
+        if let Some(key) = active_key_label(self.app, action) {
+            self.push(&key, verb);
         }
     }
-    spans.push(key(format!("{history_prev} {history_next}")));
-    spans.push(verb("history  "));
-    spans.push(key(help));
-    spans.push(verb("help  "));
-    spans.push(key(quit));
-    spans.push(verb("quit  "));
-    let focus = match app.focus {
-        FocusPane::Commands => "workflow",
-        FocusPane::Runs => "runs",
-        FocusPane::Inspector => "inspector",
-        FocusPane::Output => "activity",
+}
+
+/// Describe the *physical Enter key*, not a registry row's first alias (e.g. `y`).
+fn enter_verb(app: &MonitorApp) -> Option<String> {
+    use TuiAction::{CopySelection, PinRun, RunSelected};
+    match resolve_input(app, &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
+        KeyInput::Action(RunSelected) => match app.selected_workflow_entry()? {
+            WorkflowEntry::Group(_) => Some("Toggle group".into()),
+            WorkflowEntry::Action(action)
+                if !app.command_running() && action_runnable(action, &app.load) =>
+            {
+                Some(format!("Run {}", action.command_name()))
+            }
+            _ => None,
+        },
+        KeyInput::Action(PinRun) => app.selected_run_entry().map(|_| "Preview".into()),
+        KeyInput::Action(CopySelection) if app.can_copy_output() => Some("Copy".into()),
+        _ => None,
+    }
+}
+
+pub(super) fn footer_spans(app: &MonitorApp, width: u16) -> Vec<Span<'static>> {
+    use TuiAction::{
+        BeginSearch, CycleInspectorTabs, Escape, FocusNext, FocusRuns, FollowOutput, Interrupt,
+        RequestQuit, SearchCommit, ToggleHelp,
     };
-    spans.push(Span::styled(
-        format!("[{focus}]"),
-        Style::default().fg(Color::DarkGray),
-    ));
-    spans
+    let mut bar = HintBar {
+        app,
+        remaining: usize::from(width),
+        spans: Vec::new(),
+    };
+    let searching = app.search_mode || app.run_search_mode;
+    if app.quit_confirmation_visible() {
+        bar.action(RequestQuit, "Stop + quit");
+        bar.action(Escape, "Stay");
+        return bar.spans;
+    }
+    if app
+        .active_run
+        .as_ref()
+        .is_some_and(|run| !run.cancel_requested)
+    {
+        bar.action(Interrupt, "Stop");
+    }
+    if app.show_help {
+        bar.action(Escape, "Close");
+    } else if searching {
+        bar.action(SearchCommit, "Apply");
+        if let Some(key) = active_key_label(app, Escape) {
+            // Escape clears a saved Runs filter before the Workflow filter.
+            if !(app.search_mode && !app.run_query.is_empty() && bar.push(&key, "Clear runs")) {
+                bar.push(&key, "Clear");
+            }
+        }
+    } else {
+        bar.action(ToggleHelp, "Help");
+        if let Some(verb) = enter_verb(app) {
+            bar.push(&key_code_label(KeyCode::Enter), &verb);
+        }
+        if app.focus == FocusPane::Inspector && app.inspector_view == InspectorView::Reports {
+            bar.action(FocusRuns, "Runs");
+        }
+        bar.action(FocusNext, "Pane");
+        match app.focus {
+            FocusPane::Commands | FocusPane::Runs => bar.action(BeginSearch, "Filter"),
+            FocusPane::Inspector => bar.action(CycleInspectorTabs, "Tabs"),
+            FocusPane::Output => bar.action(
+                FollowOutput,
+                if app.history_view.is_some() {
+                    "Bottom"
+                } else {
+                    "Follow"
+                },
+            ),
+        }
+        bar.action(
+            RequestQuit,
+            if app.command_running() {
+                "Quit?"
+            } else {
+                "Quit"
+            },
+        );
+    }
+    bar.spans
 }

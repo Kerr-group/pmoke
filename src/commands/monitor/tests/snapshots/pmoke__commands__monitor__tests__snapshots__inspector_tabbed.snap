@@ -31,4 +31,4 @@ expression: rendered
 │config and            ││                                                                                              │
 │diagnostics.          ││                                                                                              │
 └──────────────────────┘╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-itabs    1-5tab    j/kscroll    Tab/Right/lfocus    [ ]history    ?help    qquit    [inspector]
+[?] Help [Enter] Run show [Tab] Pane [i] Tabs [q] Quit
