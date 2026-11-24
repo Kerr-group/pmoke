@@ -272,7 +272,11 @@ pub(super) fn render_files(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) 
 
 pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     let popup = centered_rect(70, 70, area);
-    let selected = app.selected_action();
+    let (selected, description) = match app.selected_workflow_entry() {
+        Some(WorkflowEntry::Action(action)) => (action.label(), action.description()),
+        Some(WorkflowEntry::Group(group)) => (group.label(), "Workflow group."),
+        None => ("No matching workflow action", ""),
+    };
     let mut lines = vec![
         Line::from(vec![
             Span::styled(
@@ -289,13 +293,13 @@ pub(super) fn render_help_overlay(frame: &mut Frame<'_>, app: &MonitorApp, area:
         Line::from(vec![
             Span::styled("Selected  ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                selected.label(),
+                selected,
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::styled(selected.description(), Style::default().fg(Color::Gray)),
+        Line::styled(description, Style::default().fg(Color::Gray)),
         Line::raw(""),
     ];
     // FR-02: every row below is generated from the keybinding registry, so

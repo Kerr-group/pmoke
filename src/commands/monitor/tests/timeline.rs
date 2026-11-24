@@ -51,7 +51,7 @@ fn output_table_width_fits_inside_live_output_text_area() {
     let log_content = output_log_content_area(area).expect("output area exists");
     let table_width = output_table_width_for_area(area).expect("table width exists");
 
-    assert!(table_width <= log_content.width.saturating_sub(OUTPUT_PREFIX_WIDTH + 1));
+    assert!(table_width <= log_content.width.saturating_sub(OUTPUT_PREFIX_WIDTH));
     assert!(table_width >= 24);
 }
 

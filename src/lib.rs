@@ -43,6 +43,30 @@ pub fn run_analysis_pipeline(
     commands::analyze::run_analyze(cfg, data)
 }
 
+/// Keep CLI overrides separate from the file, even while it has diagnostics.
+#[derive(Default)]
+struct RunOptions {
+    run_dir: Option<std::path::PathBuf>,
+    force: bool,
+}
+
+impl RunOptions {
+    fn apply(&self, config: &mut config::Config) {
+        config.force = self.force;
+        if let Some(dir) = &self.run_dir {
+            config.set_artifact_root(dir.clone());
+        }
+    }
+
+    fn load(&self, path: &str) -> ConfigLoad {
+        let mut load = config::load_from_path(path);
+        if let ConfigLoad::Ready { config, .. } = &mut load {
+            self.apply(config);
+        }
+        load
+    }
+}
+
 fn run_with(args: Cli) -> Result<()> {
     if let Some(Command::Completions { shell }) = args.command.as_ref() {
         commands::completions::install_completion(*shell)?;
@@ -77,6 +101,10 @@ fn run_with(args: Cli) -> Result<()> {
         return commands::raw::verify(input);
     }
 
+    let options = RunOptions {
+        run_dir: args.run_dir,
+        force: args.force,
+    };
     if let Some(Command::Export {
         command:
             ExportCommand::Csv {
@@ -96,24 +124,17 @@ fn run_with(args: Cli) -> Result<()> {
                 }
             }
         };
-        cfg.force = args.force;
-        if let Some(run_dir) = &args.run_dir {
-            cfg.set_artifact_root(run_dir.clone());
-        }
+        options.apply(&mut cfg);
         return commands::export::csv_with_canonical_lock(&cfg, input, output, args.force);
     }
 
-    let mut load = config::load_from_path(&args.config);
-    if let ConfigLoad::Ready { config, .. } = &mut load {
-        config.force = args.force;
-        if let Some(run_dir) = &args.run_dir {
-            config.set_artifact_root(run_dir.clone());
-        }
-    }
+    let load = options.load(&args.config);
 
     match args.command.as_ref() {
         Some(Command::Show) => return commands::show::show(&load),
-        None | Some(Command::Monitor) => return commands::monitor::monitor(&args.config, load),
+        None | Some(Command::Monitor) => {
+            return commands::monitor::monitor(&args.config, load, options);
+        }
         Some(Command::CompareLockin { request, output }) => {
             return commands::compare::run_compare(request, output.as_deref());
         }

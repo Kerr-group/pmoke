@@ -3,6 +3,7 @@ use crate::config::{
     Channel, ConfigDiagnostic, DiagnosticKind, Fetch, Lockin, LockinEstimator, LockinLpfKind,
     LockinWindow, Moke, MokeType, Phase, Plot, Pulse, Reference, Roles, Screenshot, Window,
 };
+use unicode_width::UnicodeWidthStr;
 
 fn test_app() -> MonitorApp {
     MonitorApp::new(
@@ -13,6 +14,7 @@ fn test_app() -> MonitorApp {
             diagnostics: Vec::new(),
             normalized: None,
         }),
+        RunOptions::default(),
     )
 }
 
@@ -87,6 +89,7 @@ fn ready_test_app(channel_count: u8) -> MonitorApp {
             },
             warnings: Vec::new(),
         },
+        RunOptions::default(),
     )
 }
 

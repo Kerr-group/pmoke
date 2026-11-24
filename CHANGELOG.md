@@ -4,6 +4,19 @@
 
 ### Changes
 
+- The monitor selects the activity row you click, including wrapped output,
+  and keeps the same run selected when the run list refreshes. Live progress
+  and completion no longer disturb a selection in command history. Changing
+  panes ends filter input, and dismissing a quit confirmation leaves the
+  filter and selection intact. Refresh and workflow commands now honor the
+  `--run-dir` and `--force` options supplied at monitor startup, instead of
+  silently falling back to the default artifact directory and overwrite policy.
+  With `--run-dir`, a temporarily invalid configuration no longer switches the
+  report being read. Wrapped activity output keeps whole graphemes, stays at
+  the tail on Down, and preserves the paused reading position when timestamps
+  appear or the pane is resized. Long field names use the available space,
+  and wide characters in a label no longer cut off part of the value.
+
 - The monitor now names what Enter will do in the focused pane. When reading a
   recorded run's reports, the view names the run separately from the workflow
   command Enter would start. Search, help, and quit confirmation have their own

@@ -27,9 +27,10 @@ Phase 2 adds the S3 REPORTS tab below.
 | ` RUNS {:02}/{total} `, ` RUNS /{query} {:02}/{total} `, ` RUNS /{query} · NO MATCHES `, ` RUNS 0/0 `, `no run dirs under scan root`, `no runs match the filter`, optional `TRUNC` | `render_runs_panel`, `runs_panel_title` (`view.rs`) | S2 browser; budgets `RUN_SCAN_MAX_*` in `runs.rs` |
 | `▌ ` selection marker | `render_runs_panel` (`view.rs`) | single-cell block, width 1 |
 | Inspector tab labels `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, `ARTIFACTS`, `REPORTS` | `InspectorView::label` (`mod.rs`) | `i` cycles; inspector-local `1`-`5` select (`5` = S3 REPORTS) |
-| ` Help ` overlay, section titles `GLOBAL WORKFLOW RUNS INSPECTOR ACTIVITY SEARCH` | `help_sections` (`keymap.rs`), `panels.rs` | fully registry-generated rows |
+| ` Help ` overlay, `Selected` action/group or `No matching workflow action`; section titles `GLOBAL WORKFLOW RUNS INSPECTOR ACTIVITY SEARCH` | `help_sections` (`keymap.rs`), `panels.rs` | shortcut rows come from the registry |
 | `[Enter] Run <command>` / `Toggle group` / `Preview` / `Copy`; search `Apply` / `Clear`, help `Close`, `[Ctrl+C] Stop`, `[q] Stop + quit` / `[Esc] Stay` | `footer_spans` (`keymap.rs`) | packs complete key–verb pairs by cell width; never offers a launch for a blocked row or while a child is active |
 | `HISTORY {i}/{n}`, `PAUSED · {n} NEW`, `PAUSED`, `STOPPING · …` | `activity_title` (`view.rs`) | status only; follow is a contextual footer action |
+| `DONE` / `FAILED` in history; `RUNNING`, `STOPPING`, `READY` / `FAILED` in live output | `displayed_run_status` (`output.rs`) | status label and color refer to the displayed run |
 | `capture on (click/drag/wheel); PMOKE_MOUSE=off disables`, `capture off (PMOKE_MOUSE=off)` | `panels.rs` | FR-05 mouse opt-out |
 | `PMOKE_MOTION=full\|reduced\|off` tick rates | `mod.rs` (`MotionMode`, `tui_frame_tick`) | snapshots run idle; motion never affects frames |
 

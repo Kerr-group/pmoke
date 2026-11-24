@@ -2,7 +2,34 @@ use super::*;
 
 pub(super) struct VisualOutputLine {
     pub(super) entry_index: usize,
+    // UTF-8 offset in the displayed payload, excluding tags and elapsed time.
+    text_start: usize,
     pub(super) line: Line<'static>,
+}
+
+/// First row of a paused viewport, independent of output appended below it.
+#[derive(Clone, Copy)]
+pub(super) struct OutputAnchor {
+    pub(super) entry: usize,
+    pub(super) text_start: usize,
+}
+
+impl OutputAnchor {
+    pub(super) fn at(lines: &[VisualOutputLine], top: usize) -> Option<Self> {
+        let line = lines.get(top)?;
+        Some(Self {
+            entry: line.entry_index,
+            text_start: line.text_start,
+        })
+    }
+
+    pub(super) fn top(self, lines: &[VisualOutputLine]) -> usize {
+        let first = lines.partition_point(|line| line.entry_index < self.entry);
+        let count = lines[first..].partition_point(|line| {
+            line.entry_index == self.entry && line.text_start <= self.text_start
+        });
+        first + count.saturating_sub(1)
+    }
 }
 
 pub(super) fn visual_output_lines(
@@ -30,18 +57,8 @@ pub(super) fn visual_output_lines_with_motion(
         .iter()
         .enumerate()
         .flat_map(|(entry_index, entry)| {
-            let text = strip_ansi_codes(&entry.text);
             let kind = entry.kind;
-            let display = if let Some(field) = &entry.field {
-                Some(OutputDisplay::Field {
-                    key: field.key.clone(),
-                    value: field.value.clone(),
-                    last: field.last,
-                })
-            } else {
-                output_display(kind, &text)
-            };
-            let Some(display) = display else {
+            let Some(display) = entry.display() else {
                 return Vec::new();
             };
             let is_selected = selected_range
@@ -62,23 +79,6 @@ pub(super) fn visual_output_lines_with_motion(
             render_output_display_lines(context, kind, display)
         })
         .collect()
-}
-
-pub(super) fn visual_output_line_count(entries: &[LogEntry], width: u16) -> usize {
-    let width = width.max(1) as usize;
-    let show_elapsed =
-        width >= ELAPSED_MIN_OUTPUT_WIDTH && entries.iter().any(|entry| entry.elapsed_ms.is_some());
-    entries
-        .iter()
-        .map(|entry| {
-            let text = strip_ansi_codes(&entry.text);
-            let kind = entry.kind;
-            let content_width = output_content_width(width, show_elapsed);
-            output_display(kind, &text)
-                .map(|display| output_display_line_count(&display, content_width))
-                .unwrap_or(0)
-        })
-        .sum()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,6 +138,20 @@ fn elapsed_prefix(context: OutputRenderContext, first_line: bool) -> Vec<Span<'s
     vec![Span::styled(text, Style::default().fg(Color::DarkGray))]
 }
 
+impl LogEntry {
+    pub(super) fn display(&self) -> Option<OutputDisplay> {
+        if let Some(field) = &self.field {
+            Some(OutputDisplay::Field {
+                key: field.key.clone(),
+                value: field.value.clone(),
+                last: field.last,
+            })
+        } else {
+            output_display(self.kind, &strip_ansi_codes(&self.text))
+        }
+    }
+}
+
 impl OutputDisplay {
     #[cfg(test)]
     pub(super) fn plain_text(&self) -> String {
@@ -158,10 +172,14 @@ pub(super) fn render_output_display_lines(
 ) -> Vec<VisualOutputLine> {
     match display {
         OutputDisplay::Section(title) => {
-            vec![VisualOutputLine {
-                entry_index: context.entry_index,
-                line: section_output_line(&title, kind, context),
-            }]
+            wrap_log_text(&title, context.width.saturating_sub(6).max(1))
+                .into_iter()
+                .map(|(text_start, text)| VisualOutputLine {
+                    entry_index: context.entry_index,
+                    text_start,
+                    line: section_output_line(text, kind, context, text_start == 0),
+                })
+                .collect()
         }
         OutputDisplay::Metric { key, value } => metric_output_lines(context, &key, &value),
         OutputDisplay::Field { key, value, last } => {
@@ -173,23 +191,26 @@ pub(super) fn render_output_display_lines(
 }
 
 pub(super) fn section_output_line(
-    title: &str,
+    title: String,
     kind: LogKind,
     context: OutputRenderContext,
+    first_line: bool,
 ) -> Line<'static> {
-    let tag = if context.live_latest {
+    let tag = if !first_line {
+        ""
+    } else if context.live_latest {
         "RUN"
     } else {
         kind.label()
     };
-    let mut spans = elapsed_prefix(context, true);
+    let mut spans = elapsed_prefix(context, first_line);
     spans.extend([
         Span::styled(
             format!("{tag:<5} "),
             selected_output_style(Style::default().fg(Color::Cyan), context.selected),
         ),
         Span::styled(
-            title.to_string(),
+            title,
             selected_output_style(
                 Style::default()
                     .fg(Color::White)
@@ -201,18 +222,28 @@ pub(super) fn section_output_line(
     Line::from(spans)
 }
 
+fn metric_widths(key: &str, value: &str, width: usize, decoration: usize) -> (usize, usize) {
+    let available = width.saturating_sub(decoration);
+    // Show the entire name when it fits. Reserve a readable part of a long
+    // value without abbreviating the name just to leave unused space.
+    let value_reserve = activity_text_width(value).clamp(1, 12);
+    let key_width = activity_text_width(key)
+        .max(8)
+        .min(available.saturating_sub(value_reserve));
+    (key_width, available.saturating_sub(key_width).max(1))
+}
+
 pub(super) fn metric_output_lines(
     context: OutputRenderContext,
     key: &str,
     value: &str,
 ) -> Vec<VisualOutputLine> {
-    let key_width = key.width_cjk().clamp(8, 18);
-    let value_width = context.width.saturating_sub(key_width + 10).max(12);
+    let (key_width, value_width) = metric_widths(key, value, context.width, 10);
     wrap_log_text(value, value_width)
         .into_iter()
-        .enumerate()
-        .map(|(idx, value_line)| {
-            let tag = if context.live_latest && idx == 0 {
+        .map(|(text_start, value_line)| {
+            let first = text_start == 0;
+            let tag = if context.live_latest && first {
                 "RUN"
             } else {
                 ""
@@ -221,12 +252,12 @@ pub(super) fn metric_output_lines(
                 live_output_rail_style(context.live_latest, context.frame),
                 context.selected,
             );
-            let mut spans = elapsed_prefix(context, idx == 0);
-            spans.extend(if idx == 0 {
+            let mut spans = elapsed_prefix(context, first);
+            spans.extend(if first {
                 vec![
                     Span::styled(format!("{tag:<5} │ "), rail),
                     Span::styled(
-                        pad_display_width(key, key_width),
+                        fit_padded_column(key, key_width),
                         selected_output_style(
                             Style::default()
                                 .fg(Color::LightCyan)
@@ -262,6 +293,7 @@ pub(super) fn metric_output_lines(
             });
             VisualOutputLine {
                 entry_index: context.entry_index,
+                text_start,
                 line: Line::from(spans),
             }
         })
@@ -274,17 +306,16 @@ pub(super) fn field_output_lines(
     value: &str,
     last: bool,
 ) -> Vec<VisualOutputLine> {
-    let key_width = key.width_cjk().clamp(8, 18);
-    let value_width = context.width.saturating_sub(key_width + 11).max(12);
+    let (key_width, value_width) = metric_widths(key, value, context.width, 11);
     let branch = if last { "└─ " } else { "├─ " };
     wrap_log_text(value, value_width)
         .into_iter()
-        .enumerate()
-        .map(|(index, value_line)| {
-            let mut spans = elapsed_prefix(context, index == 0);
+        .map(|(text_start, value_line)| {
+            let first = text_start == 0;
+            let mut spans = elapsed_prefix(context, first);
             spans.extend([
                 Span::styled(
-                    if index == 0 {
+                    if first {
                         format!("      {branch}")
                     } else {
                         "         ".to_string()
@@ -295,8 +326,8 @@ pub(super) fn field_output_lines(
                     ),
                 ),
                 Span::styled(
-                    if index == 0 {
-                        pad_display_width(key, key_width)
+                    if first {
+                        fit_padded_column(key, key_width)
                     } else {
                         " ".repeat(key_width)
                     },
@@ -313,6 +344,7 @@ pub(super) fn field_output_lines(
             ]);
             VisualOutputLine {
                 entry_index: context.entry_index,
+                text_start,
                 line: Line::from(spans),
             }
         })
@@ -323,12 +355,12 @@ pub(super) fn metric_continuation_lines(
     context: OutputRenderContext,
     value: &str,
 ) -> Vec<VisualOutputLine> {
-    let value_width = context.width.saturating_sub(9).max(12);
+    let value_width = context.width.saturating_sub(9).max(1);
     wrap_log_text(value, value_width)
         .into_iter()
-        .enumerate()
-        .map(|(idx, value_line)| {
-            let tag = if context.live_latest && idx == 0 {
+        .map(|(text_start, value_line)| {
+            let first = text_start == 0;
+            let tag = if context.live_latest && first {
                 "RUN"
             } else {
                 ""
@@ -339,8 +371,9 @@ pub(super) fn metric_continuation_lines(
             );
             VisualOutputLine {
                 entry_index: context.entry_index,
+                text_start,
                 line: Line::from({
-                    let mut spans = elapsed_prefix(context, idx == 0);
+                    let mut spans = elapsed_prefix(context, first);
                     spans.extend([
                         Span::styled(format!("{tag:<5} └─ "), rail),
                         Span::styled(
@@ -366,13 +399,12 @@ pub(super) fn event_output_lines(
     kind: LogKind,
     text: &str,
 ) -> Vec<VisualOutputLine> {
-    let text_width = context.width.saturating_sub(6).max(12);
-    wrap_log_text(text, text_width)
+    wrap_event_text(text, context.width)
         .into_iter()
-        .enumerate()
-        .map(|(idx, line)| {
-            let mut spans = elapsed_prefix(context, idx == 0);
-            spans.extend(if idx == 0 {
+        .map(|(text_start, line)| {
+            let first = text_start == 0;
+            let mut spans = elapsed_prefix(context, first);
+            spans.extend(if first {
                 let tag = if context.live_latest {
                     "RUN"
                 } else {
@@ -414,83 +446,69 @@ pub(super) fn event_output_lines(
             });
             VisualOutputLine {
                 entry_index: context.entry_index,
+                text_start,
                 line: Line::from(spans),
             }
         })
         .collect()
 }
 
-pub(super) fn output_display_line_count(display: &OutputDisplay, width: usize) -> usize {
-    match display {
-        OutputDisplay::Section(_) => 1,
-        OutputDisplay::Metric { key, value } => {
-            let key_width = key.width_cjk().clamp(8, 18);
-            let value_width = width.saturating_sub(key_width + 10).max(12);
-            wrap_line_count(value, value_width)
-        }
-        OutputDisplay::Field { key, value, .. } => {
-            let key_width = key.width_cjk().clamp(8, 18);
-            let value_width = width.saturating_sub(key_width + 11).max(12);
-            wrap_line_count(value, value_width)
-        }
-        OutputDisplay::Continuation(value) => {
-            let value_width = width.saturating_sub(9).max(12);
-            wrap_line_count(value, value_width)
-        }
-        OutputDisplay::Event(text) => {
-            let text_width = width.saturating_sub(6).max(12);
-            wrap_line_count(text, text_width)
-        }
-    }
+fn wrap_log_text(text: &str, width: usize) -> Vec<(usize, String)> {
+    wrap_log_rows(text, width, width)
 }
 
-pub(super) fn wrap_log_text(text: &str, width: usize) -> Vec<String> {
-    if text.is_empty() {
-        return vec![String::new()];
-    }
+fn wrap_event_text(text: &str, width: usize) -> Vec<(usize, String)> {
+    // The first row has a six-cell tag; continuation rows add a rail.
+    wrap_log_rows(
+        text,
+        width.saturating_sub(6).max(1),
+        width.saturating_sub(8).max(1),
+    )
+}
+
+fn wrap_log_rows(text: &str, first_width: usize, later_width: usize) -> Vec<(usize, String)> {
+    let mut text_start = 0;
 
     let mut lines = Vec::new();
+    let mut width = first_width;
     let mut current = String::new();
     let mut current_width = 0;
-    for ch in text.chars() {
-        let ch_width = ch.width_cjk().unwrap_or(0);
-        if current_width + ch_width > width && !current.is_empty() {
-            lines.push(current);
+    // Never split the graphemes ratatui paints. Keep the monitor's CJK
+    // budget for ambiguous characters, but never budget less than the renderer.
+    for grapheme in Span::raw(text).styled_graphemes(Style::default()) {
+        let symbol = grapheme.symbol;
+        let cells = grapheme_cells(symbol);
+        if current_width + cells > width && !current.is_empty() {
+            let next_start = text_start + current.len();
+            lines.push((text_start, current));
+            text_start = next_start;
+            width = later_width;
             current = String::new();
             current_width = 0;
         }
-        current.push(ch);
-        current_width += ch_width;
+        current.push_str(symbol);
+        current_width += cells;
     }
-    lines.push(current);
+    lines.push((text_start, current));
     lines
 }
 
-pub(super) fn wrap_line_count(text: &str, width: usize) -> usize {
-    if width == 0 {
-        return text.width_cjk().max(1);
+pub(super) fn displayed_run_status(app: &MonitorApp) -> (&'static str, Color) {
+    if app.history_view.is_none()
+        && let Some(run) = &app.active_run
+    {
+        return if run.cancel_requested {
+            ("STOPPING", Color::LightRed)
+        } else {
+            ("RUNNING", Color::Yellow)
+        };
     }
-    wrap_log_text(text, width).len()
-}
-
-pub(super) fn run_status_color(app: &MonitorApp) -> Color {
-    if app
-        .active_run
-        .as_ref()
-        .map(|run| run.cancel_requested)
-        .unwrap_or(false)
-    {
-        Color::LightRed
-    } else if app.command_running() {
-        Color::Yellow
-    } else if app
-        .visible_run_record()
-        .map(|record| record.ok)
-        .unwrap_or(true)
-    {
-        Color::Green
+    if app.visible_run_record().is_some_and(|run| !run.ok) {
+        ("FAILED", Color::Red)
+    } else if app.history_view.is_some() {
+        ("DONE", Color::Green)
     } else {
-        Color::Red
+        ("READY", Color::Green)
     }
 }
 
