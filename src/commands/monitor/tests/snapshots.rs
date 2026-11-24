@@ -231,8 +231,7 @@ fn ready_probe_app() -> MonitorApp {
 }
 
 /// CJK/wide-character cell budget: truncation keeps display width within
-/// budget (CJK = 2 cells) and padding reaches exact width, so callers fit
-/// first and pad second.
+/// budget (CJK = 2 cells) and column padding reaches the requested width.
 #[test]
 fn cjk_probe_stays_within_budget() {
     let probe = "あいうえお RUNS 01/20 ◆ cwd";
@@ -243,9 +242,8 @@ fn cjk_probe_stays_within_budget() {
             "fit_text overflow at {width}: {fitted:?}"
         );
     }
-    // Padding a short mixed-width string reaches exact width (pad never
-    // truncates: over-wide input is the caller's `fit_text` duty).
-    let padded = pad_display_width("あい RUNS", 12);
+    // A short mixed-width label is padded rather than truncated.
+    let padded = fit_padded_column("あい RUNS", 12);
     assert_eq!(UnicodeWidthStr::width(padded.as_str()), 12);
     // Full-width input fitted to a narrow budget stays within budget too.
     let fitted = fit_text("ＡＢＣＤＥＦＧＨＩＪＫＬＭ", 10);
@@ -262,7 +260,7 @@ fn reports_probe_app() -> MonitorApp {
     let mut app = ready_probe_app();
     app.run_entries = vec![RunDirEntry {
         name: "run-alpha".to_string(),
-        path: "/workspace/pmoke/runs/run-alpha".to_string(),
+        path: "/workspace/pmoke/runs/run-alpha".into(),
         status: "complete".to_string(),
         stage: "analysis".to_string(),
         updated: "2026-01-01".to_string(),
@@ -329,9 +327,9 @@ fn reports_names_the_view_separately_from_enters_workflow_target() {
     let mut app = reports_probe_app();
     let area = area_for(TINY);
     app.config_path = "current-workflow.toml".into();
-    app.spawn_runner = |action, path, _width| {
+    app.spawn_runner = |action, args, _width| {
         assert_eq!(action, MonitorAction::Show);
-        assert_eq!(path, "current-workflow.toml");
+        assert_eq!(args, ["--config", "current-workflow.toml", "show"]);
         Ok(RunHandle {
             receiver: mpsc::channel().1,
             cancel: mpsc::channel().0,

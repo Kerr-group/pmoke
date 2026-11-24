@@ -702,6 +702,37 @@ fn tiny_footer_tracks_real_search_help_and_cancel_input() {
 }
 
 #[test]
+fn help_names_a_group_or_no_match_instead_of_an_unselected_command() {
+    use super::harness::{WIDE, area_for, assert_continue, drive};
+    let mut app = test_app();
+    let area = area_for(WIDE);
+    for (keys, label) in [
+        (
+            vec![char_key('g'), char_key('?')],
+            ActionGroup::Utilities.label(),
+        ),
+        (
+            vec![
+                key(KeyCode::Esc),
+                char_key('/'),
+                char_key('~'),
+                key(KeyCode::Enter),
+                char_key('?'),
+            ],
+            "No matching workflow action",
+        ),
+    ] {
+        assert_continue(&drive(&mut app, area, &keys));
+        let frame = rendered_help(WIDE.0, WIDE.1, &mut app);
+        let row = frame
+            .lines()
+            .find(|line| line.contains("Selected  "))
+            .unwrap();
+        assert!(row.contains(&format!("Selected  {label}")), "{row}");
+    }
+}
+
+#[test]
 fn numbered_focus_keys_move_between_panes() {
     let mut app = test_app();
     let area = Rect::new(0, 0, 120, 30);
@@ -763,6 +794,96 @@ fn escape_follows_close_then_leave_order() {
     assert_eq!(app.focus, FocusPane::Output);
     handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
     assert_eq!(app.focus, FocusPane::Commands);
+}
+
+#[test]
+fn esc_on_stay_dismisses_only_the_quit_confirmation() {
+    use super::harness::{WIDE, area_for, assert_continue, drive};
+    let mut app = running_app();
+    let area = area_for(WIDE);
+    app.push_output(OutputStream::Stdout, "selection");
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[
+            char_key('/'),
+            char_key('s'),
+            key(KeyCode::Enter),
+            char_key('o'),
+            char_key('v'),
+            char_key('q'),
+        ],
+    ));
+    assert!(footer_text(&app).contains("[Esc] Stay"));
+    handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
+    assert!(!app.quit_confirm_pending);
+    assert_eq!(app.action_query, "s");
+    assert_eq!(app.focus, FocusPane::Output);
+    assert!(app.output_selection_anchor.is_some());
+    assert!(!app.active_run.as_ref().unwrap().cancel_requested);
+    handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
+    assert!(app.action_query.is_empty());
+}
+
+#[test]
+fn leaving_a_search_pane_keeps_the_filter_but_routes_input_to_the_new_pane() {
+    use super::harness::{WIDE, area_for, assert_continue, drive};
+    let mut app = test_app();
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[
+            char_key('/'),
+            char_key('s'),
+            key(KeyCode::Tab),
+            char_key('/'),
+            char_key('r'),
+        ],
+    ));
+    assert_eq!(app.focus, FocusPane::Runs);
+    assert_eq!((&*app.action_query, &*app.run_query), ("s", "r"));
+    let inspector = dashboard_layout(area).inspector;
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: inspector.x + 1,
+            row: inspector.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    assert_continue(&drive(&mut app, area, &[char_key('5')]));
+    assert_eq!(app.focus, FocusPane::Inspector);
+    assert_eq!(app.inspector_view, InspectorView::Reports);
+    assert_eq!(app.run_query, "r");
+}
+
+#[test]
+fn quit_prompt_does_not_evict_the_selected_event_from_a_full_log() {
+    use super::harness::{WIDE, area_for, assert_continue, drive, render_text};
+    let mut app = running_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &(0..1000)
+            .map(|i| format!("event-{i:04}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[char_key('o'), char_key('g'), char_key('v'), char_key('q')],
+    ));
+    assert!(render_text(&mut app, WIDE).contains("[Esc] Stay"));
+    assert_continue(&drive(&mut app, area, &[key(KeyCode::Esc)]));
+    assert_eq!(app.selected_output_text().as_deref(), Some("event-0000"));
+    assert!(app.output_selection_anchor.is_some());
+    assert!(app.command_running());
+    assert_eq!(app.new_output_events, 0);
 }
 
 #[test]

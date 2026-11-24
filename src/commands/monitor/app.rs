@@ -1,7 +1,9 @@
 use super::*;
+use std::collections::BTreeSet;
 
 pub(super) struct MonitorApp {
     pub(super) config_path: String,
+    pub(super) run_options: RunOptions,
     pub(super) current_dir: String,
     pub(super) load: ConfigLoad,
     pub(super) started_at: Instant,
@@ -9,7 +11,9 @@ pub(super) struct MonitorApp {
     pub(super) inspector_view: InspectorView,
     pub(super) focus: FocusPane,
     pub(super) workflow_cursor: usize,
-    pub(super) collapsed_groups: std::collections::BTreeSet<ActionGroup>,
+    pub(super) collapsed_groups: BTreeSet<ActionGroup>,
+    // A new query reveals matches without changing the unfiltered list.
+    filtered_collapsed_groups: BTreeSet<ActionGroup>,
     pub(super) action_query: String,
     pub(super) search_mode: bool,
     /// Deterministic workflow fixture for insta snapshots (Issue #278).
@@ -33,11 +37,12 @@ pub(super) struct MonitorApp {
     pub(super) run_history: std::collections::VecDeque<RunSnapshot>,
     pub(super) history_view: Option<usize>,
     pub(super) active_run: Option<ActiveRun>,
-    pub(super) spawn_runner: fn(MonitorAction, String, Option<u16>) -> Result<RunHandle>,
+    pub(super) spawn_runner: fn(MonitorAction, Vec<OsString>, Option<u16>) -> Result<RunHandle>,
     pub(super) write_clipboard: fn(&str) -> std::result::Result<ClipboardMethod, String>,
     pub(super) run_output: Vec<LogEntry>,
     pub(super) last_stderr_kind: Option<LogKind>,
     pub(super) run_output_scroll: usize,
+    paused_output_top: Option<OutputAnchor>,
     pub(super) new_output_events: usize,
     pub(super) output_selected: Option<usize>,
     pub(super) output_selection_anchor: Option<usize>,
@@ -56,15 +61,21 @@ pub(super) struct MonitorApp {
 }
 
 impl MonitorApp {
-    pub(super) fn new(config_path: String, load: ConfigLoad) -> Self {
+    pub(super) fn new(config_path: String, load: ConfigLoad, run_options: RunOptions) -> Self {
         let current_dir = env::current_dir()
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(|_| ".".to_string());
-        let run_root = run_browser_root(&config_path, &load, &current_dir)
-            .to_string_lossy()
-            .into_owned();
+        let run_root = run_browser_root(
+            &config_path,
+            &load,
+            run_options.run_dir.as_deref(),
+            &current_dir,
+        )
+        .to_string_lossy()
+        .into_owned();
         Self {
             config_path,
+            run_options,
             current_dir,
             load,
             started_at: Instant::now(),
@@ -74,7 +85,8 @@ impl MonitorApp {
             // Utilities is the first group, so row 1 selects the safe, read-only
             // Config action instead of a collapsible group header.
             workflow_cursor: 1,
-            collapsed_groups: std::collections::BTreeSet::new(),
+            collapsed_groups: BTreeSet::new(),
+            filtered_collapsed_groups: BTreeSet::new(),
             action_query: String::new(),
             search_mode: false,
             workflow_fixture: None,
@@ -94,6 +106,7 @@ impl MonitorApp {
             run_output: Vec::new(),
             last_stderr_kind: None,
             run_output_scroll: 0,
+            paused_output_top: None,
             new_output_events: 0,
             output_selected: None,
             output_selection_anchor: None,
@@ -111,7 +124,7 @@ impl MonitorApp {
     }
 
     pub(super) fn refresh(&mut self) {
-        self.load = config::load_from_path(&self.config_path);
+        self.load = self.run_options.load(&self.config_path);
         self.last_refresh = SystemTime::now();
         self.config_scroll = 0;
         self.messages_scroll = 0;
@@ -125,7 +138,12 @@ impl MonitorApp {
     /// Re-scan the browser root within the S2 budgets (read-only). Never
     /// clears the query or moves the cursor beyond the filtered list.
     pub(super) fn refresh_runs(&mut self) {
-        let root = run_browser_root(&self.config_path, &self.load, &self.current_dir);
+        let root = run_browser_root(
+            &self.config_path,
+            &self.load,
+            self.run_options.run_dir.as_deref(),
+            &self.current_dir,
+        );
         let outcome = scan_run_dirs(&root);
         self.run_root = outcome.root.clone();
         self.run_truncated = outcome.truncated_dirs || outcome.truncated_entries;
@@ -136,8 +154,18 @@ impl MonitorApp {
                 run_scan_budgets_label(),
             )
         });
+        // The inspector follows a run, not its row number. A refresh may
+        // insert a sibling ahead of it or change which runs match the filter.
+        let selected_path = self.selected_run_entry().map(|entry| entry.path.clone());
         self.run_entries = outcome.entries;
-        self.clamp_run_cursor();
+        let filtered = self.filtered_run_indices();
+        self.run_cursor = selected_path
+            .and_then(|path| {
+                filtered
+                    .iter()
+                    .position(|&i| self.run_entries[i].path == path)
+            })
+            .unwrap_or_else(|| self.run_cursor.min(filtered.len().saturating_sub(1)));
     }
 
     pub(super) fn status(&self) -> (&'static str, Color) {
@@ -168,6 +196,30 @@ impl MonitorApp {
         }
     }
 
+    pub(super) fn workflow_args(&self, action: MonitorAction) -> Vec<OsString> {
+        let mut args = Vec::new();
+        let mut path_arg = |flag: &str, path: &std::ffi::OsStr| {
+            // A value accepted as `--run-dir=-shot` must not become an option on re-exec.
+            if path.as_encoded_bytes().starts_with(b"-") {
+                let mut arg = OsString::from(flag);
+                arg.push("=");
+                arg.push(path);
+                args.push(arg);
+            } else {
+                args.extend([OsString::from(flag), path.to_owned()]);
+            }
+        };
+        path_arg("--config", self.config_path.as_ref());
+        if let Some(dir) = &self.run_options.run_dir {
+            path_arg("--run-dir", dir.as_os_str());
+        }
+        if self.run_options.force {
+            args.push(OsString::from("--force"));
+        }
+        args.extend(action.command_args().iter().map(OsString::from));
+        args
+    }
+
     pub(super) fn actions(&self) -> Vec<MonitorAction> {
         if let Some(fixture) = &self.workflow_fixture {
             return fixture.clone();
@@ -195,7 +247,7 @@ impl MonitorApp {
                 continue;
             }
             entries.push(WorkflowEntry::Group(group));
-            if !self.collapsed_groups.contains(&group) || !query.is_empty() {
+            if !self.group_collapsed(group) {
                 entries.extend(matching.into_iter().map(WorkflowEntry::Action));
             }
         }
@@ -227,12 +279,25 @@ impl MonitorApp {
             .min(self.workflow_entries().len().saturating_sub(1));
     }
 
+    pub(super) fn group_collapsed(&self, group: ActionGroup) -> bool {
+        if self.action_query.trim().is_empty() {
+            self.collapsed_groups.contains(&group)
+        } else {
+            self.filtered_collapsed_groups.contains(&group)
+        }
+    }
+
     pub(super) fn toggle_selected_group(&mut self) -> bool {
         let Some(WorkflowEntry::Group(group)) = self.selected_workflow_entry() else {
             return false;
         };
-        if !self.collapsed_groups.remove(&group) {
-            self.collapsed_groups.insert(group);
+        let groups = if self.action_query.trim().is_empty() {
+            &mut self.collapsed_groups
+        } else {
+            &mut self.filtered_collapsed_groups
+        };
+        if !groups.remove(&group) {
+            groups.insert(group);
         }
         self.clamp_workflow_cursor();
         true
@@ -263,6 +328,7 @@ impl MonitorApp {
     }
 
     fn select_first_matching_action(&mut self) {
+        self.filtered_collapsed_groups.clear();
         self.workflow_cursor = self
             .workflow_entries()
             .iter()
@@ -349,8 +415,8 @@ impl MonitorApp {
     pub(super) fn pin_selected_run(&mut self) {
         self.focus_runs();
         self.clamp_run_cursor();
-        if self.selected_run_entry().is_some() {
-            self.history_view = None;
+        if self.selected_run_entry().is_some() && self.history_view.take().is_some() {
+            self.reset_output_view();
         }
     }
 
@@ -474,10 +540,7 @@ impl MonitorApp {
             return true;
         }
         self.quit_confirm_pending = true;
-        self.push_output(
-            OutputStream::System,
-            "Quit requested while a command was running.",
-        );
+        // The footer owns the prompt. Merely asking must not evict command output.
         false
     }
 
@@ -565,8 +628,7 @@ impl MonitorApp {
     }
 
     fn reset_output_view(&mut self) {
-        self.run_output_scroll = 0;
-        self.new_output_events = 0;
+        self.follow_output();
         self.output_selection_anchor = None;
         self.output_mouse_drag_active = false;
         self.output_selected = last_renderable_output_index(self.visible_output());
@@ -671,11 +733,17 @@ impl MonitorApp {
             let old_len = end - start;
             let new_len = entries.len();
             self.run_output.splice(start..end, entries);
-            if self.history_view.is_none() && self.run_output_scroll > 0 {
-                self.run_output_scroll = if new_len >= old_len {
-                    self.run_output_scroll.saturating_add(new_len - old_len)
+            if self.history_view.is_some() {
+                // Cursor, anchor and scroll belong to the displayed snapshot.
+                return;
+            }
+            if let Some(top) = &mut self.paused_output_top
+                && top.entry >= start
+            {
+                top.entry = if top.entry < end {
+                    start + (top.entry - start).min(new_len.saturating_sub(1))
                 } else {
-                    self.run_output_scroll.saturating_sub(old_len - new_len)
+                    top.entry - old_len + new_len
                 };
             }
             self.output_selected =
@@ -718,8 +786,7 @@ impl MonitorApp {
         if appended_entries == 0 {
             return;
         }
-        if self.history_view.is_none() && self.run_output_scroll > 0 {
-            self.run_output_scroll += appended_entries;
+        if self.history_view.is_none() && self.output_is_paused() {
             self.new_output_events = self.new_output_events.saturating_add(appended_events);
         }
         const MAX_LOG_EVENTS: usize = 1_000;
@@ -728,7 +795,12 @@ impl MonitorApp {
             let drained = drain_count_for_events(&self.run_output, event_count - MAX_LOG_EVENTS);
             self.run_output.drain(0..drained);
             if self.history_view.is_none() {
-                self.run_output_scroll = self.run_output_scroll.saturating_sub(drained);
+                if let Some(top) = &mut self.paused_output_top {
+                    if top.entry < drained {
+                        top.text_start = 0;
+                    }
+                    top.entry = top.entry.saturating_sub(drained);
+                }
                 self.output_selected = shift_log_index_after_drain(self.output_selected, drained);
                 self.output_selection_anchor =
                     shift_log_index_after_drain(self.output_selection_anchor, drained);
@@ -751,9 +823,42 @@ impl MonitorApp {
         }
     }
 
+    pub(super) fn output_is_paused(&self) -> bool {
+        self.paused_output_top.is_some() || self.run_output_scroll > 0
+    }
+
     pub(super) fn follow_output(&mut self) {
+        self.paused_output_top = None;
         self.run_output_scroll = 0;
         self.new_output_events = 0;
+    }
+
+    pub(super) fn set_output_scroll(
+        &mut self,
+        offset: usize,
+        lines: &[VisualOutputLine],
+        rows: usize,
+    ) {
+        let max = lines.len().saturating_sub(rows);
+        self.run_output_scroll = offset.min(max);
+        if self.run_output_scroll == 0 {
+            self.follow_output();
+        } else {
+            self.paused_output_top = OutputAnchor::at(lines, max - self.run_output_scroll);
+        }
+    }
+
+    pub(super) fn restore_output_scroll(&mut self, lines: &[VisualOutputLine], rows: usize) {
+        if let Some(top) = self.paused_output_top {
+            // A resize can expose the tail without the reader asking to follow.
+            // Keep the original text anchor even when the physical offset is zero.
+            self.run_output_scroll = lines
+                .len()
+                .saturating_sub(rows)
+                .saturating_sub(top.top(lines));
+        } else {
+            self.set_output_scroll(self.run_output_scroll, lines, rows);
+        }
     }
 
     pub(super) fn visible_event_count(&self) -> usize {
@@ -770,15 +875,20 @@ impl MonitorApp {
         logical_event_count(self.visible_output(), |entry| entry.kind == LogKind::Error)
     }
 
+    pub(super) fn set_focus(&mut self, pane: FocusPane) {
+        self.search_mode &= pane == FocusPane::Commands;
+        self.run_search_mode &= pane == FocusPane::Runs;
+        self.output_mouse_drag_active &= pane == FocusPane::Output;
+        self.focus = pane;
+    }
+
     pub(super) fn focus_actions(&mut self) {
-        self.output_mouse_drag_active = false;
-        self.focus = FocusPane::Commands;
+        self.set_focus(FocusPane::Commands);
     }
 
     /// S2: focus the run browser section of the workflow panel.
     pub(super) fn focus_runs(&mut self) {
-        self.output_mouse_drag_active = false;
-        self.focus = FocusPane::Runs;
+        self.set_focus(FocusPane::Runs);
         self.clamp_run_cursor();
     }
 
@@ -787,7 +897,7 @@ impl MonitorApp {
     }
 
     pub(super) fn focus_output(&mut self) {
-        self.focus = FocusPane::Output;
+        self.set_focus(FocusPane::Output);
         self.output_selected = self.focused_output_cursor();
     }
 
@@ -811,8 +921,7 @@ impl MonitorApp {
     }
 
     pub(super) fn focus_inspector(&mut self) {
-        self.output_mouse_drag_active = false;
-        self.focus = FocusPane::Inspector;
+        self.set_focus(FocusPane::Inspector);
     }
 
     pub(super) fn cycle_inspector(&mut self) {
@@ -1011,8 +1120,14 @@ impl MonitorApp {
         });
         while self.run_history.len() > MAX_RUN_HISTORY {
             self.run_history.pop_front();
+            if let Some(index) = self.history_view {
+                self.history_view = index.checked_sub(1);
+                if self.history_view.is_none() {
+                    // Only switch to live if the viewed record itself expired.
+                    self.reset_output_view();
+                }
+            }
         }
-        self.history_view = None;
     }
 }
 
@@ -1086,8 +1201,7 @@ fn logical_event_count(entries: &[LogEntry], include: impl Fn(&LogEntry) -> bool
 }
 
 pub(super) fn is_renderable_output_entry(entry: &LogEntry) -> bool {
-    let text = strip_ansi_codes(&entry.text);
-    output_display(entry.kind, &text).is_some()
+    entry.field.is_some() || output_display(entry.kind, &strip_ansi_codes(&entry.text)).is_some()
 }
 
 pub(super) fn first_renderable_output_index(entries: &[LogEntry]) -> Option<usize> {

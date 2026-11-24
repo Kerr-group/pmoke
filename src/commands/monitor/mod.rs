@@ -1,5 +1,6 @@
+use crate::RunOptions;
 use crate::config::{
-    self, Config, ConfigDiagnostics, ConfigLoad, ConfigWarning, FetchAnalysisInput, FetchOutput,
+    Config, ConfigDiagnostics, ConfigLoad, ConfigWarning, FetchAnalysisInput, FetchOutput,
 };
 use crate::ui::{EventKind, EventLevel, UiEvent};
 use anyhow::Result;
@@ -20,14 +21,16 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap},
 };
 use std::{
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     io::{self, Read, Stdout},
     process::{Child, Command as ProcessCommand, ExitStatus, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError},
     thread,
     time::{Duration, Instant, SystemTime},
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 mod actions;
 mod app;
@@ -50,8 +53,9 @@ use app::*;
 use clipboard::base64_encode;
 use clipboard::{ClipboardMethod, copy_text_to_clipboard};
 use formatting::{
-    bordered_inner, centered_rect, contains, fit_path, fit_text, format_age, format_duration,
-    format_live_duration, pad_display_width, percent_width, strip_ansi_codes,
+    activity_text_width, bordered_inner, centered_rect, contains, fit_padded_column, fit_path,
+    fit_text, format_age, format_duration, format_live_duration, grapheme_cells, percent_width,
+    strip_ansi_codes,
 };
 use inspect::*;
 use keymap::*;
@@ -187,8 +191,8 @@ impl Drop for TerminalSetupGuard {
     }
 }
 
-pub fn monitor(config_path: &str, load: ConfigLoad) -> Result<()> {
-    let mut app = MonitorApp::new(config_path.to_string(), load);
+pub(crate) fn monitor(config_path: &str, load: ConfigLoad, options: RunOptions) -> Result<()> {
+    let mut app = MonitorApp::new(config_path.to_string(), load, options);
     // S2: populate the budgeted run snapshot before the first frame (the
     // constructor stays I/O-free so unit tests never touch the filesystem).
     app.refresh_runs();
@@ -537,6 +541,10 @@ fn handle_key(app: &mut MonitorApp, key: KeyEvent, area: Rect) -> Result<KeyOutc
             }
             return Ok(KeyOutcome::Continue);
         }
+        KeyInput::Action(TuiAction::Escape) if app.quit_confirmation_visible() => {
+            app.quit_confirm_pending = false;
+            return Ok(KeyOutcome::Continue);
+        }
         KeyInput::Action(action) => action,
     };
     if !matches!(action, TuiAction::RequestQuit) {
@@ -632,11 +640,10 @@ fn apply_key_action(
         }
         TuiAction::OutputFirst => {
             app.select_first_output(app.output_selection_anchor.is_some());
-            ensure_selected_output_visible(app, area);
+            scroll_output_to_offset(app, area, usize::MAX);
         }
         TuiAction::OutputLast => {
             app.select_last_output(app.output_selection_anchor.is_some());
-            ensure_selected_output_visible(app, area);
         }
         TuiAction::InspectorUp => scroll_inspector_up(app, area, 1),
         TuiAction::InspectorDown => scroll_inspector_down(app, area, 1),
@@ -687,21 +694,21 @@ fn select_last_action(app: &mut MonitorApp) {
 fn focus_previous_pane(app: &mut MonitorApp) {
     // S2 four-pane ring: the Runs browser sits next to the workflow list it
     // previews for, keeping `Tab`/`h/l` order spatial.
-    app.focus = match app.focus {
+    app.set_focus(match app.focus {
         FocusPane::Commands => FocusPane::Output,
         FocusPane::Runs => FocusPane::Commands,
         FocusPane::Inspector => FocusPane::Runs,
         FocusPane::Output => FocusPane::Inspector,
-    };
+    });
 }
 
 fn focus_next_pane(app: &mut MonitorApp) {
-    app.focus = match app.focus {
+    app.set_focus(match app.focus {
         FocusPane::Commands => FocusPane::Runs,
         FocusPane::Runs => FocusPane::Inspector,
         FocusPane::Inspector => FocusPane::Output,
         FocusPane::Output => FocusPane::Commands,
-    };
+    });
 }
 
 fn handle_mouse(app: &mut MonitorApp, area: Rect, mouse: MouseEvent) -> Result<()> {
@@ -946,9 +953,8 @@ fn select_output_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16, ext
 
     let visible_rows = log_content.height.max(1) as usize;
     let visual_lines = visual_output_lines(app.visible_output(), log_content.width, None, None);
-    let max_scroll = visual_lines.len().saturating_sub(visible_rows);
-    let scroll = app.run_output_scroll.min(max_scroll);
-    let end = visual_lines.len().saturating_sub(scroll);
+    app.restore_output_scroll(&visual_lines, visible_rows);
+    let end = visual_lines.len().saturating_sub(app.run_output_scroll);
     let start = end.saturating_sub(visible_rows);
     let row_index = row.saturating_sub(log_content.y) as usize;
     if let Some(line) = visual_lines.get(start + row_index) {
@@ -960,17 +966,14 @@ fn select_output_at(app: &mut MonitorApp, area: Rect, column: u16, row: u16, ext
 }
 
 fn output_selectable_area(area: Rect) -> Option<Rect> {
-    let sections = output_inner_layout(bordered_inner(area));
-    let log_area = sections.log;
-    if log_area.height <= 1 || log_area.width <= 1 {
-        return None;
-    }
-    Some(Rect {
-        x: log_area.x,
-        y: log_area.y.saturating_add(1),
-        width: log_area.width.saturating_sub(1),
-        height: log_area.height.saturating_sub(1),
-    })
+    let log = output_inner_layout(bordered_inner(area)).log;
+    // The status bar and timeline have already been removed. Only the
+    // scrollbar column is outside the log text, even in a one-row pane.
+    let text = Rect {
+        width: log.width.saturating_sub(1),
+        ..log
+    };
+    (!text.is_empty()).then_some(text)
 }
 
 fn ensure_selected_output_visible(app: &mut MonitorApp, area: Rect) {
@@ -985,12 +988,7 @@ fn ensure_selected_output_visible(app: &mut MonitorApp, area: Rect) {
         return;
     };
     let visible_rows = log_content.height.max(1) as usize;
-    let visual_lines = visual_output_lines(
-        app.visible_output(),
-        log_content.width.saturating_sub(1),
-        None,
-        None,
-    );
+    let visual_lines = visual_output_lines(app.visible_output(), log_content.width, None, None);
     let total = visual_lines.len();
     if total == 0 {
         return;
@@ -1004,38 +1002,34 @@ fn ensure_selected_output_visible(app: &mut MonitorApp, area: Rect) {
         return;
     };
 
-    app.run_output_scroll = if selected_start < start {
+    // If an entry cannot fit, the visible part already represents the selection.
+    // Trying to expose both ends would alternate between them on each keypress.
+    let oversized = selected_end - selected_start >= visible_rows;
+    let offset = if oversized && selected_start < end && selected_end >= start {
+        scroll
+    } else if selected_start < start {
         max_scroll.saturating_sub(selected_start)
     } else if selected_end >= end {
         total.saturating_sub(selected_end + 1).min(max_scroll)
     } else {
         scroll
     };
-}
-
-fn effective_output_scroll(app: &MonitorApp, log_area: Rect, visual_line_count: usize) -> usize {
-    let max_scroll = visual_line_count.saturating_sub(output_visible_rows(log_area));
-    app.run_output_scroll.min(max_scroll)
-}
-
-fn max_output_scroll_for_area(app: &MonitorApp, area: Rect) -> Option<usize> {
-    let log_content = output_log_content_area(area)?;
-    let visual_line_count =
-        visual_output_line_count(app.visible_output(), log_content.width.saturating_sub(1));
-    Some(visual_line_count.saturating_sub(log_content.height.max(1) as usize))
+    app.set_output_scroll(offset, &visual_lines, visible_rows);
 }
 
 fn clamp_output_scroll(app: &mut MonitorApp, area: Rect) {
+    scroll_output_to_offset(app, area, app.run_output_scroll);
+}
+
+fn scroll_output_to_offset(app: &mut MonitorApp, area: Rect, offset: usize) {
     if app.visible_output().is_empty() {
-        app.run_output_scroll = 0;
+        app.follow_output();
         return;
     }
 
-    if let Some(max_scroll) = max_output_scroll_for_area(app, area) {
-        app.run_output_scroll = app.run_output_scroll.min(max_scroll);
-        if app.run_output_scroll == 0 {
-            app.new_output_events = 0;
-        }
+    if let Some(text) = output_log_content_area(area) {
+        let lines = visual_output_lines(app.visible_output(), text.width, None, None);
+        app.set_output_scroll(offset, &lines, usize::from(text.height));
     }
 }
 
@@ -1043,30 +1037,13 @@ fn output_table_width_for_area(area: Rect) -> Option<u16> {
     output_log_content_area(area).map(|log_content| {
         log_content
             .width
-            .saturating_sub(OUTPUT_PREFIX_WIDTH + 1)
+            .saturating_sub(OUTPUT_PREFIX_WIDTH)
             .clamp(24, 160)
     })
 }
 
 fn output_log_content_area(area: Rect) -> Option<Rect> {
-    let layout = dashboard_layout(area);
-    if layout.activity.width == 0 || layout.activity.height == 0 {
-        return None;
-    }
-
-    let inner = bordered_inner(layout.activity);
-    let sections = output_inner_layout(inner);
-    let log_area = sections.log;
-    if log_area.height <= 1 || log_area.width == 0 {
-        return None;
-    }
-
-    Some(Rect {
-        x: log_area.x,
-        y: log_area.y.saturating_add(1),
-        width: log_area.width,
-        height: log_area.height.saturating_sub(1),
-    })
+    output_selectable_area(dashboard_layout(area).activity)
 }
 
 fn visual_entry_range(lines: &[VisualOutputLine], entry_index: usize) -> Option<(usize, usize)> {
@@ -1138,7 +1115,7 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
         app.run_output.clear();
         app.output_selected = None;
         app.output_selection_anchor = None;
-        app.run_output_scroll = 0;
+        app.follow_output();
         app.last_run = Some(RunRecord {
             action,
             label: action.label(),
@@ -1155,7 +1132,9 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
     }
 
     let table_width = output_table_width_for_area(area);
-    let handle = (app.spawn_runner)(action, app.config_path.clone(), table_width)?;
+    let args = app.workflow_args(action);
+    let command = workflow_command_label(&args);
+    let handle = (app.spawn_runner)(action, args, table_width)?;
     app.history_view = None;
     app.run_output.clear();
     app.last_stderr_kind = None;
@@ -1163,15 +1142,7 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
     app.output_selection_anchor = None;
     app.copy_status = None;
     app.follow_output();
-    let command_args = action.command_args();
-    app.push_output(
-        OutputStream::System,
-        &format!(
-            "pmoke --config {} {}",
-            app.config_path,
-            command_args.join(" ")
-        ),
-    );
+    app.push_output(OutputStream::System, &command);
     app.push_output(OutputStream::System, action.description());
     app.active_run = Some(ActiveRun {
         action,
@@ -1184,13 +1155,32 @@ fn run_selected_action(app: &mut MonitorApp, area: Rect) -> Result<()> {
     Ok(())
 }
 
+// Presentation only: the runner gets separate native arguments, never this string.
+fn workflow_command_label(args: &[OsString]) -> String {
+    let mut label = String::from("pmoke");
+    for arg in args {
+        label.push(' ');
+        match arg.to_str() {
+            Some(text)
+                if !text.is_empty()
+                    && text
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || "/._:+-=".contains(c)) =>
+            {
+                label.push_str(text)
+            }
+            _ => label.push_str(&format!("{arg:?}")),
+        }
+    }
+    label
+}
+
 fn spawn_command_runner(
     action: MonitorAction,
-    config_path: String,
+    args: Vec<OsString>,
     table_width: Option<u16>,
 ) -> Result<RunHandle> {
     let exe = std::env::current_exe()?;
-    let command_args = action.command_args();
     // Keep verbose child output from growing without bound if rendering is
     // briefly delayed. Readers naturally apply backpressure at this boundary.
     let (tx, rx) = mpsc::sync_channel(512);
@@ -1199,9 +1189,7 @@ fn spawn_command_runner(
     thread::spawn(move || {
         let mut command = ProcessCommand::new(exe);
         command
-            .arg("--config")
-            .arg(config_path)
-            .args(command_args)
+            .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         command.env("PMOKE_OUTPUT", "jsonl");

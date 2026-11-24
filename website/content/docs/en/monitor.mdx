@@ -8,6 +8,12 @@ same workflow commands you would run by hand and surfaces their output; it
 never edits configuration files and never touches hardware beyond what the
 selected command itself does.
 
+If you start the monitor with `--run-dir`, refreshing or running a workflow
+command keeps using that directory. Selecting a different run in `RUNS`
+only changes the preview. If you explicitly start the monitor with `--force`,
+it passes that flag to every workflow command in the session, allowing
+commands to overwrite existing artifacts.
+
 ## Layout
 
 - Header: status (`RUNNABLE` when the configuration loads, `BLOCKED` when it
@@ -20,6 +26,12 @@ selected command itself does.
 - `INSPECTOR`: `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, `ARTIFACTS`, and `REPORTS`
   tabs for the selected workflow entry or the pinned run preview.
 - `ACTIVITY`: live command output with `LIVE`, `PAUSED`, and `HISTORY` states.
+  When you browse history, progress and completion of the live command do not
+  change the record or selection you are reading. If that record ages out of
+  the ten-command history, the pane returns to live output. While output is
+  paused, the text you scrolled to stays in view when timestamps appear.
+  Enlarging the pane enough to show the tail does not resume following it.
+  Field names are shown in full when there is room; long values wrap.
 - Footer: shows what a key does in the current pane and mode. On narrow
   terminals, lower-priority hints are omitted rather than cut in half.
 
@@ -60,7 +72,9 @@ starts a selection, `K`/`J` extend it, and `y` copies it.
 
 When typing a filter, `?`, `q`, and digits are text. `Enter` keeps the filter
 without running a command, `Backspace` erases a character, and `Esc` clears a
-filter (runs first if both lists are filtered).
+filter (runs first if both lists are filtered). Moving focus to another pane
+keeps the filter but ends text entry. Matching workflow groups start expanded;
+opening or closing one does not change the unfiltered list.
 
 ## Run browser
 
@@ -71,7 +85,10 @@ parent and then the startup directory. Scanning is read-only and budgeted
 partial list is marked `TRUNC` rather than silently short. `/` filters by
 name, path, status, or stage, and `Enter` pins the selected run as a
 read-only inspector preview. Empty states read `no run dirs under scan root`
-and `no runs match the filter`.
+and `no runs match the filter`. Refresh keeps the same run selected by path if
+it still matches, even if a new run appears above it. With an explicit
+`--run-dir`, you can keep reading that report even if the configuration
+temporarily fails to load.
 
 ## Reports inspector
 
@@ -94,7 +111,8 @@ configuration. Opening or scrolling the report does not run that command.
 ## Safety and environment
 
 - Quitting while a command runs needs a second `q`; the footer shows
-  `[q] Stop + quit` and `[Esc] Stay` while armed. `Esc` never stops a command.
+  `[q] Stop + quit` and `[Esc] Stay` while armed. Here `Esc` dismisses only
+  the confirmation; it keeps your filter and selection and does not stop the command.
 - In help, `q`, `?`, or `Esc` just closes the overlay. `Ctrl+C` can request a
   stop even in help or filter input; it also closes help if it is open.
 - `PMOKE_MOUSE=off` (also `0`, `no`, `false`, `disabled`) disables mouse
