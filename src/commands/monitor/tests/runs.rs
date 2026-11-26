@@ -42,6 +42,55 @@ fn finish_temp_root(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[test]
+fn refresh_keeps_the_startup_artifact_target_after_a_config_error() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive, key};
+    let root = temp_root("workflow_root");
+    let path = root.join("cfg/config.toml");
+    let run_dir = root.join("runs/shot B");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(run_dir.join("acquisition")).unwrap();
+    write_run_manifest(&run_dir, "complete", "acquire");
+    write_run_manifest(&root.join("runs/shot C"), "failed", "analyze");
+    let valid = "version = 7\n[[sensors]]\nchannel = 1\nscale = { factor = 1.0 }\nlabel = 'field'\nunit = 'T'\n";
+    std::fs::write(&path, valid).unwrap();
+    let options = RunOptions {
+        run_dir: Some(run_dir.clone()),
+        force: true,
+    };
+    let config_path = path.to_str().unwrap().to_owned();
+    let load = options.load(&config_path);
+    let mut app = MonitorApp::new(config_path, load, options);
+    let area = area_for(WIDE);
+    assert!(action_runnable(MonitorAction::RawVerify, &app.load));
+    app.refresh_runs();
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[ch('b'), ch('G'), key(KeyCode::Enter), ch('2'), ch('5')],
+    ));
+    assert!(render_text(120, 30, &mut app).contains("VIEW shot C (read-only)"));
+    std::fs::write(&path, "invalid TOML [").unwrap();
+    assert_continue(&drive(&mut app, area, &[ch('r')]));
+    assert!(app.diagnostics().is_some());
+    assert!(
+        render_text(120, 30, &mut app).contains("VIEW shot C (read-only)"),
+        "the selected report does not depend on parsing config"
+    );
+    std::fs::write(&path, valid).unwrap();
+    assert_continue(&drive(&mut app, area, &[ch('r')]));
+    assert_eq!(
+        action_readiness(MonitorAction::RawVerify, &app.load),
+        Ok(())
+    );
+    let (config, _) = app.ready_config().unwrap();
+    assert_eq!(config.paths().run_dir, run_dir);
+    assert!(config.force);
+    assert_eq!(Path::new(&app.run_root), root.join("runs"));
+    assert!(render_text(120, 30, &mut app).contains("VIEW shot C (read-only)"));
+    finish_temp_root(&root);
+}
+
 /// Recursive `(relative path, bytes)` snapshot used to prove read-only
 /// scans. Independent of `scan_run_dirs` so the test cannot pass trivially.
 fn snapshot_tree(root: &Path) -> Vec<(String, Vec<u8>)> {
@@ -85,11 +134,25 @@ fn fake_snapshot(label: &'static str) -> RunSnapshot {
     }
 }
 
+fn attach_test_runner(app: &mut MonitorApp) -> mpsc::Sender<RunEvent> {
+    let (events, receiver) = mpsc::channel();
+    let (cancel, _stop) = mpsc::channel();
+    app.active_run = Some(ActiveRun {
+        action: MonitorAction::Show,
+        label: "live",
+        started_at: Instant::now(),
+        receiver,
+        cancel,
+        cancel_requested: false,
+    });
+    events
+}
+
 fn sample_entries() -> Vec<RunDirEntry> {
     vec![
         RunDirEntry {
             name: "run-beta".to_string(),
-            path: "/runs/run-beta".to_string(),
+            path: "/runs/run-beta".into(),
             status: "failed".to_string(),
             stage: "analyze".to_string(),
             updated: "2026-02-01".to_string(),
@@ -98,7 +161,7 @@ fn sample_entries() -> Vec<RunDirEntry> {
         },
         RunDirEntry {
             name: "run-alpha".to_string(),
-            path: "/runs/run-alpha".to_string(),
+            path: "/runs/run-alpha".into(),
             status: "complete".to_string(),
             stage: "moke".to_string(),
             updated: "2026-01-01".to_string(),
@@ -107,7 +170,7 @@ fn sample_entries() -> Vec<RunDirEntry> {
         },
         RunDirEntry {
             name: "run-gamma".to_string(),
-            path: "/runs/run-gamma".to_string(),
+            path: "/runs/run-gamma".into(),
             status: "acquired".to_string(),
             stage: "fetch".to_string(),
             updated: "2026-03-01".to_string(),
@@ -311,7 +374,7 @@ fn run_browser_root_prefers_run_dir_parent_then_falls_back() {
     // config's directory; the fixture uses "config.toml", so the scan root
     // falls back to the startup directory.
     assert_eq!(
-        run_browser_root("config.toml", &app.load, &app.current_dir),
+        run_browser_root("config.toml", &app.load, None, &app.current_dir),
         PathBuf::from(&app.current_dir)
     );
 
@@ -320,7 +383,7 @@ fn run_browser_root_prefers_run_dir_parent_then_falls_back() {
         config.set_artifact_root(PathBuf::from("/tmp/pmoke-runs/run-001"));
     }
     assert_eq!(
-        run_browser_root("config.toml", &app.load, &app.current_dir),
+        run_browser_root("config.toml", &app.load, None, &app.current_dir),
         PathBuf::from("/tmp/pmoke-runs")
     );
 
@@ -331,7 +394,7 @@ fn run_browser_root_prefers_run_dir_parent_then_falls_back() {
         normalized: None,
     });
     assert_eq!(
-        run_browser_root("some/dir/config.toml", &diagnostics, "."),
+        run_browser_root("some/dir/config.toml", &diagnostics, None, "."),
         PathBuf::from("some/dir")
     );
 }
@@ -368,6 +431,109 @@ fn esc_closes_help_before_clearing_the_runs_filter() {
 
     app.escape();
     assert!(app.run_query.is_empty());
+}
+
+#[test]
+fn refreshing_reports_keeps_the_same_filtered_run_path() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive, key};
+    let root = temp_root("refresh_target");
+    let target = root.join("team-b/shared");
+    write_run_manifest(&target, "complete", "moke");
+    write_run_manifest(&root.join("zz"), "failed", "analyze");
+    let mut app = test_app();
+    app.config_path = root.join("absent.toml").to_string_lossy().into_owned();
+    app.refresh();
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[
+            ch('b'),
+            ch('/'),
+            ch('c'),
+            key(KeyCode::Enter),
+            key(KeyCode::Enter),
+            ch('i'),
+            ch('5'),
+        ],
+    ));
+    assert_eq!(app.selected_run_entry().unwrap().path, target);
+    write_run_manifest(&root.join("aaa"), "complete", "moke");
+    write_run_manifest(&root.join("team-a/shared"), "complete", "moke");
+    assert_continue(&drive(&mut app, area, &[ch('r')]));
+    assert_eq!(app.selected_run_entry().unwrap().path, target);
+    assert_eq!(app.run_query, "c");
+    assert!(render_text(120, 30, &mut app).contains("VIEW shared (read-only)"));
+    std::fs::remove_file(target.join("run.toml")).unwrap();
+    assert_continue(&drive(&mut app, area, &[ch('r')]));
+    assert!(app.run_cursor < app.filtered_run_indices().len());
+    assert_ne!(app.selected_run_entry().unwrap().path, target);
+    finish_temp_root(&root);
+}
+
+#[test]
+#[cfg(unix)]
+fn reports_and_refresh_never_use_a_lossy_display_name_as_a_path() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive};
+    use std::os::unix::ffi::OsStrExt;
+    let root = temp_root("lossy_alias");
+    // Even on filesystems that reject non-UTF-8 names, a stale scan entry
+    // must not be opened or re-selected as the real U+FFFD look-alike.
+    let alias = root.join("run-�");
+    let raw = root.join(std::ffi::OsStr::from_bytes(b"run-\xff"));
+    write_run_manifest(&alias, "wrong-report", "other-stage");
+    write_run_manifest(&root.join("z-survivor"), "complete", "done");
+    let mut app = test_app();
+    app.config_path = root.join("absent.toml").to_str().unwrap().to_owned();
+    app.run_entries = vec![probe_run_entry(&alias), probe_run_entry(&raw)];
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[ch('b'), ch('G'), ch('2'), ch('5')],
+    ));
+    assert!(
+        !reports_table_rows(&app)
+            .iter()
+            .flatten()
+            .any(|s| s == "wrong-report")
+    );
+    assert_continue(&drive(&mut app, area, &[ch('r')]));
+    assert_eq!(app.selected_run_entry().unwrap().name, "z-survivor");
+    finish_temp_root(&root);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn refreshing_real_byte_named_siblings_preserves_their_distinct_reports() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive};
+    use std::os::unix::ffi::OsStrExt;
+    let root = temp_root("raw_names");
+    for (name, stage) in [(b"run-\xfe", "first-stage"), (b"run-\xff", "second-stage")] {
+        write_run_manifest(
+            &root.join(std::ffi::OsStr::from_bytes(name)),
+            "complete",
+            stage,
+        );
+    }
+    let mut app = test_app();
+    app.config_path = root.join("absent.toml").to_str().unwrap().to_owned();
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[ch('r'), ch('b'), ch('G'), ch('2'), ch('5'), ch('r')],
+    ));
+    assert_eq!(app.run_cursor, 1);
+    // One Stage comes from the list snapshot; the other is reread from disk.
+    assert_eq!(
+        reports_table_rows(&app)
+            .iter()
+            .filter(|r| r.as_slice() == ["Stage", "second-stage"])
+            .count(),
+        2
+    );
+    finish_temp_root(&root);
 }
 
 #[test]
@@ -408,17 +574,183 @@ fn history_keys_follow_the_runs_focus() {
 }
 
 #[test]
+fn end_goes_to_the_bottom_of_displayed_history_without_leaving_it() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive, key, render_text};
+    let mut app = test_app();
+    for _ in 0..32 {
+        app.push_output(OutputStream::Stdout, "archived event");
+    }
+    let mut archived = fake_snapshot("first");
+    archived.output = std::mem::take(&mut app.run_output);
+    app.run_history.extend([archived, fake_snapshot("latest")]);
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[ch('o'), ch('['), key(KeyCode::PageUp)],
+    ));
+    assert_eq!(app.history_view, Some(0));
+    assert!(app.run_output_scroll > 0);
+    let frame = render_text(&mut app, WIDE);
+    assert!(frame.lines().last().unwrap().contains("[End] Bottom"));
+    assert_continue(&drive(&mut app, area, &[key(KeyCode::End)]));
+    assert_eq!(app.run_output_scroll, 0);
+    assert_eq!(app.history_view, Some(0));
+}
+
+#[test]
+fn live_progress_does_not_move_a_history_selection() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive};
+    let mut app = test_app();
+    let mut older = fake_snapshot("archive");
+    older.output = ["a", "b", "c"]
+        .map(|s| LogEntry::new(OutputStream::Stdout, s))
+        .into();
+    app.run_history.push_back(older);
+    let events = attach_test_runner(&mut app);
+    let progress = |sequence, fields| UiEvent {
+        event_type: "event".into(),
+        sequence,
+        elapsed_ms: 0,
+        level: EventLevel::Info,
+        kind: EventKind::Progress,
+        stage: None,
+        message: "progress".into(),
+        fields,
+        progress_id: Some("task".into()),
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
+    };
+    events
+        .send(RunEvent::Structured(progress(1, Vec::new())))
+        .unwrap();
+    app.poll_command();
+    assert_continue(&drive(
+        &mut app,
+        area_for(WIDE),
+        &[ch('o'), ch('['), ch('g'), ch('J')],
+    ));
+    assert_eq!(app.selected_output_text().as_deref(), Some("a\nb"));
+    events
+        .send(RunEvent::Structured(progress(
+            2,
+            vec![("count".into(), "2".into())],
+        )))
+        .unwrap();
+    app.poll_command();
+    assert_eq!(app.selected_output_text().as_deref(), Some("a\nb"));
+    assert_eq!(
+        app.run_output.len(),
+        2,
+        "the live progress update must still be applied"
+    );
+}
+
+#[test]
+fn finishing_a_child_keeps_the_viewed_history_record_until_eviction() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive};
+    let root = temp_root("history_finish");
+    let area = area_for(WIDE);
+    for (count, selected) in [(1, 0), (10, 3), (10, 0)] {
+        let mut app = test_app();
+        app.config_path = root.join("absent.toml").to_string_lossy().into_owned();
+        for i in 0..count {
+            let mut snapshot = fake_snapshot("old");
+            snapshot
+                .output
+                .push(LogEntry::new(OutputStream::System, format!("old {i}")));
+            app.run_history.push_back(snapshot);
+        }
+        let events = attach_test_runner(&mut app);
+        assert_continue(&drive(&mut app, area, &[ch('o')]));
+        assert_continue(&drive(&mut app, area, &vec![ch('['); count - selected]));
+        assert_continue(&drive(&mut app, area, &[ch('v')]));
+        let text = format!("old {selected}");
+        assert_eq!(app.selected_output_text().as_deref(), Some(text.as_str()));
+        assert!(app.output_selection_anchor.is_some());
+        events
+            .send(RunEvent::Finished {
+                ok: true,
+                status: "live done".into(),
+            })
+            .unwrap();
+        app.poll_command();
+        assert!(!app.command_running());
+        if count == 10 && selected == 0 {
+            assert_eq!(app.history_view, None);
+            assert_eq!(app.output_selection_anchor, None);
+            assert!(app.selected_output_text().unwrap().contains("live done"));
+        } else {
+            assert!(app.history_view.is_some());
+            assert_eq!(app.selected_output_text().as_deref(), Some(text.as_str()));
+            assert!(app.output_selection_anchor.is_some());
+            assert_continue(&drive(&mut app, area, &vec![ch(']'); count - selected]));
+            assert_eq!(app.history_view, None);
+            assert!(app.selected_output_text().unwrap().contains("live done"));
+        }
+    }
+    finish_temp_root(&root);
+}
+
+#[test]
+fn activity_status_belongs_to_the_displayed_history_not_the_live_child() {
+    use super::harness::{WIDE, area_for, assert_continue, ch, drive};
+    let mut app = test_app();
+    let _events = attach_test_runner(&mut app);
+    let mut failed = fake_snapshot("old failure");
+    failed.record.ok = false;
+    app.run_history
+        .extend([fake_snapshot("old success"), failed]);
+    for (key, label, color) in [
+        ('[', "FAILED", Color::Red),
+        ('[', "DONE", Color::Green),
+        (']', "FAILED", Color::Red),
+        (']', "RUNNING", Color::Yellow),
+    ] {
+        assert_continue(&drive(&mut app, area_for(WIDE), &[ch(key)]));
+        let frame = render_text(120, 30, &mut app);
+        let row = frame
+            .lines()
+            .find(|line| line.contains(" events "))
+            .unwrap();
+        assert!(row.contains(label), "{row}");
+        assert_eq!(displayed_run_status(&app).1, color);
+        assert!(app.command_running());
+    }
+}
+
+#[test]
 fn pin_selected_run_returns_to_live_without_spawning() {
     let mut app = runs_app_with_entries();
-    app.run_history.push_back(fake_snapshot("first"));
+    app.spawn_runner = |_, _, _| panic!("preview must not start a command");
+    let mut older = fake_snapshot("first");
+    older.output = (0..32)
+        .map(|i| LogEntry::new(OutputStream::Stdout, format!("old {i}")))
+        .collect();
+    app.push_output(OutputStream::Stdout, "live only");
+    app.run_history.push_back(older);
     app.run_history.push_back(fake_snapshot("second"));
-    app.history_view = Some(0);
+    app.show_previous_run();
+    app.enter_output_line_visual_mode();
+    app.scroll_output_up(4);
 
-    app.pin_selected_run();
+    app.focus_runs();
+    let frame = super::harness::render_text(&mut app, super::harness::TINY);
+    assert!(frame.lines().last().unwrap().contains("[Enter] Preview"));
+    let area = super::harness::area_for(super::harness::TINY);
+    super::harness::assert_continue(&super::harness::drive(
+        &mut app,
+        area,
+        &[super::harness::key(KeyCode::Enter)],
+    ));
 
     assert_eq!(app.focus, FocusPane::Runs);
     assert_eq!(app.history_view, None);
     assert!(app.active_run.is_none());
+    assert_eq!(app.selected_output_text().as_deref(), Some("live only"));
+    assert_eq!(app.output_selection_anchor, None);
+    assert_eq!(app.run_output_scroll, 0);
 }
 
 #[test]

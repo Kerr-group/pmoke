@@ -59,7 +59,7 @@ fn structured_event_line_count_matches_rendering_with_elapsed_prefix() {
     let entries = LogEntry::from_event(&event);
     let rendered = visual_output_lines(&entries, 52, None, None);
 
-    assert_eq!(visual_output_line_count(&entries, 52), rendered.len());
+    assert_eq!(rendered.len(), 2, "reserve nine cells for elapsed time");
     let first = rendered[0]
         .line
         .spans
@@ -497,8 +497,8 @@ fn event_labels_are_clear_and_fit_the_fixed_tag_column() {
 
 #[test]
 fn display_padding_uses_cjk_width() {
-    assert_eq!(pad_display_width("abc", 5), "abc  ");
-    assert_eq!(pad_display_width("○○", 5), "○○ ");
+    assert_eq!(fit_padded_column("abc", 5), "abc  ");
+    assert_eq!(fit_padded_column("○○", 5), "○○ ");
 }
 
 #[test]
@@ -686,20 +686,318 @@ fn compact_panel_continuation_renders_without_raw_pipe() {
 fn visual_output_line_count_does_not_overcount_exact_width() {
     let entries = vec![LogEntry::new(OutputStream::Stdout, "abcdefghijklm")];
 
-    assert_eq!(visual_output_line_count(&entries, 19), 1);
-    assert_eq!(visual_output_line_count(&entries, 18), 2);
+    assert_eq!(visual_output_lines(&entries, 19, None, None).len(), 1);
+    assert_eq!(visual_output_lines(&entries, 18, None, None).len(), 2);
 }
 
 #[test]
 fn visual_output_line_count_uses_cjk_display_width() {
     let entries = vec![LogEntry::new(OutputStream::Stdout, "○○○○○○○")];
 
-    assert_eq!(visual_output_line_count(&entries, 20), 1);
-    assert_eq!(visual_output_line_count(&entries, 19), 2);
-    assert_eq!(
-        visual_output_line_count(&entries, 19),
-        visual_output_lines(&entries, 19, None, None).len()
+    assert_eq!(visual_output_lines(&entries, 20, None, None).len(), 1);
+    assert_eq!(visual_output_lines(&entries, 19, None, None).len(), 2);
+}
+
+#[test]
+fn activity_renders_the_whole_keycap_and_the_last_character_at_the_wrap_edge() {
+    use super::harness::{TINY, area_for, assert_continue, ch, drive, render_text};
+    let area = area_for(TINY);
+    let mut app = test_app();
+    app.push_output(OutputStream::Stdout, "pmoke --config 12345*️⃣.toml show");
+    assert_continue(&drive(&mut app, area, &[ch('o'), ch('g')]));
+    let first = render_text(&mut app, TINY);
+    assert!(first.contains("12345*️⃣"));
+    assert_continue(&drive(&mut app, area, &[ch('G')]));
+    let last = render_text(&mut app, TINY);
+    assert!(
+        last.contains("│ w "),
+        "the final w must be reachable: {last}"
     );
+    app.push_output(OutputStream::Stdout, &format!("{}*️⃣!", "x".repeat(30)));
+    assert!(
+        render_text(&mut app, TINY).contains("*️⃣"),
+        "the cluster must wrap intact"
+    );
+}
+
+#[test]
+fn wrapped_events_and_fields_occupy_exactly_the_rows_used_for_scrolling() {
+    let mut app = test_app();
+    app.push_structured_output(UiEvent {
+        event_type: "event".into(),
+        sequence: 1,
+        elapsed_ms: 1500,
+        level: EventLevel::Info,
+        kind: EventKind::Section,
+        stage: None,
+        message: "long section ".repeat(14),
+        fields: vec![("long structured field name".into(), "abcdefghij".repeat(15))],
+        progress_id: None,
+        progress_current: None,
+        progress_total: None,
+        duration_ms: None,
+    });
+    app.push_output(
+        OutputStream::Stdout,
+        &"abcdefghijklmnopqrstuvwxyz".repeat(8),
+    );
+    use super::harness::{COMPACT, TINY, WIDE, area_for, assert_continue, ch, drive};
+    for size in [TINY, COMPACT, WIDE] {
+        let area = area_for(size);
+        let text = output_log_content_area(area).unwrap();
+        let width = text.width;
+        let rows = visual_output_lines(app.visible_output(), width, None, None);
+        assert_continue(&drive(&mut app, area, &[ch('o'), ch('g')]));
+        assert_eq!(
+            app.run_output_scroll,
+            rows.len().saturating_sub(usize::from(text.height)),
+            "{size:?}"
+        );
+        for row in &rows {
+            assert!(
+                row.line.width() <= width as usize,
+                "{width} cols: {}",
+                row.line
+            );
+        }
+    }
+}
+
+#[test]
+fn wide_activity_preserves_distinct_doctor_field_names() {
+    use super::harness::{harness_app, render_text};
+    let keys = [
+        "config.reference.stride_samples",
+        "config.reference.window_samples",
+    ];
+    for structured in [true, false] {
+        let mut app = harness_app();
+        for key in keys {
+            push_test_column(&mut app, key, "100", structured);
+        }
+        let frame = render_text(&mut app, (90, 32));
+        for key in keys {
+            assert!(
+                frame
+                    .lines()
+                    .any(|row| row.contains(key) && row.contains("100")),
+                "structured={structured}, missing {key}: {frame}"
+            );
+        }
+    }
+}
+
+#[test]
+fn activity_keeps_the_value_after_a_halfwidth_voiced_sensor_label() {
+    use super::harness::{area_for, harness_app, render_text};
+    let size = (40, 30);
+    assert_eq!(output_log_content_area(area_for(size)).unwrap().width, 37);
+    for structured in [true, false] {
+        let mut app = harness_app();
+        push_test_column(&mut app, "ch1 ｶﾞ", "ABCDEFGHIJKLMNOPQRST", structured);
+        let frame = render_text(&mut app, size);
+        let text = frame.split("ACTIVITY ·").nth(1).unwrap();
+        assert!(text.contains("ch1 ｶﾞ"));
+        let capitals: String = text.chars().filter(char::is_ascii_uppercase).collect();
+        assert!(
+            capitals.contains("ABCDEFGHIJKLMNOPQRST"),
+            "structured={structured}: {frame}"
+        );
+    }
+}
+
+fn push_test_column(app: &mut MonitorApp, key: &str, value: &str, structured: bool) {
+    if structured {
+        let mut event = crate::ui::parse_jsonl_event(r#"{"type":"event","sequence":1,"elapsed_ms":1,"level":"info","kind":"section","message":"config"}"#).unwrap();
+        event.fields.push((key.into(), value.into()));
+        app.push_structured_output(event);
+    } else {
+        app.push_output(OutputStream::Stdout, &format!("│ {key}  {value}"));
+    }
+}
+
+#[test]
+fn resizing_until_the_tail_fits_does_not_resume_a_paused_log() {
+    use super::harness::{area_for, assert_continue, ch, drive, key, render_text};
+    let small = (40, 17);
+    let tall = (40, 20);
+    let mut app = test_app();
+    for i in 1..=10 {
+        app.push_output(OutputStream::Stdout, &format!("event-{i:02}"));
+    }
+    assert_eq!(output_log_content_area(area_for(small)).unwrap().height, 3);
+    assert_eq!(output_log_content_area(area_for(tall)).unwrap().height, 6);
+    assert_continue(&drive(&mut app, area_for(small), &[ch('o'), ch('G')]));
+    assert_continue(&drive(&mut app, area_for(small), &[ch('k'); 5]));
+    let events = |frame: &str| -> Vec<String> {
+        frame
+            .lines()
+            .filter_map(|line| line.split_once("event-").map(|(_, n)| n[..2].to_owned()))
+            .collect()
+    };
+    let before = events(&render_text(&mut app, small));
+    assert_eq!(before, ["05", "06", "07"]);
+    let expanded = render_text(&mut app, tall);
+    assert_eq!(events(&expanded), ["05", "06", "07", "08", "09", "10"]);
+    assert_eq!(events(&render_text(&mut app, small)), before);
+    assert!(expanded.contains("PAUSED"));
+    render_text(&mut app, tall);
+    app.push_output(OutputStream::Stdout, "event-11");
+    let narrow = render_text(&mut app, small);
+    assert!(narrow.contains("PAUSED · 1 NEW"));
+    assert_eq!(events(&narrow), before);
+    assert_continue(&drive(&mut app, area_for(small), &[key(KeyCode::End)]));
+    assert_eq!(events(&render_text(&mut app, small)), ["09", "10", "11"]);
+}
+
+#[test]
+fn paused_text_stays_visible_when_the_first_timestamp_changes_wrapping() {
+    use super::harness::{area_for, assert_continue, ch, drive, key, render_text};
+    let size = (55, 14);
+    let area = area_for(size);
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &format!("{}HERE{}", "x".repeat(178), "y".repeat(200)),
+    );
+    assert_continue(&drive(&mut app, area, &[ch('o'), ch('G')]));
+    let tail = render_text(&mut app, size);
+    let row = tail.lines().position(|line| line.contains("yyyy")).unwrap();
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 15,
+            row: row as u16,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    assert!(render_text(&mut app, size).contains("HERE"));
+    let event = crate::ui::parse_jsonl_event(r#"{"type":"event","sequence":1,"elapsed_ms":1200,"level":"info","kind":"status","message":"timed-tail"}"#).unwrap();
+    app.push_structured_output(event);
+    let after = render_text(&mut app, size);
+    assert!(
+        after.contains("HERE"),
+        "lost the visible text when elapsed appeared: {after}"
+    );
+    assert!(after.contains("PAUSED"));
+    for width in [50, 61, 55, 52, 55] {
+        render_text(&mut app, (width, 14));
+    }
+    assert!(
+        render_text(&mut app, size).contains("HERE"),
+        "redraws must not move the anchor"
+    );
+    assert_continue(&drive(&mut app, area, &[key(KeyCode::End)]));
+    let tail = render_text(&mut app, size);
+    assert!(tail.contains("00:01.2") && tail.contains("timed-tail"));
+}
+
+#[test]
+fn paused_activity_keeps_visible_rows_when_long_events_arrive_or_change() {
+    use super::harness::{COMPACT, area_for, assert_continue, ch, drive, key, render_text};
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &(0..1000)
+            .map(|i| format!("original-{i:03}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    assert_continue(&drive(
+        &mut app,
+        area_for(COMPACT),
+        &[ch('o'), key(KeyCode::PageUp)],
+    ));
+    let visible = |app: &mut MonitorApp| {
+        render_text(app, COMPACT)
+            .lines()
+            .filter_map(|s| s.split_once("original-").map(|(_, n)| n[..3].to_owned()))
+            .collect::<Vec<_>>()
+    };
+    let before = visible(&mut app);
+    assert!(!before.is_empty());
+    app.push_output(OutputStream::Stdout, &"long event ".repeat(90));
+    assert_eq!(
+        visible(&mut app),
+        before,
+        "appending wrapped rows and trimming the oldest event"
+    );
+    app.push_progress(OutputStream::Stderr, "short");
+    app.push_progress(OutputStream::Stderr, &"long progress ".repeat(100));
+    assert_eq!(
+        visible(&mut app),
+        before,
+        "a growing progress record below the viewport"
+    );
+    assert_continue(&drive(&mut app, area_for(COMPACT), &[key(KeyCode::End)]));
+    app.push_output(OutputStream::Stdout, "latest-after-follow");
+    assert!(render_text(&mut app, COMPACT).contains("latest-after-follow"));
+}
+
+#[test]
+fn moving_down_at_a_wrapped_tail_keeps_following_output() {
+    use super::harness::{TINY, area_for, assert_continue, ch, drive, key, render_text};
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &format!("{} tail-marker", "x".repeat(40)),
+    );
+    let area = area_for(TINY);
+    assert_continue(&drive(&mut app, area, &[ch('o'), ch('G')]));
+    assert!(render_text(&mut app, TINY).contains("tail-marker"));
+    for event in [ch('j'), key(KeyCode::Down), ch('J')] {
+        assert_continue(&drive(&mut app, area, &[event]));
+        assert!(render_text(&mut app, TINY).contains("tail-marker"));
+        assert_eq!(app.run_output_scroll, 0);
+    }
+    app.push_output(OutputStream::Stdout, "new-tail");
+    assert!(render_text(&mut app, TINY).contains("new-tail"));
+}
+
+#[test]
+fn first_and_last_output_keys_reach_the_ends_of_multirow_events() {
+    use super::harness::{COMPACT, area_for, assert_continue, ch, drive, render_text};
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &format!(
+            "start-marker {}\n{} end-marker",
+            "a".repeat(700),
+            "b".repeat(700)
+        ),
+    );
+    let area = area_for(COMPACT);
+    for (key, marker) in [
+        ('g', "start-marker"),
+        ('g', "start-marker"),
+        ('G', "end-marker"),
+    ] {
+        assert_continue(&drive(&mut app, area, &[ch('o'), ch(key)]));
+        let frame = render_text(&mut app, COMPACT);
+        assert!(frame.contains(marker), "{key}: {frame}");
+    }
+    assert_eq!(app.run_output_scroll, 0);
+}
+
+#[test]
+fn end_displays_the_tail_after_a_wrapped_activity_event() {
+    use super::harness::{COMPACT, area_for, assert_continue, ch, drive, key, render_text};
+    let mut app = test_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &format!("{}\ntail-event", "a".repeat(700)),
+    );
+    let area = area_for(COMPACT);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[ch('o'), key(KeyCode::PageUp), key(KeyCode::End)],
+    ));
+    let frame = render_text(&mut app, COMPACT);
+    assert!(frame.contains("tail-event"), "{frame}");
 }
 
 #[test]
@@ -789,7 +1087,10 @@ fn output_scroll_clamps_to_renderable_max() {
     app.focus_output();
     app.run_output_scroll = 999;
     let area = Rect::new(0, 0, 120, 28);
-    let max_scroll = max_output_scroll_for_area(&app, area).expect("output area exists");
+    let rows = output_log_content_area(area)
+        .expect("output area exists")
+        .height;
+    let max_scroll = 80 - usize::from(rows);
 
     clamp_output_scroll(&mut app, area);
 

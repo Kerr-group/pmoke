@@ -8,21 +8,32 @@ same workflow commands you would run by hand and surfaces their output; it
 never edits configuration files and never touches hardware beyond what the
 selected command itself does.
 
+If you start the monitor with `--run-dir`, refreshing or running a workflow
+command keeps using that directory. Selecting a different run in `RUNS`
+only changes the preview. If you explicitly start the monitor with `--force`,
+it passes that flag to every workflow command in the session, allowing
+commands to overwrite existing artifacts.
+
 ## Layout
 
 - Header: status (`RUNNABLE` when the configuration loads, `BLOCKED` when it
   carries diagnostics), the active run label, and a minutes:seconds timer.
-- Context bar: working directory and configuration path; it collapses to a
-  compact form on narrow terminals.
+- Context bar: working directory and configuration path. With `REPORTS` focused,
+  `VIEW` identifies the recorded run being inspected, not a command to execute.
 - `WORKFLOW`: the command list with a `DETAIL` description of the selected
   row. `/` filters, `Enter` runs the selected command.
 - `RUNS`: the S2 run browser (see below).
 - `INSPECTOR`: `SUMMARY`, `CONFIG`, `DIAGNOSTICS`, `ARTIFACTS`, and `REPORTS`
   tabs for the selected workflow entry or the pinned run preview.
 - `ACTIVITY`: live command output with `LIVE`, `PAUSED`, and `HISTORY` states.
-- Footer: the key hints for the focused pane. `?` opens the full help
-  overlay, which is generated from the same key registry as the event loop,
-  so the overlay always matches the implementation.
+  When you browse history, progress and completion of the live command do not
+  change the record or selection you are reading. If that record ages out of
+  the ten-command history, the pane returns to live output. While output is
+  paused, the text you scrolled to stays in view when timestamps appear.
+  Enlarging the pane enough to show the tail does not resume following it.
+  Field names are shown in full when there is room; long values wrap.
+- Footer: shows what a key does in the current pane and mode. On narrow
+  terminals, lower-priority hints are omitted rather than cut in half.
 
 ## Focus
 
@@ -31,32 +42,39 @@ activity.
 
 | Keys | Effect |
 | --- | --- |
-| `1` / `2` / `3` / `4` (`b` also focuses runs) | Focus workflow / inspector / activity / runs |
+| `1` / `2` / `3` / `4` outside the inspector | Focus workflow / inspector / activity / runs |
+| `b` | Focus runs, including from the inspector |
 | `Tab` / `Shift-Tab` (`l` / `h`, `Right` / `Left`) | Focus next / previous pane |
 | `i` | Cycle inspector tabs (focuses the inspector) |
 | `1`-`5` while the inspector is focused | Select inspector tab directly (`5` = `REPORTS`) |
 
 ## Keys
 
-Global keys (work in every pane):
+In normal navigation (not while typing a filter or viewing help):
 
 | Keys | Effect |
 | --- | --- |
 | `?` | Toggle help overlay (`q` or `Esc` closes it) |
 | `q` | Quit; while a command runs, arms a confirmation instead (`q` again quits, `Esc` stays) |
-| `/` | Filter the focused list (workflow or runs) |
-| `Enter` | Run the selected command, or pin the selected run preview while runs are focused |
-| `[` / `]` | Older run / back to live activity |
+| `/` | Filter runs if the runs pane is focused; otherwise filter workflow commands |
+| `Enter` | In workflow or inspector, run the selected workflow command or toggle its group. In runs, preview the selected run; in activity, copy the selection. |
+| `[` / `]` | In runs, move the selection; elsewhere, browse older / newer command output |
 | `r` | Refresh configuration and files |
 | `Ctrl+C` | Interrupt the running command |
-| `End` | Follow live activity |
+| `End` | Scroll to the bottom of the displayed output. It does not leave history. |
 | `Esc` | Close dialog, clear search/selection, then leave the panel (never cancels a run) |
 
-List keys (`j`/`k` move, `g`/`G` first/last) apply to the focused list:
-workflow selection, run selection, inspector scroll, or activity selection.
-Activity adds `v` visual-line select, `y` copy, `K`/`J` extend selection,
-`PageUp`/`PageDown` and `Ctrl+U`/`Ctrl+D` scroll. Search typing appends to
-the filter; `Enter` commits, `Backspace` erases, `Esc` clears.
+In workflow, runs, and activity, `j`/`k` move the selection and `g`/`G` go
+to the first/last entry. In the inspector, `j`/`k` scroll a scrollable tab;
+`g`/`G` move to the first/last **workflow** row instead. `PageUp`/`PageDown`
+and `Ctrl+U`/`Ctrl+D` scroll the inspector or activity. In activity, `v`
+starts a selection, `K`/`J` extend it, and `y` copies it.
+
+When typing a filter, `?`, `q`, and digits are text. `Enter` keeps the filter
+without running a command, `Backspace` erases a character, and `Esc` clears a
+filter (runs first if both lists are filtered). Moving focus to another pane
+keeps the filter but ends text entry. Matching workflow groups start expanded;
+opening or closing one does not change the unfiltered list.
 
 ## Run browser
 
@@ -67,7 +85,10 @@ parent and then the startup directory. Scanning is read-only and budgeted
 partial list is marked `TRUNC` rather than silently short. `/` filters by
 name, path, status, or stage, and `Enter` pins the selected run as a
 read-only inspector preview. Empty states read `no run dirs under scan root`
-and `no runs match the filter`.
+and `no runs match the filter`. Refresh keeps the same run selected by path if
+it still matches, even if a new run appears above it. With an explicit
+`--run-dir`, you can keep reading that report even if the configuration
+temporarily fails to load.
 
 ## Reports inspector
 
@@ -82,13 +103,18 @@ the run's per-stage lifecycle status from its `run.toml` manifest, and a
 `analysis/manifest.toml` publication state. Every probe is a bounded
 read-only file read: missing, oversized, or unparsable files degrade to an
 explicit `not found` / `unreadable` marker instead of failing the render.
-With no run selected the tab names the scan root and budgets and points at
-the runs browser.
+With this tab focused, use `b` to reach the runs browser; `4` opens `ARTIFACTS`.
+For example, `VIEW run-alpha (read-only)` with `[Enter] Run show` means you
+are reading `run-alpha`, but pressing `Enter` runs `show` with the current
+configuration. Opening or scrolling the report does not run that command.
 
 ## Safety and environment
 
 - Quitting while a command runs needs a second `q`; the footer shows
-  `q again to stop + quit` while armed. `Esc` never stops a command.
+  `[q] Stop + quit` and `[Esc] Stay` while armed. Here `Esc` dismisses only
+  the confirmation; it keeps your filter and selection and does not stop the command.
+- In help, `q`, `?`, or `Esc` just closes the overlay. `Ctrl+C` can request a
+  stop even in help or filter input; it also closes help if it is open.
 - `PMOKE_MOUSE=off` (also `0`, `no`, `false`, `disabled`) disables mouse
   capture; otherwise click, drag, and wheel work.
 - `PMOKE_MOTION=full|reduced|off` calms live animation while a command runs.

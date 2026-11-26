@@ -231,8 +231,7 @@ fn ready_probe_app() -> MonitorApp {
 }
 
 /// CJK/wide-character cell budget: truncation keeps display width within
-/// budget (CJK = 2 cells) and padding reaches exact width, so callers fit
-/// first and pad second.
+/// budget (CJK = 2 cells) and column padding reaches the requested width.
 #[test]
 fn cjk_probe_stays_within_budget() {
     let probe = "あいうえお RUNS 01/20 ◆ cwd";
@@ -243,9 +242,8 @@ fn cjk_probe_stays_within_budget() {
             "fit_text overflow at {width}: {fitted:?}"
         );
     }
-    // Padding a short mixed-width string reaches exact width (pad never
-    // truncates: over-wide input is the caller's `fit_text` duty).
-    let padded = pad_display_width("あい RUNS", 12);
+    // A short mixed-width label is padded rather than truncated.
+    let padded = fit_padded_column("あい RUNS", 12);
     assert_eq!(UnicodeWidthStr::width(padded.as_str()), 12);
     // Full-width input fitted to a narrow budget stays within budget too.
     let fitted = fit_text("ＡＢＣＤＥＦＧＨＩＪＫＬＭ", 10);
@@ -262,7 +260,7 @@ fn reports_probe_app() -> MonitorApp {
     let mut app = ready_probe_app();
     app.run_entries = vec![RunDirEntry {
         name: "run-alpha".to_string(),
-        path: "/workspace/pmoke/runs/run-alpha".to_string(),
+        path: "/workspace/pmoke/runs/run-alpha".into(),
         status: "complete".to_string(),
         stage: "analysis".to_string(),
         updated: "2026-01-01".to_string(),
@@ -288,6 +286,29 @@ fn snapshot_reports_tab_empty() {
 }
 
 #[test]
+fn empty_reports_renders_the_key_that_actually_focuses_runs() {
+    let mut app = probe_app();
+    let area = area_for(WIDE);
+    assert_continue(&drive(&mut app, area, &[ch('2'), ch('5')]));
+    let frame = render_text(&mut app, WIDE);
+    let label = frame
+        .lines()
+        .find_map(|line| line.split_once("press "))
+        .and_then(|(_, rest)| rest.split_once(" to focus the runs browser"))
+        .map(|(keys, _)| keys)
+        .expect("visible Runs hint");
+    assert_eq!(label, "b");
+    let tiny = render_text(&mut app, TINY);
+    assert!(tiny.lines().last().unwrap().contains("[b] Runs"), "{tiny}");
+    assert_continue(&drive(&mut app, area, &[ch(label.chars().next().unwrap())]));
+    assert_eq!(app.focus, FocusPane::Runs);
+    assert_continue(&drive(&mut app, area, &[ch('2'), ch('5'), ch('4')]));
+    assert_eq!(app.focus, FocusPane::Inspector);
+    assert_eq!(app.inspector_view, InspectorView::Artifacts);
+    assert!(!app.command_running());
+}
+
+#[test]
 fn snapshot_reports_tab_populated() {
     let mut app = reports_probe_app();
     let outcomes = drive(&mut app, area_for(WIDE), &[ch('2'), ch('5')]);
@@ -299,4 +320,62 @@ fn snapshot_reports_tab_populated() {
     assert!(rendered.contains("run-alpha"));
     assert!(rendered.contains("Stages"));
     insta::assert_snapshot!("reports_populated", rendered);
+}
+
+#[test]
+fn reports_names_the_view_separately_from_enters_workflow_target() {
+    let mut app = reports_probe_app();
+    let area = area_for(TINY);
+    app.config_path = "current-workflow.toml".into();
+    app.spawn_runner = |action, args, _width| {
+        assert_eq!(action, MonitorAction::Show);
+        assert_eq!(args, ["--config", "current-workflow.toml", "show"]);
+        Ok(RunHandle {
+            receiver: mpsc::channel().1,
+            cancel: mpsc::channel().0,
+        })
+    };
+    assert_continue(&drive(&mut app, area, &[ch('2'), ch('5')]));
+    for size in [TINY, COMPACT, WIDE] {
+        let frame = render_text(&mut app, size);
+        assert!(frame.contains("VIEW run-alpha (read-only)"), "{frame}");
+        if size == WIDE {
+            assert!(
+                frame
+                    .lines()
+                    .nth(1)
+                    .unwrap()
+                    .contains("config current-workflow.toml")
+            );
+        }
+        let footer = frame.lines().last().unwrap();
+        assert!(
+            footer.contains("[Enter] Run show") && footer.contains("[?] Help"),
+            "{footer}"
+        );
+    }
+    assert!(!app.command_running());
+    assert_continue(&drive(&mut app, area, &[key(KeyCode::Enter)]));
+    assert_eq!(app.active_run.as_ref().unwrap().action, MonitorAction::Show);
+    let active = render_text(&mut app, TINY);
+    assert!(active.contains("VIEW run-alpha (read-only)"));
+    let footer = active.lines().last().unwrap();
+    assert!(footer.contains("[Ctrl+C] Stop") && !footer.contains("[Enter]"));
+}
+
+#[test]
+fn long_report_name_keeps_its_read_only_label_in_the_tiny_frame() {
+    let mut app = reports_probe_app();
+    app.run_entries[0].name = "測定報告".repeat(24);
+    assert_continue(&drive(&mut app, area_for(TINY), &[ch('2'), ch('5')]));
+    // Inspect spans rather than the TestBackend's placeholder cells for wide glyphs.
+    let line = Line::from(context_bar_spans(&app, TINY.0));
+    assert!(line.width() <= usize::from(TINY.0));
+    let text = line.to_string();
+    assert!(
+        text.starts_with("VIEW 測定") && text.ends_with(" (read-only)"),
+        "{text}"
+    );
+    let tiny = render_text(&mut app, TINY);
+    assert!(tiny.lines().last().unwrap().contains("[Enter] Run show"));
 }

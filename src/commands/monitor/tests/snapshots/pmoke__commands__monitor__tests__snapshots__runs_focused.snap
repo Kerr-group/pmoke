@@ -31,4 +31,4 @@ expression: rendered
 │config and            ││                                                                                              │
 │diagnostics.          ││                                                                                              │
 └──────────────────────┘╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-/filter    j/kmove    Enterpreview    Tab/Right/lfocus    [ ]history    ?help    qquit    [runs]
+[?] Help [Tab] Pane [/] Filter [q] Quit

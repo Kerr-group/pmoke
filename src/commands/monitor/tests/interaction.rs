@@ -425,6 +425,46 @@ fn clicking_inspector_focuses_inspector() {
 }
 
 #[test]
+fn activity_click_selects_the_text_at_the_rendered_cell() {
+    use super::harness::{COMPACT, TINY, WIDE, area_for, render_text};
+    for size in [WIDE, COMPACT, TINY] {
+        let mut app = test_app();
+        app.push_output(OutputStream::Stdout, "first-event\nsecond-event");
+        let frame = render_text(&mut app, size);
+        let mut seen = 0;
+        for (row, line) in frame.lines().enumerate() {
+            for label in ["first-event", "second-event"] {
+                let Some((prefix, _)) = line.split_once(label) else {
+                    continue;
+                };
+                seen += 1;
+                handle_mouse(
+                    &mut app,
+                    area_for(size),
+                    MouseEvent {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        column: prefix.cell_width(),
+                        row: row as u16,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                )
+                .unwrap();
+                assert!(
+                    app.output_mouse_drag_active,
+                    "{size:?}: {label} is visible but not selectable"
+                );
+                assert_eq!(
+                    app.selected_output_text().as_deref(),
+                    Some(label),
+                    "{size:?}"
+                );
+            }
+        }
+        assert!(seen > 0, "fixture has no visible events at {size:?}");
+    }
+}
+
+#[test]
 fn output_scrollbar_click_focuses_without_selecting_a_line() {
     let mut app = test_app();
     app.push_output(
@@ -554,7 +594,12 @@ fn output_drag_only_extends_a_drag_started_on_an_output_line() {
     )
     .unwrap();
     let selected_before_focus_switch = app.output_selected;
-    app.focus_messages();
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        area,
+    )
+    .unwrap();
     handle_mouse(
         &mut app,
         area,

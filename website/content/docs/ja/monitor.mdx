@@ -7,18 +7,22 @@ description: コンフィグ・run参照・解析出力を扱うlive terminal da
 手実行と同じworkflow commandを実行し、その出力を表示する。コンフィグファイルの
 編集は行わず、選択command自体の動作を越えたhardware操作も行わない。
 
+起動時に `--run-dir` を指定すると、更新後もワークフローの実行先はそのディレクトリのまま。`RUNS` で別の記録を選んでもプレビューだけが切り替わる。起動時に `--force` を明示した場合は、セッション内の各コマンドにもこのフラグが渡り、既存の成果物を上書きできる。
+
 ## 配置
 
 - Header: 状態 (コンフィグが読めれば`RUNNABLE`、diagnosticsがあれば`BLOCKED`)、
   実行中runのlabel、分:秒timer。
-- Context bar: 作業directoryとコンフィグpath。狭いterminalではcompact表示。
+- コンテキスト行には作業ディレクトリと設定ファイルのパスを表示する。`REPORTS` にフォーカスがあるときの `VIEW` は、実行するコマンドではなく、閲覧中の記録を示す。
 - `WORKFLOW`: command一覧と選択行の`DETAIL`説明。`/`でfilter、`Enter`で実行。
 - `RUNS`: S2 run browser (後述)。
 - `INSPECTOR`: 選択commandまたはpin留めrun preview用の`SUMMARY`、`CONFIG`、
   `DIAGNOSTICS`、`ARTIFACTS`、`REPORTS` tab。
 - `ACTIVITY`: `LIVE`、`PAUSED`、`HISTORY`状態を持つcommand出力。
-- Footer: focus中paneのkey hint。`?`でhelp overlayを開く。overlayはevent
-  loopと同じkey registryから生成されるため、表示と実装の乖離がない。
+  履歴を読んでいる間に実行中のコマンドが進んだり終了したりしても、閲覧中の記録と選択範囲は変わらない。その記録が直近10件の履歴から外れると、ライブ出力に戻る。
+  スクロールを一時停止していれば、経過時間の列が現れても、読んでいた箇所は画面に残る。
+  ペインを広げて末尾が見えても、自動追従は再開しない。幅に余裕があれば項目名は省略せず、長い値は折り返して表示する。
+- フッターには、そのペインで今使えるキーと操作を表示する。端末が狭いときは、優先度の低い案内をキーと操作の組ごと省く。
 
 ## Focus
 
@@ -26,32 +30,33 @@ description: コンフィグ・run参照・解析出力を扱うlive terminal da
 
 | Key | 効果 |
 | --- | --- |
-| `1` / `2` / `3` / `4` (`b`もrunsへ) | workflow / inspector / activity / runsへfocus |
+| Inspector 以外で `1` / `2` / `3` / `4` | Workflow / Inspector / Activity / Runs に移る |
+| `b` | Runs に移る。Inspector からも使える |
 | `Tab` / `Shift-Tab` (`l` / `h`、`Right` / `Left`) | 次 / 前paneへfocus |
 | `i` | Inspector tab巡回 (inspectorへfocus) |
 | Inspector focus中の`1`-`5` | Inspector tab直接選択 (`5`は`REPORTS`) |
 
 ## Key
 
-全pane共通:
+通常の操作時（検索入力中とヘルプ表示中を除く）:
 
 | Key | 効果 |
 | --- | --- |
 | `?` | Help overlay切替 (`q`または`Esc`で閉じる) |
 | `q` | 終了。command実行中は確認待ち (`q`再押下で終了、`Esc`で残留) |
-| `/` | Focus中listのfilter (workflowまたはruns) |
-| `Enter` | 選択command実行。runs focus中は選択runのpreview pin留め |
-| `[` / `]` | 過去run / live activityへ戻る |
+| `/` | Runs にフォーカスがあれば記録を、それ以外では Workflow のコマンドを検索する |
+| `Enter` | Workflow と Inspector では Workflow の選択コマンドを実行し、グループ行なら開閉する。Runs では選択した記録をプレビューし、Activity では選択した出力をコピーする |
+| `[` / `]` | Runs では選択行を移動。それ以外ではコマンド出力の履歴を前後する |
 | `r` | コンフィグとfile再読込 |
 | `Ctrl+C` | 実行中commandの中断 |
-| `End` | Live activity追従 |
+| `End` | 表示中の出力の末尾に移る。履歴を開いているときは履歴のまま |
 | `Esc` | Dialogを閉じ、検索・選択解除、pane離脱 (実行中commandは中断しない) |
 
-List key (`j`/`k`移動、`g`/`G`先頭・末尾) はfocus中listに適用: workflow
-選択、run選択、inspector scroll、activity選択。Activityには`v`
-visual-line選択、`y` copy、`K`/`J`選択拡張、`PageUp`/`PageDown`と
-`Ctrl+U`/`Ctrl+D` scrollが加わる。検索入力中は文字がfilterに追加され、
-`Enter`確定、`Backspace`削除、`Esc`解除。
+Workflow、Runs、Activity では `j`/`k` で選択を移し、`g`/`G` で先頭・末尾に移る。
+Inspector では `j`/`k` でタブの内容をスクロールする。`g`/`G` が移すのは Inspector 内の行ではなく、Workflow の先頭・末尾。Inspector と Activity では `PageUp`/`PageDown` と `Ctrl+U`/`Ctrl+D` も使える。Activity では `v` で選択を開始し、`K`/`J` で範囲を広げ、`y` でコピーする。
+
+検索入力中は `?`、`q`、数字も検索文字になる。`Enter` はフィルターを保って入力を終えるだけで、コマンドは起動しない。`Backspace` は1文字削除、`Esc` はフィルター解除。両方のリストにフィルターがあれば Runs から解除する。
+別のペインに移ると入力は終わるが、フィルターは残る。Workflow の検索結果では一致したグループが開く。ここで開閉しても、検索前の一覧の開閉状態は変わらない。
 
 ## Run browser
 
@@ -61,7 +66,8 @@ budget付き (最大512 directory、深さ3、200 entry、manifest毎64 KiB)。
 部分listには`TRUNC`表示を付け、黙って欠落させない。`/`で名前・path・
 状態・stageをfilterし、`Enter`で選択runをread-only inspector previewに
 pin留めする。空状態は`no run dirs under scan root`と
-`no runs match the filter`の表示。
+`no runs match the filter`の表示。更新で上に別の記録が追加されても、同じパスの記録がフィルターに一致していれば選択は移らない。
+起動時に `--run-dir` を指定していれば、コンフィグを一時的に読み込めなくなっても、同じレポートを読み続けられる。
 
 ## Reports inspector
 
@@ -73,13 +79,13 @@ S3 の`REPORTS` tabは、選択中runの内部で何が起きたかを表示す�
 `m6-evaluation-report.json`) と`calibration.json` artifact、
 `analysis/manifest`の公開状態を表示する。probeはすべて上限付き
 read-only file read。欠落・超過・parse不可のfileは描画を失敗させず、
-`not found` / `unreadable`表示に劣化する。run未選択時はscan rootと
-budget、runs browserへのhintを表示する。
+`not found` / `unreadable` を表示する。このタブから Runs に移るキーは `b`。`4` は `ARTIFACTS` を開く。
+たとえば `VIEW run-alpha (read-only)` と `[Enter] Run show` が出ていれば、閲覧しているのは `run-alpha` だが、`Enter` が実行するのは現在の設定での `show`。レポートを開いたりスクロールしたりするだけでは起動しない。
 
 ## 安全と環境
 
-- Command実行中の終了には2度目の`q`が必要。確認待ち中footerに
-  `q again to stop + quit`表示。`Esc`でcommandが止まることはない。
+- コマンド実行中の終了には2度目の `q` が必要。確認時は `[q] Stop + quit` と `[Esc] Stay` を表示する。ここでの `Esc` は確認だけを閉じる。コマンドは止まらず、フィルターと選択範囲も残る。
+- ヘルプの `q`、`?`、`Esc` はヘルプを閉じるだけ。`Ctrl+C` は検索入力中もヘルプ表示中も実行中のコマンドに停止を要求する。ヘルプが開いていれば同時に閉じる。
 - `PMOKE_MOUSE=off` (`0`、`no`、`false`、`disabled`も可) でmouse capture
   無効。既定ではclick、drag、wheel有効。
 - `PMOKE_MOTION=full|reduced|off`で実行中live animationを抑制。

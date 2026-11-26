@@ -329,13 +329,13 @@ pub(super) fn reports_table_rows(app: &MonitorApp) -> Vec<Vec<String>> {
     let Some(entry) = app.selected_run_entry() else {
         return Vec::new();
     };
-    let run_dir = Path::new(&entry.path);
+    let run_dir = entry.path.as_path();
     let mut rows = vec![
         vec!["Run".to_string(), entry.name.clone()],
         vec!["Status".to_string(), entry.status.clone()],
         vec!["Stage".to_string(), entry.stage.clone()],
         vec!["Updated".to_string(), entry.updated.clone()],
-        vec!["Path".to_string(), entry.path.clone()],
+        vec!["Path".to_string(), entry.path.display().to_string()],
         vec![
             "Stages".to_string(),
             "per-stage status from run manifest".to_string(),

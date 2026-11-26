@@ -3,7 +3,7 @@ source: src/commands/monitor/tests/snapshots.rs
 expression: rendered
 ---
  pmoke  ● RUNNABLE  │  IDLE  │  00:00                                                                                   
- └─ ◆ cwd /workspace/pmoke  │  config config.toml ──────────────────────────────────────────────────────────────────────
+VIEW run-alpha (read-only) └─ ◆ cwd /workspace/pmoke  │  config config.toml ────────────────────────────────────────────
 ┌ RUNS 01/1 ───────────┐┌ REPORTS 1-6/21 ──────────────────────────────────────────────────────────────────────────────┐
 │▌ run-alpha complete  ││Report: run-alph Value                                                                        │
 │                      ││Run              run-alpha                                                                    │
@@ -31,4 +31,4 @@ expression: rendered
 │config and            ││                                                                                              │
 │diagnostics.          ││                                                                                              │
 └──────────────────────┘╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-itabs    1-5tab    j/kscroll    Tab/Right/lfocus    [ ]history    ?help    qquit    [inspector]
+[?] Help [Enter] Run show [b] Runs [Tab] Pane [i] Tabs [q] Quit

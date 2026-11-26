@@ -1,13 +1,39 @@
+use ratatui::buffer::CellWidth;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::{style::Style, text::Span};
 use std::time::Duration;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub(super) fn pad_display_width(text: &str, width: usize) -> String {
-    let len = text.width_cjk();
-    if len >= width {
-        return text.to_string();
+// Budget ambiguous characters as wide, but never less than ratatui paints.
+pub(super) fn grapheme_cells(symbol: &str) -> usize {
+    symbol.width_cjk().max(usize::from(symbol.cell_width()))
+}
+
+pub(super) fn activity_text_width(text: &str) -> usize {
+    Span::raw(text)
+        .styled_graphemes(Style::default())
+        .map(|g| grapheme_cells(g.symbol))
+        .sum()
+}
+
+pub(super) fn fit_padded_column(text: &str, width: usize) -> String {
+    let suffix = if width > 3 && activity_text_width(text) > width {
+        "..."
+    } else {
+        ""
+    };
+    let mut remaining = width - suffix.len();
+    let mut fitted = String::new();
+    for g in Span::raw(text).styled_graphemes(Style::default()) {
+        let Some(left) = remaining.checked_sub(grapheme_cells(g.symbol)) else {
+            break;
+        };
+        fitted.push_str(g.symbol);
+        remaining = left;
     }
-    format!("{}{}", text, " ".repeat(width - len))
+    fitted.push_str(suffix);
+    fitted.extend(std::iter::repeat_n(' ', remaining));
+    fitted
 }
 
 pub(super) fn strip_ansi_codes(text: &str) -> String {

@@ -28,7 +28,7 @@ fn rendered_help(width: u16, height: u16, app: &mut MonitorApp) -> String {
 }
 
 fn footer_text(app: &MonitorApp) -> String {
-    footer_spans(app)
+    footer_spans(app, 120)
         .iter()
         .map(|span| span.content.as_ref())
         .collect::<String>()
@@ -439,64 +439,31 @@ fn help_overlay_lists_every_registered_binding() {
 
 #[test]
 fn footer_hints_match_the_registry_per_focus() {
-    // FR-02 drift test, footer side: every focus footer names its focus tag
-    // and only keys that resolve to the expected action in that focus.
+    use super::harness::{TINY, area_for};
     let mut app = test_app();
-
-    app.focus = FocusPane::Commands;
-    let commands = footer_text(&app);
-    assert!(commands.contains("[workflow]"));
-    for token in ["run", "move", "filter", "focus", "history", "help", "quit"] {
-        assert!(commands.contains(token), "commands footer: {commands}");
-    }
-
-    app.focus = FocusPane::Inspector;
-    let inspector = footer_text(&app);
-    assert!(inspector.contains("[inspector]"));
-    for token in ["tabs", "scroll", "focus", "help", "quit"] {
-        assert!(inspector.contains(token), "inspector footer: {inspector}");
-    }
-
-    app.focus = FocusPane::Output;
-    let output = footer_text(&app);
-    assert!(output.contains("[activity]"));
-    for token in [
-        "select", "visual", "copy", "follow", "history", "help", "quit",
+    let area = area_for(TINY);
+    for (pane, next, hint) in [
+        (FocusPane::Commands, FocusPane::Runs, "[/] Filter"),
+        (FocusPane::Runs, FocusPane::Inspector, "[/] Filter"),
+        (FocusPane::Inspector, FocusPane::Output, "[i] Tabs"),
+        (FocusPane::Output, FocusPane::Commands, "[End] Follow"),
     ] {
-        assert!(output.contains(token), "output footer: {output}");
+        assert_eq!(app.focus, pane);
+        let footer = footer_text(&app);
+        for expected in [hint, "[Tab] Pane", "[?] Help", "[q] Quit"] {
+            assert!(footer.contains(expected), "{pane:?}: {footer}");
+        }
+        assert_eq!(
+            footer.contains("[Enter] Run show"),
+            matches!(pane, FocusPane::Commands | FocusPane::Inspector)
+        );
+        assert_eq!(
+            handle_key(&mut app, key(KeyCode::Tab), area).unwrap(),
+            KeyOutcome::Continue
+        );
+        assert_eq!(app.focus, next);
     }
-
-    app.focus = FocusPane::Runs;
-    let runs = footer_text(&app);
-    assert!(runs.contains("[runs]"));
-    for token in [
-        "filter", "move", "preview", "focus", "history", "help", "quit",
-    ] {
-        assert!(runs.contains(token), "runs footer: {runs}");
-    }
-
-    // Spot-check the curated literals against dispatch.
-    assert_eq!(
-        resolve_key(&char_key('j'), FocusPane::Commands, false, false),
-        Some(TuiAction::CommandsNext)
-    );
-    assert_eq!(
-        resolve_key(&char_key('k'), FocusPane::Commands, false, false),
-        Some(TuiAction::CommandsPrev)
-    );
-    assert_eq!(
-        resolve_key(&char_key('j'), FocusPane::Inspector, false, false),
-        Some(TuiAction::InspectorDown)
-    );
-    assert_eq!(
-        resolve_key(&char_key('j'), FocusPane::Output, false, false),
-        Some(TuiAction::OutputNext)
-    );
-    // Rendered footer survives the wide/compact/tiny size classes.
-    for (width, height) in [(120u16, 30u16), (72, 24), (40, 14)] {
-        let rendered = rendered_help(width, height, &mut app);
-        assert!(rendered.contains("ACTIVITY"), "{width}x{height}");
-    }
+    assert!(!app.command_running());
 }
 
 #[test]
@@ -505,8 +472,264 @@ fn footer_shows_quit_confirmation_state() {
     assert!(!app.request_quit());
     assert!(app.quit_confirm_pending);
     let text = footer_text(&app);
-    assert!(text.contains("q again to stop + quit"));
-    assert!(text.contains("Esc stays"));
+    assert!(text.contains("[q] Stop + quit"));
+    assert!(text.contains("[Esc] Stay"));
+}
+
+#[test]
+fn empty_reports_restores_its_runs_hint_when_an_armed_quit_outlives_the_child() {
+    use super::harness::{WIDE, area_for, render_text};
+    let mut app = running_app();
+    let area = area_for(WIDE);
+    for k in [char_key('2'), char_key('5'), char_key('q')] {
+        assert_eq!(handle_key(&mut app, k, area).unwrap(), KeyOutcome::Continue);
+    }
+    let confirming = render_text(&mut app, WIDE);
+    assert!(confirming.contains("[q] Stop + quit"));
+    assert!(!confirming.contains("press b to focus"));
+    // Finish between frames without a keypress. Keep the completion rescan
+    // away from any real configuration or recorded runs.
+    let missing = std::env::temp_dir().join(format!("pmoke_empty_reports_{}", std::process::id()));
+    assert!(!missing.exists());
+    app.config_path = missing.join("config.toml").display().to_string();
+    app.finish_run(true, "done".into());
+    assert!(!app.command_running());
+    let idle = render_text(&mut app, WIDE);
+    assert!(
+        idle.contains("press b to focus") && idle.contains("[q] Quit"),
+        "{idle}"
+    );
+    handle_key(&mut app, char_key('b'), area).unwrap();
+    assert_eq!(app.focus, FocusPane::Runs);
+}
+
+#[test]
+fn footer_drops_the_whole_run_hint_if_it_misses_by_a_cell() {
+    let mut app = test_app();
+    app.workflow_fixture = Some(vec![MonitorAction::Doctor]);
+    let hint = "[Enter] Run doctor";
+    let minimum = ("[?] Help ".len() + hint.len()) as u16;
+    for width in [0, minimum - 1, minimum, 40] {
+        let line = Line::from(footer_spans(&app, width));
+        assert!(line.width() <= usize::from(width));
+        let text = line.to_string();
+        assert_eq!(text.contains(hint), width >= minimum, "{text}");
+        if width < minimum {
+            assert!(
+                !text.contains("[Enter") && !text.contains("doctor"),
+                "{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn search_hints_follow_plain_keys_even_if_a_modified_q_armed_quit() {
+    let mut app = running_app();
+    let area = super::harness::area_for(super::harness::TINY);
+    handle_key(&mut app, char_key('/'), area).unwrap();
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT),
+        area,
+    )
+    .unwrap();
+    assert!(app.search_mode && app.quit_confirm_pending);
+    let text = footer_text(&app);
+    assert!(
+        text.contains("[Enter] Apply") && !text.contains("Stay"),
+        "{text}"
+    );
+    let frame = super::harness::render_text(&mut app, super::harness::WIDE);
+    assert!(!frame.contains("Press q again"), "{frame}");
+    assert_eq!(
+        handle_key(&mut app, char_key('q'), area).unwrap(),
+        KeyOutcome::Continue
+    );
+    assert_eq!(app.action_query, "q");
+}
+
+#[test]
+fn footer_copy_accounts_for_the_selection_enter_will_make() {
+    let mut app = test_app();
+    app.write_clipboard = |text| {
+        assert_eq!(text, "use this line");
+        Ok(ClipboardMethod::Osc52)
+    };
+    app.spawn_runner = |_, _, _| panic!("copy must not start a command");
+    let area = super::harness::area_for(super::harness::TINY);
+    app.push_output(OutputStream::Stdout, "use this line");
+    for _ in 0..3 {
+        handle_key(&mut app, key(KeyCode::Tab), area).unwrap();
+    }
+    assert_eq!(app.focus, FocusPane::Output);
+    // Tab focuses without selecting. Copy itself selects the last renderable event.
+    assert!(app.output_selected.is_none());
+    assert!(footer_text(&app).contains("[Enter] Copy"));
+    handle_key(&mut app, key(KeyCode::Enter), area).unwrap();
+    assert!(
+        app.copy_status
+            .as_deref()
+            .unwrap()
+            .starts_with("copied 1 lines")
+    );
+    app.run_output.clear();
+    assert!(!footer_text(&app).contains("[Enter]"));
+}
+
+#[test]
+fn tiny_search_can_clear_the_other_filter_without_losing_apply_or_stop() {
+    use super::harness::{TINY, area_for, render_text};
+    let mut app = running_app();
+    let area = area_for(TINY);
+    for k in [
+        char_key('b'),
+        char_key('/'),
+        char_key('r'),
+        key(KeyCode::Enter),
+        char_key('a'),
+        char_key('/'),
+        char_key('s'),
+    ] {
+        handle_key(&mut app, k, area).unwrap();
+    }
+    assert_eq!((&*app.run_query, &*app.action_query), ("r", "s"));
+    assert!(footer_text(&app).contains("[Esc] Clear runs"));
+    let frame = render_text(&mut app, TINY);
+    let footer = frame.lines().last().unwrap();
+    for hint in ["[Enter] Apply", "[Ctrl+C] Stop", "[Esc] Clear"] {
+        assert!(footer.contains(hint), "{footer}");
+    }
+    handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
+    assert!(app.run_query.is_empty() && app.search_mode);
+    handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
+    assert!(app.action_query.is_empty() && !app.search_mode);
+}
+
+#[test]
+fn inspector_enter_only_offers_actions_that_can_start() {
+    use super::harness::{TINY, area_for};
+    let area = area_for(TINY);
+    let mut app = test_app(); // a blocked config still permits show
+    app.spawn_runner = |_, _, _| panic!("an empty, blocked or group row must not spawn");
+    app.focus_inspector();
+    assert!(footer_text(&app).contains("[Enter] Run show"));
+    app.workflow_cursor = 0;
+    assert!(footer_text(&app).contains("[Enter] Toggle group"));
+    for expected in [true, false] {
+        handle_key(&mut app, key(KeyCode::Enter), area).unwrap();
+        assert_eq!(
+            app.collapsed_groups.contains(&ActionGroup::Utilities),
+            expected
+        );
+    }
+    app.workflow_fixture = Some(vec![MonitorAction::Analyze]);
+    app.workflow_cursor = 1;
+    assert!(!footer_text(&app).contains("[Enter]"));
+    handle_key(&mut app, key(KeyCode::Enter), area).unwrap();
+    assert!(!app.last_run.as_ref().unwrap().ok);
+    app.action_query = "no-such-workflow".into();
+    assert!(!footer_text(&app).contains("[Enter]"));
+    handle_key(&mut app, key(KeyCode::Enter), area).unwrap();
+    assert!(!app.command_running());
+}
+
+#[test]
+fn tiny_footer_tracks_real_search_help_and_cancel_input() {
+    use super::harness::{TINY, area_for, render_text};
+    let area = area_for(TINY);
+    for pane in [FocusPane::Commands, FocusPane::Runs] {
+        let mut app = running_app();
+        let (cancel, rx) = mpsc::channel();
+        app.active_run.as_mut().unwrap().cancel = cancel;
+        app.focus = pane;
+        handle_key(&mut app, char_key('/'), area).unwrap();
+        let frame = render_text(&mut app, TINY);
+        let footer = frame.lines().last().unwrap().trim_end();
+        for hint in ["[Enter] Apply", "[Esc] Clear", "[Ctrl+C] Stop"] {
+            assert!(footer.contains(hint), "{pane:?}: {footer}");
+        }
+        assert!(!footer.contains("Help") && !footer.contains("Quit"));
+        for ch in ['?', 'q', '4'] {
+            assert_eq!(
+                handle_key(&mut app, char_key(ch), area).unwrap(),
+                KeyOutcome::Continue
+            );
+        }
+        assert_eq!(
+            if pane == FocusPane::Runs {
+                &app.run_query
+            } else {
+                &app.action_query
+            },
+            "?q4"
+        );
+        handle_key(&mut app, ctrl_key(KeyCode::Char('c')), area).unwrap();
+        assert_eq!(rx.try_recv().unwrap(), CancelReason::CtrlC);
+        handle_key(&mut app, key(KeyCode::Enter), area).unwrap();
+        assert!(!app.search_mode && !app.run_search_mode);
+        assert_eq!(
+            if pane == FocusPane::Runs {
+                &app.run_query
+            } else {
+                &app.action_query
+            },
+            "?q4"
+        );
+        handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
+        assert!(app.run_query.is_empty() && app.action_query.is_empty());
+        handle_key(&mut app, char_key('?'), area).unwrap();
+        handle_key(&mut app, ctrl_key(KeyCode::Char('c')), area).unwrap();
+        assert!(!app.show_help);
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
+    let mut app = running_app();
+    let (cancel, rx) = mpsc::channel();
+    app.active_run.as_mut().unwrap().cancel = cancel;
+    handle_key(&mut app, char_key('?'), area).unwrap();
+    let frame = render_text(&mut app, TINY);
+    let footer = frame.lines().last().unwrap();
+    assert!(
+        footer.contains("[Esc] Close") && footer.contains("[Ctrl+C] Stop"),
+        "{footer}"
+    );
+    assert!(!footer.contains("Quit") && !footer.contains("Run "));
+    handle_key(&mut app, ctrl_key(KeyCode::Char('c')), area).unwrap();
+    assert!(!app.show_help);
+    assert_eq!(rx.try_recv().unwrap(), CancelReason::CtrlC);
+    handle_key(&mut app, ctrl_key(KeyCode::Char('c')), area).unwrap();
+    assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+}
+
+#[test]
+fn help_names_a_group_or_no_match_instead_of_an_unselected_command() {
+    use super::harness::{WIDE, area_for, assert_continue, drive};
+    let mut app = test_app();
+    let area = area_for(WIDE);
+    for (keys, label) in [
+        (
+            vec![char_key('g'), char_key('?')],
+            ActionGroup::Utilities.label(),
+        ),
+        (
+            vec![
+                key(KeyCode::Esc),
+                char_key('/'),
+                char_key('~'),
+                key(KeyCode::Enter),
+                char_key('?'),
+            ],
+            "No matching workflow action",
+        ),
+    ] {
+        assert_continue(&drive(&mut app, area, &keys));
+        let frame = rendered_help(WIDE.0, WIDE.1, &mut app);
+        let row = frame
+            .lines()
+            .find(|line| line.contains("Selected  "))
+            .unwrap();
+        assert!(row.contains(&format!("Selected  {label}")), "{row}");
+    }
 }
 
 #[test]
@@ -571,6 +794,96 @@ fn escape_follows_close_then_leave_order() {
     assert_eq!(app.focus, FocusPane::Output);
     handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
     assert_eq!(app.focus, FocusPane::Commands);
+}
+
+#[test]
+fn esc_on_stay_dismisses_only_the_quit_confirmation() {
+    use super::harness::{WIDE, area_for, assert_continue, drive};
+    let mut app = running_app();
+    let area = area_for(WIDE);
+    app.push_output(OutputStream::Stdout, "selection");
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[
+            char_key('/'),
+            char_key('s'),
+            key(KeyCode::Enter),
+            char_key('o'),
+            char_key('v'),
+            char_key('q'),
+        ],
+    ));
+    assert!(footer_text(&app).contains("[Esc] Stay"));
+    handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
+    assert!(!app.quit_confirm_pending);
+    assert_eq!(app.action_query, "s");
+    assert_eq!(app.focus, FocusPane::Output);
+    assert!(app.output_selection_anchor.is_some());
+    assert!(!app.active_run.as_ref().unwrap().cancel_requested);
+    handle_key(&mut app, key(KeyCode::Esc), area).unwrap();
+    assert!(app.action_query.is_empty());
+}
+
+#[test]
+fn leaving_a_search_pane_keeps_the_filter_but_routes_input_to_the_new_pane() {
+    use super::harness::{WIDE, area_for, assert_continue, drive};
+    let mut app = test_app();
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[
+            char_key('/'),
+            char_key('s'),
+            key(KeyCode::Tab),
+            char_key('/'),
+            char_key('r'),
+        ],
+    ));
+    assert_eq!(app.focus, FocusPane::Runs);
+    assert_eq!((&*app.action_query, &*app.run_query), ("s", "r"));
+    let inspector = dashboard_layout(area).inspector;
+    handle_mouse(
+        &mut app,
+        area,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: inspector.x + 1,
+            row: inspector.y + 1,
+            modifiers: KeyModifiers::NONE,
+        },
+    )
+    .unwrap();
+    assert_continue(&drive(&mut app, area, &[char_key('5')]));
+    assert_eq!(app.focus, FocusPane::Inspector);
+    assert_eq!(app.inspector_view, InspectorView::Reports);
+    assert_eq!(app.run_query, "r");
+}
+
+#[test]
+fn quit_prompt_does_not_evict_the_selected_event_from_a_full_log() {
+    use super::harness::{WIDE, area_for, assert_continue, drive, render_text};
+    let mut app = running_app();
+    app.push_output(
+        OutputStream::Stdout,
+        &(0..1000)
+            .map(|i| format!("event-{i:04}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    let area = area_for(WIDE);
+    assert_continue(&drive(
+        &mut app,
+        area,
+        &[char_key('o'), char_key('g'), char_key('v'), char_key('q')],
+    ));
+    assert!(render_text(&mut app, WIDE).contains("[Esc] Stay"));
+    assert_continue(&drive(&mut app, area, &[key(KeyCode::Esc)]));
+    assert_eq!(app.selected_output_text().as_deref(), Some("event-0000"));
+    assert!(app.output_selection_anchor.is_some());
+    assert!(app.command_running());
+    assert_eq!(app.new_output_events, 0);
 }
 
 #[test]

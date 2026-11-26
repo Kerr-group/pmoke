@@ -59,7 +59,7 @@ pub(super) fn header_spans(app: &MonitorApp, width: u16) -> Vec<Span<'static>> {
         Span::styled(
             run,
             Style::default()
-                .fg(run_status_color(app))
+                .fg(displayed_run_status(app).1)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
@@ -73,7 +73,56 @@ pub(super) fn context_bar_spans(app: &MonitorApp, width: u16) -> Vec<Span<'stati
         return Vec::new();
     }
 
-    let mut spans = if width < CONTEXT_DETAILS_MIN_WIDTH {
+    // Reports can remain focused when its body does not fit. Keep the data
+    // source visible independently of the workflow target named by Enter.
+    let mut spans =
+        if app.focus == FocusPane::Inspector && app.inspector_view == InspectorView::Reports {
+            let view = match app.selected_run_entry() {
+                Some(entry) => {
+                    let prefix = "VIEW ";
+                    let suffix = " (read-only)";
+                    if width > prefix.len() + suffix.len() {
+                        format!(
+                            "{prefix}{}{suffix}",
+                            fit_text(&entry.name, width - prefix.len() - suffix.len())
+                        )
+                    } else {
+                        fit_text(&format!("{prefix}{}", entry.name), width)
+                    }
+                }
+                None => fit_text("VIEW No recorded run selected", width),
+            };
+            let path_width = width.saturating_sub(view.cell_width() as usize);
+            let mut spans = vec![Span::styled(view, Style::default().fg(Color::Cyan))];
+            if path_width >= CONTEXT_DETAILS_MIN_WIDTH {
+                spans.extend(path_context_spans(app, path_width));
+            }
+            spans
+        } else {
+            path_context_spans(app, width)
+        };
+
+    let used = spans
+        .iter()
+        .map(|span| span.content.cell_width() as usize)
+        .sum::<usize>();
+    let remaining = width.saturating_sub(used);
+    if remaining > 0 {
+        let rule = "─";
+        let rule_width = (rule.cell_width() as usize).max(1);
+        let rule_area = remaining.saturating_sub(1);
+        let filler = format!(
+            " {}{}",
+            rule.repeat(rule_area / rule_width),
+            " ".repeat(rule_area % rule_width)
+        );
+        spans.push(Span::styled(filler, Style::default().fg(Color::DarkGray)));
+    }
+    spans
+}
+
+fn path_context_spans(app: &MonitorApp, width: usize) -> Vec<Span<'static>> {
+    if width < CONTEXT_DETAILS_MIN_WIDTH {
         let full_prefix = "◆ cwd ";
         let icon_prefix = "◆ ";
         let prefix = if width >= full_prefix.cell_width() as usize {
@@ -131,25 +180,7 @@ pub(super) fn context_bar_spans(app: &MonitorApp, width: u16) -> Vec<Span<'stati
                 Style::default().fg(Color::Gray),
             ),
         ]
-    };
-
-    let used = spans
-        .iter()
-        .map(|span| span.content.cell_width() as usize)
-        .sum::<usize>();
-    let remaining = width.saturating_sub(used);
-    if remaining > 0 {
-        let rule = "─";
-        let rule_width = (rule.cell_width() as usize).max(1);
-        let rule_area = remaining.saturating_sub(1);
-        let filler = format!(
-            " {}{}",
-            rule.repeat(rule_area / rule_width),
-            " ".repeat(rule_area % rule_width)
-        );
-        spans.push(Span::styled(filler, Style::default().fg(Color::DarkGray)));
     }
-    spans
 }
 
 pub(super) fn fit_context_path(path: &str, width: usize) -> String {
@@ -185,10 +216,7 @@ pub(super) fn render_body(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rec
 }
 
 pub(super) fn render_footer(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
-    // FR-02: the footer is generated from the keybinding registry per focus
-    // (key labels via `keymap::primary_label`), so it cannot drift from the
-    // implementation either.
-    let line = Line::from(footer_spans(app));
+    let line = Line::from(footer_spans(app, area.width));
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -317,7 +345,7 @@ pub(super) fn render_workflow_list(frame: &mut Frame<'_>, app: &MonitorApp, area
                 let WorkflowEntry::Group(group) = entry else {
                     unreachable!()
                 };
-                let collapsed = app.collapsed_groups.contains(group);
+                let collapsed = app.group_collapsed(*group);
                 return ListItem::new(Line::from(vec![
                     Span::styled(
                         if is_selected { "▌ " } else { "  " },
@@ -508,7 +536,7 @@ fn render_run_preview(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
         Line::from(vec![
             Span::styled("path     ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                fit_path(&entry.path, path_width),
+                fit_path(&entry.path.to_string_lossy(), path_width),
                 Style::default().fg(Color::Cyan),
             ),
         ]),
@@ -560,8 +588,7 @@ fn render_run_preview(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
 /// rendering never writes, spawns, or fails.
 fn render_reports(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
     let Some(entry) = app.selected_run_entry() else {
-        let focus_runs = primary_label(TuiAction::FocusRuns).unwrap_or_else(|| "4".to_string());
-        let lines = vec![
+        let mut lines = vec![
             Line::styled(
                 "No recorded run selected.",
                 Style::default().fg(Color::Yellow),
@@ -574,14 +601,18 @@ fn render_reports(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect) {
                 Span::styled("scan  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(run_scan_budgets_label(), Style::default().fg(Color::Gray)),
             ]),
-            Line::from(vec![
+        ];
+        if !app.quit_confirmation_visible()
+            && let Some(focus_runs) = active_key_label(app, TuiAction::FocusRuns)
+        {
+            lines.push(Line::from(vec![
                 Span::styled("hint  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format!("press {focus_runs} to focus the runs browser"),
                     Style::default().fg(Color::Gray),
                 ),
-            ]),
-        ];
+            ]));
+        }
         frame.render_widget(
             Paragraph::new(lines)
                 .block(accent_panel(" REPORTS ").border_style(focus_border_style(
@@ -652,7 +683,7 @@ fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
         return;
     }
     if let Some(WorkflowEntry::Group(group)) = app.selected_workflow_entry() {
-        let collapsed = app.collapsed_groups.contains(&group);
+        let collapsed = app.group_collapsed(group);
         let lines = vec![
             Line::styled(
                 group.label(),
@@ -662,9 +693,9 @@ fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
             ),
             Line::styled(
                 if collapsed {
-                    "Enter to expand this workflow group."
+                    "Workflow group: collapsed."
                 } else {
-                    "Enter to collapse this workflow group."
+                    "Workflow group: expanded."
                 },
                 Style::default().fg(Color::Gray),
             ),
@@ -715,11 +746,7 @@ fn render_inspector_summary(frame: &mut Frame<'_>, app: &MonitorApp, area: Rect)
         Line::from(vec![
             Span::styled("command  ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!(
-                    "pmoke --config {} {}",
-                    app.config_path,
-                    action.command_name()
-                ),
+                workflow_command_label(&app.workflow_args(action)),
                 Style::default().fg(Color::Cyan),
             ),
         ]),
@@ -758,7 +785,7 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
 
     let Some(entry) = app.selected_workflow_entry() else {
         frame.render_widget(
-            Paragraph::new("Type to refine the search; Esc clears it.")
+            Paragraph::new("No workflow actions match this filter.")
                 .style(Style::default().fg(Color::Gray))
                 .block(accent_panel(" DETAIL ")),
             area,
@@ -768,7 +795,7 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
     let action = app.selected_action();
     if let WorkflowEntry::Group(group) = entry {
         frame.render_widget(
-            Paragraph::new("Enter toggles this group.")
+            Paragraph::new("Workflow group.")
                 .style(Style::default().fg(Color::Gray))
                 .block(accent_panel(format!(" DETAIL {} ", group.label()))),
             area,
@@ -785,65 +812,54 @@ pub(super) fn render_command_description(frame: &mut Frame<'_>, app: &MonitorApp
 }
 
 pub(super) fn render_run_output(frame: &mut Frame<'_>, app: &mut MonitorApp, area: Rect) {
-    let output = app.visible_output();
     let block_base = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(focus_border_style(
             app,
             FocusPane::Output,
-            run_status_color(app),
+            displayed_run_status(app).1,
         ));
     let inner = block_base.inner(area);
     let output_sections = output_inner_layout(inner);
     let log_area = output_sections.log;
     let log_width = log_area.width.saturating_sub(1);
-    let visual_lines_for_layout = if output.is_empty() {
-        Vec::new()
-    } else {
-        visual_output_lines(output, log_width, None, None)
-    };
-    let visual_line_count = visual_lines_for_layout.len();
-    let selected_visual_range =
-        visual_selection_range(&visual_lines_for_layout, app.output_selection_range());
+    let visual_lines = visual_output_lines_with_motion(
+        app.visible_output(),
+        log_width,
+        app.output_selection_range(),
+        app.output_selected,
+        app.motion_mode.animates()
+            && app.command_running()
+            && app.history_view.is_none()
+            && !app.output_is_paused(),
+        timeline_motion_frame(app),
+    );
+    let visual_line_count = visual_lines.len();
+    let selected_visual_range = visual_selection_range(&visual_lines, app.output_selection_range());
     let visible_rows = output_visible_rows(log_area);
-    let effective_scroll = effective_output_scroll(app, log_area, visual_line_count);
-    let title = activity_title(app, effective_scroll, area.width);
+    if log_width > 0 && log_area.height > 0 {
+        app.restore_output_scroll(&visual_lines, visible_rows);
+    }
+    let effective_scroll = app.run_output_scroll;
+    let title = activity_title(app, area.width);
 
     let block = block_base.title(title);
     frame.render_widget(block, area);
 
-    render_output_status_bar(
-        frame,
-        app,
-        output_sections.status,
-        visual_line_count,
-        effective_scroll,
-        selected_visual_range,
-    );
+    render_output_status_bar(frame, app, output_sections.status, selected_visual_range);
     render_run_timeline(frame, app, output_sections.timeline);
 
     if log_area.height == 0 || log_area.width == 0 {
         return;
     }
 
-    let lines = if output.is_empty() {
+    let lines = if app.visible_output().is_empty() {
         vec![Line::styled(
             "  ready",
             Style::default().fg(Color::DarkGray),
         )]
     } else {
-        let visual_lines = visual_output_lines_with_motion(
-            output,
-            log_width,
-            app.output_selection_range(),
-            app.output_selected,
-            app.motion_mode.animates()
-                && app.command_running()
-                && app.history_view.is_none()
-                && effective_scroll == 0,
-            timeline_motion_frame(app),
-        );
         let end = visual_lines.len().saturating_sub(effective_scroll);
         let start = end.saturating_sub(visible_rows);
         visual_lines
@@ -853,7 +869,14 @@ pub(super) fn render_run_output(frame: &mut Frame<'_>, app: &mut MonitorApp, are
             .map(|line| line.line)
             .collect()
     };
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
+    // These are already physical rows; a second wrap would break hit-testing.
+    frame.render_widget(
+        Paragraph::new(lines),
+        Rect {
+            width: log_width,
+            ..log_area
+        },
+    );
 
     render_output_scrollbar(
         frame.buffer_mut(),
@@ -864,14 +887,14 @@ pub(super) fn render_run_output(frame: &mut Frame<'_>, app: &mut MonitorApp, are
     );
 }
 
-pub(super) fn activity_title(app: &MonitorApp, effective_scroll: usize, width: u16) -> String {
+pub(super) fn activity_title(app: &MonitorApp, width: u16) -> String {
     let detail = if let Some((index, total)) = app.history_position() {
         format!("HISTORY {index}/{total}")
-    } else if effective_scroll > 0 {
+    } else if app.output_is_paused() {
         if app.new_output_events > 0 {
-            format!("PAUSED · {} NEW · G follow", app.new_output_events)
+            format!("PAUSED · {} NEW", app.new_output_events)
         } else {
-            "PAUSED · G follow".to_string()
+            "PAUSED".to_string()
         }
     } else if let Some(run) = &app.active_run {
         if run.cancel_requested {
@@ -971,29 +994,12 @@ pub(super) fn render_output_status_bar(
     frame: &mut Frame<'_>,
     app: &MonitorApp,
     area: Rect,
-    _visual_line_count: usize,
-    effective_scroll: usize,
     selected_visual_range: Option<(usize, usize)>,
 ) {
-    let (state, color) = if let Some(run) = &app.active_run {
-        if run.cancel_requested {
-            ("STOPPING", Color::LightRed)
-        } else {
-            ("RUNNING", Color::Yellow)
-        }
-    } else if app
-        .last_run
-        .as_ref()
-        .map(|record| record.ok)
-        .unwrap_or(true)
-    {
-        ("READY", Color::Green)
-    } else {
-        ("FAILED", Color::Red)
-    };
+    let (state, color) = displayed_run_status(app);
     let mode = if app.history_view.is_some() {
         "history".to_string()
-    } else if effective_scroll == 0 {
+    } else if !app.output_is_paused() {
         "following".to_string()
     } else if app.new_output_events > 0 {
         format!("{} new", app.new_output_events)
@@ -1045,7 +1051,6 @@ pub(super) fn render_output_status_bar(
         spans.extend([
             Span::styled("  │  ", Style::default().fg(Color::DarkGray)),
             Span::styled(selection, Style::default().fg(Color::Gray)),
-            Span::styled("  ·  j/k v y g/G", Style::default().fg(Color::DarkGray)),
         ]);
     }
     if let Some(status) = &app.copy_status {

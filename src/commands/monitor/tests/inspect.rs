@@ -117,7 +117,7 @@ fn reports_app_with_run(run_dir: &Path) -> MonitorApp {
     let mut app = test_app();
     app.run_entries = vec![RunDirEntry {
         name: "run-alpha".to_string(),
-        path: run_dir.to_string_lossy().into_owned(),
+        path: run_dir.to_owned(),
         status: "complete".to_string(),
         stage: "analysis".to_string(),
         updated: "2026-01-01".to_string(),

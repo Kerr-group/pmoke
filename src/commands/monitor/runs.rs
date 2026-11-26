@@ -40,7 +40,7 @@ pub(super) const RUN_MANIFEST_MAX_BYTES: u64 = 65_536;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct RunDirEntry {
     pub(super) name: String,
-    pub(super) path: String,
+    pub(super) path: PathBuf,
     pub(super) status: String,
     pub(super) stage: String,
     pub(super) updated: String,
@@ -116,7 +116,11 @@ pub(super) fn scan_run_dirs(root: &Path) -> RunScanOutcome {
         }
     }
 
-    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    entries.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.path.cmp(&right.path))
+    });
     RunScanOutcome {
         root: root.to_string_lossy().into_owned(),
         entries,
@@ -128,7 +132,7 @@ pub(super) fn scan_run_dirs(root: &Path) -> RunScanOutcome {
 
 /// Probe one run directory. Every access is a read; failures degrade to
 /// `"unknown"` / `false` rather than failing the scan.
-fn probe_run_entry(path: &Path) -> RunDirEntry {
+pub(super) fn probe_run_entry(path: &Path) -> RunDirEntry {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -136,7 +140,7 @@ fn probe_run_entry(path: &Path) -> RunDirEntry {
     let (status, stage, updated) = read_run_manifest_state(&path.join("run.toml"));
     RunDirEntry {
         name,
-        path: path.to_string_lossy().into_owned(),
+        path: path.to_owned(),
         status,
         stage,
         updated,
@@ -191,28 +195,25 @@ fn read_run_manifest_state(manifest: &Path) -> (String, String, String) {
     (field("status"), field("stage"), field("updated_at"))
 }
 
-/// Resolve the browser root: parent of the current run directory, falling
-/// back to the config file's parent and then the startup directory. All
-/// three are read-only scan roots; none is ever created.
-pub(super) fn run_browser_root(config_path: &str, load: &ConfigLoad, current_dir: &str) -> PathBuf {
-    if let ConfigLoad::Ready { config, .. } = load {
-        let run_dir = config.paths().run_dir;
-        if let Some(parent) = run_dir
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            return parent.to_path_buf();
-        }
-        return PathBuf::from(current_dir);
-    }
-    let path = Path::new(config_path);
-    if let Some(parent) = path
+/// The explicit artifact target survives config diagnostics. Without it,
+/// browse siblings of the resolved run, or of the config file on error.
+pub(super) fn run_browser_root(
+    config_path: &str,
+    load: &ConfigLoad,
+    explicit_dir: Option<&Path>,
+    current_dir: &str,
+) -> PathBuf {
+    let target = explicit_dir
+        .map(Path::to_owned)
+        .unwrap_or_else(|| match load {
+            ConfigLoad::Ready { config, .. } => config.paths().run_dir,
+            ConfigLoad::Diagnostics(_) => PathBuf::from(config_path),
+        });
+    target
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        return parent.to_path_buf();
-    }
-    PathBuf::from(current_dir)
+        .unwrap_or_else(|| Path::new(current_dir))
+        .to_owned()
 }
 
 /// S1-idiom filter over the previewed fields (FR-02). Returns indices into
@@ -225,7 +226,11 @@ pub(super) fn filter_run_entries(entries: &[RunDirEntry], query: &str) -> Vec<us
         .filter(|(_, entry)| {
             query.is_empty()
                 || entry.name.to_ascii_lowercase().contains(&query)
-                || entry.path.to_ascii_lowercase().contains(&query)
+                || entry
+                    .path
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains(&query)
                 || entry.status.to_ascii_lowercase().contains(&query)
                 || entry.stage.to_ascii_lowercase().contains(&query)
         })
@@ -242,7 +247,7 @@ pub(super) fn run_preview_rows(entry: &RunDirEntry) -> Vec<Vec<String>> {
         vec!["Status".to_string(), entry.status.clone()],
         vec!["Stage".to_string(), entry.stage.clone()],
         vec!["Updated".to_string(), entry.updated.clone()],
-        vec!["Path".to_string(), entry.path.clone()],
+        vec!["Path".to_string(), entry.path.display().to_string()],
         vec![
             "Acquisition".to_string(),
             if entry.has_acquisition {
@@ -268,15 +273,9 @@ pub(super) fn run_preview_rows(entry: &RunDirEntry) -> Vec<Vec<String>> {
 /// runner (`spawn_command_runner`); the browser never executes or writes.
 pub(super) fn readout_panel_note(action: MonitorAction) -> Option<&'static str> {
     match action {
-        MonitorAction::Show => Some(
-            "Read-only config panel. Enter re-runs `show` through the re-exec runner; nothing is written.",
-        ),
-        MonitorAction::RawVerify => Some(
-            "Read-only RAW panel. Enter re-runs `raw verify` through the re-exec runner; nothing is written.",
-        ),
-        MonitorAction::Doctor => Some(
-            "Read-only doctor panel. Enter re-runs `doctor` through the re-exec runner; nothing is written.",
-        ),
+        MonitorAction::Show => Some("Read-only configuration view."),
+        MonitorAction::RawVerify => Some("Read-only RAW verification view."),
+        MonitorAction::Doctor => Some("Read-only diagnostic view."),
         _ => None,
     }
 }
